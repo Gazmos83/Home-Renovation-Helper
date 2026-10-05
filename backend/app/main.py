@@ -17,12 +17,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from app import logging as app_logging
+from app.agent.foreman import build_graph
+from app.agent.instructions import load_instructions
 from app.agent.memory.short_term import make_checkpointer, make_checkpointer_pool
 from app.agent.models.probe import probe_models
 from app.agent.models.profiles import Profiles
 from app.agent.models.routing import load_routing, read_routing_overrides
+from app.agent.models.slots import build_slot_models, model_provider
+from app.agent.tools.base import ToolDeps
 from app.api.admin_render import router as admin_render_router
 from app.api.auth import router as auth_router
+from app.api.chat import router as chat_router
 from app.api.health import router as health_router
 from app.api.limits import RateLimiter
 from app.api.packages import router as packages_router
@@ -40,6 +45,11 @@ from app.render.tiers import load_tiers
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     settings: Settings = app.state.settings
+
+    # The loop agent tools schedule builds and renders on. Tool code runs in
+    # worker threads (sync routes), so it needs this handle to reach the loop
+    # that owns the Blender semaphore.
+    app.state.loop = asyncio.get_running_loop()
 
     # The checkpointer owns its own schema and creates it here (§6). `.setup()`
     # is idempotent, so every boot runs it. An unreachable database leaves the
@@ -102,6 +112,27 @@ async def _lifespan(app: FastAPI):
     # Per-model generation profiles (defaults until the developer panel edits
     # them). Degrades to defaults if the store is unreadable.
     app.state.profiles = Profiles(app.state.engine)
+
+    # One chat model per loop slot (Foreman, Intake, Designer, Builder), built
+    # once from routing and the slot's profile. No fallback model exists.
+    app.state.models = build_slot_models(settings, app.state.routing, app.state.profiles)
+    app.state.model_provider = model_provider(app.state.models)
+
+    # The Foreman graph, on the checkpointer. A missing or malformed instruction
+    # file stops startup naming the file; without a checkpointer there is no
+    # graph and chat refuses with a stated reason.
+    instructions = load_instructions(slots=[slot for slot, _ in app.state.routing.items()])
+    app.state.graph = None
+    if app.state.checkpointer is not None:
+        app.state.graph = build_graph(
+            app.state.engine,
+            settings,
+            model_provider=app.state.model_provider,
+            model_ids=app.state.routing.model_for,
+            checkpointer=app.state.checkpointer,
+            deps=ToolDeps(app.state),
+            instructions=instructions,
+        )
 
     # The startup probe: one minimal call per distinct routed slug, so a blocked
     # model surfaces at boot as a configuration error rather than mid-session.
@@ -172,6 +203,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # in-memory single-use approvals for `final` renders.
     app.state.tiers = load_tiers()
     app.state.render_approvals = ApprovalStore()
+    # Built in the lifespan; `None` until then, and without a checkpointer.
+    app.state.graph = None
+    app.state.loop = None
     app.state.auth_rate_limiter = RateLimiter(
         settings.auth_rate_limit, settings.auth_rate_limit_window_seconds
     )
@@ -179,6 +213,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(health_router)
     app.include_router(packages_router)
+    app.include_router(chat_router)
     app.include_router(renders_router)
     app.include_router(admin_render_router)
 

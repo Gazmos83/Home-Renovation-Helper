@@ -4,10 +4,11 @@ Alembic owns everything here. It does NOT own the LangGraph checkpointer's
 tables — those are created by the checkpointer's own `.setup()` and are
 filtered out of autogenerate in `alembic/env.py` (CLAUDE.md §2, §6).
 
-This change ships the foundation's four tables: the single owner account, its
-login sessions, the operator key/value store (model routing overrides and
-generation profiles live here), and per-call model usage. Later changes add the
-house file, packages, pricing and the rest.
+The foundation's four tables: the single owner account, its login sessions, the
+operator key/value store (model routing overrides and generation profiles live
+here), and per-call model usage. The house file (rooms, preferences, pieces and
+their versions, generator-extension requests, the thread index) follows. Later
+changes add pricing and the rest.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from sqlalchemy import (
     Text,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # The width `BAAI/bge-m3` emits (CLAUDE.md §2). No table here stores a vector
@@ -162,4 +164,111 @@ class ModelUsage(Base):
             name="ck_model_usage_output_tokens_non_negative",
         ),
         Index("ix_model_usage_project_id", "project_id"),
+    )
+
+
+class Room(Base):
+    """One measured room of the owner's home (house file).
+
+    The corners, openings and heights are what Intake's confirmed numbers say;
+    they are validated like a room-scene document before they are stored.
+    """
+
+    __tablename__ = "rooms"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    corners_mm: Mapped[list] = mapped_column(JSONB, nullable=False)
+    height_mm: Mapped[int] = mapped_column(Integer, nullable=False)
+    wall_thickness_mm: Mapped[int] = mapped_column(Integer, nullable=False)
+    openings: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("btrim(name) <> ''", name="ck_rooms_name_not_blank"),
+    )
+
+
+class Preference(Base):
+    """A named style or default value (`style`, `budget_eur`, ...)."""
+
+    __tablename__ = "preferences"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Piece(Base):
+    """A piece the owner confirmed, one per package id."""
+
+    __tablename__ = "pieces"
+
+    package_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    room_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("rooms.id", ondelete="SET NULL"), nullable=True
+    )
+    brief: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class PieceVersion(Base):
+    """A version record mirroring a `docs/renders/<id>/v<N>` folder."""
+
+    __tablename__ = "piece_versions"
+
+    package_id: Mapped[str] = mapped_column(
+        ForeignKey("pieces.package_id", ondelete="CASCADE"), primary_key=True
+    )
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    revised_from: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    changes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("version >= 1", name="ck_piece_versions_version_positive"),
+    )
+
+
+class GeneratorExtensionRequest(Base):
+    """A change the schema cannot express yet (ladder step 2, CLAUDE.md §3)."""
+
+    __tablename__ = "generator_extension_requests"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    package_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    field: Mapped[str] = mapped_column(String(200), nullable=False)
+    request: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Thread(Base):
+    """The index of one conversation; its messages live in the checkpointer."""
+
+    __tablename__ = "threads"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    package_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_turn_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )

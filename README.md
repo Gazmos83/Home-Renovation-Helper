@@ -124,6 +124,56 @@ fast Workbench frame for progress checks; it is not a render and needs no tier.
 Blender is `BLENDER_BIN` (default: the pinned 5.2.1 LTS); without it the service
 still boots, and only builds and renders answer 503.
 
+## Chat and the house file
+
+You talk to the **Foreman**; it hands each message to Intake (turns a wish into
+confirmed numbers), the Designer (creates and revises pieces, lists parts, checks
+a room) or the Builder (builds and renders), and you never name one. Every model
+call needs `OPENROUTER_API_KEY`; the routes below work against a live service
+once a key is set. Conversations survive restarts (the Postgres checkpointer).
+
+Anything that changes the house — confirmed numbers, a new piece, a revision, a
+`final` render — **pauses** until you answer `yes` or `no`:
+
+```bash
+# 1. start a conversation (cookie from "Signing in with curl" above)
+THREAD=$(curl -s -b cookies.txt -X POST http://localhost:8000/chat/threads \
+  -H 'Content-Type: application/json' -d '{"title":"Hall bench"}' | jq -r .thread_id)
+
+# 2. send a turn; the reply says who answered and whether a confirmation is pending
+curl -s -b cookies.txt -X POST http://localhost:8000/chat/threads/$THREAD/turns \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"I want a bench for the hall: 1200 wide, 3000 long, 2400 high, 400 euro, light oak"}'
+# → {"reply": "...", "specialist": "intake", "pending": {"confirmation_id": "...", "subject": "brief", "summary": "..."}}
+
+# 3. answer it — "yes" runs the action, "no" (with an optional reason) returns the reason to the agent
+curl -s -b cookies.txt -X POST http://localhost:8000/chat/threads/$THREAD/resume \
+  -H 'Content-Type: application/json' \
+  -d '{"confirmation_id":"<id from the reply>","answer":"yes"}'
+
+# 4. read the conversation (and any pending confirmation), or list them all
+curl -s -b cookies.txt http://localhost:8000/chat/threads/$THREAD
+curl -s -b cookies.txt http://localhost:8000/chat/threads
+```
+
+A new message while a confirmation is pending, or an answer to one that is no
+longer pending, is refused with 409. If the conversation memory is unavailable
+the turn is refused with 503; a model-gateway failure answers 502 with its class
+(`timeout`, `unauthorized`, …) and leaves the unanswered message out of the
+thread. Replies never show a model name, a prompt, a token count or a file path;
+files are named by their package route, for example
+`/packages/hall-bench/versions/1/files/screenshot.png`.
+
+**The house file** is the owner's long-term memory, in the database and the
+package folders: every room (polygon, heights, openings), preferences (`style`,
+`budget_eur`), pieces with their versions and what changed, and **generator-
+extension requests**. If you ask for something the spec schema cannot express (a
+bevelled edge), the Designer says so plainly and the field is recorded as a
+request — it never offers Blender code. Rooms and style are written only by a
+confirmed brief; pieces and versions only by a confirmed `create_piece` or
+`revise_package`. Packages made directly through `/packages` still appear to the
+Designer, without a brief.
+
 ## Model routing
 
 Per-agent model routing lives in [`backend/config/models.yaml`](backend/config/models.yaml):

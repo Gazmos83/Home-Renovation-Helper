@@ -161,8 +161,8 @@ None open as of 2026-10-05.
 
 1. [x] Port foundation: FastAPI, Postgres, migrations, registry, gateway, Langfuse, auth (owner + dev route) — `openspec/changes/port-foundation`
 2. [x] Render guard, Eevee defaults, first-launch benchmark; port generators and runner behind it — `openspec/changes/render-guard`
-3. [ ] House file + checkpointer
-4. [ ] Foreman → Intake → Designer → Builder loop with `revise_package`, `cut_list`, `room_fit`
+3. [x] House file + checkpointer — `openspec/changes/agent-loop`
+4. [x] Foreman → Intake → Designer → Builder loop with `revise_package`, `cut_list`, `room_fit` — `openspec/changes/agent-loop`
 4a. [ ] Intake vision read of blueprints and photos into the house file; headless apartment shell generator
 5. [ ] Pricing port and rework (§5a) + Researcher
 6. [ ] Reviewer (`revision_review`) with a vision model

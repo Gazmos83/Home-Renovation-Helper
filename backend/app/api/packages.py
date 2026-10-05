@@ -8,7 +8,6 @@ run by `app.blender.runner` behind the render guard.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from pathlib import Path
@@ -23,6 +22,7 @@ from app.blender import runner, storage
 from app.blender.launch import subprocess_launch
 from app.blender.schemas import CustomBuildSpec, describe_validation_error
 from app.blender.spec_contract import SpecValidationError
+from app.packages import service
 
 logger = logging.getLogger("app")
 
@@ -154,18 +154,12 @@ def _start_build(
 def _create_version(
     request: Request, background: BackgroundTasks, package_id: str, spec: dict[str, Any]
 ) -> dict[str, Any]:
-    root = render_root(request)
-    version = storage.next_version(root, package_id)
-    folder = storage.version_dir(root, package_id, version)
-    folder.mkdir(parents=True)
-    (folder / storage.INPUT_FILE).write_text(json.dumps(spec, indent=2), encoding="utf-8")
-    runner.mark_build_queued(folder)
-    _start_build(request, background, package_id, version)
-    logger.info(
-        "package version created",
-        extra={"context": {"package_id": package_id, "version": version}},
+    return service.create_version(
+        render_root(request),
+        package_id,
+        spec,
+        lambda version: _start_build(request, background, package_id, version),
     )
-    return {"package_id": package_id, "version": version, "status": "queued"}
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)

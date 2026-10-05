@@ -441,6 +441,32 @@ def _normalise_output(raw: Any) -> dict[str, Any]:
     return {"kind": kind}
 
 
+def normalise_room_shell(
+    room: Mapping[str, Any], openings: Any = None
+) -> tuple[dict[str, Any], tuple[dict[str, Any], ...]]:
+    """Validate a room's outline, heights and openings without a placement.
+
+    The house file stores rooms before any piece is placed in them. Returns the
+    normalised `room` mapping (counter-clockwise corners) and the openings.
+    """
+    _require_keys(room, _ROOM_REQUIRED, _ROOM_OPTIONAL, "room")
+    corners = _normalise_corners(room["corners"])
+    height_mm = _number(room["height_mm"], "room.height_mm", maximum=_MAX_CEILING_MM)
+    wall_thickness_mm = _number(
+        room.get("wall_thickness_mm", DEFAULT_WALL_THICKNESS_MM), "room.wall_thickness_mm"
+    )
+    walls = _build_walls(corners)
+    normalised = _normalise_openings(openings, walls, height_mm)
+    return (
+        {
+            "corners": [list(corner) for corner in corners],
+            "height_mm": height_mm,
+            "wall_thickness_mm": wall_thickness_mm,
+        },
+        normalised,
+    )
+
+
 def normalise_room_scene(
     document: Mapping[str, Any], *, package_overall: Mapping[str, float]
 ) -> RoomBuildContext:

@@ -321,6 +321,62 @@ class CustomBuildSpec(BaseModel):
         return CustomBuildContext(overall=custom_derive.overall(self.model_dump(mode="json")))
 
 
+class ModuleChange(BaseModel):
+    """Every `ModuleIn` field but its id, each optional; an absent field keeps its value."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    name: Label | None = None
+    x: Position | None = None
+    y: Position | None = None
+    z: Position | None = None
+    width: Millimetres | None = None
+    height: Millimetres | None = None
+    depth: Millimetres | None = None
+    carcass: SlotName | None = None
+    back: SlotName | None = None
+    shelves: Annotated[int, Field(ge=0, le=20)] | None = None
+    fronts: Annotated[list[FrontIn], Field(max_length=10)] | None = None
+    hardware: Annotated[list[HardwareLineIn], Field(max_length=50)] | None = None
+
+
+class PackageChanges(BaseModel):
+    """A bounded set of changes to a stored `custom_build`; at least one."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    name: Label | None = None
+    envelope: EnvelopeIn | None = None
+    materials: dict[SlotName, MaterialSlotIn] = {}
+    modules: dict[Slug, ModuleChange] = {}
+    add_modules: Annotated[list[ModuleIn], Field(max_length=MAX_MODULES)] = []
+    remove_modules: Annotated[list[Slug], Field(max_length=MAX_MODULES)] = []
+    add_extra_parts: Annotated[list[ExtraPartIn], Field(max_length=100)] = []
+    remove_extra_parts: Annotated[list[Slug], Field(max_length=100)] = []
+    part_overrides: Annotated[list[PartOverrideIn], Field(max_length=MAX_DERIVED_ROWS)] = []
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> PackageChanges:
+        if not any(
+            (
+                self.name is not None,
+                self.envelope is not None,
+                self.materials,
+                self.modules,
+                self.add_modules,
+                self.remove_modules,
+                self.add_extra_parts,
+                self.remove_extra_parts,
+                self.part_overrides,
+            )
+        ):
+            raise ValueError("state at least one change")
+        for slug, change in self.modules.items():
+            if not change.model_dump(exclude_none=True):
+                raise ValueError(f"modules.{slug}: state at least one field to change")
+        return self
+
+
 # --- room scenes (Tier 2 day 5) -------------------------------------------------------
 #
 # Unlike `ListeningWallSpec`, a room document cannot validate its own
