@@ -1,0 +1,6 @@
+id,name,qty,l,w,t,material,grain,banding,notes,module
+cabinet-side,Side,2,700,288,18,18 mm oak-veneered birch,length (vertical),front edge,Rule: sides full height × depth less the back,cabinet
+cabinet-top-bottom,Top/bottom,2,964,288,18,18 mm oak-veneered birch,length (left-right),front edge,Rule: top and bottom between the sides,cabinet
+cabinet-back,Back,1,700,1000,12,12 mm birch plywood,length (vertical),none,Rule: full-size back fixed over the carcass rear,cabinet
+cabinet-shelf,Fixed shelf,2,964,288,18,18 mm oak-veneered birch,length (left-right),front edge,Rule: fixed shelves between the sides at the back-reduced depth,cabinet
+cabinet-flap-1,Flap,1,997,697,18,18 mm oak-veneered birch,length (left-right),all edges,"Rule: bottom-hinged overlay flap, 3 mm gap",cabinet

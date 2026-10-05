@@ -1,0 +1,14 @@
+schema: spec-driven
+
+context: |
+  See CLAUDE.md (what) and docs/DESIGN_NOTES.md (why). openspec/specs/ holds acceptance scenarios.
+  Stack: Python 3.14 / FastAPI / LangGraph / OpenRouter / PostgreSQL+pgvector; Vite React SPA.
+  Blender 5.2.1: headless generators from validated spec JSON by default; the MCP socket only at ladder step 3.
+  Every render passes the render guard. Prices come only from lawful toom sources, manual entries and snapshots.
+
+rules:
+  proposal:
+    - Name which ladder step and which agent a change touches
+    - State whether the render guard or the bpy allow-list is affected
+  tasks:
+    - Every task that renders names its tier

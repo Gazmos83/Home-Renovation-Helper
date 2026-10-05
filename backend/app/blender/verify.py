@@ -1,0 +1,74 @@
+"""Format checks for published files, shared by the generators and the runner.
+
+Standard library only: it runs inside Blender's Python as well as the backend.
+"""
+
+from __future__ import annotations
+
+import csv
+import json
+from pathlib import Path
+
+from app.blender.storage import BUILD_FILES
+
+
+class VerificationError(RuntimeError):
+    """A published file is missing, empty or malformed. The message names it."""
+
+
+def png_size(path: Path) -> tuple[int, int]:
+    data = path.read_bytes()
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise VerificationError(f"{path.name} is not a PNG file")
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def verify_png(path: Path, expected: tuple[int, int] | None = None) -> None:
+    if not path.is_file() or path.stat().st_size == 0:
+        raise VerificationError(f"{path.name} is missing or empty")
+    size = png_size(path)
+    if expected is not None and size != expected:
+        raise VerificationError(
+            f"{path.name} is {size[0]}×{size[1]}, expected {expected[0]}×{expected[1]}"
+        )
+
+
+def verify_glb(path: Path) -> None:
+    data = path.read_bytes()
+    if len(data) < 20 or data[:4] != b"glTF":
+        raise VerificationError("model.glb is not a GLB 2.0 file")
+
+
+def verify_build(directory: Path) -> None:
+    """The six build files exist (exactly), are non-empty and parse."""
+    names = {entry.name for entry in directory.iterdir()}
+    if names != set(BUILD_FILES):
+        raise VerificationError(
+            f"expected the build files only, got {sorted(names)} (missing "
+            f"{sorted(set(BUILD_FILES) - names)}, extra {sorted(names - set(BUILD_FILES))})"
+        )
+    for entry in directory.iterdir():
+        if entry.stat().st_size == 0:
+            raise VerificationError(f"{entry.name} is empty")
+    json.loads((directory / "spec.json").read_text(encoding="utf-8"))
+    for name in ("cutlist.csv", "hardware.csv"):
+        with (directory / name).open(newline="", encoding="utf-8") as handle:
+            list(csv.DictReader(handle))
+    verify_glb(directory / "model.glb")
+    png_size(directory / "screenshot.png")
+
+
+def verify_frames(directory: Path, count: int, size: int) -> None:
+    """`frames/frame_000.png` … exactly `count` of them, each `size` × `size`."""
+    frames = directory / "frames"
+    expected = [f"frame_{index:03d}.png" for index in range(count)]
+    present = sorted(entry.name for entry in frames.iterdir()) if frames.is_dir() else []
+    if present != expected:
+        missing = sorted(set(expected) - set(present))
+        raise VerificationError(
+            f"expected {count} turntable frames; missing {missing[:3]}"
+            if missing
+            else f"unexpected frame files: {sorted(set(present) - set(expected))[:3]}"
+        )
+    for name in expected:
+        verify_png(frames / name, (size, size))

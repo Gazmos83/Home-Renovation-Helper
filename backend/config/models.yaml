@@ -1,0 +1,15 @@
+# Per-agent model routing (CLAUDE.md §4). Exactly one registry slug per slot,
+# no backup or fallback slot. Validated against the registry at startup; an
+# unknown slug, a missing or duplicate slot, an unsupported key, or a Reviewer
+# routed to a text-only model stops startup by name.
+#
+# The developer panel (step 7) writes per-slot overrides to operator_settings
+# (`routing:<slot>`), which the loader resolves over this file.
+agents:
+  foreman: openai/gpt-5.6-luna
+  intake: openai/gpt-5.6-luna
+  designer: deepseek/deepseek-v4-pro-0813
+  builder: deepseek/deepseek-v4-pro-0813
+  lighting: openai/gpt-5.6-sol
+  reviewer: deepseek/deepseek-v4.1-flash
+  researcher: openai/gpt-5.6-luna

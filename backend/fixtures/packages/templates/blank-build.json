@@ -1,0 +1,13 @@
+{
+  "kind": "custom_build",
+  "schema_version": 1,
+  "units": "mm",
+  "name": "Blank build",
+  "template": "blank-build",
+  "materials": {
+    "carcass": {"material": "18 mm oak-veneered birch", "thickness_mm": 18},
+    "back": {"material": "12 mm birch plywood", "thickness_mm": 12}
+  },
+  "envelope": {"width": 1000, "height": 2000, "depth": 600},
+  "modules": []
+}

@@ -1,0 +1,33 @@
+{
+  "kind": "custom_build",
+  "schema_version": 1,
+  "units": "mm",
+  "name": "Fold-down desk",
+  "template": "fold-down-desk",
+  "materials": {
+    "carcass": {"material": "18 mm oak-veneered birch", "thickness_mm": 18},
+    "back": {"material": "12 mm birch plywood", "thickness_mm": 12}
+  },
+  "modules": [
+    {
+      "id": "cabinet",
+      "name": "Wall cabinet",
+      "x": 0,
+      "y": 0,
+      "z": 750,
+      "width": 1000,
+      "height": 700,
+      "depth": 300,
+      "carcass": "carcass",
+      "back": "back",
+      "shelves": 2,
+      "fronts": [{"type": "flap", "hinged": "bottom"}],
+      "hardware": [
+        {"id": "cabinet-hanger", "item": "Cabinet wall hanger", "qty": 2, "notes": "Wall fixing, one each side"}
+      ]
+    }
+  ],
+  "assembly_notes": [
+    "Fix the cabinet so the open flap's top face sits at 750 mm, the desk height."
+  ]
+}

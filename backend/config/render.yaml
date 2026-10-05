@@ -1,0 +1,22 @@
+# Render tiers (CLAUDE.md §6). Exactly draft, preview and final; each fixes a
+# frame count, a square resolution and an engine. A render request names a tier
+# and nothing else — raw frame counts, resolutions and engines are refused.
+#
+# `timeout_multiplier` scales BLENDER_TIMEOUT_SECONDS for the tier (assumption,
+# TODO(user): a final on this CPU can take hours; 24x = 4 h at the 600 s default).
+tiers:
+  draft:
+    frames: 12
+    resolution: 600
+    engine: eevee
+    timeout_multiplier: 1
+  preview:
+    frames: 24
+    resolution: 1000
+    engine: eevee
+    timeout_multiplier: 2
+  final:
+    frames: 36
+    resolution: 1500
+    engine: cycles
+    timeout_multiplier: 24

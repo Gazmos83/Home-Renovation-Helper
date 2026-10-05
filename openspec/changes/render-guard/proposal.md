@@ -1,0 +1,34 @@
+## Why
+
+The foundation (`port-foundation`) gives the service an owner, a gateway and tracing, but nothing that turns a spec into a model or a turntable, and nothing that tracks the laptop's render budget. Every later step depends on that path: the Builder (step 4) renders through it, the Reviewer (step 6) reads its frames, the house file (step 3) records its versions. CLAUDE.md §1 forbids any Blender render without the render guard, so the guard is built first and the predecessor's generators and runner are ported behind it — together with the HTTP surface the owner needs to look at a package, scrub its turntable and edit its spec, which the Studio (next change) and the agents will share.
+
+## What Changes
+
+- **Render guard** (CLAUDE.md §6): tiers `draft` (12 × 600², Eevee), `preview` (24 × 1000², Eevee) and `final` (36 × 1500², Cycles) read from `config/render.yaml`; `tier` is a required argument and any raw frame count, resolution or engine is refused by name; the estimate `frames × megapixels × engine_multiplier × benchmark_seconds_per_megapixel` is reported in human terms before every run; `final` pauses for an explicit "yes" — `interrupt()` inside a graph, a two-step approval over HTTP; tier, estimate and actual are logged to the structured log and, when tracing is on, to Langfuse. A process-wide `asyncio.Semaphore(1)` serialises every Blender process.
+- **First-launch benchmark**: one approved Eevee frame of a reference package measures `benchmark_seconds_per_megapixel`; the Cycles multiplier starts at 30 and is calibrated from the first approved final. Until a benchmark exists every guarded render is refused with that reason. Re-runnable from a developer-gated route and a CLI.
+- **Package generation, ported**: the custom-build spec contract (`CustomBuildSpec`, unknown fields refused by name), the rule-table derivation and CSV writers the generator needs, the layer registry and the `build_custom_build` generator. A build publishes `model.glb`, `model.blend`, the emitted `spec.json` (same shape the Studio reads: `overall`, `modules`, `layers`, `parts`, `hardware`, `assembly`), `cutlist.csv`, `hardware.csv` and a Workbench `screenshot.png` for progress checks — it no longer renders during the build. **Confirmed** (`TODO(discover)` in CLAUDE.md §7): the generator creates one named object per cut-list piece, parented to one empty per module.
+- **Turntables and stills, ported and tier-driven**: a still and a turntable of the piece alone (new, small: the studio scene's iso camera orbiting the build), and the room-scene still/turntable (`build_room_scene`, `RoomSceneSpec`, room contract) placed in a measured room. Frames go to `docs/renders/<package-id>/<version>/frames/`, with `still.png` and a `viewer.html` written beside them from the scroll-viewer template. **BREAKING** relative to the predecessor's room-scene document: `output.frames` and `output.resolution` are removed — the tier decides both, and a document naming either is refused by field name.
+- **Filesystem package records**: `docs/renders/<package-id>/<version>/` is the record; a version is the next `vN` folder, `status.json` carries the job state, and no table is added. The house file (step 3) records pieces and versions on top of this.
+- **HTTP routes** (owner-gated): create a package from a spec, list packages and versions, edit a spec into a new version, start a still or turntable with a tier, approve a `final`, and serve each version's files by exact name (`model.glb`, `spec.json`, `cutlist.csv`, `hardware.csv`, `screenshot.png`, `still.png`, `viewer.html`, `scene.json`, `status.json`, `frames/<n>`). Developer-gated: run the benchmark.
+- **Configuration**: `BLENDER_BIN` (default: the pinned 5.2.1 path), `BLENDER_TIMEOUT_SECONDS`, `RENDER_ROOT` (default `docs/renders`); the `--blender` pytest flag with the 5.2.1 LTS check.
+- **Dropped from the port**: the Listening Wall generator (its shared `bpy` helpers are extracted), package approval, render sharing, delete-by-dependency, uploads and attachments, render-by-row-id routes, the per-job rate limit (one owner, one semaphore), and the pricing module's `material_key` (a minimal thickness parser replaces the one call the validator makes).
+
+**Ladder step and agent:** ladder step 1 (headless, from validated spec JSON). No agent is bound yet; the Builder's `blender_build` and `render_turntable` plugins (step 4) wrap these functions. **Render guard:** created by this change — every Eevee/Cycles render passes through it, enforced in code and tests. **bpy allow-list:** not affected; no live socket work is included.
+
+## Capabilities
+
+### New Capabilities
+- `render-guard`: tiers from configuration, required tier and bypass refusal, benchmark and estimate, final-tier approval, logging of tier/estimate/actual, and one Blender process at a time.
+- `furniture-packages`: a validated custom-build spec becomes a versioned package on the filesystem — build outputs, the emitted spec contract, screenshots, status, listing, editing into a new version and file serving by exact name.
+- `scene-rendering`: stills and turntables of a piece and of a piece placed in a room scene, tier-driven output, frame and viewer layout, and the room-scene document's output shape.
+
+### Modified Capabilities
+None. `service-foundation`'s configuration requirement is unchanged: the new Blender values are optional with documented defaults, and a host without the binary still boots (only a render is refused, with a reason).
+
+## Impact
+
+- New code under `backend/app/render/` (tiers, estimate, guard, benchmark, viewer template) and `backend/app/blender/` (schemas, spec contract, room contract, `custom_build/derive.py`, `shop_csv.py`, `layers.py`, `materials.py`, `cli.py`, `storage.py`, `runner.py`, `generators/{_scene,build_custom_build,build_room_scene,render_still,render_turntable}.py`); routers `backend/app/api/packages.py` and `backend/app/api/renders.py`; `backend/config/render.yaml`; templates under `backend/fixtures/packages/`.
+- `config.py` gains the three Blender/render values; `main.py` builds the semaphore, the launch seam and the render root; `observability/langfuse.py` gains a render event hook. New `operator_settings` keys `render:benchmark` and `render:cycles_multiplier`; no migration.
+- Tests: guard unit tests (tier parsing, estimate maths, interrupt on final, refusal on bypass), runner lifecycle with fake launchers, spec and contract tests ported, storage tests, route tests against the test database, and `--blender` tests that build the fold-down-desk template and render a `draft` turntable with the pinned binary.
+- Docs: README (render section, benchmark, `--blender`), CLAUDE.md §11 step 2 ticked and the §7 `TODO(discover)` resolved.
+- Follow-on change: the Studio SPA (GLB viewer with layers, explode and dimensions, cut list, turntable panel) and `/login`, built on exactly these routes and the unchanged emitted `spec.json`.

@@ -1,0 +1,16 @@
+{
+  "kind": "room_scene",
+  "schema_version": 1,
+  "units": "mm",
+  "room": {
+    "corners": [[0, 0], [4000, 0], [4000, 3500], [0, 3500]],
+    "height_mm": 2600,
+    "wall_thickness_mm": 100
+  },
+  "openings": [
+    {"wall": 2, "type": "door", "offset_mm": 200, "width_mm": 900, "height_mm": 2100}
+  ],
+  "placement": {"wall": 0, "offset_mm": 944},
+  "furnishings": [],
+  "output": {"kind": "still"}
+}

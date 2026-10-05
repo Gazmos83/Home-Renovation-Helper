@@ -1,0 +1,25 @@
+{
+  "kind": "room_scene",
+  "schema_version": 1,
+  "units": "mm",
+  "room": {
+    "corners": [[0, 0], [6327, 0], [6325, 5327], [1579, 6189]],
+    "height_mm": 2600,
+    "wall_thickness_mm": 380
+  },
+  "openings": [
+    {"wall": 0, "type": "door", "offset_mm": 3875, "width_mm": 950, "height_mm": 2050},
+    {"wall": 2, "type": "door", "offset_mm": 149, "width_mm": 1050, "height_mm": 2200},
+    {"wall": 2, "type": "window", "offset_mm": 2344, "width_mm": 1140, "height_mm": 1300, "sill_mm": 900}
+  ],
+  "placement": {"wall": 1, "offset_mm": 1608},
+  "furnishings": [
+    {"name": "sofa", "width_mm": 950, "depth_mm": 2400, "height_mm": 800, "x_mm": 4700, "y_mm": 2664, "rotation_deg": 0, "z_mm": 0},
+    {"name": "coffee_table", "width_mm": 1100, "depth_mm": 1100, "height_mm": 400, "x_mm": 3900, "y_mm": 2664, "rotation_deg": 0, "z_mm": 0},
+    {"name": "side_table_lamp", "width_mm": 500, "depth_mm": 500, "height_mm": 750, "x_mm": 4700, "y_mm": 1350, "rotation_deg": 0, "z_mm": 0},
+    {"name": "dining_table", "width_mm": 1800, "depth_mm": 900, "height_mm": 740, "x_mm": 5000, "y_mm": 4500, "rotation_deg": 20, "z_mm": 0},
+    {"name": "floor_lamp", "width_mm": 400, "depth_mm": 400, "height_mm": 1620, "x_mm": 1500, "y_mm": 4400, "rotation_deg": 0, "z_mm": 0},
+    {"name": "rug", "width_mm": 3200, "depth_mm": 3400, "height_mm": 20, "x_mm": 3900, "y_mm": 2664, "rotation_deg": 0, "z_mm": 0}
+  ],
+  "output": {"kind": "still"}
+}

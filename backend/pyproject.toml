@@ -1,0 +1,35 @@
+[project]
+name = "home-renovation-agents-backend"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "alembic>=1.20.0",
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
+    "langchain>=1.4.2",
+    "langchain-openai>=1.6.2",
+    "langfuse>=4.15.4",
+    "langgraph>=1.2.11",
+    "langgraph-checkpoint-postgres>=3.1.2",
+    "pgvector>=0.5.0",
+    "psycopg[binary]>=3.3.5",
+    "pwdlib[argon2]>=0.3.1",
+    "pydantic-settings>=2.15.0",
+    "pydantic[email]>=2.13.5",
+    "pyyaml>=6.0.3",
+    "sqlalchemy>=2.0.52",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.10",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "live: runs the real OpenRouter gateway (spends money); needs --live",
+    "blender: invokes the pinned Blender 5.2.1 LTS binary; needs --blender",
+]

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}} — turntable</title>
+<style>
+  body { margin: 0; background: #111; display: flex; flex-direction: column;
+         justify-content: center; align-items: center; height: 100vh;
+         font-family: system-ui, sans-serif; color: #ddd; }
+  #viewer { max-width: 90vw; max-height: 78vh; cursor: grab; user-select: none; }
+  #viewer.dragging { cursor: grabbing; }
+  #hint { color: #888; margin-top: 12px; font-size: 14px; }
+  #meta { color: #666; margin-top: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+  <img id="viewer" src="frames/frame_000.png" draggable="false" alt="{{TITLE}} turntable">
+  <div id="hint">Drag left/right, scroll or use the arrow keys to rotate</div>
+  <div id="meta">{{META}} &middot; {{FRAME_COUNT}} frames</div>
+  <script>
+    const frameCount = {{FRAME_COUNT}};   // written by the generator from the tier
+    const img = document.getElementById('viewer');
+    let currentFrame = 0;
+    let isDragging = false;
+    let startX = 0;
+
+    const pad = n => String(n).padStart(3, '0');
+    const src = n => `frames/frame_${pad(n)}.png`;
+
+    // Preload every frame so dragging doesn't flash while a PNG loads.
+    const cache = [];
+    for (let i = 0; i < frameCount; i++) {
+      const im = new Image();
+      im.src = src(i);
+      cache.push(im);
+    }
+
+    function setFrame(n) {
+      currentFrame = ((n % frameCount) + frameCount) % frameCount;
+      img.src = src(currentFrame);
+    }
+
+    img.addEventListener('mousedown', e => {
+      isDragging = true;
+      startX = e.clientX;
+      img.classList.add('dragging');
+      e.preventDefault();
+    });
+    window.addEventListener('mouseup', () => {
+      isDragging = false;
+      img.classList.remove('dragging');
+    });
+    window.addEventListener('mousemove', e => {
+      if (!isDragging) return;
+      const deltaX = e.clientX - startX;
+      if (Math.abs(deltaX) > 8) {
+        setFrame(currentFrame + (deltaX > 0 ? -1 : 1));
+        startX = e.clientX;
+      }
+    });
+    window.addEventListener('wheel', e => {
+      setFrame(currentFrame + (e.deltaY > 0 ? 1 : -1));
+    }, { passive: true });
+    window.addEventListener('keydown', e => {
+      if (e.key === 'ArrowLeft')  setFrame(currentFrame - 1);
+      if (e.key === 'ArrowRight') setFrame(currentFrame + 1);
+    });
+    img.addEventListener('touchstart', e => { startX = e.touches[0].clientX; }, { passive: true });
+    img.addEventListener('touchmove', e => {
+      const deltaX = e.touches[0].clientX - startX;
+      if (Math.abs(deltaX) > 8) {
+        setFrame(currentFrame + (deltaX > 0 ? -1 : 1));
+        startX = e.touches[0].clientX;
+      }
+    }, { passive: true });
+  </script>
+</body>
+</html>

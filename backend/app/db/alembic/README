@@ -1,0 +1,5 @@
+Generic single-database Alembic configuration.
+
+The URL comes from env.py (ALEMBIC_DATABASE_URL, then DATABASE_URL, then the
+repo-root .env). The LangGraph checkpointer's tables are excluded from both
+reflection and autogenerate — it owns its own schema via `.setup()`.
