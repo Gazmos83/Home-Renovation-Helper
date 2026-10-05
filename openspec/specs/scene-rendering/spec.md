@@ -30,7 +30,7 @@ A turntable at a tier SHALL render exactly the tier's frame count from cameras s
 - **THEN** dragging or scrolling cycles through the frames in order and wraps at both ends
 
 ### Requirement: The room-scene document's output is tier-driven
-A room-scene document SHALL describe the room (corners, height, wall thickness), openings, where the piece is placed, existing furnishings, and `output.kind` of `still` or `turntable` only. A document naming `output.frames`, `output.resolution` or any other output field SHALL be refused by field name. Room geometry SHALL be validated as before: a piece overflowing its wall or the ceiling, a footprint leaving the room, an opening off its wall, a door with a sill, a non-convex outline, duplicate furnishing names and a furnishing intersecting the piece are each refused naming the problem.
+A room-scene document SHALL describe the room (corners, height, wall thickness), openings, where the piece is placed, existing furnishings, and `output.kind` of `still` or `turntable` only. A document naming `output.frames`, `output.resolution` or any other output field SHALL be refused by field name. The room's outline SHALL be a simple polygon of three to twelve corners, convex or not. Room geometry SHALL be validated as before: a piece overflowing its wall or the ceiling, a footprint leaving the room (including across the inner corner of an L-shaped room), an opening off its wall, a door with a sill, a self-intersecting outline, duplicate furnishing names and a furnishing intersecting the piece are each refused naming the problem.
 
 #### Scenario: Frames in the document
 - **WHEN** a room-scene document carries `output: {kind: turntable, frames: 36}`
@@ -39,6 +39,14 @@ A room-scene document SHALL describe the room (corners, height, wall thickness),
 #### Scenario: Overflow named
 - **WHEN** the piece is wider than the remaining length of its wall
 - **THEN** the document is refused naming the wall and the excess in millimetres
+
+#### Scenario: L-shaped room draft still
+- **WHEN** a `draft` still is requested of a piece placed on a wall of a six-corner L-shaped room
+- **THEN** the still is rendered with the floor and ceiling following the L and the camera aimed at a point inside the room
+
+#### Scenario: Footprint across the inner corner
+- **WHEN** a piece placed in an L-shaped room would reach past the inner corner into the missing quarter
+- **THEN** the document is refused naming the footprint leaving the room
 
 ### Requirement: A room still or turntable
 A room render at a tier SHALL build the room shell and furnishings, import the version's model at the placement, and render a still or turntable at the tier's frame count, resolution and engine into the version's `room/` folder with the same `still.png`, `frames/`, `viewer.html` and `scene.json` layout, where `scene.json` also carries the normalised room document. For a turntable the walls between the camera and the room SHALL be hidden per frame, as in the predecessor.
