@@ -36,6 +36,7 @@ class PendingApproval:
     room: bool
     scene_document: dict[str, Any] | None
     expires_at: float
+    record: str = "piece"
 
 
 class ApprovalStore:
@@ -47,18 +48,20 @@ class ApprovalStore:
 
     def issue(
         self, *, package_id: str, version: int, kind: str, tier: str, room: bool,
-        scene_document: dict[str, Any] | None,
+        scene_document: dict[str, Any] | None, record: str = "piece",
     ) -> str:
         token = secrets.token_urlsafe(24)
         pending = PendingApproval(
-            package_id, version, kind, tier, room, scene_document, self._clock() + self._ttl
+            package_id, version, kind, tier, room, scene_document, self._clock() + self._ttl, record
         )
         with self._lock:
             self._purge()
             self._pending[token] = pending
         return token
 
-    def take(self, token: str, *, package_id: str, version: int) -> PendingApproval:
+    def take(
+        self, token: str, *, package_id: str, version: int, record: str = "piece"
+    ) -> PendingApproval:
         """Use a token once. A token for another package version is refused and
         left alone; an expired or unknown one is refused."""
         with self._lock:
@@ -66,7 +69,7 @@ class ApprovalStore:
             pending = self._pending.get(token)
             if pending is None:
                 raise ApprovalError("the approval token is unknown or has expired")
-            if (pending.package_id, pending.version) != (package_id, version):
+            if (pending.package_id, pending.version, pending.record) != (package_id, version, record):
                 raise ApprovalError("the approval token was issued for a different package version")
             del self._pending[token]
             return pending

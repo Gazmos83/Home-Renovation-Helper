@@ -82,7 +82,7 @@ class ToolDeps:
 
     # --- builds and renders run on the app's event loop -----------------------
 
-    def build_coroutine(self, package_id: str, version: int):
+    def build_coroutine(self, package_id: str, version: int, record: str = "piece"):
         settings = self.settings
         return runner.run_build(
             root=settings.render_root,
@@ -92,14 +92,17 @@ class ToolDeps:
             version=version,
             semaphore=self.semaphore,
             launch=self.launch,
+            record=record,
         )
 
-    def start_build(self, package_id: str, version: int) -> asyncio.Future | None:
+    def start_build(
+        self, package_id: str, version: int, record: str = "piece"
+    ) -> asyncio.Future | None:
         """Schedule a build on the app loop; `None` when there is no loop."""
         loop = self.loop
         if loop is None:
             return None
-        return asyncio.run_coroutine_threadsafe(self.build_coroutine(package_id, version), loop)
+        return asyncio.run_coroutine_threadsafe(self.build_coroutine(package_id, version, record), loop)
 
 
 @dataclass(frozen=True)

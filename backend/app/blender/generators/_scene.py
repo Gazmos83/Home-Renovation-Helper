@@ -98,6 +98,7 @@ def aim_at(camera: bpy.types.Object, target: tuple[float, float, float]) -> None
 def _is_presentation_helper(obj: bpy.types.Object) -> bool:
     return (
         obj.name == "StudioFloor"
+        or obj.name.startswith("Ceiling_")  # an apartment shell's ceilings hide the rooms from above
         or obj.name.startswith("DIM_")
         or obj.name.startswith("MOD_Dimensions")
     )

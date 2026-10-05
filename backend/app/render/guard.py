@@ -71,6 +71,9 @@ class RenderQuote:
     tier: Tier
     frames: int
     estimate_seconds: float
+    # What `package_id` names: a furniture `piece` or an apartment `shell`. A
+    # ticket for one never matches the other, whatever the id.
+    record: str = "piece"
 
     @property
     def estimate_text(self) -> str:
@@ -104,9 +107,13 @@ class RenderTicket:
     def consumed(self) -> bool:
         return self._consumed
 
-    def matches(self, package_id: str, version: int, kind: str, room: bool) -> bool:
+    def matches(
+        self, package_id: str, version: int, kind: str, room: bool, record: str = "piece"
+    ) -> bool:
         q = self.quote
-        return (q.package_id, q.version, q.kind, q.room) == (package_id, version, kind, room)
+        return (q.package_id, q.version, q.kind, q.room, q.record) == (
+            package_id, version, kind, room, record,
+        )
 
     def consume(self) -> None:
         if self._consumed:
@@ -138,6 +145,7 @@ def quote(
     cycles_multiplier: float = DEFAULT_CYCLES_MULTIPLIER,
     room: bool = False,
     raw_fields: Iterable[str] = (),
+    record: str = "piece",
 ) -> RenderQuote:
     """Validate a request and price it. Never approves and never starts anything."""
     for name in raw_fields:
@@ -165,7 +173,7 @@ def quote(
     seconds = estimate_seconds(
         chosen, benchmark.seconds_per_megapixel, cycles_multiplier, frames=frames
     )
-    return RenderQuote(package_id, version, kind, room, chosen, frames, seconds)
+    return RenderQuote(package_id, version, kind, room, chosen, frames, seconds, record)
 
 
 def authorise(
@@ -180,6 +188,7 @@ def authorise(
     room: bool = False,
     raw_fields: Iterable[str] = (),
     approval: object = None,
+    record: str = "piece",
 ) -> RenderTicket:
     """Validate, price and — for `final` — require approval; then mint a ticket."""
     priced = quote(
@@ -192,6 +201,7 @@ def authorise(
         cycles_multiplier=cycles_multiplier,
         room=room,
         raw_fields=raw_fields,
+        record=record,
     )
     if priced.tier.name == "final" and not _is_yes(approval):
         if approval is None:

@@ -177,3 +177,95 @@ def test_a_room_render_carries_the_room_fit_document(make_ctx, tool_deps, tool_s
     assert job["tier"] == "draft"
     scene = json.loads((folder_of(tool_state) / "room" / "scene.json").read_text(encoding="utf-8"))
     assert scene
+
+
+# --- apartment shells (tier `draft` only) -------------------------------------------------
+
+def seed_apartment(tool_deps) -> None:
+    from tests.test_record_plan import PLAN
+
+    with tool_deps.session() as session:
+        house_file.upsert_apartment(
+            session, "Flat", PLAN["ceiling_height_mm"], PLAN["wall_thickness_mm"],
+            [{"name": r["name"], "corners_mm": r["corners_mm"], "openings": r.get("openings", [])}
+             for r in PLAN["rooms"]],
+        )
+        session.commit()
+
+
+def build_shell_run(make_ctx, name: str = "Flat") -> str:
+    from plugins.blender_build.tool import run_shell
+
+    return run_shell({"apartment_name": name}, make_ctx())
+
+
+def test_a_shell_is_built_waited_for_and_reported_with_its_screenshot(make_ctx, tool_deps, tool_state) -> None:
+    seed_apartment(tool_deps)
+    result = build_shell_run(make_ctx)
+    assert result == "Built Flat shell version 1. Screenshot: /apartments/flat/shell/versions/1/files/screenshot.png"
+    folder = storage.shell_version_dir(tool_state.settings.render_root, "flat", 1)
+    assert (storage.read_status(folder) or {}).get("status") == "succeeded"
+    assert any("build_shell.py" in " ".join(argv) for argv in tool_state.launched)
+
+
+def test_an_unchanged_shell_is_reported_not_rebuilt_and_a_changed_one_gets_a_new_version(
+    make_ctx, tool_deps, tool_state
+) -> None:
+    seed_apartment(tool_deps)
+    build_shell_run(make_ctx)
+    launched = len(tool_state.launched)
+    again = build_shell_run(make_ctx)
+    assert "already built from these rooms; nothing was rebuilt" in again
+    assert len(tool_state.launched) == launched
+
+    with tool_deps.session() as session:
+        apartment = house_file.apartment_by_name(session, "Flat")
+        house_file.upsert_apartment(
+            session, "Flat", 2600, 120,
+            [{"name": "Bedroom", "corners_mm": [[5200, 0], [8400, 0], [8400, 3800], [5200, 3800]]}],
+        )
+        assert apartment is not None
+        session.commit()
+    assert build_shell_run(make_ctx).startswith("Built Flat shell version 2.")
+
+
+def test_an_unknown_apartment_lists_the_known_ones(make_ctx, tool_deps) -> None:
+    seed_apartment(tool_deps)
+    result = build_shell_run(make_ctx, "Villa")
+    assert "no apartment 'Villa'" in result and "Flat" in result
+
+
+def test_a_draft_shell_turntable_is_enqueued_with_its_estimate_and_viewer(make_ctx, tool_deps, tool_state) -> None:
+    seed_apartment(tool_deps)
+    build_shell_run(make_ctx)
+    args = {"shell": "Flat", "tier": "draft", "kind": "turntable"}
+    assert render_preview(args, make_ctx()) is None
+    result = render_run(args, make_ctx())
+    assert result.startswith("Started a draft turntable of the Flat shell version 1: about")
+    assert "/apartments/flat/shell/versions/1/files/viewer.html" in result
+    folder = storage.shell_version_dir(tool_state.settings.render_root, "flat", 1)
+    job = wait_job(folder, "turntable")
+    assert job["tier"] == "draft"
+    assert png_size(folder / "frames" / "frame_000.png") == (600, 600)
+
+
+def test_a_shell_render_needs_a_tier_refuses_raw_frames_and_pauses_for_final(make_ctx, tool_deps, tool_state) -> None:
+    seed_apartment(tool_deps)
+    build_shell_run(make_ctx)
+    launched = len(tool_state.launched)
+    assert "a tier is required" in render_run({"shell": "Flat"}, make_ctx())
+    assert "frames cannot be set on a render" in render_run({"shell": "Flat", "tier": "draft", "frames": 100}, make_ctx())
+    pause = render_preview({"shell": "Flat", "tier": "final"}, make_ctx())
+    assert isinstance(pause, Confirmation) and pause.subject == "final_render"
+    assert len(tool_state.launched) == launched
+
+
+def test_a_render_names_a_piece_or_a_shell_not_both_nor_neither(make_ctx, tool_deps) -> None:
+    seed_apartment(tool_deps)
+    for args in ({"tier": "draft"}, {"tier": "draft", "package_id": "bench", "shell": "Flat"}):
+        assert "either a package_id" in render_run(args, make_ctx())
+
+
+def test_an_unbuilt_shell_cannot_be_rendered(make_ctx, tool_deps) -> None:
+    seed_apartment(tool_deps)
+    assert "no built shell yet" in render_run({"shell": "Flat", "tier": "draft"}, make_ctx())

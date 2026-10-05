@@ -10,6 +10,7 @@ the Blender tools) attach to this app rather than replacing it.
 from __future__ import annotations
 
 import asyncio
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -20,23 +21,33 @@ from app import logging as app_logging
 from app.agent.foreman import build_graph
 from app.agent.instructions import load_instructions
 from app.agent.memory.short_term import make_checkpointer, make_checkpointer_pool
+from app.agent.models.budgets import Budgets
 from app.agent.models.probe import probe_models
 from app.agent.models.profiles import Profiles
 from app.agent.models.routing import load_routing, read_routing_overrides
-from app.agent.models.slots import build_slot_models, model_provider
+from app.agent.models.slots import build_slot_models
 from app.agent.tools.base import ToolDeps
+from app.api.admin_models import router as admin_models_router
+from app.api.admin_plugins import router as admin_plugins_router
 from app.api.admin_render import router as admin_render_router
+from app.api.admin_usage import router as admin_usage_router
+from app.api.apartments import router as apartments_router
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.health import router as health_router
 from app.api.limits import RateLimiter
 from app.api.packages import router as packages_router
 from app.api.renders import router as renders_router
+from app.api.tool_toggles import router as tool_toggles_router
+from app.api.uploads import router as uploads_router
 from app.auth.accounts import ensure_owner
 from app.blender import storage
 from app.config import Settings, get_settings
 from app.db.session import make_engine
 from app.observability.langfuse import Tracing
+from app.plugins.binding import attach_https_tools
+from app.plugins.executor import PluginExecutor
+from app.plugins.loader import load_plugins
 from app.render.approvals import ApprovalStore
 from app.render.benchmark_store import read_benchmark
 from app.render.tiers import load_tiers
@@ -112,26 +123,36 @@ async def _lifespan(app: FastAPI):
     # Per-model generation profiles (defaults until the developer panel edits
     # them). Degrades to defaults if the store is unreadable.
     app.state.profiles = Profiles(app.state.engine)
+    app.state.budgets = Budgets(app.state.engine)
 
     # One chat model per loop slot (Foreman, Intake, Designer, Builder), built
     # once from routing and the slot's profile. No fallback model exists.
     app.state.models = build_slot_models(settings, app.state.routing, app.state.profiles)
-    app.state.model_provider = model_provider(app.state.models)
+    app.state.model_provider = lambda slot: app.state.models[slot]
 
     # The Foreman graph, on the checkpointer. A missing or malformed instruction
     # file stops startup naming the file; without a checkpointer there is no
     # graph and chat refuses with a stated reason.
-    instructions = load_instructions(slots=[slot for slot, _ in app.state.routing.items()])
+    instructions = load_instructions(
+        slots=[slot for slot, _ in app.state.routing.items()],
+        known_tools=app.state.plugins.tool_names(),
+        tool_roles={
+            tool: app.state.plugins.by_name[plugin].role
+            for tool, plugin in app.state.plugins.tool_to_plugin.items()
+        },
+    )
     app.state.graph = None
     if app.state.checkpointer is not None:
         app.state.graph = build_graph(
             app.state.engine,
             settings,
-            model_provider=app.state.model_provider,
-            model_ids=app.state.routing.model_for,
+            model_provider=lambda slot: app.state.models[slot],
+            model_ids=lambda slot: app.state.routing.model_for(slot),
             checkpointer=app.state.checkpointer,
             deps=ToolDeps(app.state),
             instructions=instructions,
+            plugins=app.state.plugins,
+            budgets=app.state.budgets,
         )
 
     # The startup probe: one minimal call per distinct routed slug, so a blocked
@@ -209,13 +230,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.auth_rate_limiter = RateLimiter(
         settings.auth_rate_limit, settings.auth_rate_limit_window_seconds
     )
+    app.state.plugins = load_plugins(allowed_hosts=settings.plugin_allowed_hosts)
+    app.state.plugin_executor = PluginExecutor(app.state.engine, settings)
+    attach_https_tools(app.state.plugins, app.state.plugin_executor)
+    app.state.swap_lock = threading.Lock()
 
     app.include_router(auth_router)
     app.include_router(health_router)
     app.include_router(packages_router)
     app.include_router(chat_router)
+    app.include_router(tool_toggles_router)
+    app.include_router(uploads_router)
     app.include_router(renders_router)
+    app.include_router(apartments_router)
     app.include_router(admin_render_router)
+    app.include_router(admin_models_router)
+    app.include_router(admin_plugins_router)
+    app.include_router(admin_usage_router)
 
     app_logging.install(app)
     # Added last so it sits outermost: preflight and error responses both need

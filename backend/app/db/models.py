@@ -14,10 +14,12 @@ changes add pricing and the rest.
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Final
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -138,6 +140,9 @@ class ModelUsage(Base):
     operation: Mapped[str] = mapped_column(String(64), nullable=False)
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Pre-call count written by the budget step. Used when the gateway reported
+    # no token figures, so the daily ceiling still has a number to add.
+    estimated_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # The owner who made the call. Nullable so a deleted owner does not discard
     # the spend it caused, but set on every call this single-user service makes.
     user_id: Mapped[UUID | None] = mapped_column(
@@ -163,7 +168,12 @@ class ModelUsage(Base):
             "output_tokens IS NULL OR output_tokens >= 0",
             name="ck_model_usage_output_tokens_non_negative",
         ),
+        CheckConstraint(
+            "estimated_tokens IS NULL OR estimated_tokens >= 0",
+            name="ck_model_usage_estimated_tokens_non_negative",
+        ),
         Index("ix_model_usage_project_id", "project_id"),
+        Index("ix_model_usage_model_id_created_at", "model_id", "created_at"),
     )
 
 
@@ -183,6 +193,10 @@ class Room(Base):
     wall_thickness_mm: Mapped[int] = mapped_column(Integer, nullable=False)
     openings: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # When set, the corners are in the apartment's plan frame.
+    apartment_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("apartments.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -271,4 +285,106 @@ class Thread(Base):
     )
     last_turn_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Apartment(Base):
+    """A group of rooms measured in one plan frame (millimetres)."""
+
+    __tablename__ = "apartments"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    ceiling_height_mm: Mapped[int] = mapped_column(Integer, nullable=False)
+    wall_thickness_mm: Mapped[int] = mapped_column(Integer, nullable=False)
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("btrim(name) <> ''", name="ck_apartments_name_not_blank"),
+    )
+
+
+class Upload(Base):
+    """An image the owner attached to a conversation. Only its metadata lives
+    here; the bytes are a file under the upload root."""
+
+    __tablename__ = "uploads"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    thread_id: Mapped[UUID] = mapped_column(
+        ForeignKey("threads.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    original_name: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('png', 'jpeg')", name="ck_uploads_kind"),
+        Index("ix_uploads_thread_id", "thread_id"),
+    )
+
+
+class ThreadToolSetting(Base):
+    """Per-conversation on/off for one plugin. Absent means the manifest default."""
+
+    __tablename__ = "thread_tool_settings"
+
+    thread_id: Mapped[UUID] = mapped_column(
+        ForeignKey("threads.id", ondelete="CASCADE"), primary_key=True
+    )
+    plugin: Mapped[str] = mapped_column(String(64), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("btrim(plugin) <> ''", name="ck_thread_tool_settings_plugin_not_blank"),
+    )
+
+
+class PluginOutcome(StrEnum):
+    """How one HTTPS plugin invocation ended; the audit trail keeps no payload."""
+
+    OK = "ok"
+    REFUSED = "refused"
+    TIMEOUT = "timeout"
+    TOO_LARGE = "too_large"
+    INVALID_OUTPUT = "invalid_output"
+    UNFETCHABLE = "unfetchable"
+
+
+class PluginInvocation(Base):
+    """One HTTPS plugin call's outcome — no arguments and no response body."""
+
+    __tablename__ = "plugin_invocations"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    plugin: Mapped[str] = mapped_column(String(64), nullable=False)
+    thread_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("threads.id", ondelete="SET NULL"), nullable=True
+    )
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("btrim(plugin) <> ''", name="ck_plugin_invocations_plugin_not_blank"),
+        CheckConstraint(
+            "outcome IN ('ok', 'refused', 'timeout', 'too_large', 'invalid_output', 'unfetchable')",
+            name="ck_plugin_invocations_outcome_known",
+        ),
+        Index("ix_plugin_invocations_plugin", "plugin"),
+        Index("ix_plugin_invocations_thread_id", "thread_id"),
     )

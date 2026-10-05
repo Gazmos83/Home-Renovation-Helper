@@ -88,3 +88,16 @@ def test_an_unknown_room_without_measurements_asks_for_them(make_ctx) -> None:
 def test_the_tool_is_gated_and_named(make_ctx) -> None:
     assert record_brief.name == "record_brief"
     assert record_brief.gated
+
+
+def test_an_l_shaped_room_can_be_proposed(make_ctx) -> None:
+    shown = preview(
+        {
+            **HALL,
+            "room_name": "L-room",
+            "corners_mm": [[0, 0], [4000, 0], [4000, 2000], [2000, 2000], [2000, 4000], [0, 4000]],
+        },
+        make_ctx(),
+    )
+    assert isinstance(shown, Confirmation)
+    assert shown.proposal["room"]["corners_mm"][3] == [2000, 2000]

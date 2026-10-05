@@ -105,3 +105,30 @@ def test_a_forced_render_failure_leaves_no_staging_directory(
     assert result.returncode != 0 and "injected test render failure" in result.stderr
     assert not out.exists()
     assert [entry for entry in tmp_path.iterdir() if ".tmp-" in entry.name] == []
+
+
+L_SHAPE = [[0, 0], [4000, 0], [4000, 1500], [2000, 1500], [2000, 3500], [0, 3500]]
+
+
+def test_a_draft_still_of_an_l_shaped_room_renders_with_the_camera_inside_it(
+    blender_bin: Path, package: Path, tmp_path: Path
+) -> None:
+    from app.blender.room_contract import _point_in_polygon
+
+    document = json.loads(RECTANGLE.read_text(encoding="utf-8"))
+    document["room"]["corners"] = L_SHAPE
+    document["openings"] = []
+    document["furnishings"] = []
+    document["placement"] = {"wall": 0, "offset_mm": 500}
+    document["output"] = {"kind": "still"}
+    scene = tmp_path / "l-room.json"
+    scene.write_text(json.dumps(document), encoding="utf-8")
+
+    result, out = _room(blender_bin, package, tmp_path, scene)
+
+    assert result.returncode == 0, result.stderr[-800:]
+    assert png_size(out / "still.png") == (600, 600)
+    produced = json.loads((out / "scene.json").read_text(encoding="utf-8"))
+    camera = produced["output"]["camera"]["location_mm"]
+    assert _point_in_polygon((camera[0], camera[1]), [tuple(map(float, c)) for c in L_SHAPE])
+    assert len(produced["input"]["room"]["corners"]) == 6

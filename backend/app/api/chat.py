@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.agent import chat, house_file
+from app.agent import chat, house_file, uploads
 from app.api.gate import require_owner
 from app.auth.sessions import AuthSessionRecord
 from app.blender import storage
@@ -36,6 +36,7 @@ class ThreadIn(BaseModel):
 
 class TurnIn(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
+    upload_ids: list[UUID] = Field(default_factory=list)
 
 
 class ResumeIn(BaseModel):
@@ -114,6 +115,20 @@ def _load_thread(request: Request, thread_id: UUID) -> Any:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not Found")
         session.expunge(thread)
         return thread
+
+
+def _check_uploads(request: Request, thread_id: UUID, upload_ids: list[UUID]) -> None:
+    """Every attached id must be an upload of this thread, and within the per-turn limit."""
+    limit = request.app.state.settings.turn_max_images
+    if len(upload_ids) > limit:
+        raise _refusal(422, "too_many_images", f"a turn takes at most {limit} images")
+    if not upload_ids:
+        return
+    with Session(request.app.state.engine) as session:
+        owned = {upload.id for upload in uploads.list_uploads(session, thread_id)}
+    for upload_id in upload_ids:
+        if upload_id not in owned:
+            raise _refusal(422, "unknown_upload", f"upload {upload_id} does not belong to this conversation")
 
 
 def _current_pending(request: Request, graph: Any, thread_id: UUID, owner: UUID) -> chat.Pending | None:
@@ -206,6 +221,7 @@ def send_turn(
 ) -> TurnOut:
     thread = _load_thread(request, thread_id)
     graph = _graph(request)
+    _check_uploads(request, thread_id, body.upload_ids)
     waiting = _current_pending(request, graph, thread_id, login.user_id)
     if waiting is not None:
         raise _refusal(
@@ -223,6 +239,7 @@ def send_turn(
             thread_id=thread_id,
             owner_id=login.user_id,
             message=body.message,
+            upload_ids=body.upload_ids,
             run_config=run_config,
         ),
     )

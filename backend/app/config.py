@@ -12,6 +12,7 @@ import functools
 import os
 from pathlib import Path
 from typing import Annotated, Any, Final
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
     AliasChoices,
@@ -40,6 +41,7 @@ DEFAULT_BLENDER_BIN: Final = Path(
     "/home/pingu/Applications/blender-5.2.1-linux-x64/blender"
 )
 DEFAULT_RENDER_ROOT: Final = REPO_ROOT / "docs" / "renders"
+DEFAULT_UPLOAD_ROOT: Final = REPO_ROOT / "docs" / "uploads"
 
 
 class ConfigurationError(RuntimeError):
@@ -128,6 +130,24 @@ class Settings(BaseSettings):
     blender_timeout_seconds: int = 600
     render_root: Path = DEFAULT_RENDER_ROOT
 
+    # --- Uploads (blueprints and photos attached to a conversation) -----------
+    upload_root: Path = DEFAULT_UPLOAD_ROOT
+    upload_max_bytes: int = 10 * 1024 * 1024
+    upload_max_per_thread: int = 20
+    turn_max_images: int = 4
+
+    # --- HTTPS plugins -------------------------------------------------------
+    # Hosts an HTTPS plugin's URL may name. Empty by default: no outbound host
+    # is allow-listed until the owner sets one.
+    plugin_allowed_hosts: Annotated[tuple[str, ...], NoDecode] = ()
+    plugin_timeout_seconds: float = 5.0
+    plugin_max_response_bytes: int = 262_144
+    plugin_min_interval_seconds: float = 0.5
+
+    # --- Token budget --------------------------------------------------------
+    # The day's start for the daily token ceiling, as an IANA time zone.
+    budget_timezone: str = "Europe/Berlin"
+
     # --- Tracing (optional) --------------------------------------------------
     # Langfuse. All three must be set for tracing to run at all; with any of them
     # absent the service starts and answers exactly as before. An unreachable
@@ -157,6 +177,13 @@ class Settings(BaseSettings):
         """Whether starting a Blender process is possible on this host now."""
         return self.blender_bin.is_file() and os.access(self.blender_bin, os.X_OK)
 
+    @field_validator("upload_max_bytes", "upload_max_per_thread", "turn_max_images", mode="after")
+    @classmethod
+    def _reject_non_positive_upload_limit(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("upload limits must be positive")
+        return value
+
     @field_validator("blender_timeout_seconds", mode="after")
     @classmethod
     def _reject_non_positive_timeout(cls, value: int) -> int:
@@ -164,10 +191,38 @@ class Settings(BaseSettings):
             raise ValueError("blender_timeout_seconds must be positive")
         return value
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", "plugin_allowed_hosts", mode="before")
     @classmethod
     def _accept_csv(cls, value: Any) -> Any:
         return _split_csv(value)
+
+    @field_validator("plugin_allowed_hosts", mode="after")
+    @classmethod
+    def _lower_plugin_hosts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(host.lower() for host in value)
+
+    @field_validator("plugin_timeout_seconds", "plugin_max_response_bytes", mode="after")
+    @classmethod
+    def _reject_non_positive_plugin_limit(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("plugin limits must be positive")
+        return value
+
+    @field_validator("plugin_min_interval_seconds", mode="after")
+    @classmethod
+    def _reject_negative_plugin_interval(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("plugin_min_interval_seconds must be zero or positive")
+        return value
+
+    @field_validator("budget_timezone", mode="after")
+    @classmethod
+    def _known_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError:
+            raise ValueError(f"unknown time zone {value!r}") from None
+        return value
 
     @field_validator("cors_origins", mode="after")
     @classmethod
@@ -208,7 +263,11 @@ class Settings(BaseSettings):
             "blender_bin": str(self.blender_bin),
             "blender_timeout_seconds": self.blender_timeout_seconds,
             "render_root": str(self.render_root),
+            "upload_root": str(self.upload_root),
             "generation": "on" if self.generation_enabled else "off",
+            "plugin_allowed_hosts": list(self.plugin_allowed_hosts),
+            "plugin_timeout_seconds": self.plugin_timeout_seconds,
+            "budget_timezone": self.budget_timezone,
             "langfuse_host": self.langfuse_host,
             "langfuse_tracing_environment": self.langfuse_tracing_environment,
             "langfuse_public_key": _REDACTED,

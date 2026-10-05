@@ -7,3 +7,7 @@ frontend/dist/
 # renders are generated output; keep the folder, ignore its contents
 docs/renders/*
 !docs/renders/.gitkeep
+
+# uploads are the owner's own files; keep the folder, ignore its contents
+docs/uploads/*
+!docs/uploads/.gitkeep

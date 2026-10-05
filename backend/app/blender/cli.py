@@ -155,3 +155,15 @@ def load_custom_build(path: Path) -> dict:
     except (DeriveError, KeyError, TypeError) as error:
         raise InputError(f"validation: {error}") from error
     return document
+
+
+def load_shell(path: Path) -> dict:
+    """Load a stored apartment-shell document and validate it with the shared contract."""
+    from app.blender.shell_contract import SpecValidationError, normalise_shell
+
+    document = load_json(path)
+    try:
+        normalise_shell(document)
+    except SpecValidationError as error:
+        raise InputError(f"validation: {error}") from error
+    return document

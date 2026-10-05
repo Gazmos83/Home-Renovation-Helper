@@ -64,9 +64,9 @@ def test_the_apartment_4_quadrilateral_is_accepted(apt4_doc: dict) -> None:
 
 
 def _inside(point, corners) -> bool:
-    from app.blender.room_contract import _point_in_convex_polygon
+    from app.blender.room_contract import _point_in_polygon
 
-    return _point_in_convex_polygon(point, corners)
+    return _point_in_polygon(point, corners)
 
 
 def test_a_rectangle_is_the_four_corner_case(rectangle_doc: dict) -> None:
@@ -228,26 +228,16 @@ def test_a_door_with_a_sill_is_refused(rectangle_doc: dict) -> None:
 # --- the polygon itself --------------------------------------------------------------
 
 
-def test_an_l_shaped_outline_is_refused(rectangle_doc: dict) -> None:
-    document = copy.deepcopy(rectangle_doc)
-    document["room"]["corners"] = [
-        [0, 0], [4000, 0], [4000, 1500], [2000, 1500], [2000, 3500], [0, 3500]
-    ]
-    document["placement"] = {"wall": 0, "offset_mm": 0}
-    with pytest.raises(SpecValidationError, match="convex"):
-        normalise_room_scene(document, package_overall={"w": 500, "h": 500, "d": 100})
-
-
 def test_too_few_corners_is_refused(rectangle_doc: dict) -> None:
     document = copy.deepcopy(rectangle_doc)
-    document["room"]["corners"] = [[0, 0], [4000, 0], [2000, 3500]]
+    document["room"]["corners"] = [[0, 0], [4000, 0]]
     with pytest.raises(SpecValidationError, match="between"):
         normalise_room_scene(document, package_overall=LISTENING_WALL_OVERALL)
 
 
 def test_too_many_corners_is_refused(rectangle_doc: dict) -> None:
     document = copy.deepcopy(rectangle_doc)
-    document["room"]["corners"] = [[i * 500, 0] for i in range(9)]
+    document["room"]["corners"] = [[i * 500, 0] for i in range(13)]
     with pytest.raises(SpecValidationError, match="between"):
         normalise_room_scene(document, package_overall=LISTENING_WALL_OVERALL)
 
@@ -335,3 +325,92 @@ def test_missing_a_required_field_is_refused(rectangle_doc: dict) -> None:
 def test_a_non_object_document_is_refused() -> None:
     with pytest.raises(SpecValidationError):
         normalise_room_scene([1, 2, 3], package_overall=LISTENING_WALL_OVERALL)  # type: ignore[arg-type]
+
+
+# --- simple polygons: L- and U-shaped rooms ------------------------------------------
+
+L_SHAPE = [[0, 0], [4000, 0], [4000, 1500], [2000, 1500], [2000, 3500], [0, 3500]]
+U_SHAPE = [[0, 0], [6000, 0], [6000, 3000], [4000, 3000], [4000, 1000], [2000, 1000], [2000, 3000], [0, 3000]]
+
+
+def _room(rectangle_doc: dict, corners, *, wall: int = 0, offset: float = 0, furnishings=None) -> dict:
+    document = copy.deepcopy(rectangle_doc)
+    document["room"]["corners"] = corners
+    document["openings"] = []
+    document["furnishings"] = furnishings or []
+    document["placement"] = {"wall": wall, "offset_mm": offset}
+    return document
+
+
+def test_an_l_shaped_room_is_accepted(rectangle_doc: dict) -> None:
+    ctx = normalise_room_scene(_room(rectangle_doc, L_SHAPE), package_overall={"w": 1000, "h": 500, "d": 500})
+    assert len(ctx.corners) == 6
+    assert len(ctx.walls) == 6
+
+
+def test_a_u_shaped_room_is_accepted_and_twelve_corners_are_the_limit(rectangle_doc: dict) -> None:
+    ctx = normalise_room_scene(_room(rectangle_doc, U_SHAPE), package_overall={"w": 1000, "h": 500, "d": 500})
+    assert len(ctx.corners) == 8
+    twelve = [[2000 * i, 0] for i in range(1)] + [[4000, 0], [4000, 3000], [3500, 3000], [3500, 500], [3000, 500],
+        [3000, 3000], [1000, 3000], [1000, 500], [500, 500], [500, 3000], [0, 3000]]
+    assert len(twelve) == 12
+    assert len(normalise_room_scene(_room(rectangle_doc, twelve), package_overall={"w": 500, "h": 500, "d": 300}).corners) == 12
+
+
+def test_a_bow_tie_outline_is_refused(rectangle_doc: dict) -> None:
+    with pytest.raises(SpecValidationError, match="simple outline"):
+        normalise_room_scene(
+            _room(rectangle_doc, [[0, 0], [4000, 2000], [4000, 0], [0, 3500]]),
+            package_overall={"w": 500, "h": 500, "d": 300},
+        )
+
+
+def test_a_repeated_corner_is_refused(rectangle_doc: dict) -> None:
+    with pytest.raises(SpecValidationError, match="same point"):
+        normalise_room_scene(
+            _room(rectangle_doc, [[0, 0], [4000, 0], [4000, 3500], [4000, 0], [0, 3500]]),
+            package_overall={"w": 500, "h": 500, "d": 300},
+        )
+
+
+def test_an_edge_shorter_than_fifty_millimetres_is_refused(rectangle_doc: dict) -> None:
+    with pytest.raises(SpecValidationError, match="shorter than 50 mm"):
+        normalise_room_scene(
+            _room(rectangle_doc, [[0, 0], [4000, 0], [4000, 20], [0, 3500]]),
+            package_overall={"w": 500, "h": 500, "d": 300},
+        )
+
+
+def test_a_footprint_across_the_inner_corner_is_refused(rectangle_doc: dict) -> None:
+    # All four corners of this footprint are inside the U, but its middle crosses the notch.
+    document = _room(rectangle_doc, U_SHAPE, wall=0, offset=1500)
+    with pytest.raises(SpecValidationError, match="footprint on wall 0 leaves the room"):
+        normalise_room_scene(document, package_overall={"w": 3000, "h": 500, "d": 1500})
+
+
+def test_a_footprint_along_the_inner_wall_is_accepted(rectangle_doc: dict) -> None:
+    # Wall 2 of the L is the inner wall of its lower arm; the piece stands against it.
+    document = _room(rectangle_doc, L_SHAPE, wall=2, offset=500)
+    ctx = normalise_room_scene(document, package_overall={"w": 1000, "h": 500, "d": 600})
+    assert ctx.placement["wall"] == 2
+
+
+def test_a_furnishing_in_the_missing_quarter_is_refused(rectangle_doc: dict) -> None:
+    furnishing = {
+        "name": "Sofa", "width_mm": 800, "depth_mm": 800, "height_mm": 800,
+        "x_mm": 3000, "y_mm": 2500, "rotation_deg": 0,
+    }
+    document = _room(rectangle_doc, L_SHAPE, furnishings=[furnishing])
+    with pytest.raises(SpecValidationError, match=r"furnishings\[0\] \(Sofa\) leaves the room"):
+        normalise_room_scene(document, package_overall={"w": 500, "h": 500, "d": 300})
+
+
+def test_the_interior_point_is_inside_even_when_the_centroid_is_not() -> None:
+    from app.blender.room_contract import _point_in_polygon, interior_point
+
+    u_shape = [tuple(map(float, corner)) for corner in U_SHAPE]
+    centroid_x = sum(x for x, _ in u_shape) / len(u_shape)
+    assert not _point_in_polygon((centroid_x, 2900.0), u_shape)  # the notch, for contrast
+    for shape in (U_SHAPE, L_SHAPE, [[0, 0], [4000, 0], [4000, 3500], [0, 3500]]):
+        corners = [tuple(map(float, corner)) for corner in shape]
+        assert _point_in_polygon(interior_point(corners), corners)

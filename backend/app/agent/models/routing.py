@@ -47,7 +47,7 @@ SLOTS: Final[tuple[str, ...]] = (
 )
 
 # Slots whose agent sends images and so must route to an image-capable model.
-IMAGE_SLOTS: Final[frozenset[str]] = frozenset({"reviewer"})
+IMAGE_SLOTS: Final[frozenset[str]] = frozenset({"intake", "reviewer"})
 
 _OVERRIDE_PREFIX: Final = "routing:"
 
@@ -124,6 +124,29 @@ def read_routing_overrides(engine: Engine) -> dict[str, str]:
         )
         return {}
     return {row.key.removeprefix(_OVERRIDE_PREFIX): row.value for row in rows}
+
+
+def write_routing_override(engine: Engine, slot: str, slug: str) -> None:
+    from datetime import UTC, datetime
+
+    key = _OVERRIDE_PREFIX + slot
+    with Session(engine) as session:
+        row = session.get(OperatorSetting, key)
+        now = datetime.now(UTC)
+        if row is None:
+            session.add(OperatorSetting(key=key, value=slug, updated_at=now))
+        else:
+            row.value = slug
+            row.updated_at = now
+        session.commit()
+
+
+def delete_routing_override(engine: Engine, slot: str) -> None:
+    with Session(engine) as session:
+        row = session.get(OperatorSetting, _OVERRIDE_PREFIX + slot)
+        if row is not None:
+            session.delete(row)
+            session.commit()
 
 
 def load_routing(

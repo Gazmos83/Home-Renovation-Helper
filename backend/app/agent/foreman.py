@@ -13,6 +13,7 @@ sees or changes a token budget, a model name or a path (CLAUDE.md §1, §4).
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from collections.abc import Callable
@@ -25,7 +26,6 @@ from langchain_core.messages import (
     AIMessage,
     AnyMessage,
     HumanMessage,
-    SystemMessage,
     ToolMessage,
 )
 from langchain_core.runnables import RunnableConfig
@@ -36,11 +36,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from app.agent import house_file
+from app.agent import house_file, uploads
+from app.agent.budget import BudgetRefused, RequestBudget, prepare, refusal_message
 from app.agent.instructions import AgentInstruction, load_instructions
+from app.agent.models.budgets import Budgets
 from app.agent.models.openrouter_client import gateway_errors
+from app.agent.models.routing import IMAGE_SLOTS
 from app.agent.prompts import TOOL_ROUND_CAP_NOTE, compose_agent_prompt, house_note
-from app.agent.tools import all_tools
+from app.agent.tools import loaded_plugins
 from app.agent.tools.base import (
     AgentTool,
     Confirmation,
@@ -48,13 +51,15 @@ from app.agent.tools.base import (
     ToolDeps,
     ToolOutput,
 )
+from app.blender import storage
 from app.config import Settings
-from app.observability.usage import UsageRecorder
+from app.observability.usage import UsageRecorder, tokens_today
+from app.plugins.binding import bound_tool_names
+from app.plugins.loader import Plugins
 
 logger = logging.getLogger("app")
 
 MAX_TOOL_ROUNDS: Final = 6
-HISTORY_WINDOW: Final = 40
 SPECIALISTS: Final = ("intake", "designer", "builder")
 
 TEMPLATES_DIR: Final = Path(__file__).resolve().parents[2] / "fixtures" / "packages" / "templates"
@@ -66,6 +71,7 @@ ONE_AT_A_TIME_NOTE: Final = (
 NOT_AVAILABLE_NOTE: Final = "this tool is not available to you"
 DECLINED: Final[dict[str, str]] = {
     "brief": "The brief was not saved.",
+    "plan": "The plan was not saved.",
     "create_piece": "The piece was not created.",
     "revise": "No revision was created.",
     "final_render": "The final render was not started.",
@@ -84,7 +90,9 @@ class ChatState(TypedDict, total=False):
     round_count: int
     package_id: str | None
     piece_ready: bool
+    shell_ready: bool
     brief: dict[str, Any]
+    bound_tools: dict[str, list[str]]
 
 
 class Decision(BaseModel):
@@ -94,14 +102,57 @@ class Decision(BaseModel):
     reason: str = Field(description="one sentence")
 
 
-def window(messages: list[AnyMessage], size: int = HISTORY_WINDOW) -> list[AnyMessage]:
-    """The last `size` messages, never starting on a tool result whose call was cut."""
-    if len(messages) <= size:
-        return list(messages)
-    kept = list(messages[-size:])
-    while kept and isinstance(kept[0], ToolMessage):
-        kept.pop(0)
-    return kept
+def _image_blocks(
+    engine: Engine, settings: Settings, upload_ids: list[str]
+) -> tuple[list[dict[str, Any]], int]:
+    """`image_url` blocks for the stored uploads, and how many could not be read."""
+    blocks: list[dict[str, Any]] = []
+    missing = 0
+    with Session(engine) as session:
+        for raw in upload_ids:
+            upload = uploads.get_upload(session, UUID(raw))
+            path = (
+                uploads.upload_path(settings.upload_root, upload.thread_id, upload.id, upload.kind)
+                if upload
+                else None
+            )
+            if upload is None or path is None or not path.is_file():
+                missing += 1
+                continue
+            data = base64.b64encode(path.read_bytes()).decode("ascii")
+            media = uploads.MEDIA_TYPES[upload.kind]
+            blocks.append({"type": "image_url", "image_url": {"url": f"data:{media};base64,{data}"}})
+    return blocks, missing
+
+
+def with_images(
+    messages: list[AnyMessage], *, capable: bool, engine: Engine, settings: Settings
+) -> list[AnyMessage]:
+    """Expand attached upload ids for the model call; the stored messages are untouched.
+
+    An image-capable slot receives each image beside the owner's text; any other
+    slot receives a note that images were attached, never the images.
+    """
+    expanded: list[AnyMessage] = []
+    for message in messages:
+        ids = message.additional_kwargs.get("upload_ids") if isinstance(message, HumanMessage) else None
+        if not ids:
+            expanded.append(message)
+            continue
+        text = _text_of(message.content)
+        if capable:
+            blocks, missing = _image_blocks(engine, settings, list(ids))
+            if missing:
+                text += f"\n(The owner attached {missing} image(s) that are no longer available.)"
+            content: Any = [{"type": "text", "text": text}, *blocks]
+        else:
+            content = f"{text}\n(The owner attached {len(ids)} image(s); Intake reads them.)"
+        expanded.append(HumanMessage(content, id=message.id, additional_kwargs=message.additional_kwargs))
+    return expanded
+
+
+def _text_of(content: Any) -> str:
+    return content if isinstance(content, str) else str(content)
 
 
 def with_callbacks(config: RunnableConfig, *handlers: Any) -> RunnableConfig:
@@ -163,10 +214,16 @@ def build_graph(
     checkpointer: Any,
     deps: ToolDeps,
     instructions: dict[str, AgentInstruction] | None = None,
+    plugins: Plugins | None = None,
+    budgets: Budgets | None = None,
 ):
     """Compile the Foreman graph on `checkpointer`."""
     loaded = instructions or load_instructions()
-    tools_by_name = all_tools()
+    loaded_plugins_set = plugins or loaded_plugins()
+    budget_store = budgets or Budgets(engine)
+    tools_by_name = dict(loaded_plugins_set.builtin_tools())
+    for plugin in loaded_plugins_set.https_plugins():
+        tools_by_name.update(plugin.tools)
     designer_note = _designer_note()
 
     # --- context ------------------------------------------------------------
@@ -181,10 +238,34 @@ def build_graph(
                 {"field": r.field, "request": r.request}
                 for r in house_file.open_extension_requests(session)
             ]
+            apartments = []
+            for apartment in house_file.apartments(session):
+                try:
+                    built = storage.shell_versions(settings.render_root, storage.apartment_slug(apartment.name))
+                except storage.InvalidPackageId:
+                    built = []
+                apartments.append(
+                    {
+                        "name": apartment.name,
+                        "rooms": len(house_file.rooms_of(session, apartment)),
+                        "shell_version": built[-1] if built else None,
+                    }
+                )
             thread = None
             raw_thread = configurable.get("chat_thread")
             if raw_thread:
                 thread = house_file.get_thread(session, UUID(str(raw_thread)))
+            thread_id = thread.id if thread else None
+            tools_this_turn = {
+                name: bound_tool_names(
+                    session,
+                    loaded_plugins_set,
+                    thread_id=thread_id,
+                    role=name,
+                    header_tools=loaded[name].tools,
+                )
+                for name in SPECIALISTS
+            }
         package_id = thread.package_id if thread and thread.package_id else state.get("package_id")
         bound = next((p for p in pieces if p["package_id"] == package_id), None)
         piece_ready = bool(bound and bound["latest_version"])
@@ -196,37 +277,87 @@ def build_graph(
         else:
             piece_line = "none"
         confirmed = "yes" if state.get("brief") else "no"
+        shell_ready = any(a["shell_version"] for a in apartments)
+        facts = f"This conversation: piece {piece_line}; confirmed brief: {confirmed}."
+        if apartments:
+            listed = ", ".join(
+                f"{a['name']} ({a['rooms']} room(s), "
+                + (f"shell v{a['shell_version']}" if a["shell_version"] else "no shell yet")
+                + ")"
+                for a in apartments
+            )
+            facts += f" Apartments: {listed}."
         return {
-            "house_note": house_note(rooms, preferences, pieces, requests) or "",
-            "facts": f"This conversation: piece {piece_line}; confirmed brief: {confirmed}.",
+            "house_note": house_note(rooms, preferences, pieces, requests, apartments) or "",
+            "facts": facts,
             "package_id": package_id,
             "piece_ready": piece_ready,
+            "shell_ready": shell_ready,
             "round_count": 0,
             "specialist": "",
+            "bound_tools": tools_this_turn,
         }
 
     # --- the Foreman ----------------------------------------------------------
 
-    def recorder(slot: str, config: RunnableConfig) -> UsageRecorder:
+    def recorder(slot: str, config: RunnableConfig, *, estimated_tokens: int | None = None) -> UsageRecorder:
         configurable = config.get("configurable", {})
         return UsageRecorder(
             engine,
             model_id=model_ids(slot),
             owner_user_id=UUID(str(configurable["owner_id"])),
             trace_id=configurable.get("trace_id"),
+            estimated_tokens=estimated_tokens,
+        )
+
+    def prompt_for(slot: str, system: str, state: ChatState, tools: list) -> tuple[list, int]:
+        slug = model_ids(slot)
+        restrictions = budget_store.for_model(slug)
+        model = model_provider(slot)
+        max_tokens = getattr(model, "max_tokens", None)
+        budget = RequestBudget.for_model(
+            slug,
+            context_budget_tokens=restrictions.context_budget_tokens,
+            max_output_tokens=max_tokens if isinstance(max_tokens, int) else None,
+        )
+        history = with_images(
+            list(state.get("messages", [])),
+            capable=slot in IMAGE_SLOTS,
+            engine=engine,
+            settings=settings,
+        )
+        used = tokens_today(engine, slug, settings.budget_timezone)
+        return prepare(
+            budget,
+            system,
+            history,
+            tools=tools or None,
+            used_today=used,
+            daily_ceiling=restrictions.daily_token_ceiling,
         )
 
     def foreman(
         state: ChatState, config: RunnableConfig
-    ) -> Command[Literal["intake", "designer", "builder"]]:
+    ) -> Command[Literal["intake", "designer", "builder", "__end__"]]:
         instruction = loaded["foreman"]
         system = compose_agent_prompt(instruction.text, state.get("facts", ""), state.get("house_note", ""))
-        prompt = [SystemMessage(system), *window(state.get("messages", []), 12)]
+        try:
+            prompt, counted = prompt_for(instruction.slot, system, state, [])
+        except BudgetRefused as error:
+            return Command(
+                update={"messages": [AIMessage(refusal_message("foreman", error))], "specialist": ""},
+                goto=END,
+            )
         with gateway_errors(operation="chat.foreman"):
             decision = (
                 model_provider(instruction.slot)
                 .with_structured_output(Decision)
-                .invoke(prompt, config=with_callbacks(config, recorder(instruction.slot, config)))
+                .invoke(
+                    prompt,
+                    config=with_callbacks(
+                        config, recorder(instruction.slot, config, estimated_tokens=counted)
+                    ),
+                )
             )
         chosen = getattr(decision, "specialist", None)
         if chosen not in SPECIALISTS:
@@ -234,9 +365,11 @@ def build_graph(
         reason = getattr(decision, "reason", "") or ""
 
         # Application rules bound the model's choice (design-agents spec).
-        if not state.get("piece_ready") and chosen == "builder":
+        # A piece with a version, or an apartment with a shell, gives the Builder something to work on.
+        buildable = state.get("piece_ready") or state.get("shell_ready")
+        if not buildable and chosen == "builder":
             chosen = "designer" if state.get("brief") else "intake"
-        if not state.get("piece_ready") and not state.get("brief"):
+        if not buildable and not state.get("brief"):
             chosen = "intake"
         return Command(update={"specialist": chosen, "reason": reason}, goto=chosen)
 
@@ -244,7 +377,12 @@ def build_graph(
 
     def specialist_graph(name: str):
         instruction = loaded[name]
-        bound_tools: dict[str, AgentTool] = {t: tools_by_name[t] for t in instruction.tools}
+
+        def bound_for(state: ChatState) -> dict[str, AgentTool]:
+            names = (state.get("bound_tools") or {}).get(name)
+            if names is None:
+                names = list(instruction.tools)
+            return {tool: tools_by_name[tool] for tool in names if tool in tools_by_name}
 
         def agent(state: ChatState, config: RunnableConfig) -> Command[Literal["tools", "__end__"]]:
             round_count = state.get("round_count", 0)
@@ -257,13 +395,25 @@ def build_graph(
             if capped:
                 notes.append(TOOL_ROUND_CAP_NOTE)
             system = compose_agent_prompt(instruction.text, *notes)
-            prompt = [SystemMessage(system), *window(state.get("messages", []))]
+            bound_tools = bound_for(state)
             selected = [] if capped else [tool.structured() for tool in bound_tools.values()]
+            try:
+                prompt, counted = prompt_for(instruction.slot, system, state, selected)
+            except BudgetRefused as error:
+                return Command(
+                    update={"messages": [AIMessage(refusal_message(name, error))]},
+                    goto=END,
+                )
             with gateway_errors(operation=f"chat.{name}"):
                 reply = (
                     model_provider(instruction.slot)
                     .bind_tools(selected)
-                    .invoke(prompt, config=with_callbacks(config, recorder(instruction.slot, config)))
+                    .invoke(
+                        prompt,
+                        config=with_callbacks(
+                            config, recorder(instruction.slot, config, estimated_tokens=counted)
+                        ),
+                    )
                 )
             goto: Literal["tools", "__end__"] = "tools" if getattr(reply, "tool_calls", None) else END
             return Command(
@@ -281,6 +431,7 @@ def build_graph(
                 last_message=_last_human_text(state),
             )
             calls = _last_ai_tool_calls(state)
+            bound_tools = bound_for(state)
 
             # The round's first gated call decides whether the turn pauses. Its
             # preview is code, so an invalid call is refused with no pause; the

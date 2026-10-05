@@ -83,6 +83,14 @@ def write_build_files(out: Path, *, spec: dict | None = None) -> None:
     (out / "screenshot.png").write_bytes(png_bytes(800, 500))
 
 
+def write_shell_files(out: Path) -> None:
+    out.mkdir()
+    (out / "model.glb").write_bytes(b"glTF" + struct.pack("<II", 2, 20) + b"\x00" * 8)
+    (out / "model.blend").write_bytes(b"BLENDER-fake")
+    (out / "shell.json").write_text(json.dumps({"kind": "apartment_shell", "walls": []}), encoding="utf-8")
+    (out / "screenshot.png").write_bytes(png_bytes(800, 500))
+
+
 def write_frames(out: Path, *, frames: int, size: int, skip_empty: int | None = None) -> None:
     out.mkdir()
     folder = out / "frames"
@@ -160,6 +168,9 @@ def fake_pipeline_launch(
         script = next((Path(a).name for a in argv if a.endswith(".py")), "")
         if script == "build_custom_build.py":
             write_build_files(out)
+            return
+        if script == "build_shell.py":
+            write_shell_files(out)
             return
         size = int(arg_value(argv, "--tier-resolution"))
         frames = int(arg_value(argv, "--tier-frames"))

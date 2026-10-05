@@ -3,7 +3,7 @@
 Single-user personal project: design custom furniture and room layouts for the owner's own home, model them in Blender, render cheap turntables, review them against the brief, and price the build from lawful supplier data. Portfolio-quality code; no multi-tenant concerns.
 This file is the "what". [docs/DESIGN_NOTES.md](docs/DESIGN_NOTES.md) is the "why". Acceptance scenarios live in `openspec/specs/`; active changes in `openspec/changes/`.
 The code base is a pruned port of `/home/pingu/Applications/Interior_Design_App` (§7). Course requirements are in `docs/Task requirements.md`.
-Status: planning, 2026-10-05. Nothing in §5 or §11 is implemented here until its change is archived.
+Status: plugins and token budgets land with `plugins-and-budgets` (2026-10-06). Photoreal detail, pricing, and the reviewer remain later steps.
 
 ## 0. OpenSpec workflow (mandatory)
 
@@ -69,7 +69,8 @@ Routing lives in `config/models.yaml`: one registry entry per agent, no backup. 
 
 | Agent | Model | Reason |
 |---|---|---|
-| Foreman, Intake | `openai/gpt-5.6-luna` | cheap, frequent, strong aggregate score for its price |
+| Foreman | `openai/gpt-5.6-luna` | cheap, frequent, strong aggregate score for its price |
+| Intake | `deepseek/deepseek-v4.1-flash` | reads blueprints and room photos, so it needs image input (decided 2026-10-06); same model as the Reviewer |
 | Designer | `deepseek/deepseek-v4-pro-0813` | schema-validated output, so the cheaper top coder leads |
 | Builder | `deepseek/deepseek-v4-pro-0813` | bpy is well-trodden; allow-list and schema catch mistakes |
 | Lighting & materials | `openai/gpt-5.6-sol` | physics-heavy node graphs; leads the aggregate index |
@@ -85,18 +86,22 @@ Consumer subscriptions (Claude Pro, SuperGrok) are not backends; Claude Desktop 
 
 ## 5. Tools (plugins)
 
-Each tool is a folder under `backend/plugins/<name>/` with `manifest.yaml` (name, description, model role, tools, enabled by default) and its implementation. The backend loads enabled plugins; the homeowner UI toggles them per project. Declarative HTTPS plugins from the old repo stay as a second plugin kind.
+Each tool is a folder under `backend/plugins/<name>/` with `manifest.yaml` (name, description, kind, role, tools, enabled by default, toggleable) and its implementation. The backend loads every manifest at startup and refuses a malformed one by file name. The homeowner toggles plugins per conversation; the developer enables or disables them globally from `/admin/plugins`. Declarative HTTPS plugins are a second kind: one GET to an allow-listed host, executed with the SSRF guard (global addresses only, pinned IP + SNI, no redirects, cap, timeout, pacing); none ship enabled.
 
 | # | Plugin | Agent | Status | Notes |
 |---|---|---|---|---|
-| 1 | `blender_build` | Builder | port | headless generator from spec JSON; viewport screenshots |
+| 1 | `blender_build` | Builder | port | `blender_build`; `build_shell` listed, filled in by apartment-intake |
 | 2 | `render_turntable` | Builder | port | behind the guard; writes `docs/renders/...` and `viewer.html` |
 | 3 | `revise_package` | Designer | port | linked new version from stated changes behind `interrupt()` confirmation |
-| 4 | `cut_list` | Designer | port | `derive.py` rule table, part overrides, remnant rack; zero GPU |
-| 5 | `room_fit` | Designer | port + extend | polygon room contract, openings, furnishings, placement validation; grows to multi-room shells from the house file |
-| 6 | `material_cost` | Researcher | port + extend | §5a |
-| 7 | `revision_review` | Reviewer | new | render and spec against brief; discrepancy list only |
-| 8 | `photoreal_detail` | Lighting | new | carpentry pass over the socket, allow-listed, `final` tier only |
+| 4 | `cut_list` | Designer | port | `derive.py` rule table; zero GPU |
+| 5 | `room_fit` | Designer | port | polygon room contract, openings, placement validation |
+| — | `intake` | Intake | port | `record_brief`, `record_plan`; not toggleable |
+| — | `create_piece` | Designer | port | not toggleable |
+| — | `guidelines` | Designer | stub | `search_guidelines`; filled in by pricing-researcher |
+| 6 | `material_cost` | Researcher | stub | `price_cut_list`, `manage_remnants`; filled in by pricing-researcher |
+| — | `catalog_research` | Researcher | stub | catalogue lookups; filled in by pricing-researcher |
+| 7 | `revision_review` | Reviewer | stub | filled in by render-reviewer |
+| 8 | `photoreal_detail` | Lighting | later | carpentry pass over the socket, allow-listed, `final` tier only |
 
 ### 5a. Pricing (kept, reworked)
 
@@ -163,10 +168,10 @@ None open as of 2026-10-05.
 2. [x] Render guard, Eevee defaults, first-launch benchmark; port generators and runner behind it — `openspec/changes/render-guard`
 3. [x] House file + checkpointer — `openspec/changes/agent-loop`
 4. [x] Foreman → Intake → Designer → Builder loop with `revise_package`, `cut_list`, `room_fit` — `openspec/changes/agent-loop`
-4a. [ ] Intake vision read of blueprints and photos into the house file; headless apartment shell generator
+4a. [x] Intake vision read of blueprints and photos into the house file; headless apartment shell generator — `openspec/changes/apartment-intake`
 5. [ ] Pricing port and rework (§5a) + Researcher
 6. [ ] Reviewer (`revision_review`) with a vision model
-7. [ ] Plugin manifests, homeowner toggles, dev panel with per-agent model routing and token restrictions
+7. [x] Plugin manifests, homeowner toggles, dev panel with per-agent model routing and token restrictions — `openspec/changes/plugins-and-budgets`
 8. [ ] `photoreal_detail` over the socket, allow-list, `final` tier
 9. [ ] Feedback capture → house file + Langfuse tags
 10. [ ] Cloud render offload — only if asked

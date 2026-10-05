@@ -1,0 +1,72 @@
+{
+  "kind": "apartment_shell",
+  "schema_version": 1,
+  "units": "mm",
+  "apartment": {
+    "name": "Example one-bed",
+    "ceiling_height_mm": 2550,
+    "wall_thickness_mm": 120
+  },
+  "rooms": [
+    {
+      "name": "Living room",
+      "corners": [
+        [
+          0,
+          0
+        ],
+        [
+          5200,
+          0
+        ],
+        [
+          5200,
+          3800
+        ],
+        [
+          0,
+          3800
+        ]
+      ],
+      "openings": [
+        {
+          "wall": 0,
+          "type": "window",
+          "offset_mm": 800,
+          "width_mm": 1800,
+          "height_mm": 1350,
+          "sill_mm": 900
+        },
+        {
+          "wall": 1,
+          "type": "door",
+          "offset_mm": 1200,
+          "width_mm": 900,
+          "height_mm": 2050
+        }
+      ]
+    },
+    {
+      "name": "Bedroom",
+      "corners": [
+        [
+          5200,
+          0
+        ],
+        [
+          8400,
+          0
+        ],
+        [
+          8400,
+          3800
+        ],
+        [
+          5200,
+          3800
+        ]
+      ],
+      "openings": []
+    }
+  ]
+}

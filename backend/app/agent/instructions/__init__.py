@@ -20,7 +20,6 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.agent.models.routing import SLOTS
 from app.agent.prompts import SENTINEL
-from app.agent.tools import KNOWN_TOOLS
 
 INSTRUCTIONS_DIR: Final = Path(__file__).parent
 
@@ -68,8 +67,19 @@ def _split(raw: str, filename: str) -> tuple[str, str]:
     raise InstructionError(f"{filename}: the header has no closing ---")
 
 
+def _known_tools_and_roles() -> tuple[frozenset[str], dict[str, str]]:
+    from app.agent.tools import KNOWN_TOOLS, tool_roles
+
+    return KNOWN_TOOLS, tool_roles()
+
+
 def parse_instruction(
-    raw: str, *, filename: str, slots: Collection[str] = SLOTS
+    raw: str,
+    *,
+    filename: str,
+    slots: Collection[str] = SLOTS,
+    known_tools: Collection[str] | None = None,
+    tool_roles: dict[str, str] | None = None,
 ) -> AgentInstruction:
     """Validate one file's content. `filename` is `<agent name>.md`."""
     header_text, text = _split(raw, filename)
@@ -91,9 +101,27 @@ def parse_instruction(
         raise InstructionError(f"{filename}: {header.name!r} is not a known agent")
     if header.slot not in slots:
         raise InstructionError(f"{filename}: the slot {header.slot!r} is not in the routing")
-    unknown = sorted(set(header.tools) - KNOWN_TOOLS)
+    if known_tools is None or tool_roles is None:
+        shipped_tools, shipped_roles = _known_tools_and_roles()
+        if known_tools is None:
+            known_tools = shipped_tools
+        if tool_roles is None:
+            tool_roles = shipped_roles
+    declared = frozenset(known_tools)
+    roles = tool_roles or {}
+    unknown = sorted(set(header.tools) - declared)
     if unknown:
         raise InstructionError(f"{filename}: unknown tool {', '.join(unknown)}")
+    mismatched = [
+        tool
+        for tool in header.tools
+        if roles.get(tool) and roles[tool] != header.name
+    ]
+    if mismatched:
+        tool = mismatched[0]
+        raise InstructionError(
+            f"{filename}: tool {tool!r} belongs to {roles[tool]}, not {header.name}"
+        )
     if not text:
         raise InstructionError(f"{filename}: the instruction text is empty")
     if SENTINEL in text:
@@ -102,7 +130,11 @@ def parse_instruction(
 
 
 def load_instructions(
-    directory: Path | None = None, *, slots: Collection[str] = SLOTS
+    directory: Path | None = None,
+    *,
+    slots: Collection[str] = SLOTS,
+    known_tools: Collection[str] | None = None,
+    tool_roles: dict[str, str] | None = None,
 ) -> dict[str, AgentInstruction]:
     """Read all four files. The first fault stops the load, naming the file."""
     base = directory or INSTRUCTIONS_DIR
@@ -113,5 +145,7 @@ def load_instructions(
             raw = (base / filename).read_text(encoding="utf-8")
         except FileNotFoundError:
             raise InstructionError(f"{filename}: the instruction file is missing") from None
-        loaded[name] = parse_instruction(raw, filename=filename, slots=slots)
+        loaded[name] = parse_instruction(
+            raw, filename=filename, slots=slots, known_tools=known_tools, tool_roles=tool_roles
+        )
     return loaded

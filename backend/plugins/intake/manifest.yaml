@@ -1,0 +1,7 @@
+name: intake
+description: Record a confirmed brief or a whole-apartment plan into the house file.
+kind: builtin
+role: intake
+tools: [record_brief, record_plan]
+enabled_by_default: true
+toggleable: false

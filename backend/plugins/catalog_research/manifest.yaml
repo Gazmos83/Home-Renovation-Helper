@@ -1,0 +1,7 @@
+name: catalog_research
+description: Search the toom catalogue corpus, check a live listing, and compare products.
+kind: builtin
+role: researcher
+tools: [search_catalog_knowledge, check_live_listing, compare_products]
+enabled_by_default: true
+toggleable: true

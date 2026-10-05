@@ -1,0 +1,7 @@
+name: revise_package
+description: Create the next version of a piece from stated changes.
+kind: builtin
+role: designer
+tools: [revise_package]
+enabled_by_default: true
+toggleable: true

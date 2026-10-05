@@ -36,9 +36,9 @@ def test_all_four_files_load() -> None:
 def test_each_agent_names_exactly_its_tools() -> None:
     loaded = load_instructions()
     assert loaded["foreman"].tools == ()
-    assert loaded["intake"].tools == ("record_brief",)
+    assert loaded["intake"].tools == ("record_brief", "record_plan")
     assert set(loaded["designer"].tools) == {"create_piece", "revise_package", "cut_list", "room_fit"}
-    assert set(loaded["builder"].tools) == {"blender_build", "render_turntable"}
+    assert set(loaded["builder"].tools) == {"blender_build", "build_shell", "render_turntable"}
 
 
 def test_the_designer_and_builder_never_offer_blender_code() -> None:

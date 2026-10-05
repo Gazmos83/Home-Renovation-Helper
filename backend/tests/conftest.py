@@ -21,7 +21,8 @@ from app.render.tiers import load_tiers
 from tests.blender_fakes import fake_pipeline_launch
 
 HOUSE_TABLES = (
-    "piece_versions, pieces, rooms, preferences, generator_extension_requests, threads"
+    "piece_versions, pieces, rooms, apartments, preferences, generator_extension_requests, "
+    "thread_tool_settings, plugin_invocations, threads, uploads"
 )
 
 
@@ -29,6 +30,8 @@ def clean_house_file(engine) -> None:
     with Session(engine) as session:
         session.execute(text(f"TRUNCATE TABLE {HOUSE_TABLES} CASCADE"))
         session.execute(text("DELETE FROM operator_settings WHERE key LIKE 'render:%'"))
+        session.execute(text("DELETE FROM operator_settings WHERE key LIKE 'plugin:%'"))
+        session.execute(text("DELETE FROM operator_settings WHERE key LIKE 'budget:%'"))
         session.commit()
 
 

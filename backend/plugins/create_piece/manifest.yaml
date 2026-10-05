@@ -1,0 +1,7 @@
+name: create_piece
+description: Create a new piece from a complete custom-build document.
+kind: builtin
+role: designer
+tools: [create_piece]
+enabled_by_default: true
+toggleable: false

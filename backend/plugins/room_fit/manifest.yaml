@@ -1,0 +1,7 @@
+name: room_fit
+description: Check whether a piece fits a room from the house file.
+kind: builtin
+role: designer
+tools: [room_fit]
+enabled_by_default: true
+toggleable: true

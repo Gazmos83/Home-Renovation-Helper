@@ -4,8 +4,8 @@ Mirrors `spec_contract.py`'s split (day 3): standard-library only, so a
 background ``bpy`` process and the FastAPI service validate the exact same
 document and derive the exact same geometry. Where the furniture contract
 normalises primitive dimensions into one fixed shape, this contract
-normalises a *traced* room — 4 to 8 interior corners, in millimetres, forming
-a convex polygon — plus its openings, the wall a furniture package stands
+normalises a *traced* room — 3 to 12 interior corners, in millimetres, forming
+a simple polygon (convex or not, so an L-shaped room is one room) — plus its openings, the wall a furniture package stands
 against, the existing furnishings that stay in it, and the requested output.
 
 A rectangular room is simply the four-corner case: a client's three intake
@@ -28,8 +28,9 @@ KIND: Final = "room_scene"
 SCHEMA_VERSION: Final = 1
 UNITS: Final = "mm"
 
-MIN_CORNERS: Final = 4
-MAX_CORNERS: Final = 8
+MIN_CORNERS: Final = 3
+MAX_CORNERS: Final = 12
+MIN_EDGE_MM: Final = 50
 DEFAULT_WALL_THICKNESS_MM: Final = 100
 _MAX_ROOM_DIMENSION_MM: Final = 30_000
 _MAX_CEILING_MM: Final = 6_000
@@ -98,29 +99,126 @@ def _signed_area_x2(corners: Sequence[Point]) -> float:
     return total
 
 
-def _is_convex_ccw(corners: Sequence[Point]) -> bool:
-    """Every turn along a CCW polygon must be a left turn (or straight)."""
+def _on_segment(point: Point, a: Point, b: Point) -> bool:
+    """Whether `point` lies on the segment a-b (within tolerance)."""
+    cross = (b[0] - a[0]) * (point[1] - a[1]) - (b[1] - a[1]) * (point[0] - a[0])
+    if abs(cross) > _TOL * max(1.0, math.hypot(b[0] - a[0], b[1] - a[1])):
+        return False
+    return (
+        min(a[0], b[0]) - _TOL <= point[0] <= max(a[0], b[0]) + _TOL
+        and min(a[1], b[1]) - _TOL <= point[1] <= max(a[1], b[1]) + _TOL
+    )
+
+
+def _point_in_polygon(point: Point, corners: Sequence[Point]) -> bool:
+    """Whether `point` lies inside (or on the boundary of) a simple polygon (even-odd rule)."""
+    n = len(corners)
+    inside = False
+    for i in range(n):
+        a = corners[i]
+        b = corners[(i + 1) % n]
+        if _on_segment(point, a, b):
+            return True
+        if (a[1] > point[1]) != (b[1] > point[1]):
+            x_cross = a[0] + (point[1] - a[1]) * (b[0] - a[0]) / (b[1] - a[1])
+            if point[0] < x_cross:
+                inside = not inside
+    return inside
+
+
+def _orientation(a: Point, b: Point, c: Point) -> float:
+    return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+
+def _segments_cross_properly(a: Point, b: Point, c: Point, d: Point) -> bool:
+    """Whether the open segments a-b and c-d cross at a single interior point."""
+    d1 = _orientation(c, d, a)
+    d2 = _orientation(c, d, b)
+    d3 = _orientation(a, b, c)
+    d4 = _orientation(a, b, d)
+    return ((d1 > _TOL and d2 < -_TOL) or (d1 < -_TOL and d2 > _TOL)) and (
+        (d3 > _TOL and d4 < -_TOL) or (d3 < -_TOL and d4 > _TOL)
+    )
+
+
+def _is_simple(corners: Sequence[Point]) -> bool:
+    """No two non-adjacent edges of the polygon cross or touch."""
     n = len(corners)
     for i in range(n):
-        ax, ay = corners[i]
-        bx, by = corners[(i + 1) % n]
-        cx, cy = corners[(i + 2) % n]
-        cross = (bx - ax) * (cy - by) - (by - ay) * (cx - bx)
-        if cross < -_TOL:
+        a, b = corners[i], corners[(i + 1) % n]
+        for j in range(i + 1, n):
+            if j == i or (j + 1) % n == i or (i + 1) % n == j:
+                continue
+            c, d = corners[j], corners[(j + 1) % n]
+            if _segments_cross_properly(a, b, c, d):
+                return False
+            if _on_segment(c, a, b) or _on_segment(d, a, b) or _on_segment(a, c, d) or _on_segment(b, c, d):
+                return False
+    return True
+
+
+def _footprint_inside(footprint: Sequence[Point], corners: Sequence[Point]) -> bool:
+    """Whether a rectangle's footprint lies wholly inside a simple polygon.
+
+    Every footprint corner must be inside, no footprint edge may properly cross
+    a room edge (the inner corner of an L-shaped room), and no room corner may
+    poke strictly into the footprint.
+    """
+    if not all(_point_in_polygon(point, corners) for point in footprint):
+        return False
+    n = len(corners)
+    m = len(footprint)
+    for i in range(m):
+        a, b = footprint[i], footprint[(i + 1) % m]
+        for j in range(n):
+            if _segments_cross_properly(a, b, corners[j], corners[(j + 1) % n]):
+                return False
+    for corner in corners:
+        if _point_in_polygon(corner, footprint) and not any(
+            _on_segment(corner, footprint[i], footprint[(i + 1) % m]) for i in range(m)
+        ):
             return False
     return True
 
 
-def _point_in_convex_polygon(point: Point, corners: Sequence[Point]) -> bool:
-    """Whether `point` lies inside (or on the boundary of) a CCW convex polygon."""
+def sight_clear(a: Point, b: Point, corners: Sequence[Point]) -> bool:
+    """Whether the straight line from `a` to `b` stays inside the polygon."""
     n = len(corners)
     for i in range(n):
-        ax, ay = corners[i]
-        bx, by = corners[(i + 1) % n]
-        cross = (bx - ax) * (point[1] - ay) - (by - ay) * (point[0] - ax)
-        if cross < -_TOL:
+        if _segments_cross_properly(a, b, corners[i], corners[(i + 1) % n]):
             return False
-    return True
+    midpoint = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+    return _point_in_polygon(midpoint, corners)
+
+
+def interior_point(corners: Sequence[Point]) -> Point:
+    """A point inside the polygon: the centroid when it is inside, else the
+    midpoint of the longest horizontal chord through the polygon's vertical middle."""
+    n = len(corners)
+    area2 = _signed_area_x2(corners)
+    cx = cy = 0.0
+    for i in range(n):
+        x0, y0 = corners[i]
+        x1, y1 = corners[(i + 1) % n]
+        cross = x0 * y1 - x1 * y0
+        cx += (x0 + x1) * cross
+        cy += (y0 + y1) * cross
+    centroid = (cx / (3 * area2), cy / (3 * area2))
+    if _point_in_polygon(centroid, corners):
+        return centroid
+    ys = sorted({y for _, y in corners})
+    y_mid = (min(ys) + max(ys)) / 2
+    # Nudge off any vertex height so the chord crosses edges cleanly.
+    if any(abs(y - y_mid) < _TOL for y in ys):
+        y_mid += (max(ys) - min(ys)) * 1e-3
+    xs = []
+    for i in range(n):
+        a, b = corners[i], corners[(i + 1) % n]
+        if (a[1] > y_mid) != (b[1] > y_mid):
+            xs.append(a[0] + (y_mid - a[1]) * (b[0] - a[0]) / (b[1] - a[1]))
+    xs.sort()
+    best = max(zip(xs[0::2], xs[1::2], strict=False), key=lambda chord: chord[1] - chord[0])
+    return ((best[0] + best[1]) / 2, y_mid)
 
 
 def _rotated_footprint(
@@ -248,8 +346,17 @@ def _normalise_corners(raw: Any) -> tuple[Point, ...]:
         _fail("room.corners must enclose a non-zero area")
     if area2 < 0:
         corners = list(reversed(corners))
-    if not _is_convex_ccw(corners):
-        _fail("room.corners must form a convex polygon")
+    count = len(corners)
+    for i in range(count):
+        for j in range(i + 1, count):
+            if math.hypot(corners[i][0] - corners[j][0], corners[i][1] - corners[j][1]) < _TOL:
+                _fail(f"room.corners[{i}] and room.corners[{j}] are the same point")
+    for i in range(count):
+        a, b = corners[i], corners[(i + 1) % count]
+        if math.hypot(b[0] - a[0], b[1] - a[1]) < MIN_EDGE_MM:
+            _fail(f"room.corners: the edge from corner {i} is shorter than {MIN_EDGE_MM} mm")
+    if not _is_simple(corners):
+        _fail("room.corners must form a simple outline: the edges cross or touch")
     return tuple(corners)
 
 
@@ -357,9 +464,8 @@ def _normalise_placement(
     front_left = (back_left[0] - nx * package_d, back_left[1] - ny * package_d)
     front_right = (back_right[0] - nx * package_d, back_right[1] - ny * package_d)
     footprint = (back_left, back_right, front_right, front_left)
-    for corner in footprint:
-        if not _point_in_convex_polygon(corner, corners):
-            _fail(f"the package's footprint on wall {wall_index} leaves the room")
+    if not _footprint_inside(footprint, corners):
+        _fail(f"the package's footprint on wall {wall_index} leaves the room")
 
     center = (
         (back_left[0] + back_right[0] + front_left[0] + front_right[0]) / 4,
@@ -406,9 +512,8 @@ def _normalise_furnishings(
         z = _number(item.get("z_mm", 0), f"{label}.z_mm", allow_zero=True)
 
         footprint = _rotated_footprint(x, y, width, depth, rotation)
-        for corner in footprint:
-            if not _point_in_convex_polygon(corner, corners):
-                _fail(f"{label} ({name}) leaves the room")
+        if not _footprint_inside(footprint, corners):
+            _fail(f"{label} ({name}) leaves the room")
         if _rectangles_overlap(footprint, package_footprint):
             _fail(f"{label} ({name}) overlaps the package")
 
@@ -504,6 +609,9 @@ def normalise_room_scene(
         sum(x for x, _ in corners) / len(corners),
         sum(y for _, y in corners) / len(corners),
     )
+    if not _point_in_polygon(centroid, corners):
+        # An L- or U-shaped room's corner average can lie outside it.
+        centroid = interior_point(corners)
 
     return RoomBuildContext(
         corners=corners,

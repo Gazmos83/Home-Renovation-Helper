@@ -71,3 +71,22 @@ def room_scene_document(folder: Path, kind: str, room: Any) -> dict[str, Any]:
             "this version has no readable spec.json to place in a room; build it first"
         ) from None
     return spec.model_dump(mode="json")
+
+
+def create_shell_version(
+    root: Path,
+    slug: str,
+    document: dict[str, Any],
+    start: Callable[[int], None],
+) -> dict[str, Any]:
+    """Write the next shell version's input, mark it queued and hand it to `start`."""
+    version = storage.next_shell_version(root, slug)
+    folder = storage.shell_version_dir(root, slug, version)
+    folder.mkdir(parents=True)
+    (folder / storage.INPUT_FILE).write_text(json.dumps(document, indent=2), encoding="utf-8")
+    runner.mark_build_queued(folder)
+    start(version)
+    logger.info(
+        "shell version created", extra={"context": {"apartment": slug, "version": version}}
+    )
+    return {"apartment": slug, "version": version, "status": "queued"}

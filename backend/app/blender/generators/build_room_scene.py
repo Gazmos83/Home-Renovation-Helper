@@ -49,6 +49,7 @@ from app.blender.room_contract import (
     RoomBuildContext,
     SpecValidationError,
     normalise_room_scene,
+    sight_clear,
 )
 from app.blender.verify import (
     VerificationError,
@@ -220,6 +221,9 @@ def _prism(
     mesh.update()
     bm = bmesh.new()
     bm.from_mesh(mesh)
+    if n > 4:
+        # Floor and ceiling caps of an L- or U-shaped room are concave n-gons.
+        bmesh.ops.triangulate(bm, faces=bm.faces[:])
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     bm.to_mesh(mesh)
     bm.free()
@@ -267,15 +271,29 @@ def _build_floor_ceiling(state: RoomBuildState, collection: bpy.types.Collection
     _prism(state, "Ceiling", corners, ceiling, ceiling + 20, collection, "Ceiling")
 
 
+def _is_convex_vertex(corners, index: int) -> bool:
+    """Whether the counter-clockwise polygon turns left (or straight) at `corners[index]`."""
+    n = len(corners)
+    ax, ay = corners[index - 1]
+    bx, by = corners[index]
+    cx, cy = corners[(index + 1) % n]
+    return (bx - ax) * (cy - by) - (by - ay) * (cx - bx) >= 0
+
+
 def _build_wall(state: RoomBuildState, collection: bpy.types.Collection, wall) -> None:
     thickness = state.context.wall_thickness_mm
     ceiling = state.context.height_mm
     wall_openings = [o for o in state.context.openings if o["wall"] == wall.index]
 
     holes = [(o["offset_mm"], o["offset_mm"] + o["width_mm"]) for o in wall_openings]
-    # Overrun both ends by the wall thickness so adjacent walls meet cleanly
-    # at any angle, matching the original mock-up's `wall()` comment.
-    full_range = (-thickness, wall.length_mm + thickness)
+    # Overrun an end by the wall thickness so adjacent walls meet cleanly at a
+    # convex corner. At a reflex corner (the inner corner of an L) the overrun
+    # would poke into the room, and the neighbouring wall already covers it.
+    corners = state.context.corners
+    count = len(corners)
+    start_over = thickness if _is_convex_vertex(corners, wall.index) else 0.0
+    end_over = thickness if _is_convex_vertex(corners, (wall.index + 1) % count) else 0.0
+    full_range = (-start_over, wall.length_mm + end_over)
     for index, (s, e) in enumerate(_complement_intervals(full_range, holes)):
         polygon = _wall_segment_polygon(wall, s, e, thickness)
         _prism(state, f"Wall_{wall.index}_{index}", polygon, 0, ceiling, collection, "Wall")
@@ -396,21 +414,20 @@ def _add_camera(name: str, location: tuple[float, float, float]) -> bpy.types.Ob
     return camera
 
 
-def _farthest_corner_from_wall(corners: list[tuple[float, float]], wall) -> tuple[float, float]:
-    ax, ay = wall.start
-    nx, ny = wall.outward_normal
-
-    def distance(point: tuple[float, float]) -> float:
-        return abs((point[0] - ax) * nx + (point[1] - ay) * ny)
-
-    return max(corners, key=distance)
-
-
 def _still_camera(state: RoomBuildState) -> dict[str, Any]:
     ctx = state.context
     package_wall = ctx.walls[ctx.placement["wall"]]
-    corner = _farthest_corner_from_wall(list(ctx.corners), package_wall)
     target_xy = ctx.placement["center"]
+    # The corner farthest from the piece's wall that can see the piece without
+    # the line of sight leaving the room (in an L the farthest corner may not).
+    ordered = sorted(
+        ctx.corners,
+        key=lambda c: -abs(
+            (c[0] - package_wall.start[0]) * package_wall.outward_normal[0]
+            + (c[1] - package_wall.start[1]) * package_wall.outward_normal[1]
+        ),
+    )
+    corner = next((c for c in ordered if sight_clear(c, target_xy, ctx.corners)), ordered[0])
     direction = Vector((target_xy[0] - corner[0], target_xy[1] - corner[1]))
     if direction.length > 1e-6:
         direction.normalize()

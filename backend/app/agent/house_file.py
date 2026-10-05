@@ -22,8 +22,10 @@ from sqlalchemy.orm import Session
 
 from app.blender import storage
 from app.blender.room_contract import normalise_room_shell
+from app.blender.shell_contract import ShellContext, normalise_shell
 from app.blender.spec_contract import SpecValidationError
 from app.db.models import (
+    Apartment,
     GeneratorExtensionRequest,
     Piece,
     PieceVersion,
@@ -57,7 +59,7 @@ def validate_room(
 ) -> dict[str, Any]:
     """The normalised room, or `HouseFileError` naming what is wrong.
 
-    Held to the same rules as a room-scene document: convex outline, openings on
+    Held to the same rules as a room-scene document: a simple outline (convex or not), openings on
     their wall and below the ceiling, no sill on a door.
     """
     name = (name or "").strip()
@@ -90,6 +92,7 @@ def upsert_room(
     openings: Any = None,
     wall_thickness_mm: Any = None,
     notes: str = "",
+    apartment_id: UUID | None = None,
 ) -> Room:
     """Store a room by its unique name, replacing the measurements of one that exists."""
     valid = validate_room(name, corners_mm, height_mm, openings, wall_thickness_mm)
@@ -102,6 +105,7 @@ def upsert_room(
     room.wall_thickness_mm = valid["wall_thickness_mm"]
     room.openings = valid["openings"]
     room.notes = notes
+    room.apartment_id = apartment_id
     room.updated_at = _now()
     session.flush()
     return room
@@ -123,6 +127,154 @@ def describe_room(room: Room) -> dict[str, Any]:
         "wall_thickness_mm": room.wall_thickness_mm,
         "openings": room.openings,
         "notes": room.notes,
+    }
+
+
+# --- apartments ------------------------------------------------------------------------
+
+
+def apartment_by_name(session: Session, name: str) -> Apartment | None:
+    return session.scalar(select(Apartment).where(Apartment.name == (name or "").strip()))
+
+
+def find_apartment(session: Session, name_or_slug: str) -> Apartment | None:
+    """An apartment by its name, or by the slug its shell folders use."""
+    text = (name_or_slug or "").strip()
+    found = apartment_by_name(session, text)
+    if found is not None:
+        return found
+    for apartment in apartments(session):
+        try:
+            if storage.apartment_slug(apartment.name) == text:
+                return apartment
+        except storage.InvalidPackageId:
+            continue
+    return None
+
+
+def apartments(session: Session) -> list[Apartment]:
+    return list(session.scalars(select(Apartment).order_by(Apartment.name)))
+
+
+def rooms_of(session: Session, apartment: Apartment) -> list[Room]:
+    return list(session.scalars(select(Room).where(Room.apartment_id == apartment.id).order_by(Room.name)))
+
+
+def validate_apartment(
+    name: str,
+    ceiling_height_mm: Any,
+    wall_thickness_mm: Any,
+    rooms: list[dict[str, Any]],
+    printed_areas_m2: dict[str, float] | None = None,
+) -> ShellContext:
+    """The normalised apartment (walls and plausibility warnings), or `HouseFileError`.
+
+    Each room is held to the room rules, and rooms of one apartment must not
+    overlap in area. `rooms` items carry `name`, `corners_mm`, and optionally
+    `height_mm` and `openings`.
+    """
+    document = {
+        "kind": "apartment_shell",
+        "schema_version": 1,
+        "units": "mm",
+        "apartment": {
+            "name": name,
+            "ceiling_height_mm": ceiling_height_mm,
+            "wall_thickness_mm": wall_thickness_mm if wall_thickness_mm is not None else 100,
+        },
+        "rooms": [
+            {
+                "name": room.get("name"),
+                "corners": room.get("corners_mm"),
+                **({"height_mm": room["height_mm"]} if room.get("height_mm") is not None else {}),
+                "openings": room.get("openings") or [],
+            }
+            for room in rooms
+        ],
+    }
+    try:
+        return normalise_shell(document, printed_areas_m2=printed_areas_m2)
+    except SpecValidationError as error:
+        raise HouseFileError(str(error)) from None
+
+
+def upsert_apartment(
+    session: Session,
+    name: str,
+    ceiling_height_mm: Any,
+    wall_thickness_mm: Any,
+    rooms: list[dict[str, Any]],
+    notes: str = "",
+) -> Apartment:
+    """Store an apartment and its rooms in one plan frame; rooms of the same name are replaced.
+
+    Rooms already in the apartment that are not named here stay and are checked
+    for overlap with the new ones. Flushes; the caller commits.
+    """
+    name = (name or "").strip()
+    apartment = apartment_by_name(session, name)
+    kept = []
+    if apartment is not None:
+        named = {(room.get("name") or "").strip() for room in rooms}
+        kept = [
+            {
+                "name": room.name,
+                "corners_mm": room.corners_mm,
+                "height_mm": room.height_mm,
+                "openings": room.openings,
+            }
+            for room in rooms_of(session, apartment)
+            if room.name not in named
+        ]
+    context = validate_apartment(name, ceiling_height_mm, wall_thickness_mm, [*kept, *rooms])
+    if apartment is None:
+        apartment = Apartment(name=name)
+        session.add(apartment)
+    apartment.ceiling_height_mm = _whole(context.ceiling_height_mm)
+    apartment.wall_thickness_mm = _whole(context.wall_thickness_mm)
+    apartment.notes = notes
+    apartment.updated_at = _now()
+    session.flush()
+    new_names = {(room.get("name") or "").strip() for room in rooms}
+    for shell_room in context.rooms:
+        if shell_room.name not in new_names:
+            continue
+        upsert_room(
+            session,
+            shell_room.name,
+            [list(c) for c in shell_room.corners],
+            shell_room.height_mm,
+            list(shell_room.openings),
+            context.wall_thickness_mm,
+            apartment_id=apartment.id,
+        )
+    return apartment
+
+
+def apartment_shell_document(session: Session, apartment: Apartment) -> dict[str, Any]:
+    """The normalised shell document for a stored apartment, or `HouseFileError`."""
+    rooms = rooms_of(session, apartment)
+    if not rooms:
+        raise HouseFileError("this apartment has no rooms to build")
+    context = validate_apartment(
+        apartment.name,
+        apartment.ceiling_height_mm,
+        apartment.wall_thickness_mm,
+        [
+            {"name": r.name, "corners_mm": r.corners_mm, "height_mm": r.height_mm, "openings": r.openings}
+            for r in rooms
+        ],
+    )
+    return context.input_document()
+
+
+def describe_apartment(session: Session, apartment: Apartment) -> dict[str, Any]:
+    return {
+        "name": apartment.name,
+        "ceiling_height_mm": apartment.ceiling_height_mm,
+        "wall_thickness_mm": apartment.wall_thickness_mm,
+        "rooms": [describe_room(room) for room in rooms_of(session, apartment)],
+        "notes": apartment.notes,
     }
 
 

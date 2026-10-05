@@ -1,0 +1,7 @@
+name: material_cost
+description: Price a cut list from the toom price list and manage the remnant rack.
+kind: builtin
+role: researcher
+tools: [price_cut_list, manage_remnants]
+enabled_by_default: true
+toggleable: true

@@ -59,6 +59,25 @@ def _image_probe(settings: Settings, slug: str, http_client: Any | None) -> None
         model.invoke(message)
 
 
+def probe_slug(
+    settings: Settings,
+    slug: str,
+    *,
+    image: bool = False,
+    http_client: Any | None = None,
+) -> None:
+    """Probe one slug. Raises `ConfigurationError` naming the model on failure."""
+    try:
+        if image:
+            _image_probe(settings, slug, http_client)
+        else:
+            _text_probe(settings, slug, http_client)
+    except GatewayError as error:
+        raise ConfigurationError(
+            f"model {slug} blocked by gateway: {error.reason}"
+        ) from error
+
+
 def probe_models(
     settings: Settings,
     routing: Routing,

@@ -21,8 +21,9 @@ from typing import Any, Final
 from uuid import uuid4
 
 PACKAGE_ID_PATTERN: Final = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
-RESERVED_IDS: Final = frozenset({"benchmark"})
+RESERVED_IDS: Final = frozenset({"benchmark", "shells"})
 BENCHMARK_DIRNAME: Final = "benchmark"
+SHELLS_DIRNAME: Final = "shells"
 
 INPUT_FILE: Final = "input.json"
 STATUS_FILE: Final = "status.json"
@@ -34,6 +35,14 @@ BUILD_FILES: Final[dict[str, str]] = {
     "spec.json": "application/json",
     "cutlist.csv": "text/csv",
     "hardware.csv": "text/csv",
+    "screenshot.png": "image/png",
+}
+
+# What a successful shell build publishes (an apartment, not a piece).
+SHELL_FILES: Final[dict[str, str]] = {
+    "model.glb": "model/gltf-binary",
+    "model.blend": "application/octet-stream",
+    "shell.json": "application/json",
     "screenshot.png": "image/png",
 }
 
@@ -100,9 +109,7 @@ def version_dir(root: Path, package_id: str, version: int) -> Path:
     return resolve(root, Path(validate_package_id(package_id)) / f"v{version}")
 
 
-def versions(root: Path, package_id: str) -> list[int]:
-    """The version numbers a package has, ascending."""
-    folder = package_dir(root, package_id)
+def _version_numbers(folder: Path) -> list[int]:
     if not folder.is_dir():
         return []
     found = [
@@ -113,9 +120,65 @@ def versions(root: Path, package_id: str) -> list[int]:
     return sorted(found)
 
 
+def versions(root: Path, package_id: str) -> list[int]:
+    """The version numbers a package has, ascending."""
+    return _version_numbers(package_dir(root, package_id))
+
+
 def next_version(root: Path, package_id: str) -> int:
     existing = versions(root, package_id)
     return (existing[-1] + 1) if existing else 1
+
+
+# --- apartment shells: `<root>/shells/<apartment-slug>/v<N>/` -----------------------------
+
+
+def apartment_slug(name: str) -> str:
+    """A package-id-shaped slug for an apartment name ("Example one-bed" → "example-one-bed")."""
+    slug = re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-")[:64].strip("-")
+    if not slug:
+        raise InvalidPackageId(f"an apartment name needs letters or digits to make an id: {name!r}")
+    return validate_package_id(slug)
+
+
+def shell_dir(root: Path, slug: str) -> Path:
+    return resolve(root, Path(SHELLS_DIRNAME) / validate_package_id(slug))
+
+
+def shell_version_dir(root: Path, slug: str, version: int) -> Path:
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise ValueError("version must be a positive integer")
+    return resolve(root, Path(SHELLS_DIRNAME) / validate_package_id(slug) / f"v{version}")
+
+
+def shell_versions(root: Path, slug: str) -> list[int]:
+    return _version_numbers(shell_dir(root, slug))
+
+
+def next_shell_version(root: Path, slug: str) -> int:
+    existing = shell_versions(root, slug)
+    return (existing[-1] + 1) if existing else 1
+
+
+def list_shells(root: Path) -> list[tuple[str, list[int]]]:
+    """Every apartment slug with its shell versions (ascending), ordered by slug."""
+    base = root / SHELLS_DIRNAME
+    if not base.is_dir():
+        return []
+    shells = []
+    for entry in sorted(base.iterdir()):
+        if entry.is_dir() and PACKAGE_ID_PATTERN.match(entry.name):
+            found = _version_numbers(entry)
+            if found:
+                shells.append((entry.name, found))
+    return shells
+
+
+def record_version_dir(root: Path, record: str, record_id: str, version: int) -> Path:
+    """The version folder of a `piece` or a `shell`."""
+    if record == "shell":
+        return shell_version_dir(root, record_id, version)
+    return version_dir(root, record_id, version)
 
 
 def list_packages(root: Path) -> list[tuple[str, list[int]]]:
@@ -237,18 +300,25 @@ def sweep_orphaned_statuses(root: Path, *, reason: str = "the service restarted"
     were changed. Never raises for one unreadable folder.
     """
     changed = 0
-    for package_id, found in list_packages(root):
-        for number in found:
-            folder = version_dir(root, package_id, number)
-            status = read_status(folder)
-            if status is None:
-                continue
-            now = datetime.now(UTC).isoformat()
-            if status.get("status") in ("queued", "running"):
-                write_status(folder, status="failed", finished_at=now, error=reason)
+    folders = [
+        version_dir(root, package_id, number)
+        for package_id, found in list_packages(root)
+        for number in found
+    ] + [
+        shell_version_dir(root, slug, number)
+        for slug, found in list_shells(root)
+        for number in found
+    ]
+    for folder in folders:
+        status = read_status(folder)
+        if status is None:
+            continue
+        now = datetime.now(UTC).isoformat()
+        if status.get("status") in ("queued", "running"):
+            write_status(folder, status="failed", finished_at=now, error=reason)
+            changed += 1
+        for key, entry in list((status.get("renders") or {}).items()):
+            if entry.get("status") in ("queued", "running"):
+                write_render_status(folder, key, status="failed", finished_at=now, error=reason)
                 changed += 1
-            for key, entry in list((status.get("renders") or {}).items()):
-                if entry.get("status") in ("queued", "running"):
-                    write_render_status(folder, key, status="failed", finished_at=now, error=reason)
-                    changed += 1
     return changed

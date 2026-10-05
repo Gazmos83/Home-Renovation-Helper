@@ -1,0 +1,21 @@
+:root {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  color: #1a1a1a;
+  background: #f6f4ef;
+  line-height: 1.45;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+a { color: inherit; }
+button, input { font: inherit; }
+main { max-width: 52rem; margin: 0 auto; padding: 1.5rem; }
+nav { display: flex; gap: 1rem; padding: 0.75rem 1.5rem; background: #fff; border-bottom: 1px solid #ddd; }
+label { display: block; margin: 0.5rem 0 0.15rem; }
+.card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: 0.75rem 0; }
+.row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.error { color: #9b1c1c; font-size: 0.9rem; }
+button { background: #1f3d2b; color: #fff; border: 0; border-radius: 6px; padding: 0.4rem 0.8rem; cursor: pointer; }
+button.secondary { background: #eee; color: #1a1a1a; }
+input, select { width: 100%; padding: 0.4rem 0.5rem; border: 1px solid #ccc; border-radius: 6px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #eee; }

@@ -119,13 +119,18 @@ def answer(
     thread_id: UUID,
     owner_id: UUID,
     message: str,
+    upload_ids: list[UUID] | None = None,
     run_config: dict[str, Any] | None = None,
 ) -> TurnResult:
-    """Run one turn of one thread for the owner."""
+    """Run one turn of one thread for the owner. `upload_ids` are images from the thread."""
     if graph is None:
         return _unavailable()
     config = _config(thread_id, owner_id, run_config)
-    human = HumanMessage(message, id=str(uuid4()))
+    human = HumanMessage(
+        message,
+        id=str(uuid4()),
+        additional_kwargs={"upload_ids": [str(i) for i in upload_ids]} if upload_ids else {},
+    )
     try:
         state = graph.invoke({"messages": [human]}, config=config)
     except GatewayError as error:

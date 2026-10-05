@@ -1,0 +1,7 @@
+name: revision_review
+description: Compare a render and its spec against the brief and list discrepancies.
+kind: builtin
+role: reviewer
+tools: [revision_review]
+enabled_by_default: true
+toggleable: true

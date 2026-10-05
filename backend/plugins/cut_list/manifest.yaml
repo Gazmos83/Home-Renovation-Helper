@@ -1,0 +1,7 @@
+name: cut_list
+description: List a version's derived cut-list parts and hardware.
+kind: builtin
+role: designer
+tools: [cut_list]
+enabled_by_default: true
+toggleable: true

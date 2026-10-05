@@ -128,7 +128,7 @@ def test_the_prompt_carries_the_guard_once_and_binds_only_the_headers_tools(tool
     assert system.count(UNTRUSTED_CONTENT_PREAMBLE) == 1
     assert system.endswith(UNTRUSTED_CONTENT_PREAMBLE)
     assert set(models["designer"].bound_tools) == {"create_piece", "revise_package", "cut_list", "room_fit"}
-    assert models["intake"].bound_tools == ["record_brief"]
+    assert models["intake"].bound_tools == ["record_brief", "record_plan"]
     # The Foreman's own prompt is guarded and binds nothing.
     foreman_prompt = "\n".join(str(m.content) for m in models["foreman"].decision_prompts[-1])
     assert foreman_prompt.count(UNTRUSTED_CONTENT_PREAMBLE) == 1
@@ -166,3 +166,33 @@ def test_two_threads_do_not_share_a_conversation(tool_state) -> None:
     assert [m.content for m in one.snapshot().values["messages"] if isinstance(m, HumanMessage)] == [
         "a secret about the hall"
     ]
+
+
+def test_the_builder_can_answer_for_an_apartment_with_a_shell_but_not_before(tool_state, make_ctx) -> None:
+    from app.agent import house_file
+    from app.agent.tools.base import ToolDeps
+    from plugins.blender_build.tool import run_shell
+    from tests.test_record_plan import PLAN
+
+    models = fake_models(
+        foreman={"decisions": [decision("builder"), decision("builder")]},
+        intake={"replies": ["First the plan."]},
+        builder={"replies": ["The shell is ready."]},
+    )
+    harness = make_harness(tool_state, models)
+    with ToolDeps(tool_state).session() as session:
+        house_file.upsert_apartment(
+            session, "Flat", 2550, 120,
+            [{"name": r["name"], "corners_mm": r["corners_mm"], "openings": r.get("openings", [])} for r in PLAN["rooms"]],
+        )
+        session.commit()
+
+    # An apartment with no shell version gives the Builder nothing to work on.
+    first = harness.turn("show me the flat")
+    assert first["specialist"] == "intake" and models["builder"].calls == 0
+
+    run_shell({"apartment_name": "Flat"}, make_ctx())
+    second = harness.turn("show me the flat now")
+    assert second["specialist"] == "builder"
+    assert "Apartments: Flat (2 room(s), shell v1)" in models["builder"].last_prompt_text()
+    assert last_reply(second) == "The shell is ready."

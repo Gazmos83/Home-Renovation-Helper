@@ -13,6 +13,7 @@ text and fixed notes an agent has, so no edit can remove or weaken it.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Final
 
 # Both delimiters start with this, so neutralising it neutralises both.
@@ -68,18 +69,37 @@ def _size(corners: Sequence[Sequence[float]]) -> str:
     return f"{max(xs) - min(xs):g} × {max(ys) - min(ys):g} mm"
 
 
+@dataclass(frozen=True, slots=True)
+class Passage:
+    """One retrieved or fetched passage, ready to wrap as untrusted content."""
+
+    content: str
+    url: str
+    scraped_at: str
+
+
+def wrap_passage(passage: Passage, retrieved_at: str) -> str:
+    return (
+        f'{OPEN_PREFIX} url="{passage.url}" scraped_at="{passage.scraped_at}" '
+        f'retrieved_at="{retrieved_at}"]]]\n'
+        f"{neutralise(passage.content)}\n"
+        f"{CLOSE_TOKEN}"
+    )
+
+
 def house_note(
     rooms: Sequence[Mapping[str, Any]],
     preferences: Mapping[str, str],
     pieces: Sequence[Mapping[str, Any]],
     requests: Sequence[Mapping[str, Any]],
+    apartments: Sequence[Mapping[str, Any]] = (),
 ) -> str | None:
     """The house file as a labelled note, or `None` when it holds nothing.
 
     Every owner-authored string is neutralised, so a room named with the
     untrusted-content delimiter cannot open or close a block.
     """
-    if not (rooms or preferences or pieces or requests):
+    if not (rooms or preferences or pieces or requests or apartments):
         return None
     lines = [HOUSE_CONTEXT_PREAMBLE]
     if rooms:
@@ -89,6 +109,11 @@ def house_note(
                 f"- {neutralise(room['name'])}: {_size(room['corners_mm'])}, "
                 f"ceiling {room['height_mm']:g} mm, {len(room.get('openings') or [])} opening(s)"
             )
+    if apartments:
+        lines.append("Apartments:")
+        for apartment in apartments:
+            shell = f"shell v{apartment['shell_version']}" if apartment.get("shell_version") else "no shell yet"
+            lines.append(f"- {neutralise(apartment['name'])}: {apartment['rooms']} room(s), {shell}")
     if preferences:
         lines.append("Preferences:")
         for key, value in preferences.items():

@@ -70,7 +70,8 @@ def test_a_guardrail_block_fails_startup_naming_the_slug_and_slot() -> None:
         )
     message = str(caught.value)
     assert "deepseek/deepseek-v4.1-flash" in message
-    assert "reviewer" in message
+    # The slug serves two image slots; the message names one of them.
+    assert "intake" in message or "reviewer" in message
     assert "blocked" in message
 
 

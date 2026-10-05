@@ -9,7 +9,7 @@ import csv
 import json
 from pathlib import Path
 
-from app.blender.storage import BUILD_FILES
+from app.blender.storage import BUILD_FILES, SHELL_FILES
 
 
 class VerificationError(RuntimeError):
@@ -72,3 +72,19 @@ def verify_frames(directory: Path, count: int, size: int) -> None:
         )
     for name in expected:
         verify_png(frames / name, (size, size))
+
+
+def verify_shell(directory: Path) -> None:
+    """The four shell build files exist (exactly), are non-empty and parse."""
+    names = {entry.name for entry in directory.iterdir()}
+    if names != set(SHELL_FILES):
+        raise VerificationError(
+            f"expected the shell files only, got {sorted(names)} (missing "
+            f"{sorted(set(SHELL_FILES) - names)}, extra {sorted(names - set(SHELL_FILES))})"
+        )
+    for entry in directory.iterdir():
+        if entry.stat().st_size == 0:
+            raise VerificationError(f"{entry.name} is empty")
+    json.loads((directory / "shell.json").read_text(encoding="utf-8"))
+    verify_glb(directory / "model.glb")
+    png_size(directory / "screenshot.png")

@@ -1,0 +1,7 @@
+name: blender_build
+description: Build a piece or an apartment shell in Blender from the stored document.
+kind: builtin
+role: builder
+tools: [blender_build, build_shell]
+enabled_by_default: true
+toggleable: true

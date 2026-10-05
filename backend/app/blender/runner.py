@@ -18,7 +18,7 @@ import logging
 import os
 import shutil
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
@@ -31,6 +31,7 @@ from app.blender.verify import (
     verify_build,
     verify_frames,
     verify_png,
+    verify_shell,
 )
 from app.observability.langfuse import Tracing
 from app.render.guard import RenderNotAuthorised, RenderQuote, RenderTicket
@@ -56,6 +57,7 @@ BUILD_GENERATOR: Final = GENERATORS / "build_custom_build.py"
 STILL_GENERATOR: Final = GENERATORS / "render_still.py"
 TURNTABLE_GENERATOR: Final = GENERATORS / "render_turntable.py"
 ROOM_GENERATOR: Final = GENERATORS / "build_room_scene.py"
+SHELL_GENERATOR: Final = GENERATORS / "build_shell.py"
 
 # Every script that writes an Eevee or Cycles frame. A build is not on this list
 # (it writes a Workbench screenshot; render-guard design decision 5).
@@ -86,7 +88,7 @@ async def launch_unguarded(
 async def launch_guarded(
     ticket: object,
     *,
-    expected: tuple[str, int, str, bool],
+    expected: tuple[str, int, str, bool] | tuple[str, int, str, bool, str],
     argv: list[str],
     cwd: Path,
     timeout: float,
@@ -95,7 +97,7 @@ async def launch_guarded(
 ) -> LaunchResult:
     """Run a render script for exactly one valid, unused ticket.
 
-    `expected` is (package id, version, kind, room): a ticket minted for another
+    `expected` is (id, version, kind, room, record): a ticket minted for another
     request is refused, and the ticket is consumed before the process starts, so
     a second launch with it is refused too.
     """
@@ -149,13 +151,13 @@ def mark_render_queued(version_folder: Path, ticket: RenderTicket) -> None:
     )
 
 
-def _move_build_files(stage: Path, version_folder: Path) -> None:
-    """Move the six verified build files into the version folder, undoing the
-    ones already moved if a move fails, so a failure publishes nothing. The
-    version's status stays `running` until all six are in place."""
+def _move_build_files(stage: Path, version_folder: Path, names: Iterable[str] = storage.BUILD_FILES) -> None:
+    """Move the verified build files into the version folder, undoing the ones
+    already moved if a move fails, so a failure publishes nothing. The version's
+    status stays `running` until all are in place."""
     moved: list[Path] = []
     try:
-        for name in storage.BUILD_FILES:
+        for name in names:
             target = version_folder / name
             os.replace(stage / name, target)
             moved.append(target)
@@ -174,10 +176,19 @@ async def run_build(
     version: int,
     semaphore: asyncio.Semaphore,
     launch: Launch = subprocess_launch,
+    record: str = "piece",
 ) -> None:
-    """Build one version from its stored `input.json`; never raises."""
-    folder = storage.version_dir(root, package_id, version)
-    context = {"package_id": package_id, "version": version, "kind": "build"}
+    """Build one version from its stored `input.json`; never raises.
+
+    `record` is `piece` (a furniture package) or `shell` (an apartment shell,
+    built by its own generator into `shells/<slug>/v<N>/`).
+    """
+    shell = record == "shell"
+    folder = storage.record_version_dir(root, record, package_id, version)
+    script = SHELL_GENERATOR if shell else BUILD_GENERATOR
+    verify = verify_shell if shell else verify_build
+    names = storage.SHELL_FILES if shell else storage.BUILD_FILES
+    context = {"package_id": package_id, "version": version, "kind": "build", "record": record}
 
     def running() -> None:
         storage.write_status(folder, status="running", started_at=_now(), error=None)
@@ -194,7 +205,7 @@ async def run_build(
     error: str | None = None
     try:
         result = await launch_unguarded(
-            [str(blender_bin), "--background", "--python", str(BUILD_GENERATOR), "--",
+            [str(blender_bin), "--background", "--python", str(script), "--",
              "--spec", str(folder / storage.INPUT_FILE), "--out", str(stage)],
             cwd=folder, timeout=timeout, semaphore=semaphore, launch=starting,
         )
@@ -202,8 +213,8 @@ async def run_build(
             error = safe_error(result.stderr_tail, root)
         else:
             try:
-                verify_build(stage)
-                _move_build_files(stage, folder)
+                verify(stage)
+                _move_build_files(stage, folder, names)
             except (VerificationError, OSError, ValueError) as problem:
                 error = safe_error(f"publish: {problem}", root)
     except Exception as problem:  # noqa: BLE001 - a background job must record, not raise
@@ -279,7 +290,7 @@ async def run_render(
     route uses it to calibrate the Cycles multiplier).
     """
     quote = ticket.quote
-    folder = storage.version_dir(root, quote.package_id, quote.version)
+    folder = storage.record_version_dir(root, quote.record, quote.package_id, quote.version)
     key = storage.render_key(quote.kind, quote.room)
     target = folder / "room" if quote.room else folder
     stage_name = folder / f"render-{key}"
@@ -319,7 +330,7 @@ async def run_render(
         error: str | None = None
         result = await launch_guarded(
             ticket,
-            expected=(quote.package_id, quote.version, quote.kind, quote.room),
+            expected=(quote.package_id, quote.version, quote.kind, quote.room, quote.record),
             argv=argv, cwd=folder, timeout=limit, semaphore=semaphore, launch=starting,
         )
         actual = time.perf_counter() - started_at["t"] if started_at["t"] else 0.0

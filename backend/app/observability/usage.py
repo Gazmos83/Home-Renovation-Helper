@@ -23,12 +23,14 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, case, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -103,12 +105,14 @@ class UsageRecorder(BaseCallbackHandler):
         owner_user_id: UUID,
         project_id: UUID | None = None,
         trace_id: str | None = None,
+        estimated_tokens: int | None = None,
     ) -> None:
         self._engine = engine
         self._model_id = model_id
         self._owner_user_id = owner_user_id
         self._project_id = project_id
         self._trace_id = trace_id
+        self._estimated_tokens = estimated_tokens
 
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
         input_tokens, output_tokens = _token_counts(response)
@@ -124,6 +128,7 @@ class UsageRecorder(BaseCallbackHandler):
                         user_id=self._owner_user_id,
                         project_id=self._project_id,
                         trace_id=self._trace_id,
+                        estimated_tokens=self._estimated_tokens,
                     )
                 )
                 session.commit()
@@ -156,6 +161,24 @@ class UsageLine:
     input_tokens: int
     output_tokens: int
     calls_without_tokens: int
+
+
+def tokens_today(engine: Engine, model_id: str, tz: str) -> int:
+    """Tokens already recorded for `model_id` since the start of the day in `tz`.
+
+    A row with no token figures counts as its estimated_tokens.
+    """
+    zone = ZoneInfo(tz)
+    start = datetime.now(zone).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+    recorded = func.coalesce(ModelUsage.input_tokens, 0) + func.coalesce(ModelUsage.output_tokens, 0)
+    estimated = func.coalesce(ModelUsage.estimated_tokens, 0)
+    both_missing = ModelUsage.input_tokens.is_(None) & ModelUsage.output_tokens.is_(None)
+    amount = func.coalesce(func.sum(case((both_missing, estimated), else_=recorded)), 0)
+    with Session(engine) as session:
+        total = session.execute(
+            select(amount).where(ModelUsage.model_id == model_id, ModelUsage.created_at >= start)
+        ).scalar_one()
+    return int(total)
 
 
 def usage_for_project(session: Session, project_id: UUID) -> list[UsageLine]:

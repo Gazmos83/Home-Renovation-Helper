@@ -45,11 +45,18 @@ def test_a_door_with_a_sill_is_refused_by_name_and_nothing_is_stored(db_session)
     assert house_file.room_by_name(db_session, "Hall") is None
 
 
-def test_a_room_outline_that_is_not_convex_is_refused(db_session) -> None:
-    with pytest.raises(HouseFileError, match="convex"):
-        house_file.validate_room(
-            "L", [[0, 0], [4000, 0], [4000, 2000], [2000, 2000], [2000, 4000], [0, 4000]], 2600
-        )
+def test_an_l_shaped_room_is_stored_counter_clockwise(db_session) -> None:
+    l_shape = [[0, 0], [4000, 0], [4000, 2000], [2000, 2000], [2000, 4000], [0, 4000]]
+    house_file.upsert_room(db_session, "L-room", list(reversed(l_shape)), 2600)
+    room = house_file.room_by_name(db_session, "L-room")
+    assert len(room.corners_mm) == 6
+    assert room.corners_mm == l_shape or sorted(room.corners_mm) == sorted(l_shape)
+
+
+def test_a_bow_tie_outline_is_refused_naming_the_outline(db_session) -> None:
+    with pytest.raises(HouseFileError, match="simple outline"):
+        house_file.upsert_room(db_session, "Bow", [[0, 0], [4000, 2000], [4000, 0], [0, 3500]], 2600)
+    assert house_file.room_by_name(db_session, "Bow") is None
 
 
 def test_an_opening_above_the_ceiling_is_refused() -> None:
@@ -146,3 +153,40 @@ def test_threads_are_listed_newest_activity_first(db_session) -> None:
     ids = [t.id for t in house_file.list_threads(db_session)]
     assert ids.index(older.id) < ids.index(newer.id)
     assert house_file.get_thread(db_session, older.id).package_id == "hall-bench"
+
+
+# --- apartments -------------------------------------------------------------------------
+
+LIVING_ROOM = {
+    "name": "Living room", "corners_mm": [[0, 0], [5200, 0], [5200, 3800], [0, 3800]],
+    "openings": [{"wall": 1, "type": "door", "offset_mm": 1200, "width_mm": 900, "height_mm": 2050}],
+}
+BEDROOM = {"name": "Bedroom", "corners_mm": [[5200, 0], [8400, 0], [8400, 3800], [5200, 3800]]}
+
+
+def test_an_apartment_stores_its_rooms_in_one_plan_frame(db_session) -> None:
+    apartment = house_file.upsert_apartment(db_session, "Flat", 2550, 120, [LIVING_ROOM, BEDROOM])
+    rooms = house_file.rooms_of(db_session, apartment)
+    assert [r.name for r in rooms] == ["Bedroom", "Living room"]
+    assert all(r.apartment_id == apartment.id for r in rooms)
+    assert rooms[0].height_mm == 2550 and rooms[0].wall_thickness_mm == 120
+    described = house_file.describe_apartment(db_session, apartment)
+    assert described["name"] == "Flat" and len(described["rooms"]) == 2
+
+
+def test_overlapping_rooms_refuse_the_apartment_naming_both_and_store_nothing(db_session) -> None:
+    overlapping = {**BEDROOM, "corners_mm": [[5000, 0], [8400, 0], [8400, 3800], [5000, 3800]]}
+    with pytest.raises(HouseFileError, match="rooms 'Living room' and 'Bedroom' overlap"):
+        house_file.upsert_apartment(db_session, "Flat", 2550, 120, [LIVING_ROOM, overlapping])
+    assert house_file.apartment_by_name(db_session, "Flat") is None
+    assert house_file.room_by_name(db_session, "Living room") is None
+
+
+def test_a_second_write_replaces_a_room_and_checks_it_against_the_ones_kept(db_session) -> None:
+    house_file.upsert_apartment(db_session, "Flat", 2550, 120, [LIVING_ROOM, BEDROOM])
+    wider = {**BEDROOM, "corners_mm": [[5200, 0], [9000, 0], [9000, 3800], [5200, 3800]]}
+    house_file.upsert_apartment(db_session, "Flat", 2550, 120, [wider])
+    assert house_file.room_by_name(db_session, "Bedroom").corners_mm[1] == [9000, 0]
+    clashing = {**BEDROOM, "corners_mm": [[4000, 0], [9000, 0], [9000, 3800], [4000, 3800]]}
+    with pytest.raises(HouseFileError, match="overlap"):
+        house_file.upsert_apartment(db_session, "Flat", 2550, 120, [clashing])
