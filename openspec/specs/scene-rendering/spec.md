@@ -1,0 +1,59 @@
+## Purpose
+
+Defines what a guarded render produces: a still or a scrollable turntable of a built piece, alone in its studio or placed in a measured room, with the tier deciding every frame count and resolution, and a fixed folder layout the viewer and later agents read.
+
+## Requirements
+
+### Requirement: A render needs a built version
+A still or turntable SHALL be requested for one package version, and SHALL be refused with a stated reason when that version has not succeeded or its `model.blend` is missing.
+
+#### Scenario: Render before the build finishes
+- **WHEN** a turntable is requested for a version whose build is still `running`
+- **THEN** the request is refused stating the build has not succeeded
+
+### Requirement: A still of the piece
+A still at a tier SHALL render one frame from the package's isometric studio camera at the tier's resolution and engine and publish it as `still.png` in the version folder, replacing any earlier still, and SHALL record the tier, resolution and engine used in `scene.json`.
+
+#### Scenario: Draft still
+- **WHEN** a `draft` still is requested for a built version
+- **THEN** `still.png` exists at 600 × 600, and `scene.json` records tier `draft` and engine Eevee
+
+### Requirement: A turntable of the piece
+A turntable at a tier SHALL render exactly the tier's frame count from cameras spaced evenly around the build's centre, at the tier's resolution and engine, publish them as `frames/frame_000.png` … `frames/frame_<N-1>.png` all at once, write `viewer.html` beside them with the frame count filled in, and record tier, frame count, resolution, engine and each frame's camera position in `scene.json`. A previous turntable of the version SHALL be replaced whole.
+
+#### Scenario: Draft turntable
+- **WHEN** a `draft` turntable is requested for a built version
+- **THEN** `frames/` holds exactly `frame_000.png` … `frame_011.png`, each 600 × 600, and `viewer.html` names 12 frames
+
+#### Scenario: Viewer works offline
+- **WHEN** `viewer.html` is opened beside its frames
+- **THEN** dragging or scrolling cycles through the frames in order and wraps at both ends
+
+### Requirement: The room-scene document's output is tier-driven
+A room-scene document SHALL describe the room (corners, height, wall thickness), openings, where the piece is placed, existing furnishings, and `output.kind` of `still` or `turntable` only. A document naming `output.frames`, `output.resolution` or any other output field SHALL be refused by field name. Room geometry SHALL be validated as before: a piece overflowing its wall or the ceiling, a footprint leaving the room, an opening off its wall, a door with a sill, a non-convex outline, duplicate furnishing names and a furnishing intersecting the piece are each refused naming the problem.
+
+#### Scenario: Frames in the document
+- **WHEN** a room-scene document carries `output: {kind: turntable, frames: 36}`
+- **THEN** it is refused naming `frames`
+
+#### Scenario: Overflow named
+- **WHEN** the piece is wider than the remaining length of its wall
+- **THEN** the document is refused naming the wall and the excess in millimetres
+
+### Requirement: A room still or turntable
+A room render at a tier SHALL build the room shell and furnishings, import the version's model at the placement, and render a still or turntable at the tier's frame count, resolution and engine into the version's `room/` folder with the same `still.png`, `frames/`, `viewer.html` and `scene.json` layout, where `scene.json` also carries the normalised room document. For a turntable the walls between the camera and the room SHALL be hidden per frame, as in the predecessor.
+
+#### Scenario: Room draft turntable
+- **WHEN** a `draft` room turntable is requested with the rectangle room fixture
+- **THEN** `room/frames/` holds exactly 12 frames at 600 × 600 and `room/scene.json` records the room document, the placement and tier `draft`
+
+### Requirement: Output is verified and published atomically
+A render SHALL write into a staging folder and publish it in one rename only after every expected file exists, is non-empty and matches the tier's resolution. A missing or empty frame SHALL fail the job with a reason naming the frame, publish nothing, and leave no staging folder. A killed run's staging folder SHALL be removed before the next run of that version.
+
+#### Scenario: Empty frame
+- **WHEN** a turntable run leaves `frame_007.png` empty
+- **THEN** the job fails naming `frame_007.png`, no `frames/` folder is published, and no staging folder remains
+
+#### Scenario: Stale staging swept
+- **WHEN** a previous run was killed leaving a staging folder beside the version
+- **THEN** the next run removes it before starting
