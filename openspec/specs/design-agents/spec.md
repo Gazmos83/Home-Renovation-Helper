@@ -17,15 +17,20 @@ Each turn SHALL be handled by exactly one specialist — Intake, Designer or Bui
 - **THEN** Intake or the Designer answers, explaining what must exist first; the Builder is not chosen
 
 ### Requirement: Each specialist runs on its routed model with its instruction file
-Each specialist SHALL call the model routed for its slot (`intake`, `designer`, `builder`; the Foreman on `foreman`) with that slot's generation profile, and SHALL be prompted from its checked-in instruction file: a header naming its tools (not editable) and text, followed by the fixed notes and the untrusted-content guard composed by code, exactly once and last. A missing or malformed instruction file SHALL stop startup naming the file.
+Each specialist SHALL call the model routed for its slot (`intake`, `designer`, `builder`, `researcher`, `reviewer`; the Foreman on `foreman`) with that slot's generation profile, and SHALL be prompted from its checked-in instruction file: a header naming its tools (not editable) and text, followed by the fixed notes and the untrusted-content guard composed by code, exactly once and last. The tools a header may name SHALL be the tools the plugin manifests declare, and a specialist SHALL bind only the named tools whose plugin is enabled for the thread, plus enabled HTTPS plugins for its role. A missing or malformed instruction file SHALL stop startup naming the file.
 
 #### Scenario: Prompt shape
 - **WHEN** the Designer's prompt is assembled
-- **THEN** it ends with the untrusted-content guard, contains it once, and binds exactly the tools its header names
+- **THEN** it ends with the untrusted-content guard, contains it once, and binds exactly the tools its header names that are enabled for the thread
 
 #### Scenario: Instruction file missing
-- **WHEN** `builder.md` is absent
-- **THEN** startup fails naming `builder.md`
+- **WHEN** `reviewer.md` is absent
+- **THEN** startup fails naming `reviewer.md`
+
+#### Scenario: Header names an undeclared tool
+- **WHEN** `designer.md` names a tool no manifest declares
+- **THEN** startup fails naming `designer.md` and the tool
+
 
 ### Requirement: Intake turns a wish into confirmed numbers
 Intake SHALL collect the brief — the room (by name, or its measurements), the piece's purpose and place, heights, style and budget — ask for what is missing without inventing a figure, and propose the confirmed numbers through `record_brief`, which pauses for the owner's `yes`. On `yes` the room, preferences and the brief are written to the house file; on `no` nothing is written and the reason returns to Intake.

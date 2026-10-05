@@ -17,7 +17,7 @@ The owner SHALL be able to start a conversation (optionally naming the piece it 
 - **THEN** the response is 401
 
 ### Requirement: A turn is one message in, one reply out
-Sending a message to a thread SHALL run exactly one Foreman turn and answer with the reply text, which specialist answered (by role name only), and either nothing pending or a pending confirmation. The turn SHALL be bounded: after the configured number of tool rounds the specialist answers in text with no further tool calls.
+Sending a message to a thread SHALL run exactly one Foreman turn and answer with the reply text, which specialist answered (by role name only), and either nothing pending or a pending confirmation. The turn SHALL be bounded: after the configured number of tool rounds the specialist answers in text with no further tool calls, and every model call in it is fitted to its model's token budget before it is sent.
 
 #### Scenario: Plain turn
 - **WHEN** the owner writes "I want a bench for the hall"
@@ -26,6 +26,13 @@ Sending a message to a thread SHALL run exactly one Foreman turn and answer with
 #### Scenario: Round cap
 - **WHEN** a specialist would call tools more times than the cap allows
 - **THEN** the turn ends with a text reply that says what remains undone
+
+### Requirement: A thread carries its tool toggles
+Each thread SHALL have a tool setting per toggleable plugin, starting from the manifest's default; the owner SHALL be able to read and change them on the thread through an owner-gated route, and a change SHALL apply from the thread's next turn. A pending confirmation SHALL resume with the tools of the turn that raised it.
+
+#### Scenario: Toggles listed
+- **WHEN** the owner reads a new thread's tools
+- **THEN** each toggleable plugin is listed with its manifest default
 
 ### Requirement: A confirmation pauses the turn until the owner answers
 When a gated action is proposed — confirmed numbers, a new piece, a revision, a `final` render — the turn SHALL pause and the reply SHALL carry a pending confirmation with a stable id, a subject, a readable summary and the structured proposal. The owner answers it on the thread with `yes` or `no` and an optional reason; `yes` runs the action and `no` returns the reason to the specialist, which continues the conversation. An answer naming no pending confirmation, or a stale id, SHALL be refused with 409. A new message while a confirmation is pending SHALL be refused with 409 naming the pending subject.
