@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, type Thread, type ToolToggle } from "../lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { cardClass } from "@/components/ui/card";
+import { Page } from "@/components/Page";
 
 function Tools({ thread }: { thread: Thread }) {
   const queryClient = useQueryClient();
@@ -17,21 +22,21 @@ function Tools({ thread }: { thread: Thread }) {
   return (
     <ul>
       {tools.data.map((tool: ToolToggle) => (
-        <li key={tool.plugin} className="row">
+        <li key={tool.plugin} className="flex items-center justify-between gap-4">
           <div>
             <strong>{tool.plugin.replaceAll("_", " ")}</strong>
             <div>{tool.description}</div>
-            {!tool.toggleable && <small>Always on</small>}
+            {!tool.toggleable && <small className="text-muted-foreground">Always on</small>}
           </div>
-          <label>
-            <input
+          <Label>
+            <Input
               type="checkbox"
               checked={tool.enabled}
               disabled={!tool.toggleable}
               aria-label={tool.plugin}
               onChange={(event) => toggle.mutate({ plugin: tool.plugin, enabled: event.target.checked })}
             />
-          </label>
+          </Label>
         </li>
       ))}
     </ul>
@@ -48,24 +53,24 @@ export default function Conversations() {
   });
 
   return (
-    <main>
+    <Page>
       <h1>Conversations</h1>
       <form
-        className="row"
+        className="flex items-center justify-between gap-4"
         onSubmit={(event) => {
           event.preventDefault();
           create.mutate();
         }}
       >
-        <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Conversation title" />
-        <button type="submit">Start</button>
+        <Input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Conversation title" />
+        <Button type="submit">Start</Button>
       </form>
       {threads.data?.map((thread) => (
-        <section key={thread.thread_id} className="card">
+        <section key={thread.thread_id} className={cardClass}>
           <h2>{thread.title || "Untitled"}</h2>
           <Tools thread={thread} />
         </section>
       ))}
-    </main>
+    </Page>
   );
 }

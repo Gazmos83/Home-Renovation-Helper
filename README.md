@@ -51,7 +51,7 @@ uv run uvicorn app.main:create_app --factory --reload
 
 ### Signing in with `curl`
 
-There is no frontend in this change. Sign in against the API directly:
+Sign in against the API directly (the Studio SPA signs in the same way):
 
 ```bash
 # Sign in — stores the session cookie in cookies.txt
@@ -226,6 +226,39 @@ a `final` answers 409 with an `approval_token` until you confirm. In chat the Bu
 `docs/renders/shells/<apartment>/v<N>/`. Reading a plan with the vision model needs
 `OPENROUTER_API_KEY`; everything after a confirmed plan works without a model.
 
+## Pricing, the price list and guidelines
+
+Prices come only from toom, read under this service's stated identity after its robots rules allow the page; a 401, 403, 429 or an unreadable robots file is an answer, reported and never retried another way. Money is euro cents.
+
+```bash
+# The toom corpus and the home store (TOOM_HOME_STORE, TODO(user) in .env.example)
+uv run python -m app.ingestion toom
+uv run python -m app.ingestion --store
+# Guideline publications listed in config/guideline_sources.yaml: your own PDFs and .md
+# files under docs/guidelines/{pdf,notes}/ (read locally, no request; pdf/ is gitignored)
+# or official URLs (robots-gated). A missing file or a refusing host is reported and
+# skipped. The official hosts checked on 2026-10-06 refused, so download those yourself.
+uv run python -m app.ingestion --guidelines
+
+# The price list (cookie from "Signing in with curl")
+curl -b cookies.txt http://localhost:8000/price-list?category=panel
+curl -b cookies.txt -X POST http://localhost:8000/price-list -H 'Content-Type: application/json' \
+  -d '{"key":"hinge","label":"Hinge","category":"hardware","unit":"per_piece","base_cents":250}'
+curl -b cookies.txt -X PUT http://localhost:8000/price-list/hinge/override -H 'Content-Type: application/json' \
+  -d '{"cents":300,"note":"bought in bulk"}'
+curl -b cookies.txt -X POST http://localhost:8000/price-list/from-url -H 'Content-Type: application/json' \
+  -d '{"url":"https://www.toom.de/p/…/3150333","key":"foam-eps","category":"finish"}'
+curl -b cookies.txt -X POST http://localhost:8000/price-list/foam-eps/refresh
+
+# Price a version (an immutable record), the remnant rack, guideline notes
+curl -b cookies.txt -X POST http://localhost:8000/packages/hall-bench/versions/1/pricings -H 'Content-Type: application/json' -d '{}'
+curl -b cookies.txt http://localhost:8000/remnants
+curl -b cookies.txt -X POST http://localhost:8000/guideline-notes -H 'Content-Type: application/json' \
+  -d '{"title":"Wardrobe passage","body":"Keep it clear.","value":900,"unit":"mm","citation":"Neufert, p. 123"}'
+```
+
+Hard design rules live in `backend/config/design_rules.yaml` (each with its quoted source; it ships empty, see the file). The Researcher answers price and product questions in chat; the Designer can search the guideline corpus.
+
 ## Model routing
 
 Per-agent model routing lives in [`backend/config/models.yaml`](backend/config/models.yaml):
@@ -290,7 +323,8 @@ With the panel off these answer 404.
 ```bash
 cd frontend
 pnpm install
-pnpm dev          # http://localhost:5173, proxies /chat /auth /admin to the backend
+pnpm dev          # http://localhost:5173, proxies the API routes to the backend
+                  # (pages: Price list, Snapshots, Remnants, Guidelines, Conversations)
 pnpm test && pnpm lint && pnpm build
 ```
 

@@ -236,3 +236,40 @@ def test_generation_needs_an_executable_binary(clean_env: None, tmp_path: Path) 
     assert ready.generation_enabled is True
     assert ready.safe_summary()["generation"] == "on"
     assert ready.safe_summary()["blender_bin"] == str(plain)
+
+
+# --- retail sources (pricing-researcher) ----------------------------------------------
+
+
+def _retail_settings(**overrides):
+    from app.config import Settings
+
+    base = {
+        "database_url": "postgresql://u:p@h/d",
+        "openrouter_api_key": "k",
+        "cors_origins": "http://localhost:5173",
+        "owner_email": "owner@example.com",
+        "owner_password": "an-initial-owner-password",
+        "_env_file": None,
+    }
+    return Settings(**{**base, **overrides})
+
+
+def test_toom_is_the_only_default_retail_source() -> None:
+    settings = _retail_settings()
+    assert settings.retail_sources == frozenset({"toom"})
+    assert settings.source_enabled("toom") and not settings.source_enabled("bauhaus")
+
+
+def test_an_unknown_retail_source_fails_startup_naming_it() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as caught:
+        _retail_settings(retail_sources="toom,bauhaus")
+    assert "bauhaus" in str(caught.value)
+
+
+def test_the_crawler_identity_falls_back_to_the_owners_email() -> None:
+    assert _retail_settings().crawler_identity == "owner@example.com"
+    assert _retail_settings(crawler_contact="https://example.org/contact").crawler_identity == "https://example.org/contact"

@@ -143,7 +143,9 @@ def test_the_prompt_carries_the_guard_once_and_binds_only_the_headers_tools(tool
     system = str(models["designer"].prompts[-1][0].content)
     assert system.count(UNTRUSTED_CONTENT_PREAMBLE) == 1
     assert system.endswith(UNTRUSTED_CONTENT_PREAMBLE)
-    assert set(models["designer"].bound_tools) == {"create_piece", "revise_package", "cut_list", "room_fit"}
+    assert set(models["designer"].bound_tools) == {
+        "create_piece", "revise_package", "cut_list", "room_fit", "search_guidelines",
+    }
     assert models["intake"].bound_tools == ["record_brief", "record_plan"]
     # The Foreman's own prompt is guarded and binds nothing.
     foreman_prompt = "\n".join(str(m.content) for m in models["foreman"].decision_prompts[-1])
@@ -249,3 +251,23 @@ def test_the_reviewer_binds_only_revision_review(tool_state) -> None:
     _bind_piece(tool_state, harness, screenshot=True)
     harness.turn("check it")
     assert models["reviewer"].bound_tools == ["revision_review"]
+
+
+def test_a_price_question_goes_to_the_researcher_even_without_a_brief_or_piece(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("researcher")]},
+        intake={"replies": ["should not run"]},
+        researcher={"replies": ["I can look that up."]},
+    )
+    state = make_harness(tool_state, models).turn("what does a birch ply sheet cost?")
+    assert state["specialist"] == "researcher"
+    assert models["intake"].calls == 0
+    assert last_reply(state) == "I can look that up."
+
+
+def test_the_researcher_binds_exactly_its_five_tools(tool_state) -> None:
+    models = fake_models(foreman={"decisions": [decision("researcher")]}, researcher={"replies": ["Ok."]})
+    make_harness(tool_state, models).turn("price it")
+    assert set(models["researcher"].bound_tools) == {
+        "search_catalog_knowledge", "check_live_listing", "compare_products", "price_cut_list", "manage_remnants",
+    }

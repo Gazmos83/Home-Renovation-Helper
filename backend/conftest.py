@@ -177,6 +177,20 @@ def db_session(migrated_database: str) -> Iterator[Session]:
     engine.dispose()
 
 
+def embedding(seed: int, *, magnitude: float = 1.0) -> list[float]:
+    """A one-hot vector of the provisioned width.
+
+    One-hot keeps cosine similarity trivial to reason about in assertions:
+    identical vectors score 1.0, different positions score 0.0. A zero vector
+    would leave cosine distance undefined, so `magnitude` is never 0.
+    """
+    from app.db.models import EMBEDDING_DIMENSIONS
+
+    vector = [0.0] * EMBEDDING_DIMENSIONS
+    vector[seed % EMBEDDING_DIMENSIONS] = magnitude
+    return vector
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--live",

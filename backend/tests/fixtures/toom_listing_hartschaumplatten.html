@@ -1,0 +1,57 @@
+<!--
+  Trimmed stand-in for toom's category listing page (/c/bauen-renovieren/
+  baustoffe/daemmung/hartschaumplatten), reproducing the real markup a live
+  fetch confirmed on 2026-09-17: each product tile is
+  <a data-testid="m-product-teaser" href="/p/...">, its name lives in a
+  data-testid="m-product-teaser-name" child, the tile states both a per-unit
+  price and the purchasable pack's price fused with no separator, and the
+  stock line is one of three verbs ("Verfügbar"/"Nicht verfügbar"/
+  "Bestellbar") followed by the store, with "Nur wenige verfügbar" fused onto
+  the store name when stock is low. See ../../../openspec/changes/
+  add-tools-session-memory-chat/docs/live-probe.md.
+-->
+<html>
+<head><title>Hartschaumplatten | toom Baumarkt</title></head>
+<body>
+  <nav>
+    <ul>
+      <li><a href="/c/holz">Holz</a></li>
+      <li><a href="/c/farben">Farben</a></li>
+      <li><a href="/c/daemmstoffe">Dämmstoffe</a></li>
+    </ul>
+  </nav>
+  <main>
+    <h1>Hartschaumplatten</h1>
+    <section class="product-list">
+      <div class="css-1r77zrg">
+        <a data-testid="m-product-teaser" href="/p/hartschaumplatte-eps-040-50-x-100-cm/3150333">
+          <span data-testid="m-product-teaser-name">Hartschaumplatte EPS 040 50 x 100 cm</span>
+          <div data-testid="m-product-teaser-prices">
+            <span><span>1</span><span>,</span><span>82</span><span> €</span><span> / Kilogramm</span></span>
+            <div><span>36,49 € / Pack</span></div>
+          </div>
+          <ul data-testid="m-product-teaser-availabilities">
+            <li>Lieferung nach Hause</li>
+            <li><span>Verfügbar in </span><button>Troisdorf</button>Nur wenige verfügbar</li>
+          </ul>
+        </a>
+      </div>
+      <div class="css-1r77zrg">
+        <a data-testid="m-product-teaser" href="/p/hartschaumplatte-eps-035-100-x-100-cm/3150334">
+          <span data-testid="m-product-teaser-name">Hartschaumplatte EPS 035 100 x 100 cm</span>
+          <div data-testid="m-product-teaser-prices">
+            <span><span>1</span><span>,</span><span>25</span><span> €</span><span> / Kilogramm</span></span>
+            <div><span>24,99 € / Pack</span></div>
+          </div>
+          <ul data-testid="m-product-teaser-availabilities">
+            <li>Lieferung nach Hause</li>
+            <li><span>Verfügbar in </span><button>Troisdorf</button></li>
+          </ul>
+        </a>
+      </div>
+    </section>
+  </main>
+  <footer><a href="/service/kontakt">Kontakt</a></footer>
+  <script>window.__STATE__ = {"hidden": "not a real price 99,99 €"};</script>
+</body>
+</html>

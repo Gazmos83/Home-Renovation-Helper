@@ -118,3 +118,53 @@ def wait_for_status(folder: Path, wanted: str = "succeeded", seconds: float = 10
             return state
         time.sleep(0.05)
     raise AssertionError(f"{folder.name} never reached {wanted!r}; last status {state}")
+
+
+@pytest.fixture
+def clean_chunks(migrated_database: str) -> Iterator[None]:
+    """An empty corpus before and after a test that commits chunks."""
+    engine = make_engine(migrated_database)
+
+    def empty() -> None:
+        with Session(engine) as session:
+            session.execute(text("DELETE FROM chunks"))
+            session.commit()
+
+    empty()
+    yield
+    empty()
+    engine.dispose()
+
+
+class FakeEmbedder:
+    """A deterministic stand-in for bge-m3: words hash into the vector's slots.
+
+    Texts that share words score closer; identical texts score 1.0. Enough to
+    exercise retrieval end to end with no model load.
+    """
+
+    def __call__(self, texts):
+        import hashlib
+        import math
+
+        from app.db.models import EMBEDDING_DIMENSIONS
+
+        vectors = []
+        for text_ in texts:
+            vector = [0.0] * EMBEDDING_DIMENSIONS
+            for word in text_.casefold().split():
+                slot = int(hashlib.sha256(word.encode()).hexdigest(), 16) % EMBEDDING_DIMENSIONS
+                vector[slot] += 1.0
+            norm = math.sqrt(sum(v * v for v in vector)) or 1.0
+            vectors.append([v / norm for v in vector])
+        return vectors
+
+
+@pytest.fixture
+def fake_embedder() -> Iterator[FakeEmbedder]:
+    from app import embedding
+
+    embedder = FakeEmbedder()
+    embedding.set_embedder(embedder)
+    yield embedder
+    embedding.set_embedder(None)

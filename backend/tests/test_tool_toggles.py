@@ -86,4 +86,6 @@ def test_a_resumed_confirmation_keeps_the_turns_tools(tool_state) -> None:
 
     next_turn = harness.turn("design it")
     assert "room_fit" not in next_turn["bound_tools"]["designer"]
-    assert set(models["designer"].bound_tools) == {"create_piece", "revise_package", "cut_list"}
+    assert set(models["designer"].bound_tools) == {
+        "create_piece", "revise_package", "cut_list", "search_guidelines",
+    }

@@ -23,7 +23,7 @@ from app.agent.prompts import SENTINEL
 
 INSTRUCTIONS_DIR: Final = Path(__file__).parent
 
-AGENT_NAMES: Final[tuple[str, ...]] = ("foreman", "intake", "designer", "builder", "reviewer")
+AGENT_NAMES: Final[tuple[str, ...]] = ("foreman", "intake", "designer", "builder", "reviewer", "researcher")
 
 
 class InstructionError(ValueError):

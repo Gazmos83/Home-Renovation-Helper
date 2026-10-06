@@ -2,8 +2,8 @@
 
 `load_house` reads the house file and the thread, `foreman` chooses one
 specialist (a structured decision from the `foreman` slot's model, then bounded
-by code rules), and the chosen specialist — Intake, Designer, Builder or
-Reviewer — runs its own bounded `agent ⇄ tools` loop. One compiled graph on one
+by code rules), and the chosen specialist — Intake, Designer, Builder,
+Reviewer or Researcher — runs its own bounded `agent ⇄ tools` loop. One compiled graph on one
 checkpointer thread means a paused confirmation resumes inside the specialist
 that raised it.
 
@@ -61,7 +61,7 @@ from app.plugins.loader import Plugins
 logger = logging.getLogger("app")
 
 MAX_TOOL_ROUNDS: Final = 6
-SPECIALISTS: Final = ("intake", "designer", "builder", "reviewer")
+SPECIALISTS: Final = ("intake", "designer", "builder", "reviewer", "researcher")
 
 TEMPLATES_DIR: Final = Path(__file__).resolve().parents[2] / "fixtures" / "packages" / "templates"
 
@@ -76,6 +76,7 @@ DECLINED: Final[dict[str, str]] = {
     "create_piece": "The piece was not created.",
     "revise": "No revision was created.",
     "final_render": "The final render was not started.",
+    "remnant": "The remnant rack was not changed.",
 }
 
 ModelProvider = Callable[[str], Any]
@@ -100,7 +101,7 @@ class ChatState(TypedDict, total=False):
 class Decision(BaseModel):
     """The Foreman's choice for this turn."""
 
-    specialist: Literal["intake", "designer", "builder", "reviewer"]
+    specialist: Literal["intake", "designer", "builder", "reviewer", "researcher"]
     reason: str = Field(description="one sentence")
 
 
@@ -364,7 +365,7 @@ def build_graph(
 
     def foreman(
         state: ChatState, config: RunnableConfig
-    ) -> Command[Literal["intake", "designer", "builder", "reviewer", "__end__"]]:
+    ) -> Command[Literal["intake", "designer", "builder", "reviewer", "researcher", "__end__"]]:
         instruction = loaded["foreman"]
         system = compose_agent_prompt(instruction.text, state.get("facts", ""), state.get("house_note", ""))
         try:
@@ -397,7 +398,7 @@ def build_graph(
             chosen = "designer" if state.get("brief") else "intake"
         if chosen == "reviewer" and not state.get("review_ready"):
             chosen = "builder" if buildable else ("designer" if state.get("brief") else "intake")
-        if not buildable and not state.get("brief"):
+        if not buildable and not state.get("brief") and chosen not in ("reviewer", "researcher"):
             chosen = "intake"
         return Command(update={"specialist": chosen, "reason": reason}, goto=chosen)
 

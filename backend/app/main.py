@@ -34,9 +34,12 @@ from app.api.admin_usage import router as admin_usage_router
 from app.api.apartments import router as apartments_router
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
+from app.api.guideline_notes import router as guideline_notes_router
 from app.api.health import router as health_router
 from app.api.limits import RateLimiter
 from app.api.packages import router as packages_router
+from app.api.price_list import router as price_list_router
+from app.api.pricing import router as pricing_router
 from app.api.renders import router as renders_router
 from app.api.reviews import item_router as review_item_router
 from app.api.reviews import version_router as package_reviews_router
@@ -46,6 +49,8 @@ from app.auth.accounts import ensure_owner
 from app.blender import storage
 from app.config import Settings, get_settings
 from app.db.session import make_engine
+from app.guidelines.rules import load_rules
+from app.ingestion.live_fetcher import make_live_fetcher
 from app.observability.langfuse import Tracing
 from app.plugins.binding import attach_https_tools
 from app.plugins.executor import PluginExecutor
@@ -200,6 +205,7 @@ async def _lifespan(app: FastAPI):
         if app.state.checkpointer_pool is not None:
             app.state.checkpointer_pool.close()
         app.state.tracing.flush()
+        app.state.live_fetcher.close()
         app.state.engine.dispose()
 
 
@@ -225,12 +231,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The three render tiers (a bad render.yaml stops startup by name) and the
     # in-memory single-use approvals for `final` renders.
     app.state.tiers = load_tiers()
+    # The hard design rules; a rule without a source stops startup naming it.
+    app.state.design_rules = load_rules()
     app.state.render_approvals = ApprovalStore()
     # Built in the lifespan; `None` until then, and without a checkpointer.
     app.state.graph = None
     app.state.loop = None
     app.state.auth_rate_limiter = RateLimiter(
         settings.auth_rate_limit, settings.auth_rate_limit_window_seconds
+    )
+    # Reading retailer pages: one long-lived, robots-gated, cached fetcher, and a
+    # limit on the requests that each cause a page read (price capture, refresh).
+    app.state.live_fetcher = make_live_fetcher(
+        contact=settings.crawler_identity,
+        min_interval_seconds=settings.ingestion_min_interval_seconds,
+    )
+    app.state.price_rate_limiter = RateLimiter(
+        settings.rate_limit_price_fetch, settings.rate_limit_price_fetch_window_seconds
     )
     app.state.plugins = load_plugins(allowed_hosts=settings.plugin_allowed_hosts)
     app.state.plugin_executor = PluginExecutor(app.state.engine, settings)
@@ -247,6 +264,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(uploads_router)
     app.include_router(renders_router)
     app.include_router(apartments_router)
+    app.include_router(price_list_router)
+    app.include_router(pricing_router)
+    app.include_router(guideline_notes_router)
     app.include_router(admin_render_router)
     app.include_router(admin_models_router)
     app.include_router(admin_plugins_router)

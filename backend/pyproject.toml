@@ -4,6 +4,8 @@ version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.20.0",
+    "beautifulsoup4>=4.15.0",
+    "defusedxml>=0.7.1",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "langchain>=1.4.2",
@@ -14,13 +16,27 @@ dependencies = [
     "pgvector>=0.5.0",
     "psycopg[binary]>=3.3.5",
     "pwdlib[argon2]>=0.3.1",
+    "pypdf>=5.0.0",
     "pydantic-settings>=2.15.0",
     "pydantic[email]>=2.13.5",
     "python-multipart>=0.0.32",
     "pyyaml>=6.0.3",
+    "sentence-transformers>=6.0.1",
     "sqlalchemy>=2.0.52",
+    "torch>=2.14.0",
     "uvicorn[standard]>=0.54.0",
 ]
+
+# CPU-only PyTorch. This machine has no GPU, and the default PyPI torch wheel
+# pulls the CUDA stack. `explicit = true` means only the packages named in
+# [tool.uv.sources] come from this index.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
 
 [dependency-groups]
 dev = [
@@ -33,4 +49,5 @@ dev = [
 markers = [
     "live: runs the real OpenRouter gateway (spends money); needs --live",
     "blender: invokes the pinned Blender 5.2.1 LTS binary; needs --blender",
+    "slow: loads the real embedding model (minutes on a cold cache); deselect with -m \"not slow\"",
 ]

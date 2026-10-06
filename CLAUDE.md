@@ -97,9 +97,9 @@ Each tool is a folder under `backend/plugins/<name>/` with `manifest.yaml` (name
 | 5 | `room_fit` | Designer | port | polygon room contract, openings, placement validation |
 | — | `intake` | Intake | port | `record_brief`, `record_plan`; not toggleable |
 | — | `create_piece` | Designer | port | not toggleable |
-| — | `guidelines` | Designer | stub | `search_guidelines`; filled in by pricing-researcher |
-| 6 | `material_cost` | Researcher | stub | `price_cut_list`, `manage_remnants`; filled in by pricing-researcher |
-| — | `catalog_research` | Researcher | stub | catalogue lookups; filled in by pricing-researcher |
+| — | `guidelines` | Designer | new | `search_guidelines` over official rules and the owner's notes; hard rules in `config/design_rules.yaml` |
+| 6 | `material_cost` | Researcher | port + extend | `price_cut_list`, `manage_remnants`; §5a |
+| — | `catalog_research` | Researcher | port | `search_catalog_knowledge`, `check_live_listing`, `compare_products` |
 | 7 | `revision_review` | Reviewer | port | render vs spec vs brief; discrepancy list; no write tool |
 | 8 | `photoreal_detail` | Lighting | later | carpentry pass over the socket, allow-listed, `final` tier only |
 

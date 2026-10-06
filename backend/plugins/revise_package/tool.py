@@ -34,6 +34,7 @@ from app.agent.tools.shared import (
 from app.blender import storage
 from app.blender.schemas import PackageChanges, describe_validation_error
 from app.db.models import Piece
+from app.guidelines.rules import piece_outcome
 from app.packages import service
 
 
@@ -95,9 +96,15 @@ def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
     unavailable = builds_unavailable(ctx.deps)
     if unavailable:
         return unavailable
+    refusal, warnings = piece_outcome(ctx.deps.design_rules, spec)
+    if refusal:
+        return refusal
+    summary = f"Revise {package_id} (from version {latest}):\n" + "\n".join(lines)
+    if warnings:
+        summary += f"\nDesign-rule warnings: {warnings}"
     return Confirmation(
         subject="revise",
-        summary=f"Revise {package_id} (from version {latest}):\n" + "\n".join(lines),
+        summary=summary,
         proposal={"package_id": package_id, "revised_from": latest, "changes": lines},
     )
 
@@ -111,6 +118,9 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
     unavailable = builds_unavailable(ctx.deps)
     if unavailable:
         return unavailable
+    refusal, _warnings = piece_outcome(ctx.deps.design_rules, spec)
+    if refusal:
+        return refusal
 
     created = service.create_version(
         ctx.deps.render_root,

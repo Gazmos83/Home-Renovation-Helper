@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api } from "../../lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
+import { cardClass } from "@/components/ui/card";
+import { Page } from "@/components/Page";
 
 export default function Models() {
   const queryClient = useQueryClient();
@@ -39,19 +45,19 @@ export default function Models() {
     },
   });
 
-  if (!models.data) return <main>Loading…</main>;
+  if (!models.data) return <Page>Loading…</Page>;
   const slugs = models.data.registry.filter((row) => row.slug).map((row) => row.slug);
 
   return (
-    <main>
+    <Page>
       <h1>Models and routing</h1>
       {models.data.slots.map((slot) => (
-        <section key={slot.slot} className="card">
+        <section key={slot.slot} className={cardClass}>
           <h2>
             {slot.slot} {slot.override ? "(override)" : ""}
           </h2>
-          <label htmlFor={`route-${slot.slot}`}>Model</label>
-          <select
+          <Label htmlFor={`route-${slot.slot}`}>Model</Label>
+          <Select
             id={`route-${slot.slot}`}
             value={slot.model}
             onChange={(event) => route.mutate({ slot: slot.slot, model: event.target.value })}
@@ -61,13 +67,13 @@ export default function Models() {
                 {slug}
               </option>
             ))}
-          </select>
-          {errors[`route-${slot.slot}`] && <p className="error">{errors[`route-${slot.slot}`]}</p>}
+          </Select>
+          {errors[`route-${slot.slot}`] && <p className="text-sm text-destructive">{errors[`route-${slot.slot}`]}</p>}
         </section>
       ))}
       <h1>Generation and budgets</h1>
       {models.data.models.map((model) => (
-        <section key={model.slug} className="card">
+        <section key={model.slug} className={cardClass}>
           <h2>{model.slug}</h2>
           <p>Today: {model.usage_today} tokens</p>
           <form
@@ -79,27 +85,27 @@ export default function Models() {
               budget.mutate({ slug: model.slug, context_budget_tokens: context, daily_token_ceiling: daily });
             }}
           >
-            <label htmlFor={`context-${model.slug}`}>Context budget</label>
-            <input
+            <Label htmlFor={`context-${model.slug}`}>Context budget</Label>
+            <Input
               id={`context-${model.slug}`}
               name="context"
               type="number"
               defaultValue={model.context_budget_tokens}
             />
             {errors[`budget-${model.slug}-context_budget_tokens`] && (
-              <p className="error">{errors[`budget-${model.slug}-context_budget_tokens`]}</p>
+              <p className="text-sm text-destructive">{errors[`budget-${model.slug}-context_budget_tokens`]}</p>
             )}
-            <label htmlFor={`daily-${model.slug}`}>Daily ceiling</label>
-            <input id={`daily-${model.slug}`} name="daily" type="number" defaultValue={model.daily_token_ceiling} />
+            <Label htmlFor={`daily-${model.slug}`}>Daily ceiling</Label>
+            <Input id={`daily-${model.slug}`} name="daily" type="number" defaultValue={model.daily_token_ceiling} />
             {errors[`budget-${model.slug}-daily_token_ceiling`] && (
-              <p className="error">{errors[`budget-${model.slug}-daily_token_ceiling`]}</p>
+              <p className="text-sm text-destructive">{errors[`budget-${model.slug}-daily_token_ceiling`]}</p>
             )}
             <p>
-              <button type="submit">Save budget</button>
+              <Button type="submit">Save budget</Button>
             </p>
           </form>
         </section>
       ))}
-    </main>
+    </Page>
   );
 }

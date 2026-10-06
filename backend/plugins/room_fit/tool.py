@@ -19,6 +19,7 @@ from app.agent.tools.shared import read_input, version_folder
 from app.blender.custom_build import derive as custom_derive
 from app.blender.room_contract import normalise_room_scene
 from app.blender.spec_contract import SpecValidationError
+from app.guidelines.rules import evaluate, partition, refusal_text, warnings_note
 
 
 class RoomFitArgs(BaseModel):
@@ -102,9 +103,14 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
         "offset_mm": context.placement["offset_mm"],
         "package_overall_mm": overall,
     }
+    refusals, warnings = partition(evaluate(ctx.deps.design_rules, "placement", context))
+    if refusals:
+        return refusal_text(refusals)
+    note = f"Design-rule warnings: {warnings_note(warnings)}\n" if warnings else ""
     return (
         f"{args.package_id} version {number} fits in {args.room_name} on wall {args.wall} at "
         f"offset {args.offset_mm:g} mm.\n"
+        f"{note}"
         f"Placement: {json.dumps(placement)}\n"
         f"Room document (pass it as `room` to render_turntable): {json.dumps(context.input_document())}"
     )

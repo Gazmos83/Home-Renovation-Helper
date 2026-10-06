@@ -26,7 +26,7 @@ def _copy(tmp_path: Path) -> Path:
 
 def test_all_instruction_files_load() -> None:
     loaded = load_instructions()
-    assert list(loaded) == ["foreman", "intake", "designer", "builder", "reviewer"]
+    assert list(loaded) == ["foreman", "intake", "designer", "builder", "reviewer", "researcher"]
     for name, instruction in loaded.items():
         assert instruction.name == name
         assert instruction.slot == name
@@ -37,9 +37,14 @@ def test_each_agent_names_exactly_its_tools() -> None:
     loaded = load_instructions()
     assert loaded["foreman"].tools == ()
     assert loaded["intake"].tools == ("record_brief", "record_plan")
-    assert set(loaded["designer"].tools) == {"create_piece", "revise_package", "cut_list", "room_fit"}
+    assert set(loaded["designer"].tools) == {
+        "create_piece", "revise_package", "cut_list", "room_fit", "search_guidelines",
+    }
     assert set(loaded["builder"].tools) == {"blender_build", "build_shell", "render_turntable"}
     assert loaded["reviewer"].tools == ("revision_review",)
+    assert set(loaded["researcher"].tools) == {
+        "search_catalog_knowledge", "check_live_listing", "compare_products", "price_cut_list", "manage_remnants",
+    }
 
 
 def test_the_designer_and_builder_never_offer_blender_code() -> None:
@@ -59,7 +64,7 @@ def _break(tmp_path: Path, name: str, edit) -> str:
 
 def test_an_unknown_tool_fails_naming_the_file(tmp_path: Path) -> None:
     message = _break(
-        tmp_path, "designer", lambda text: text.replace("room_fit]", "room_fit, run_bpy]", 1)
+        tmp_path, "designer", lambda text: text.replace("search_guidelines]", "search_guidelines, run_bpy]", 1)
     )
     assert message.startswith("designer.md:")
     assert "run_bpy" in message
@@ -88,6 +93,13 @@ def test_a_missing_file_fails_naming_it(tmp_path: Path) -> None:
     directory = _copy(tmp_path)
     (directory / "builder.md").unlink()
     with pytest.raises(InstructionError, match=r"builder\.md: the instruction file is missing"):
+        load_instructions(directory)
+
+
+def test_a_missing_researcher_file_fails_naming_it(tmp_path: Path) -> None:
+    directory = _copy(tmp_path)
+    (directory / "researcher.md").unlink()
+    with pytest.raises(InstructionError, match=r"researcher\.md: the instruction file is missing"):
         load_instructions(directory)
 
 

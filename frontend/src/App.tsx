@@ -1,11 +1,46 @@
 import { useEffect, useState } from "react";
-import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { api } from "./lib/api";
+import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { cn } from "@/lib/utils";
+import { api, onUnauthorized } from "./lib/api";
+import { Page } from "@/components/Page";
 import Conversations from "./routes/Conversations";
+import GuidelineNotes from "./routes/GuidelineNotes";
 import Login from "./routes/Login";
+import PriceList from "./routes/PriceList";
+import Remnants from "./routes/Remnants";
+import Snapshots from "./routes/Snapshots";
 import Models from "./routes/admin/Models";
 import Plugins from "./routes/admin/Plugins";
 import Usage from "./routes/admin/Usage";
+
+const links = [
+  ["/conversations", "Conversations"],
+  ["/price-list", "Price list"],
+  ["/snapshots", "Snapshots"],
+  ["/remnants", "Remnants"],
+  ["/guidelines", "Guidelines"],
+] as const;
+const adminLinks = [
+  ["/admin/models", "Models"],
+  ["/admin/plugins", "Plugins"],
+  ["/admin/usage", "Usage"],
+] as const;
+
+function NavItem({ to, label }: { to: string; label: string }) {
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) =>
+        cn(
+          "rounded-md px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent",
+          isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground",
+        )
+      }
+    >
+      {label}
+    </NavLink>
+  );
+}
 
 export default function App() {
   const location = useLocation();
@@ -19,6 +54,9 @@ export default function App() {
       .catch(() => setSignedIn(false));
   }, [location.pathname]);
 
+  // Any call answered 401 returns the owner to sign-in.
+  useEffect(() => onUnauthorized(() => setSignedIn(false)), []);
+
   useEffect(() => {
     if (!signedIn) {
       setDev(false);
@@ -30,21 +68,27 @@ export default function App() {
       .catch(() => setDev(false));
   }, [signedIn]);
 
-  if (signedIn === null) return <main>Loading…</main>;
+  if (signedIn === null) return <Page>Loading…</Page>;
 
   return (
     <>
       {signedIn && (
-        <nav>
-          <Link to="/conversations">Conversations</Link>
-          {dev && (
-            <>
-              <Link to="/admin/models">Models</Link>
-              <Link to="/admin/plugins">Plugins</Link>
-              <Link to="/admin/usage">Usage</Link>
-            </>
-          )}
-        </nav>
+        <header className="border-b bg-card">
+          <nav aria-label="Main" className="mx-auto flex max-w-5xl flex-wrap items-center gap-1 px-4 py-2 sm:px-6">
+            <span className="mr-4 font-semibold">Home Renovation</span>
+            {links.map(([to, label]) => (
+              <NavItem key={to} to={to} label={label} />
+            ))}
+            {dev && (
+              <>
+                <span className="mx-2 h-5 w-px bg-border" aria-hidden />
+                {adminLinks.map(([to, label]) => (
+                  <NavItem key={to} to={to} label={label} />
+                ))}
+              </>
+            )}
+          </nav>
+        </header>
       )}
       <Routes>
         <Route path="/login" element={<Login onSignedIn={() => setSignedIn(true)} />} />
@@ -52,6 +96,10 @@ export default function App() {
           path="/conversations"
           element={signedIn ? <Conversations /> : <Navigate to="/login" replace />}
         />
+        <Route path="/price-list" element={signedIn ? <PriceList /> : <Navigate to="/login" replace />} />
+        <Route path="/snapshots" element={signedIn ? <Snapshots /> : <Navigate to="/login" replace />} />
+        <Route path="/remnants" element={signedIn ? <Remnants /> : <Navigate to="/login" replace />} />
+        <Route path="/guidelines" element={signedIn ? <GuidelineNotes /> : <Navigate to="/login" replace />} />
         <Route
           path="/admin/models"
           element={signedIn && dev ? <Models /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}

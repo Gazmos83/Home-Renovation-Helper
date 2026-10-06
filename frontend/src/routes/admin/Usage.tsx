@@ -1,34 +1,36 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
+import { Page } from "@/components/Page";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 export default function Usage() {
   const usage = useQuery({ queryKey: ["admin-usage"], queryFn: () => api.usage(1) });
-  if (!usage.data) return <main>Loading…</main>;
+  if (!usage.data) return <Page>Loading…</Page>;
   return (
-    <main>
+    <Page>
       <h1>Usage</h1>
-      <table>
-        <thead>
-          <tr>
-            <th>Model</th>
-            <th>Day</th>
-            <th>Input</th>
-            <th>Output</th>
-            <th>Calls</th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Model</TableHead>
+            <TableHead>Day</TableHead>
+            <TableHead>Input</TableHead>
+            <TableHead>Output</TableHead>
+            <TableHead>Calls</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {usage.data.map((row) => (
-            <tr key={`${row.model}-${row.day}`}>
-              <td>{row.model}</td>
-              <td>{row.day}</td>
-              <td>{row.input_tokens}</td>
-              <td>{row.output_tokens}</td>
-              <td>{row.calls}</td>
-            </tr>
+            <TableRow key={`${row.model}-${row.day}`}>
+              <TableCell>{row.model}</TableCell>
+              <TableCell>{row.day}</TableCell>
+              <TableCell>{row.input_tokens}</TableCell>
+              <TableCell>{row.output_tokens}</TableCell>
+              <TableCell>{row.calls}</TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
-    </main>
+        </TableBody>
+      </Table>
+    </Page>
   );
 }

@@ -13,30 +13,39 @@ changes add pricing and the rest.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from enum import StrEnum
-from typing import Final
+from typing import Any, Final
 from uuid import UUID, uuid4
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Computed,
+    Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
+    UniqueConstraint,
+    Uuid,
     func,
+    text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-# The width `BAAI/bge-m3` emits (CLAUDE.md §2). No table here stores a vector
-# yet — the `vector` extension is enabled by the first migration so later steps
-# need no separate migration for it — but the constant lives here so the model
-# and any future embedding column cannot drift apart.
+# The width `BAAI/bge-m3` emits (CLAUDE.md §2). The `chunks` table stores it; the
+# constant lives here so the model and the embedder cannot drift apart.
 EMBEDDING_DIMENSIONS: Final = 1024
+# The text-search configuration the corpus is indexed and searched with.
+FTS_CONFIG: Final = "german"
 
 
 class Base(DeclarativeBase):
@@ -448,4 +457,395 @@ class ReviewItem(Base):
         ),
         CheckConstraint("image >= 1", name="ck_review_items_image_positive"),
         Index("ix_review_items_review_id", "review_id"),
+    )
+
+
+# --- pricing, stores and the corpus (pricing-researcher) -----------------------------------
+
+
+class SupplierPriceCategory(StrEnum):
+    PANEL = "panel"
+    HARDWARE = "hardware"
+    FINISH = "finish"
+    EDGE_BAND = "edge_band"
+    CUT_SERVICE = "cut_service"
+    DELIVERY = "delivery"
+
+
+class SupplierPriceUnit(StrEnum):
+    PER_M2 = "per_m2"
+    PER_PIECE = "per_piece"
+    PER_METRE = "per_metre"
+    PER_CUT = "per_cut"
+
+
+class Provenance(StrEnum):
+    CAPTURED = "captured"
+    MANUAL = "manual"
+    SNAPSHOT = "snapshot"
+
+
+def _in_vocabulary(column: str, vocabulary: type[StrEnum]) -> str:
+    return f"{column} IN ({', '.join(repr(member.value) for member in vocabulary)})"
+
+
+class ProductSnapshot(Base):
+    """A product page's details recorded by hand (the record of what the owner typed).
+
+    Kept even after a re-record replaces the derived chunks for the same `url`.
+    A snapshot never enables crawling or live lookup for its retailer.
+    """
+
+    __tablename__ = "product_snapshots"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    retailer: Mapped[str] = mapped_column(String(32), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    product_name: Mapped[str] = mapped_column(Text, nullable=False)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    availability: Mapped[str | None] = mapped_column(Text, nullable=True)
+    specification: Mapped[str] = mapped_column(Text, nullable=False)
+    store_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    captured_on: Mapped[date] = mapped_column(Date, nullable=False)
+    # The owner who typed it. A plain id, not a foreign key: a key to `users` would
+    # make truncating the account table cascade into the price list through
+    # `supplier_prices.snapshot_id`.
+    recorded_by_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("btrim(retailer) <> ''", name="ck_product_snapshots_retailer_not_blank"),
+        CheckConstraint("btrim(url) <> ''", name="ck_product_snapshots_url_not_blank"),
+        CheckConstraint("btrim(product_name) <> ''", name="ck_product_snapshots_name_not_blank"),
+        CheckConstraint(
+            "btrim(specification) <> ''", name="ck_product_snapshots_specification_not_blank"
+        ),
+        CheckConstraint("price IS NULL OR price >= 0", name="ck_product_snapshots_price_non_negative"),
+        Index("ix_product_snapshots_url_captured_on", "url", "captured_on"),
+    )
+
+
+class SupplierPrice(Base):
+    """One price-list entry, keyed uniquely by `key`.
+
+    `base_cents` is where the price came from (`provenance`: a fetched page, a
+    hand entry or a snapshot); `override_cents` is the owner's layer on top. The
+    effective price is the override when set, else the base — both stay readable.
+    `unconfirmed` marks the dated planning figures seeded by the migration.
+    """
+
+    __tablename__ = "supplier_prices"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    category: Mapped[str] = mapped_column(String(16), nullable=False)
+    unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_site: Mapped[str] = mapped_column(String(32), nullable=False, default="toom")
+
+    sheet_length_mm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sheet_width_mm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    thickness_mm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bundle_length_mm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    base_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    provenance: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    snapshot_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("product_snapshots.id", ondelete="RESTRICT"), nullable=True
+    )
+
+    override_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    override_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    override_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    unconfirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("btrim(key) <> ''", name="ck_supplier_prices_key_not_blank"),
+        CheckConstraint("btrim(label) <> ''", name="ck_supplier_prices_label_not_blank"),
+        CheckConstraint(
+            _in_vocabulary("category", SupplierPriceCategory), name="ck_supplier_prices_category_known"
+        ),
+        CheckConstraint(_in_vocabulary("unit", SupplierPriceUnit), name="ck_supplier_prices_unit_known"),
+        CheckConstraint(
+            _in_vocabulary("provenance", Provenance), name="ck_supplier_prices_provenance_known"
+        ),
+        CheckConstraint(
+            "category <> 'panel' OR (sheet_width_mm IS NOT NULL "
+            "AND sheet_length_mm IS NOT NULL AND thickness_mm IS NOT NULL)",
+            name="ck_supplier_prices_panel_has_sheet",
+        ),
+        CheckConstraint(
+            "base_cents IS NULL OR base_cents >= 0", name="ck_supplier_prices_base_non_negative"
+        ),
+        CheckConstraint(
+            "override_cents IS NULL OR override_cents >= 0",
+            name="ck_supplier_prices_override_non_negative",
+        ),
+        CheckConstraint(
+            "bundle_length_mm IS NULL OR bundle_length_mm > 0",
+            name="ck_supplier_prices_bundle_length_positive",
+        ),
+        Index("ix_supplier_prices_category", "category"),
+    )
+
+    @property
+    def effective_cents(self) -> int | None:
+        """Override when present, base price otherwise — never both."""
+        return self.override_cents if self.override_cents is not None else self.base_cents
+
+
+class Store(Base):
+    """A physical store (the home store); `store_key` is the retailer's own slug."""
+
+    __tablename__ = "stores"
+
+    store_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    source_site: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The retailer's own market identifier; null when never published, and
+    # reported as such rather than answered against a default market.
+    market_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("btrim(store_key) <> ''", name="ck_stores_key_not_blank"),
+        CheckConstraint("btrim(url) <> ''", name="ck_stores_url_not_blank"),
+    )
+
+
+class StoreService(Base):
+    """A cutting service at one store: whether it is performed, and its price."""
+
+    __tablename__ = "store_services"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    store_key: Mapped[str] = mapped_column(
+        ForeignKey("stores.store_key", ondelete="CASCADE"), nullable=False
+    )
+    service: Mapped[str] = mapped_column(String(64), nullable=False)
+    availability: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Null means not established; zero means performed at no charge.
+    price_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("store_key", "service", name="uq_store_service"),
+        CheckConstraint(
+            "price_cents IS NULL OR price_cents >= 0", name="ck_store_service_price_non_negative"
+        ),
+    )
+
+
+class StoreCutRestriction(Base):
+    """A limit the owner established on site. Never touched by ingestion."""
+
+    __tablename__ = "store_cut_restrictions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    store_key: Mapped[str] = mapped_column(
+        ForeignKey("stores.store_key", ondelete="CASCADE"), nullable=False
+    )
+    restriction: Mapped[str] = mapped_column(String(48), nullable=False)
+    numeric_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    text_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recorded_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("store_key", "restriction", name="uq_store_cut_restriction"),
+        CheckConstraint(
+            "numeric_value IS NOT NULL OR text_value IS NOT NULL",
+            name="ck_store_restriction_has_a_value",
+        ),
+        CheckConstraint("btrim(recorded_by) <> ''", name="ck_store_restriction_has_an_author"),
+    )
+
+
+class CutListPricing(Base):
+    """One immutable `price_cut_list` record for a package version.
+
+    `result` carries every line and the sheet groups; the money columns are its
+    totals. It never changes after it is written — repricing makes a new row.
+    """
+
+    __tablename__ = "cut_list_pricings"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    package_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    store_key: Mapped[str] = mapped_column(ForeignKey("stores.store_key"), nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    materials_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    cut_service_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    banding_cents: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    hardware_cents: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    delivery_cents: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    total_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    complete: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    custom_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    undetermined_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    review_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    unpriced_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    result: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    # Null until chosen: `shared` (the workshop's own saw) or `per_cut` (the store tariff).
+    cut_charge_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "materials_cents >= 0 AND cut_service_cents >= 0 AND banding_cents >= 0 "
+            "AND hardware_cents >= 0 AND delivery_cents >= 0 AND total_cents >= 0",
+            name="ck_cut_list_pricings_money_non_negative",
+        ),
+        CheckConstraint(
+            "cut_charge_mode IS NULL OR cut_charge_mode IN ('shared', 'per_cut')",
+            name="ck_cut_list_pricings_charge_mode",
+        ),
+        CheckConstraint(
+            "custom_count >= 0 AND undetermined_count >= 0 AND review_count >= 0 "
+            "AND unpriced_count >= 0",
+            name="ck_cut_list_pricings_counts_non_negative",
+        ),
+        Index("ix_cut_list_pricings_package", "package_id", "version"),
+    )
+
+
+class CutListPricingEntry(Base):
+    """Which price-list entries one pricing used, at the price it used.
+
+    Exists so "a used entry cannot be deleted" is `ON DELETE RESTRICT`, a
+    database fact rather than a scan of `result`.
+    """
+
+    __tablename__ = "cut_list_pricing_entries"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    pricing_id: Mapped[UUID] = mapped_column(
+        ForeignKey("cut_list_pricings.id", ondelete="CASCADE"), nullable=False
+    )
+    entry_id: Mapped[UUID] = mapped_column(
+        ForeignKey("supplier_prices.id", ondelete="RESTRICT"), nullable=False
+    )
+    cents_used: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("pricing_id", "entry_id", name="uq_cut_list_pricing_entry"),
+        Index("ix_cut_list_pricing_entries_pricing_id", "pricing_id"),
+    )
+
+
+class RemnantSheet(Base):
+    """One row on the workshop remnant rack. Pricing never changes `quantity`."""
+
+    __tablename__ = "remnant_sheets"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    material_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    length_mm: Mapped[int] = mapped_column(Integer, nullable=False)
+    width_mm: Mapped[int] = mapped_column(Integer, nullable=False)
+    grain_axis: Mapped[str] = mapped_column(String(16), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("btrim(material_key) <> ''", name="ck_remnant_sheets_key_not_blank"),
+        CheckConstraint("length_mm > 0 AND width_mm > 0", name="ck_remnant_sheets_size_positive"),
+        CheckConstraint("quantity > 0", name="ck_remnant_sheets_quantity_positive"),
+        CheckConstraint("grain_axis IN ('length', 'width')", name="ck_remnant_sheets_grain_axis"),
+        Index("ix_remnant_sheets_material_key", "material_key"),
+    )
+
+
+class Chunk(Base):
+    """One embedded passage of text with its provenance (the corpus)."""
+
+    __tablename__ = "chunks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIMENSIONS), nullable=False)
+
+    # Provenance: retrieval must always be able to say where an answer came from.
+    source_site: Mapped[str] = mapped_column(String(32), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(String(128), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    section: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    published_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    scraped_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Generated and stored, so it cannot drift from `content`.
+    search_vector: Mapped[str] = mapped_column(
+        TSVECTOR, Computed(f"to_tsvector('{FTS_CONFIG}', content)", persisted=True), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("url", "chunk_index", name="uq_chunks_url_chunk_index"),
+        CheckConstraint("btrim(url) <> ''", name="ck_chunks_url_not_blank"),
+        CheckConstraint("btrim(source_site) <> ''", name="ck_chunks_source_site_not_blank"),
+        CheckConstraint("chunk_index >= 0", name="ck_chunks_chunk_index_non_negative"),
+        Index(
+            "ix_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index("ix_chunks_search_vector", "search_vector", postgresql_using="gin"),
+        Index("ix_chunks_source_site", "source_site"),
+        Index("ix_chunks_category", "category"),
+    )
+
+
+class GuidelineNote(Base):
+    """The owner's own guideline entry: a rule or number with a required citation."""
+
+    __tablename__ = "guideline_notes"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    citation: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("btrim(title) <> ''", name="ck_guideline_notes_title_not_blank"),
+        CheckConstraint("btrim(body) <> ''", name="ck_guideline_notes_body_not_blank"),
+        CheckConstraint("btrim(citation) <> ''", name="ck_guideline_notes_citation_not_blank"),
     )

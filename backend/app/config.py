@@ -42,10 +42,16 @@ DEFAULT_BLENDER_BIN: Final = Path(
 )
 DEFAULT_RENDER_ROOT: Final = REPO_ROOT / "docs" / "renders"
 DEFAULT_UPLOAD_ROOT: Final = REPO_ROOT / "docs" / "uploads"
+DEFAULT_GUIDELINE_ROOT: Final = REPO_ROOT / "docs" / "guidelines"
 
 
 class ConfigurationError(RuntimeError):
     """The environment cannot produce a usable configuration."""
+
+
+# The only retailer this service may read (CLAUDE.md §5a). Bauhaus, Kaufland and
+# OKI are excluded, not deferred.
+KNOWN_RETAIL_SOURCES: Final = frozenset({"toom"})
 
 
 def _split_csv(value: Any) -> Any:
@@ -134,6 +140,9 @@ class Settings(BaseSettings):
     upload_root: Path = DEFAULT_UPLOAD_ROOT
     upload_max_bytes: int = 10 * 1024 * 1024
     upload_max_per_thread: int = 20
+
+    # --- Guideline files (the owner's own PDFs and notes) ----------------------
+    guideline_root: Path = DEFAULT_GUIDELINE_ROOT
     turn_max_images: int = 4
 
     # --- HTTPS plugins -------------------------------------------------------
@@ -143,6 +152,18 @@ class Settings(BaseSettings):
     plugin_timeout_seconds: float = 5.0
     plugin_max_response_bytes: int = 262_144
     plugin_min_interval_seconds: float = 0.5
+
+    # --- Retail sources and pricing (pricing-researcher) ----------------------
+    retail_sources: Annotated[frozenset[str], NoDecode] = KNOWN_RETAIL_SOURCES
+    # Sent in the crawler's User-Agent so a site can reach the operator; falls back to the owner's email.
+    crawler_contact: str | None = None
+    ingestion_page_budget: int = 50
+    ingestion_min_interval_seconds: float = 1.0
+    # TODO(user): the toom store whose cut services and restrictions price a cut list.
+    toom_home_store: str = "berlin-friedrichshain"
+    # Refreshing a price and capturing a URL each read a retailer page.
+    rate_limit_price_fetch: int = 10
+    rate_limit_price_fetch_window_seconds: int = 60
 
     # --- Token budget --------------------------------------------------------
     # The day's start for the daily token ceiling, as an IANA time zone.
@@ -173,6 +194,14 @@ class Settings(BaseSettings):
         )
 
     @property
+    def crawler_identity(self) -> str:
+        """The contact the crawler's User-Agent carries: configured, else the owner's email."""
+        return self.crawler_contact or str(self.owner_email)
+
+    def source_enabled(self, source: str) -> bool:
+        return source in self.retail_sources
+
+    @property
     def generation_enabled(self) -> bool:
         """Whether starting a Blender process is possible on this host now."""
         return self.blender_bin.is_file() and os.access(self.blender_bin, os.X_OK)
@@ -191,10 +220,32 @@ class Settings(BaseSettings):
             raise ValueError("blender_timeout_seconds must be positive")
         return value
 
-    @field_validator("cors_origins", "plugin_allowed_hosts", mode="before")
+    @field_validator("cors_origins", "plugin_allowed_hosts", "retail_sources", mode="before")
     @classmethod
     def _accept_csv(cls, value: Any) -> Any:
         return _split_csv(value)
+
+    @field_validator("retail_sources", mode="after")
+    @classmethod
+    def _only_known_retail_sources(cls, value: frozenset[str]) -> frozenset[str]:
+        names = frozenset(str(item).strip().lower() for item in value)
+        unknown = sorted(names - KNOWN_RETAIL_SOURCES)
+        if unknown:
+            raise ValueError(
+                f"unknown retail source(s): {', '.join(unknown)}; "
+                f"the only permitted source is {', '.join(sorted(KNOWN_RETAIL_SOURCES))}"
+            )
+        return names
+
+    @field_validator(
+        "ingestion_page_budget", "rate_limit_price_fetch", "rate_limit_price_fetch_window_seconds",
+        mode="after",
+    )
+    @classmethod
+    def _reject_non_positive_ingestion_limit(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("ingestion and rate limits must be positive")
+        return value
 
     @field_validator("plugin_allowed_hosts", mode="after")
     @classmethod
@@ -264,8 +315,11 @@ class Settings(BaseSettings):
             "blender_timeout_seconds": self.blender_timeout_seconds,
             "render_root": str(self.render_root),
             "upload_root": str(self.upload_root),
+            "guideline_root": str(self.guideline_root),
             "generation": "on" if self.generation_enabled else "off",
             "plugin_allowed_hosts": list(self.plugin_allowed_hosts),
+            "retail_sources": sorted(self.retail_sources),
+            "toom_home_store": self.toom_home_store,
             "plugin_timeout_seconds": self.plugin_timeout_seconds,
             "budget_timezone": self.budget_timezone,
             "langfuse_host": self.langfuse_host,

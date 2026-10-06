@@ -4,12 +4,20 @@ Defines the architectural guidance the agents use: a corpus of official building
 
 ## ADDED Requirements
 
-### Requirement: Official guidelines are ingested from their publications
-The guideline corpus SHALL be built from a checked-in source list naming each publication (the Bauordnung Berlin, the Musterbauordnung, the BAuA technical rules for workplaces), its official URL, jurisdiction, version or date and licence note, fetched under the same robots and identity rules as retail pages, with PDF and HTML text extracted, chunked by section where the text marks sections, and embedded into the corpus under the category `guideline`. A source that refuses or cannot be read SHALL be reported and skipped, never fetched another way. DIN standards and copyrighted guides SHALL NOT be ingested.
+### Requirement: Guideline publications are ingested from a checked-in source list
+The guideline corpus SHALL be built from a checked-in source list naming each publication with its title, jurisdiction, version or date, licence note and either a file the owner placed under the guidelines folder (`docs/guidelines/`; PDF or Markdown) or an official URL. A file source SHALL be read locally, with no network request, and SHALL be refused when its path leaves the guidelines folder or the file is missing. A URL source SHALL be fetched under the same robots and identity rules as retail pages. PDF, HTML and Markdown text SHALL be extracted, chunked by section where the text marks sections, and embedded into the corpus under the category `guideline`. A source that refuses, cannot be read or is missing SHALL be reported and skipped, never fetched another way. A publication whose host refuses this service SHALL NOT be listed by URL; the owner supplies it as a file. DIN standards and copyrighted guides MAY be ingested only as the owner's own local files and SHALL NOT be committed to the repository.
 
-#### Scenario: ASR ingested
-- **WHEN** the guideline ingestion runs
-- **THEN** the ASR passages are searchable with their rule number, section and publication date
+#### Scenario: Local PDF ingested
+- **WHEN** the owner places the ASR A1.2 PDF under the guidelines folder, lists it, and runs the guideline ingestion
+- **THEN** its passages are searchable with their rule number, section and publication date, and no network request was made
+
+#### Scenario: Missing file
+- **WHEN** a listed file does not exist
+- **THEN** the ingestion reports it by source id, skips it and continues with the others
+
+#### Scenario: Path outside the folder
+- **WHEN** a listed path leaves the guidelines folder
+- **THEN** loading the source list fails naming the source
 
 ### Requirement: The owner can add guideline notes by hand
 The owner SHALL be able to create, edit and delete guideline notes, each with a title, text, an optional number with unit, and a required source citation (for example a book and page); notes SHALL be added to the corpus as `guideline` passages from the source `owner` and removed from it when deleted.

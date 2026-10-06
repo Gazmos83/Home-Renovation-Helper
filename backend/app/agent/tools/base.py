@@ -72,6 +72,14 @@ class ToolDeps:
         return getattr(self._state, "loop", None)
 
     @property
+    def live_fetcher(self) -> Any:
+        return getattr(self._state, "live_fetcher", None)
+
+    @property
+    def design_rules(self) -> tuple[Any, ...]:
+        return getattr(self._state, "design_rules", ())
+
+    @property
     def tracing(self) -> Any:
         return getattr(self._state, "tracing", None)
 

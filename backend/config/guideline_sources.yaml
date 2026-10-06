@@ -1,0 +1,24 @@
+# The guideline publications the corpus is built from (design-guidelines spec).
+#
+# A source is one of:
+#   path: a file you placed under docs/guidelines/ (GUIDELINE_ROOT), e.g. pdf/asr-a1-2.pdf or
+#         notes/wardrobe.md; read locally, no network request; format pdf | md
+#   url:  an official https URL; fetched under this service's identity only after the host's
+#         robots.txt allows it; format pdf | html
+# plus id, title, jurisdiction, format, published_on and a licence note. A file that is missing or
+# a host that refuses is reported and skipped by `python -m app.ingestion --guidelines`.
+#
+# Review 2026-10-06 (checked with this service's own User-Agent): gesetze.berlin.de disallows
+# this identity, www.bauministerkonferenz.de serves no robots.txt (404) and www.baua.de answers
+# a 403 bot challenge. None is listed by URL; download the publication yourself and list the
+# file. Copyrighted material (DIN, books) stays in your own gitignored pdf/ folder.
+#
+# Example (not a source):
+#   - id: asr-a1-2
+#     title: ASR A1.2 Raumabmessungen und Bewegungsflächen
+#     jurisdiction: Germany (BAuA technical rules for workplaces)
+#     path: pdf/asr-a1-2.pdf
+#     format: pdf
+#     published_on: 2022-01-01
+#     licence: Published free by BAuA as an official technical rule.
+sources: []

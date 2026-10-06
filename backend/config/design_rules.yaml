@@ -1,0 +1,25 @@
+# Hard design rules applied in code (design-guidelines spec).
+#
+# Each rule names one check from the closed set in app/guidelines/checks.py:
+#   front_clearance_mm            placement  params: min_mm
+#   door_swing_clear              placement  params: (none)
+#   height_range_mm               piece      params: match [words in module id/name], min_mm, max_mm
+#   shelf_span_mm_for_thickness   piece      params: table [{thickness_mm, max_span_mm}]
+# with a severity (warn | refuse) and the clause the limit is quoted from:
+#   source: {publication: <id in guideline_sources.yaml, or owner:<note uuid>>, section: ..., quote: ...}
+# A rule without a source, with an unknown check or source, or with parameters its check does not
+# take stops startup naming the rule id.
+#
+# No limit is entered yet: a number here must be quoted from the clause it cites, and none of the
+# official publications could be read for this review (see config/guideline_sources.yaml; each host
+# refused this service's identity). TODO(user): add each rule below by quoting its clause (from an
+# official text you have read, or from an owner note added under /guideline-notes and cited as
+# `owner:<note id>`). Example shape, not a rule:
+#
+#   - id: wardrobe-front-clearance
+#     applies_to: placement
+#     check: front_clearance_mm
+#     params: {min_mm: <quoted value>}
+#     severity: warn
+#     source: {publication: owner:<note id>, section: "<book, page>", quote: "<the clause>"}
+rules: []

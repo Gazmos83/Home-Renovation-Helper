@@ -29,6 +29,7 @@ from app.agent.tools.shared import (
 from app.blender import storage
 from app.blender.custom_build import derive as custom_derive
 from app.db.models import Piece
+from app.guidelines.rules import piece_outcome
 from app.packages import service
 
 
@@ -71,6 +72,9 @@ def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
     unavailable = builds_unavailable(ctx.deps)
     if unavailable:
         return unavailable
+    refusal, warnings = piece_outcome(ctx.deps.design_rules, spec)
+    if refusal:
+        return refusal
     parts, hardware, _assembly = custom_derive.derive(spec)
     overall = custom_derive.overall(spec)
     modules = len(spec["modules"])
@@ -79,6 +83,8 @@ def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
         f"{overall['w']} × {overall['h']} × {overall['d']} mm (w × h × d), "
         f"{modules} module(s), {len(parts)} cut-list rows, {len(hardware)} hardware lines"
     )
+    if warnings:
+        summary += f"\nDesign-rule warnings: {warnings}"
     return Confirmation(
         subject="create_piece",
         summary=summary,
@@ -102,6 +108,9 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
     unavailable = builds_unavailable(ctx.deps)
     if unavailable:
         return unavailable
+    refusal, _warnings = piece_outcome(ctx.deps.design_rules, spec)
+    if refusal:
+        return refusal
 
     created = service.create_version(
         ctx.deps.render_root,

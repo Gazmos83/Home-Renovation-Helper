@@ -11,3 +11,6 @@ docs/renders/*
 # uploads are the owner's own files; keep the folder, ignore its contents
 docs/uploads/*
 !docs/uploads/.gitkeep
+# The owner's own guideline PDFs (licences vary); notes/ may be committed.
+docs/guidelines/pdf/*
+!docs/guidelines/pdf/.gitkeep

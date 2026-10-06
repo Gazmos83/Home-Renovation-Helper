@@ -12,8 +12,9 @@ text and fixed notes an agent has, so no edit can remove or weaken it.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Final
 
 # Both delimiters start with this, so neutralising it neutralises both.
@@ -76,15 +77,55 @@ class Passage:
     content: str
     url: str
     scraped_at: str
+    source_site: str = ""
+    category: str = ""
+    title: str = ""
+    section: str = ""
+
+    @classmethod
+    def from_hit(cls, hit: Any) -> Passage:
+        """A passage from a corpus search hit. Dates become ISO strings: graph
+        state is persisted and its serializer only trusts plain types."""
+        scraped_at = hit.scraped_at
+        return cls(
+            content=hit.content,
+            url=hit.url,
+            scraped_at=scraped_at.isoformat() if isinstance(scraped_at, datetime) else str(scraped_at),
+            source_site=getattr(hit, "source_site", "") or "",
+            category=getattr(hit, "category", "") or "",
+            title=getattr(hit, "title", "") or "",
+            section=getattr(hit, "section", "") or "",
+        )
+
+
+def _attribute(value: str) -> str:
+    """An attribute value that cannot close its own delimiter or break a line."""
+    return neutralise(value).replace('"', "'").replace("\n", " ")
 
 
 def wrap_passage(passage: Passage, retrieved_at: str) -> str:
+    """One passage inside the untrusted-content delimiters, attributed and dated."""
+    attributes = f'url="{passage.url}" scraped_at="{passage.scraped_at}"'
+    if passage.source_site:
+        attributes += f' source="{_attribute(passage.source_site)}"'
+    if passage.title:
+        attributes += f' title="{_attribute(passage.title)}"'
+    if passage.section:
+        attributes += f' section="{_attribute(passage.section)}"'
     return (
-        f'{OPEN_PREFIX} url="{passage.url}" scraped_at="{passage.scraped_at}" '
-        f'retrieved_at="{retrieved_at}"]]]\n'
+        f'{OPEN_PREFIX} {attributes} retrieved_at="{retrieved_at}"]]]\n'
         f"{neutralise(passage.content)}\n"
         f"{CLOSE_TOKEN}"
     )
+
+
+def wrap_passages(
+    passages: Iterable[Passage], *, retrieved_at: datetime | str | None = None
+) -> str:
+    """Retrieved passages as delimited, attributed reference material, blank-line separated."""
+    when = retrieved_at or datetime.now(UTC)
+    stamp = when.isoformat() if isinstance(when, datetime) else when
+    return "\n\n".join(wrap_passage(passage, stamp) for passage in passages)
 
 
 def house_note(
