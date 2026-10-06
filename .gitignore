@@ -14,3 +14,6 @@ docs/uploads/*
 # The owner's own guideline PDFs (licences vary); notes/ may be committed.
 docs/guidelines/pdf/*
 !docs/guidelines/pdf/.gitkeep
+
+# Unapproved explore notes; adopt via OpenSpec before committing.
+docs/blueprint-input-notes.md
