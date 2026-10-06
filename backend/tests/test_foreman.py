@@ -6,13 +6,16 @@ from dataclasses import replace
 
 from langchain_core.messages import HumanMessage
 
+from app.agent import house_file
 from app.agent.foreman import MAX_TOOL_ROUNDS, last_reply
 from app.agent.prompts import UNTRUSTED_CONTENT_PREAMBLE
+from app.agent.tools.base import ToolDeps
 from app.agent.tools.create_piece import run as create_run
 from tests.api_helpers import desk
 from tests.conftest import wait_for_status
 from tests.fakes import tool_call
 from tests.graph_helpers import fake_models, make_harness
+from tests.test_review_evidence import _png
 
 HALL = {
     "room_name": "Hall",
@@ -25,6 +28,19 @@ HALL = {
 
 def decision(specialist: str) -> dict:
     return {"specialist": specialist, "reason": "test"}
+
+
+def _bind_piece(tool_state, harness, *, screenshot: bool) -> None:
+    folder = tool_state.settings.render_root / "hall-bench" / "v1"
+    folder.mkdir(parents=True)
+    (folder / "input.json").write_text("{}", encoding="utf-8")
+    if screenshot:
+        _png(folder / "screenshot.png")
+    with ToolDeps(tool_state).session() as session:
+        house_file.record_piece(session, "hall-bench", "Hall bench")
+        house_file.record_version(session, "hall-bench", 1)
+        house_file.touch_thread(session, harness.thread, package_id="hall-bench")
+        session.commit()
 
 
 def test_a_new_wish_with_no_piece_goes_to_intake_whatever_the_model_says(tool_state) -> None:
@@ -196,3 +212,40 @@ def test_the_builder_can_answer_for_an_apartment_with_a_shell_but_not_before(too
     assert second["specialist"] == "builder"
     assert "Apartments: Flat (2 room(s), shell v1)" in models["builder"].last_prompt_text()
     assert last_reply(second) == "The shell is ready."
+
+
+def test_the_reviewer_is_chosen_when_a_render_exists(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("reviewer")]},
+        reviewer={"replies": ["The screenshot matches the brief."]},
+    )
+    harness = make_harness(tool_state, models)
+    _bind_piece(tool_state, harness, screenshot=True)
+    state = harness.turn("check the bench against the brief")
+    assert state["specialist"] == "reviewer"
+    assert last_reply(state) == "The screenshot matches the brief."
+
+
+def test_the_reviewer_is_never_chosen_without_a_screenshot_or_render(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("reviewer")]},
+        builder={"replies": ["Build it first so there is a screenshot to check."]},
+        reviewer={"replies": ["should not run"]},
+    )
+    harness = make_harness(tool_state, models)
+    _bind_piece(tool_state, harness, screenshot=False)
+    state = harness.turn("check the bench against the brief")
+    assert state["specialist"] == "builder"
+    assert models["reviewer"].calls == 0
+    assert last_reply(state) == "Build it first so there is a screenshot to check."
+
+
+def test_the_reviewer_binds_only_revision_review(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("reviewer")]},
+        reviewer={"replies": ["Checked."]},
+    )
+    harness = make_harness(tool_state, models)
+    _bind_piece(tool_state, harness, screenshot=True)
+    harness.turn("check it")
+    assert models["reviewer"].bound_tools == ["revision_review"]

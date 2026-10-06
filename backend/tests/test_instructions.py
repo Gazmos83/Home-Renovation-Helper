@@ -24,9 +24,9 @@ def _copy(tmp_path: Path) -> Path:
     return target
 
 
-def test_all_four_files_load() -> None:
+def test_all_instruction_files_load() -> None:
     loaded = load_instructions()
-    assert list(loaded) == ["foreman", "intake", "designer", "builder"]
+    assert list(loaded) == ["foreman", "intake", "designer", "builder", "reviewer"]
     for name, instruction in loaded.items():
         assert instruction.name == name
         assert instruction.slot == name
@@ -39,6 +39,7 @@ def test_each_agent_names_exactly_its_tools() -> None:
     assert loaded["intake"].tools == ("record_brief", "record_plan")
     assert set(loaded["designer"].tools) == {"create_piece", "revise_package", "cut_list", "room_fit"}
     assert set(loaded["builder"].tools) == {"blender_build", "build_shell", "render_turntable"}
+    assert loaded["reviewer"].tools == ("revision_review",)
 
 
 def test_the_designer_and_builder_never_offer_blender_code() -> None:

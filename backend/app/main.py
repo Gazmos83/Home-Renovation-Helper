@@ -38,6 +38,8 @@ from app.api.health import router as health_router
 from app.api.limits import RateLimiter
 from app.api.packages import router as packages_router
 from app.api.renders import router as renders_router
+from app.api.reviews import item_router as review_item_router
+from app.api.reviews import version_router as package_reviews_router
 from app.api.tool_toggles import router as tool_toggles_router
 from app.api.uploads import router as uploads_router
 from app.auth.accounts import ensure_owner
@@ -238,6 +240,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(health_router)
     app.include_router(packages_router)
+    app.include_router(package_reviews_router)
+    app.include_router(review_item_router)
     app.include_router(chat_router)
     app.include_router(tool_toggles_router)
     app.include_router(uploads_router)

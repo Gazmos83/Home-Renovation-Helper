@@ -62,6 +62,8 @@ class Harness:
 
 def make_harness(tool_state: SimpleNamespace, models: dict[str, FakeChatModel] | None = None) -> Harness:
     models = models or fake_models()
+    # Nested tool calls (revision_review) read the slot model from ToolDeps.
+    tool_state.models = models
     graph = build_graph(
         tool_state.engine,
         tool_state.settings,

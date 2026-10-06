@@ -21,8 +21,8 @@ from app.render.tiers import load_tiers
 from tests.blender_fakes import fake_pipeline_launch
 
 HOUSE_TABLES = (
-    "piece_versions, pieces, rooms, apartments, preferences, generator_extension_requests, "
-    "thread_tool_settings, plugin_invocations, threads, uploads"
+    "review_items, reviews, piece_versions, pieces, rooms, apartments, preferences, "
+    "generator_extension_requests, thread_tool_settings, plugin_invocations, threads, uploads"
 )
 
 

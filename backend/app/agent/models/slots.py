@@ -15,7 +15,7 @@ from app.agent.models.profiles import Profiles
 from app.agent.models.routing import Routing
 from app.config import Settings
 
-LOOP_SLOTS: Final[tuple[str, ...]] = ("foreman", "intake", "designer", "builder")
+LOOP_SLOTS: Final[tuple[str, ...]] = ("foreman", "intake", "designer", "builder", "reviewer")
 
 ModelProvider = Callable[[str], Any]
 

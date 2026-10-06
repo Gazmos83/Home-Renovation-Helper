@@ -3,7 +3,7 @@
 Single-user personal project: design custom furniture and room layouts for the owner's own home, model them in Blender, render cheap turntables, review them against the brief, and price the build from lawful supplier data. Portfolio-quality code; no multi-tenant concerns.
 This file is the "what". [docs/DESIGN_NOTES.md](docs/DESIGN_NOTES.md) is the "why". Acceptance scenarios live in `openspec/specs/`; active changes in `openspec/changes/`.
 The code base is a pruned port of `/home/pingu/Applications/Interior_Design_App` (§7). Course requirements are in `docs/Task requirements.md`.
-Status: plugins and token budgets land with `plugins-and-budgets` (2026-10-06). Photoreal detail, pricing, and the reviewer remain later steps.
+Status: the Reviewer lands with `render-reviewer` (2026-10-06). Photoreal detail and pricing remain later steps.
 
 ## 0. OpenSpec workflow (mandatory)
 
@@ -100,7 +100,7 @@ Each tool is a folder under `backend/plugins/<name>/` with `manifest.yaml` (name
 | — | `guidelines` | Designer | stub | `search_guidelines`; filled in by pricing-researcher |
 | 6 | `material_cost` | Researcher | stub | `price_cut_list`, `manage_remnants`; filled in by pricing-researcher |
 | — | `catalog_research` | Researcher | stub | catalogue lookups; filled in by pricing-researcher |
-| 7 | `revision_review` | Reviewer | stub | filled in by render-reviewer |
+| 7 | `revision_review` | Reviewer | port | render vs spec vs brief; discrepancy list; no write tool |
 | 8 | `photoreal_detail` | Lighting | later | carpentry pass over the socket, allow-listed, `final` tier only |
 
 ### 5a. Pricing (kept, reworked)
@@ -156,7 +156,7 @@ Backend in `backend/`: `uv sync`, `uv run alembic upgrade head`, `uv run pytest 
 
 ### 9a. House file
 
-Long-term memory: every room's measured polygon, heights and openings; style preferences; pieces designed and their versions; render feedback (thumbs and comment with prompt, model, tier); generator-extension requests. Designer and Intake read it first. Owned by the single account.
+Long-term memory: every room's measured polygon, heights and openings; style preferences; pieces designed and their versions; reviews of a version (open items reach the Designer); render feedback (thumbs and comment with prompt, model, tier); generator-extension requests. Designer and Intake read it first. Owned by the single account.
 
 ## 10. Open questions — ask, do not assume
 
@@ -170,7 +170,7 @@ None open as of 2026-10-05.
 4. [x] Foreman → Intake → Designer → Builder loop with `revise_package`, `cut_list`, `room_fit` — `openspec/changes/agent-loop`
 4a. [x] Intake vision read of blueprints and photos into the house file; headless apartment shell generator — `openspec/changes/apartment-intake`
 5. [ ] Pricing port and rework (§5a) + Researcher
-6. [ ] Reviewer (`revision_review`) with a vision model
+6. [x] Reviewer (`revision_review`) with a vision model — `openspec/changes/render-reviewer`
 7. [x] Plugin manifests, homeowner toggles, dev panel with per-agent model routing and token restrictions — `openspec/changes/plugins-and-budgets`
 8. [ ] `photoreal_detail` over the socket, allow-list, `final` tier
 9. [ ] Feedback capture → house file + Langfuse tags

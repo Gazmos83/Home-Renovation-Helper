@@ -39,8 +39,8 @@ def test_the_provider_returns_the_slots_model_and_refuses_an_unknown_slot(settin
     provide = model_provider(models)
     assert provide("builder") is models["builder"]
     try:
-        provide("reviewer")
+        provide("lighting")
     except KeyError as error:
-        assert "reviewer" in str(error)
+        assert "lighting" in str(error)
     else:  # pragma: no cover
         raise AssertionError("an unbuilt slot must be refused")

@@ -93,13 +93,14 @@ def house_note(
     pieces: Sequence[Mapping[str, Any]],
     requests: Sequence[Mapping[str, Any]],
     apartments: Sequence[Mapping[str, Any]] = (),
+    review_items: Sequence[Mapping[str, Any]] = (),
 ) -> str | None:
     """The house file as a labelled note, or `None` when it holds nothing.
 
     Every owner-authored string is neutralised, so a room named with the
     untrusted-content delimiter cannot open or close a block.
     """
-    if not (rooms or preferences or pieces or requests or apartments):
+    if not (rooms or preferences or pieces or requests or apartments or review_items):
         return None
     lines = [HOUSE_CONTEXT_PREAMBLE]
     if rooms:
@@ -131,4 +132,11 @@ def house_note(
         lines.append("Open generator-extension requests:")
         for request in requests:
             lines.append(f"- {neutralise(request['field'])}: {neutralise(request['request'])}")
+    if review_items:
+        lines.append("Open review items:")
+        for item in review_items:
+            lines.append(
+                f"- {item.get('aspect')}: expected {neutralise(str(item.get('expected') or ''))}; "
+                f"observed {neutralise(str(item.get('observed') or ''))}"
+            )
     return "\n".join(lines)

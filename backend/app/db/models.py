@@ -388,3 +388,64 @@ class PluginInvocation(Base):
         Index("ix_plugin_invocations_plugin", "plugin"),
         Index("ix_plugin_invocations_thread_id", "thread_id"),
     )
+
+
+class Review(Base):
+    """One Reviewer's check of a package version against its spec and brief."""
+
+    __tablename__ = "reviews"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    package_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    renders: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("btrim(package_id) <> ''", name="ck_reviews_package_id_not_blank"),
+        CheckConstraint("version >= 1", name="ck_reviews_version_positive"),
+        Index("ix_reviews_package_id_version", "package_id", "version"),
+    )
+
+
+class ReviewItem(Base):
+    """One discrepancy on a review. Status is open until the owner closes it."""
+
+    __tablename__ = "review_items"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    review_id: Mapped[UUID] = mapped_column(
+        ForeignKey("reviews.id", ondelete="CASCADE"), nullable=False
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    aspect: Mapped[str] = mapped_column(String(32), nullable=False)
+    expected: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_source: Mapped[str] = mapped_column(String(16), nullable=False)
+    rule_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    observed: Mapped[str] = mapped_column(Text, nullable=False)
+    image: Mapped[int] = mapped_column(Integer, nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    suggestion: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    status_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("ordinal >= 1", name="ck_review_items_ordinal_positive"),
+        CheckConstraint(
+            "aspect IN ('brief', 'proportion', 'material', 'placement', 'construction', 'render')",
+            name="ck_review_items_aspect_known",
+        ),
+        CheckConstraint(
+            "expected_source IN ('brief', 'spec', 'rule')",
+            name="ck_review_items_expected_source_known",
+        ),
+        CheckConstraint("severity IN ('minor', 'major')", name="ck_review_items_severity_known"),
+        CheckConstraint(
+            "status IN ('open', 'resolved', 'dismissed')",
+            name="ck_review_items_status_known",
+        ),
+        CheckConstraint("image >= 1", name="ck_review_items_image_positive"),
+        Index("ix_review_items_review_id", "review_id"),
+    )

@@ -30,6 +30,8 @@ from app.db.models import (
     Piece,
     PieceVersion,
     Preference,
+    Review,
+    ReviewItem,
     Room,
     Thread,
 )
@@ -414,6 +416,99 @@ def get_thread(session: Session, thread_id: UUID) -> Thread | None:
 
 def list_threads(session: Session) -> list[Thread]:
     return list(session.scalars(select(Thread).order_by(Thread.last_turn_at.desc())))
+
+
+def record_review(
+    session: Session,
+    package_id: str,
+    version: int,
+    renders: list[str],
+    items: list[dict[str, Any]],
+) -> Review:
+    """Store a completed review and its items, all `open`."""
+    review = Review(package_id=package_id, version=version, renders=list(renders))
+    session.add(review)
+    session.flush()
+    for ordinal, item in enumerate(items, start=1):
+        session.add(
+            ReviewItem(
+                review_id=review.id,
+                ordinal=ordinal,
+                aspect=item["aspect"],
+                expected=item["expected"],
+                expected_source=item["expected_source"],
+                rule_id=item.get("rule_id"),
+                observed=item["observed"],
+                image=item["image"],
+                severity=item["severity"],
+                suggestion=item.get("suggestion"),
+                status="open",
+            )
+        )
+    session.flush()
+    return review
+
+
+def reviews_for(session: Session, package_id: str, version: int) -> list[Review]:
+    return list(
+        session.scalars(
+            select(Review)
+            .where(Review.package_id == package_id, Review.version == version)
+            .order_by(Review.created_at.desc())
+        )
+    )
+
+
+def items_of(session: Session, review_id: UUID) -> list[ReviewItem]:
+    return list(
+        session.scalars(
+            select(ReviewItem)
+            .where(ReviewItem.review_id == review_id)
+            .order_by(ReviewItem.ordinal)
+        )
+    )
+
+
+def latest_open_items(session: Session, package_id: str) -> list[dict[str, Any]]:
+    """Open items of the newest review of `package_id`, for the Designer's note."""
+    review = session.scalars(
+        select(Review)
+        .where(Review.package_id == package_id)
+        .order_by(Review.created_at.desc())
+        .limit(1)
+    ).first()
+    if review is None:
+        return []
+    return [
+        {
+            "id": item.id,
+            "aspect": item.aspect,
+            "expected": item.expected,
+            "observed": item.observed,
+            "severity": item.severity,
+            "suggestion": item.suggestion,
+        }
+        for item in items_of(session, review.id)
+        if item.status == "open"
+    ]
+
+
+def set_item_status(session: Session, item_id: UUID, status: str) -> ReviewItem | None:
+    item = session.get(ReviewItem, item_id)
+    if item is None:
+        return None
+    item.status = status
+    item.status_at = _now()
+    session.flush()
+    return item
+
+
+def get_review(session: Session, review_id: UUID) -> Review | None:
+    return session.get(Review, review_id)
+
+
+def get_item(session: Session, item_id: UUID) -> ReviewItem | None:
+    return session.get(ReviewItem, item_id)
 
 
 def touch_thread(session: Session, thread_id: UUID, package_id: str | None = None) -> None:

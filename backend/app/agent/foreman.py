@@ -1,10 +1,11 @@
-"""The Foreman graph: one supervisor, three specialist sub-graphs.
+"""The Foreman graph: one supervisor, four specialist sub-graphs.
 
 `load_house` reads the house file and the thread, `foreman` chooses one
 specialist (a structured decision from the `foreman` slot's model, then bounded
-by code rules), and the chosen specialist — Intake, Designer or Builder — runs
-its own bounded `agent ⇄ tools` loop. One compiled graph on one checkpointer
-thread means a paused confirmation resumes inside the specialist that raised it.
+by code rules), and the chosen specialist — Intake, Designer, Builder or
+Reviewer — runs its own bounded `agent ⇄ tools` loop. One compiled graph on one
+checkpointer thread means a paused confirmation resumes inside the specialist
+that raised it.
 
 Gated tools pause with `interrupt()` before they run: the first gated call in a
 round is previewed by code, and only the owner's `yes` runs it. The model never
@@ -60,7 +61,7 @@ from app.plugins.loader import Plugins
 logger = logging.getLogger("app")
 
 MAX_TOOL_ROUNDS: Final = 6
-SPECIALISTS: Final = ("intake", "designer", "builder")
+SPECIALISTS: Final = ("intake", "designer", "builder", "reviewer")
 
 TEMPLATES_DIR: Final = Path(__file__).resolve().parents[2] / "fixtures" / "packages" / "templates"
 
@@ -91,6 +92,7 @@ class ChatState(TypedDict, total=False):
     package_id: str | None
     piece_ready: bool
     shell_ready: bool
+    review_ready: bool
     brief: dict[str, Any]
     bound_tools: dict[str, list[str]]
 
@@ -98,8 +100,21 @@ class ChatState(TypedDict, total=False):
 class Decision(BaseModel):
     """The Foreman's choice for this turn."""
 
-    specialist: Literal["intake", "designer", "builder"]
+    specialist: Literal["intake", "designer", "builder", "reviewer"]
     reason: str = Field(description="one sentence")
+
+
+def _review_ready(root: Path, package_id: str | None, version: int | None) -> bool:
+    if not package_id or version is None:
+        return False
+    try:
+        folder = storage.version_dir(root, package_id, version)
+    except (storage.InvalidPackageId, ValueError):
+        return False
+    return any(
+        (folder / name).is_file()
+        for name in ("screenshot.png", "still.png", "room/still.png")
+    ) or (folder / "frames" / "frame_000.png").is_file()
 
 
 def _image_blocks(
@@ -269,6 +284,13 @@ def build_graph(
         package_id = thread.package_id if thread and thread.package_id else state.get("package_id")
         bound = next((p for p in pieces if p["package_id"] == package_id), None)
         piece_ready = bool(bound and bound["latest_version"])
+        review_ready = _review_ready(
+            settings.render_root, package_id, bound["latest_version"] if bound else None
+        )
+        open_review = []
+        if package_id:
+            with Session(engine) as session:
+                open_review = house_file.latest_open_items(session, package_id)
 
         if bound:
             latest = f"version {bound['latest_version']}" if bound["latest_version"] else "no version"
@@ -288,11 +310,15 @@ def build_graph(
             )
             facts += f" Apartments: {listed}."
         return {
-            "house_note": house_note(rooms, preferences, pieces, requests, apartments) or "",
+            "house_note": house_note(
+                rooms, preferences, pieces, requests, apartments, open_review
+            )
+            or "",
             "facts": facts,
             "package_id": package_id,
             "piece_ready": piece_ready,
             "shell_ready": shell_ready,
+            "review_ready": review_ready,
             "round_count": 0,
             "specialist": "",
             "bound_tools": tools_this_turn,
@@ -338,7 +364,7 @@ def build_graph(
 
     def foreman(
         state: ChatState, config: RunnableConfig
-    ) -> Command[Literal["intake", "designer", "builder", "__end__"]]:
+    ) -> Command[Literal["intake", "designer", "builder", "reviewer", "__end__"]]:
         instruction = loaded["foreman"]
         system = compose_agent_prompt(instruction.text, state.get("facts", ""), state.get("house_note", ""))
         try:
@@ -369,6 +395,8 @@ def build_graph(
         buildable = state.get("piece_ready") or state.get("shell_ready")
         if not buildable and chosen == "builder":
             chosen = "designer" if state.get("brief") else "intake"
+        if chosen == "reviewer" and not state.get("review_ready"):
+            chosen = "builder" if buildable else ("designer" if state.get("brief") else "intake")
         if not buildable and not state.get("brief"):
             chosen = "intake"
         return Command(update={"specialist": chosen, "reason": reason}, goto=chosen)

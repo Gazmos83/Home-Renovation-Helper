@@ -23,7 +23,7 @@ from app.agent.prompts import SENTINEL
 
 INSTRUCTIONS_DIR: Final = Path(__file__).parent
 
-AGENT_NAMES: Final[tuple[str, ...]] = ("foreman", "intake", "designer", "builder")
+AGENT_NAMES: Final[tuple[str, ...]] = ("foreman", "intake", "designer", "builder", "reviewer")
 
 
 class InstructionError(ValueError):
@@ -136,7 +136,7 @@ def load_instructions(
     known_tools: Collection[str] | None = None,
     tool_roles: dict[str, str] | None = None,
 ) -> dict[str, AgentInstruction]:
-    """Read all four files. The first fault stops the load, naming the file."""
+    """Read every instruction file. The first fault stops the load, naming the file."""
     base = directory or INSTRUCTIONS_DIR
     loaded: dict[str, AgentInstruction] = {}
     for name in AGENT_NAMES:

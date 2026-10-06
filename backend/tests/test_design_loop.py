@@ -13,12 +13,15 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.agent import chat, house_file
+from app.agent.foreman import last_reply
 from app.blender import storage
 from app.db.models import ModelUsage, User
+from app.packages import service
 from tests.api_helpers import desk
 from tests.conftest import wait_for_status
 from tests.fakes import tool_call
 from tests.graph_helpers import fake_models, make_harness
+from tests.test_review_evidence import _png
 
 HALL = {
     "room_name": "Hall",
@@ -159,3 +162,74 @@ def test_the_full_loop(tool_state, owner) -> None:
         "fake/builder": 4,
     }
     assert {row.operation for row in rows} == {"chat.foreman", "chat.intake", "chat.designer", "chat.builder"}
+
+
+def test_review_then_fix_it_revises_to_version_2(tool_state) -> None:
+    root = tool_state.settings.render_root
+    document = desk()
+    shelves = document["modules"][0]["shelves"]
+    service.create_version(root, "hall-bench", document, lambda version: None)
+    _png(storage.version_dir(root, "hall-bench", 1) / "screenshot.png")
+    with Session(tool_state.engine) as session:
+        house_file.record_piece(
+            session, "hall-bench", "Hall bench", brief={"purpose": "two drawers"}
+        )
+        house_file.record_version(session, "hall-bench", 1)
+        session.commit()
+
+    item = {
+        "aspect": "brief",
+        "expected": "two drawers",
+        "expected_source": "brief",
+        "observed": "one drawer",
+        "image": 1,
+        "severity": "major",
+    }
+    models = fake_models(
+        foreman={
+            "decisions": [
+                {"specialist": "reviewer", "reason": "check it"},
+                {"specialist": "designer", "reason": "fix it"},
+            ]
+        },
+        reviewer={
+            "tool_call_scripts": [[tool_call("revision_review", {})]],
+            "replies": [
+                "The brief asks for two drawers; I see one. Ask the Designer to fix it."
+            ],
+            "decisions": [{"items": [item]}],
+        },
+        designer={
+            "tool_call_scripts": [
+                [
+                    tool_call(
+                        "revise_package",
+                        {
+                            "package_id": "hall-bench",
+                            "changes": {"modules": {"cabinet": {"shelves": shelves + 1}}},
+                        },
+                    )
+                ]
+            ],
+            "replies": ["Version 2 is created."],
+        },
+    )
+    harness = make_harness(tool_state, models)
+    harness.start(package_id="hall-bench")
+
+    reviewed = harness.turn("check the render")
+    assert reviewed["specialist"] == "reviewer"
+
+    paused = harness.turn("fix it")
+    assert paused["specialist"] == "designer"
+    prompt = models["designer"].last_prompt_text()
+    assert "Open review items:" in prompt
+    assert "brief: expected two drawers; observed one drawer" in prompt
+    interrupts = harness.snapshot().interrupts
+    assert len(interrupts) == 1
+    assert interrupts[0].value["subject"] == "revise"
+
+    done = harness.answer("yes")
+    assert last_reply(done) == "Version 2 is created."
+    assert storage.versions(root, "hall-bench") == [1, 2]
+    wait_for_status(storage.version_dir(root, "hall-bench", 2))

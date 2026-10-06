@@ -75,6 +75,20 @@ class ToolDeps:
     def tracing(self) -> Any:
         return getattr(self._state, "tracing", None)
 
+    @property
+    def model_provider(self):
+        provide = getattr(self._state, "model_provider", None)
+        if provide is not None:
+            return provide
+        models = getattr(self._state, "models", None) or {}
+        return models.__getitem__
+
+    def model_id(self, slot: str) -> str:
+        routing = getattr(self._state, "routing", None)
+        if routing is not None:
+            return routing.model_for(slot)
+        return f"fake/{slot}"
+
     @contextmanager
     def session(self) -> Iterator[Session]:
         with Session(self.engine) as session:

@@ -127,7 +127,8 @@ still boots, and only builds and renders answer 503.
 
 You talk to the **Foreman**; it hands each message to Intake (turns a wish into
 confirmed numbers), the Designer (creates and revises pieces, lists parts, checks
-a room) or the Builder (builds and renders), and you never name one. Every model
+a room), the Builder (builds and renders) or the Reviewer (checks a screenshot or
+render against the brief and spec), and you never name one. Every model
 call needs `OPENROUTER_API_KEY`; the routes below work against a live service
 once a key is set. Conversations survive restarts (the Postgres checkpointer).
 
@@ -163,10 +164,23 @@ thread. Replies never show a model name, a prompt, a token count or a file path;
 files are named by their package route, for example
 `/packages/hall-bench/versions/1/files/screenshot.png`.
 
+**Reviews.** After a screenshot or a draft turntable exists, ask to check the
+piece. The Reviewer returns a discrepancy list (what was expected, what it saw,
+which image, how serious) and records it; it cannot change the piece. Ask the
+Designer to fix what it found — that is a normal `revise_package` you confirm.
+Mark an item resolved or dismissed yourself; closed items leave the Designer's
+context:
+
+```bash
+curl -s -b cookies.txt http://localhost:8000/packages/hall-bench/versions/1/reviews
+curl -s -b cookies.txt -X PATCH http://localhost:8000/reviews/$REVIEW/items/$ITEM \
+  -H 'Content-Type: application/json' -d '{"status":"resolved"}'
+```
+
 **The house file** is the owner's long-term memory, in the database and the
 package folders: every room (polygon, heights, openings), preferences (`style`,
-`budget_eur`), pieces with their versions and what changed, and **generator-
-extension requests**. If you ask for something the spec schema cannot express (a
+`budget_eur`), pieces with their versions and what changed, reviews of a version,
+and **generator-extension requests**. If you ask for something the spec schema cannot express (a
 bevelled edge), the Designer says so plainly and the field is recorded as a
 request — it never offers Blender code. Rooms and style are written only by a
 confirmed brief; pieces and versions only by a confirmed `create_piece` or
