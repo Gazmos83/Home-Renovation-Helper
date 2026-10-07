@@ -20,7 +20,7 @@ export type Pending = {
   proposal: Record<string, unknown>;
 };
 
-export type ChatMessage = { role: "owner" | "assistant"; text: string };
+export type ChatMessage = { role: "owner" | "assistant" | "confirmation"; text: string };
 
 export type ThreadDetail = Thread & { messages: ChatMessage[]; pending: Pending | null };
 

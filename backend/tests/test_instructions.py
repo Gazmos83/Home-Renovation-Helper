@@ -138,3 +138,36 @@ def test_a_tool_shared_with_another_agent_may_be_named_by_it_but_a_stranger_may_
             header.format(name="builder", tool="cut_list"),
             filename="builder.md", known_tools=tools, tool_roles=roles,
         )
+
+
+def test_the_foreman_sends_room_corrections_to_intake_and_piece_changes_to_the_designer() -> None:
+    text = load_instructions()["foreman"].text
+    assert "goes to `intake` even after the numbers are confirmed or a piece exists" in text
+    intake_line = next(line for line in text.splitlines() if line.startswith("- `intake`"))
+    designer_line = next(line for line in text.splitlines() if line.startswith("- `designer`"))
+    assert "corner angles" in intake_line and "openings" in intake_line
+    assert "the piece itself" in designer_line and "numbers are confirmed" not in designer_line
+
+
+PLAIN_REFUSAL = (
+    "If a tool result says nothing was done, tell the owner plainly that nothing was saved or changed and why; "
+    "never say a tool failed or would not take an update."
+)
+NO_LATER_PROMISE = "Never promise to tell the owner later"
+
+
+def test_every_specialist_passes_a_refusal_on_plainly() -> None:
+    loaded = load_instructions()
+    for name in ("intake", "designer", "builder", "lighting", "reviewer", "researcher"):
+        assert PLAIN_REFUSAL in loaded[name].text, name
+
+
+def test_no_specialist_promises_to_report_back_after_the_turn() -> None:
+    loaded = load_instructions()
+    for name in ("designer", "builder", "lighting", "reviewer"):
+        assert NO_LATER_PROMISE in loaded[name].text, name
+    for name in ("designer", "builder"):
+        assert "status shows in the conversation's Project panel" in loaded[name].text, name
+    for name, instruction in loaded.items():
+        lowered = instruction.text.lower()
+        assert "i'll tell you" not in lowered and "let you know" not in lowered, name

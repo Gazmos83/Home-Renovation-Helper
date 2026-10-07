@@ -67,7 +67,7 @@ class ThreadOut(BaseModel):
 
 
 class MessageOut(BaseModel):
-    role: Literal["owner", "assistant"]
+    role: Literal["owner", "assistant", "confirmation"]
     text: str
 
 

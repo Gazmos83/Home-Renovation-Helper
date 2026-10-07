@@ -158,6 +158,131 @@ def test_a_design_file_in_an_empty_thread_goes_to_the_designer_and_is_imported(t
         assert house_file.get_thread(session, harness.thread).package_id == "wall-unit"
 
 
+def _confirmed_brief(harness) -> None:
+    harness.turn("a hall bench, 1200 wide")
+    harness.answer("yes")
+
+
+def test_a_designer_choice_on_a_turn_with_a_photo_goes_to_intake(tool_state, tmp_path) -> None:
+    import io
+
+    from app.agent import uploads
+    from tests.blender_fakes import png_bytes
+
+    tool_state.settings.upload_root = tmp_path / "uploads"
+    models = fake_models(
+        foreman={"decisions": [decision("intake"), decision("designer")]},
+        intake={"tool_call_scripts": [[tool_call("record_brief", HALL)]], "replies": ["Saved.", "I read the plan."]},
+    )
+    harness = make_harness(tool_state, models)
+    _confirmed_brief(harness)
+    with ToolDeps(tool_state).session() as session:
+        upload_id = str(
+            uploads.add_upload(
+                session, tool_state.settings.upload_root, harness.thread, io.BytesIO(png_bytes(8, 8)),
+                original_name="blueprint_revision.png", max_bytes=1_000_000, max_per_thread=10,
+            ).id
+        )
+    state = harness.graph.invoke(
+        {"messages": [HumanMessage("this plan is the source of truth", additional_kwargs={"upload_ids": [upload_id]})]},
+        config=harness.config,
+    )
+    assert state["specialist"] == "intake"
+    assert models["designer"].calls == 0
+
+
+def test_a_designer_choice_without_an_upload_stays_with_the_designer(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("intake"), decision("designer")]},
+        intake={"tool_call_scripts": [[tool_call("record_brief", HALL)]], "replies": ["Saved."]},
+        designer={"replies": ["Wider it is."]},
+    )
+    harness = make_harness(tool_state, models)
+    _confirmed_brief(harness)
+    state = harness.turn("make it 2206 mm wide")
+    assert state["specialist"] == "designer"
+
+
+def test_an_intake_choice_for_a_corner_angle_after_a_piece_reaches_intake(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("intake"), decision("intake")]},
+        intake={"tool_call_scripts": [[tool_call("record_brief", HALL)]], "replies": ["Saved.", "Corrected."]},
+    )
+    harness = make_harness(tool_state, models)
+    _confirmed_brief(harness)
+    _bind_piece(tool_state, harness, screenshot=True)
+    state = harness.turn("bottom wall/left wall corner = 76°")
+    assert state["specialist"] == "intake"
+    assert last_reply(state) == "Corrected."
+
+
+def _designer_calls(tool_state, call, reply: str = "Told the owner."):
+    models = fake_models(
+        foreman={"decisions": [decision("intake"), decision("designer")]},
+        intake={"tool_call_scripts": [[tool_call("record_brief", HALL)]], "replies": ["Saved."]},
+        designer={"tool_call_scripts": [[call]], "replies": [reply]},
+    )
+    harness = make_harness(tool_state, models)
+    _confirmed_brief(harness)
+    return models, harness
+
+
+def test_the_designer_calling_intakes_tool_is_refused_naming_intake(tool_state) -> None:
+    models, harness = _designer_calls(
+        tool_state, tool_call("record_brief", {**HALL, "room_name": "Hall", "ceiling_height_mm": 2300})
+    )
+    state = harness.turn("the hall ceiling is 2300, not 2400")
+    assert "__interrupt__" not in state
+    prompt = models["designer"].last_prompt_text()
+    assert "`record_brief` belongs to Intake, not to you. Nothing was done or saved." in prompt
+    with ToolDeps(tool_state).session() as session:
+        assert house_file.room_by_name(session, "Hall").height_mm == 2400
+
+
+def test_a_switched_off_own_tool_is_refused_as_switched_off(tool_state) -> None:
+    from app.agent.tools import loaded_plugins
+    from app.plugins.enablement import set_thread_enabled
+
+    models, harness = _designer_calls(tool_state, tool_call("cut_list", {"package_id": "hall-bench"}))
+    with ToolDeps(tool_state).session() as session:
+        set_thread_enabled(session, loaded_plugins(), harness.thread, "cut_list", False)
+        session.commit()
+    harness.turn("list the parts")
+    assert "`cut_list` is switched off in this conversation's tools. Nothing was done." in (
+        models["designer"].last_prompt_text()
+    )
+
+
+def test_an_unknown_tool_is_refused_as_not_existing(tool_state) -> None:
+    models, harness = _designer_calls(tool_state, tool_call("frobnicate", {}))
+    harness.turn("do the thing")
+    assert "There is no tool `frobnicate`. Nothing was done." in models["designer"].last_prompt_text()
+
+
+def test_an_answered_confirmation_is_kept_on_the_stored_tool_message(tool_state, make_ctx) -> None:
+    from langchain_core.messages import ToolMessage
+
+    from app.blender import storage
+
+    create_run({"package_id": "bench", "spec": desk()}, replace(make_ctx(), approved=True))
+    wait_for_status(storage.version_dir(tool_state.settings.render_root, "bench", 1))
+    revise = {"package_id": "bench", "changes": {"modules": {"cabinet": {"shelves": 3}}}}
+    models = fake_models(
+        foreman={"decisions": [decision("designer")]},
+        designer={"tool_call_scripts": [[tool_call("revise_package", revise)]], "replies": ["Four shelves, then?"]},
+    )
+    harness = make_harness(tool_state, models)
+    harness.start(package_id="bench")
+    paused = harness.turn("three shelves please")
+    summary = paused["__interrupt__"][0].value["summary"]
+    harness.answer("no", "make it 4 shelves")
+
+    stored = [m for m in harness.snapshot().values["messages"] if isinstance(m, ToolMessage)]
+    assert stored[-1].additional_kwargs["confirmation"] == {
+        "subject": "revise", "summary": summary, "answer": "no", "reason": "make it 4 shelves",
+    }
+
+
 def test_a_bound_piece_with_a_version_lets_the_builder_answer(tool_state, make_ctx) -> None:
     create_run({"package_id": "bench", "spec": desk()}, replace(make_ctx(), approved=True))
     from app.blender import storage

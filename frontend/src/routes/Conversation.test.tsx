@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import Conversation from "./Conversation";
 
-type Msg = { role: "owner" | "assistant"; text: string };
+type Msg = { role: "owner" | "assistant" | "confirmation"; text: string };
 type Reply = { status?: number; body?: unknown };
 
 const STEPS = ["brief", "piece", "built", "rendered", "reviewed", "detail", "final"];
@@ -310,4 +310,17 @@ test("a file that is not a design is refused in plain words", async () => {
   );
   expect(await screen.findByRole("alert")).toHaveTextContent("design files (.json) are accepted");
   expect(screen.queryByLabelText("Design file list.json")).not.toBeInTheDocument();
+});
+
+test("an answered confirmation stays in the history as one muted line", async () => {
+  messages = [
+    owner("a hall bench"),
+    { role: "confirmation", text: "brief: Room Hall: 1200 × 3000 mm — no (make it 4 shelves)" },
+    reply("Four shelves, then?"),
+  ];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  const line = list.getByText("Answered: brief: Room Hall: 1200 × 3000 mm — no (make it 4 shelves)");
+  expect(line).toHaveAttribute("data-role", "confirmation");
+  expect(list.getByText("Four shelves, then?")).toBeInTheDocument();
 });

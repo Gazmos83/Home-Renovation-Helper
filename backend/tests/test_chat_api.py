@@ -217,6 +217,7 @@ def test_no_response_shows_a_model_a_token_count_or_a_host_path(client: TestClie
         json={"confirmation_id": paused.json()["pending"]["confirmation_id"], "answer": "yes"},
     )
     bodies.append(done.text)
+    bodies.append(client.get(f"/chat/threads/{thread}").text)
     bodies.append(client.get("/chat/threads").text)
     everything = json.dumps(bodies).lower()
 
@@ -407,3 +408,81 @@ def test_a_built_and_reviewed_piece_shows_in_the_progress(client: TestClient, re
         session.commit()
     body = client.get(f"/chat/threads/{thread}/progress").json()
     assert body["approved_version"] == 1
+
+
+# --- history (foreman-routing-fixes) ----------------------------------------------
+
+
+def _history_of(messages) -> list[dict[str, str]]:
+    from types import SimpleNamespace
+
+    from app.agent import chat
+
+    graph = SimpleNamespace(
+        get_state=lambda _config, **_kw: SimpleNamespace(values={"messages": messages}, interrupts=())
+    )
+    return chat.history(graph, thread_id=uuid4(), owner_id=uuid4())
+
+
+def test_a_reply_sent_with_a_tool_call_is_shown_without_the_call() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    call = {"id": "c1", "name": "create_piece", "args": {"package_id": "wall", "spec": {"secret": "args"}}}
+    shown = _history_of([
+        HumanMessage("design it"),
+        AIMessage("Here's how your spec forces the dimensions.", tool_calls=[call]),
+        ToolMessage("Created wall version 1.", tool_call_id="c1"),
+        AIMessage("\n\n", tool_calls=[{**call, "id": "c2"}]),
+        ToolMessage("Created.", tool_call_id="c2"),
+        AIMessage("It is building."),
+    ])
+    assert shown == [
+        {"role": "owner", "text": "design it"},
+        {"role": "assistant", "text": "Here's how your spec forces the dimensions."},
+        {"role": "assistant", "text": "It is building."},
+    ]
+    assert "secret" not in json.dumps(shown) and "Created" not in json.dumps(shown)
+
+
+def test_an_answered_confirmation_is_one_line_before_the_reply_that_followed(client: TestClient) -> None:
+    install(client, fake_models(
+        foreman={"decisions": [{"specialist": "intake", "reason": "t"}]},
+        intake={"steps": [[tool_call("record_brief", HALL)], "Four shelves, then? Tell me the change."]},
+    ))
+    thread = start(client)
+    paused = client.post(f"/chat/threads/{thread}/turns", json={"message": "a hall bench"}).json()
+    pending = paused["pending"]
+    read = client.get(f"/chat/threads/{thread}").json()
+    assert [m["role"] for m in read["messages"]] == ["owner"]
+    assert read["pending"]["confirmation_id"] == pending["confirmation_id"]
+
+    client.post(
+        f"/chat/threads/{thread}/resume",
+        json={"confirmation_id": pending["confirmation_id"], "answer": "no", "reason": "make it 4 shelves"},
+    )
+    messages = client.get(f"/chat/threads/{thread}").json()["messages"]
+    assert messages == [
+        {"role": "owner", "text": "a hall bench"},
+        {"role": "confirmation", "text": f"brief: {pending['summary']} — no (make it 4 shelves)"},
+        {"role": "assistant", "text": "Four shelves, then? Tell me the change."},
+    ]
+
+
+def test_the_words_sent_with_a_gated_call_show_above_the_pending_card(client: TestClient) -> None:
+    install(client, fake_models(
+        foreman={"decisions": [{"specialist": "intake", "reason": "t"}]},
+        intake={"steps": [("Your hall is 1200 by 3000, so here is the brief.", [tool_call("record_brief", HALL)]), "Saved."]},
+    ))
+    thread = start(client)
+    paused = client.post(f"/chat/threads/{thread}/turns", json={"message": "a hall bench"}).json()
+    read = client.get(f"/chat/threads/{thread}").json()
+    assert read["messages"] == [
+        {"role": "owner", "text": "a hall bench"},
+        {"role": "assistant", "text": "Your hall is 1200 by 3000, so here is the brief."},
+    ]
+    assert read["pending"]["confirmation_id"] == paused["pending"]["confirmation_id"]
+
+    client.post(f"/chat/threads/{thread}/resume", json={"confirmation_id": paused["pending"]["confirmation_id"], "answer": "yes"})
+    after = client.get(f"/chat/threads/{thread}").json()["messages"]
+    assert [m["role"] for m in after] == ["owner", "assistant", "confirmation", "assistant"]
+    assert after[1]["text"] == "Your hall is 1200 by 3000, so here is the brief."

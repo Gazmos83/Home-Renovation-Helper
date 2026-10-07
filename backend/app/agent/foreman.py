@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -76,7 +77,29 @@ ONE_AT_A_TIME_NOTE: Final = (
     "Not run: only one confirmable action can be handled at a time. "
     "Propose any further action in a later step."
 )
-NOT_AVAILABLE_NOTE: Final = "this tool is not available to you"
+# How a refusal names the specialist that owns a tool (design-agents).
+SPECIALIST_LABELS: Final[dict[str, str]] = {
+    "intake": "Intake",
+    "designer": "the Designer",
+    "builder": "the Builder",
+    "lighting": "Lighting & materials",
+    "reviewer": "the Reviewer",
+    "researcher": "the Researcher",
+}
+_TOOL_NAME: Final = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+def tool_refusal(tool: str, specialist: str, owners: dict[str, list[str]]) -> str:
+    """The fixed text for a call to a tool `specialist` has not bound; nothing ran."""
+    named = owners.get(tool, [])
+    if specialist in named:
+        return f"`{tool}` is switched off in this conversation's tools. Nothing was done."
+    if named:
+        who = " and ".join(SPECIALIST_LABELS.get(n, n) for n in named)
+        return f"`{tool}` belongs to {who}, not to you. Nothing was done or saved."
+    if _TOOL_NAME.match(tool):
+        return f"There is no tool `{tool}`. Nothing was done."
+    return "There is no such tool. Nothing was done."
 DECLINED: Final[dict[str, str]] = {
     "brief": "The brief was not saved.",
     "plan": "The plan was not saved.",
@@ -107,6 +130,7 @@ class ChatState(TypedDict, total=False):
     shell_ready: bool
     review_ready: bool
     detail_ready: bool
+    image_attached: bool
     design_attached: bool
     brief: dict[str, Any]
     bound_tools: dict[str, list[str]]
@@ -142,11 +166,14 @@ def _image_blocks(
     return blocks, missing
 
 
-def _design_attached(engine: Engine, messages: list[AnyMessage]) -> bool:
-    """Whether the newest owner message carries a design file."""
+def _attached(engine: Engine, messages: list[AnyMessage]) -> tuple[bool, bool]:
+    """Whether the newest owner message carries (an image, a design file)."""
     newest = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
     ids = newest.additional_kwargs.get("upload_ids") if newest is not None else None
-    return bool(ids) and bool(_designs(engine, list(ids))[1])
+    if not ids:
+        return False, False
+    images, designs = _designs(engine, list(ids))
+    return bool(images), bool(designs)
 
 
 def _designs(engine: Engine, upload_ids: list[str]) -> tuple[list[str], list[tuple[str, str]]]:
@@ -267,6 +294,11 @@ def build_graph(
 ):
     """Compile the Foreman graph on `checkpointer`."""
     loaded = instructions or load_instructions()
+    # Which specialists' headers name each tool, for an honest refusal of a call outside the bound set.
+    owners: dict[str, list[str]] = {}
+    for specialist in SPECIALISTS:
+        for tool_name in loaded[specialist].tools:
+            owners.setdefault(tool_name, []).append(specialist)
     loaded_plugins_set = plugins or loaded_plugins()
     budget_store = budgets or Budgets(engine)
     tools_by_name = dict(loaded_plugins_set.builtin_tools())
@@ -348,6 +380,7 @@ def build_graph(
                 for a in apartments
             )
             facts += f" Apartments: {listed}."
+        image_attached, design_attached = _attached(engine, state.get("messages", []))
         return {
             "house_note": house_note(
                 rooms, preferences, pieces, requests, apartments, open_review
@@ -360,7 +393,8 @@ def build_graph(
             "shell_ready": shell_ready,
             "review_ready": review_ready,
             "detail_ready": detail_ready,
-            "design_attached": _design_attached(engine, state.get("messages", [])),
+            "image_attached": image_attached,
+            "design_attached": design_attached,
             "round_count": 0,
             "specialist": "",
             "bound_tools": tools_this_turn,
@@ -444,6 +478,9 @@ def build_graph(
         if chosen == "lighting" and not state.get("detail_ready"):
             chosen = "builder" if buildable else ("designer" if state.get("brief") else "intake")
         if not buildable and not state.get("brief") and chosen not in ("reviewer", "researcher"):
+            chosen = "intake"
+        # Only Intake reads plans and photos, so an image turn the model gave the Designer goes to Intake.
+        if chosen == "designer" and state.get("image_attached"):
             chosen = "intake"
         # An attached design file is the Designer's to import, whatever the thread holds (design-import).
         if state.get("design_attached"):
@@ -541,7 +578,9 @@ def build_graph(
                 call_id = call.get("id") or ""
                 tool = bound_tools.get(call.get("name") or "")
                 if tool is None:
-                    messages.append(ToolMessage(NOT_AVAILABLE_NOTE, tool_call_id=call_id))
+                    messages.append(
+                        ToolMessage(tool_refusal(call.get("name") or "", name, owners), tool_call_id=call_id)
+                    )
                     continue
                 args = call.get("args") or {}
                 if tool.gated and call is not first_gated:
@@ -579,6 +618,18 @@ def build_graph(
                     messages.append(ToolMessage(result.text, tool_call_id=call_id))
                 else:
                     messages.append(ToolMessage(result, tool_call_id=call_id))
+            # An answered confirmation stays in the history as one line (homeowner-chat); the
+            # model never sees these kwargs, only the tool result's text.
+            if isinstance(outcome, Confirmation) and first_gated is not None:
+                answered = {
+                    "subject": outcome.subject,
+                    "summary": outcome.summary,
+                    "answer": "yes" if approved else "no",
+                    "reason": reason,
+                }
+                for message in messages:
+                    if message.tool_call_id == (first_gated.get("id") or ""):
+                        message.additional_kwargs["confirmation"] = answered
             return Command(update={"messages": messages, **update}, goto="agent")
 
         builder = StateGraph(ChatState)

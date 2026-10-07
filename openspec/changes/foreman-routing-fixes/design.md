@@ -37,7 +37,7 @@ See proposal.md for the motivation. The relevant code as it stands:
    - *Alternative:* add a visible `AIMessage`. Rejected: it would enter the model's context as words the model never said.
    - *Alternative:* a new table. Rejected: a migration for one line.
 6. **History rule.** Keep an `AIMessage` whenever its text, stripped, is non-empty, whether or not it has tool calls. Skip `ToolMessage`s except to read the confirmation kwargs. A whitespace-only message (the `'\n\n'` beside a tool call seen in the thread) stays hidden.
-7. **The Studio shows the new role.** `Conversation.tsx` renders a `confirmation` entry as a muted, bordered line ("Confirmed: brief — yes"). Its styling stays minimal, because `studio-chat-polish` restyles the whole view.
+7. **The Studio shows the new role.** `Conversation.tsx` renders a `confirmation` entry as a muted, bordered line ("Answered: brief — yes"). Its styling stays minimal, because `studio-chat-polish` restyles the whole view.
 
 ## Risks / Trade-offs
 

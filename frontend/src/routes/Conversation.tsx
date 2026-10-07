@@ -336,14 +336,20 @@ export default function Conversation() {
         <div className="space-y-4">
           <section className={cardClass} aria-label="Messages">
             {messages.length === 0 && !optimistic && <p className="text-muted-foreground">Nothing said yet. Describe the piece you want.</p>}
-            {messages.map((m, index) => (
+            {messages.map((m, index) =>
+              m.role === "confirmation" ? (
+                <p key={index} className="rounded-md border px-3 py-2 text-sm text-muted-foreground" data-role="confirmation">
+                  Answered: {m.text}
+                </p>
+              ) : (
               <p key={index} className={m.role === "owner" ? "font-medium" : ""}>
                 <strong>{m.role === "owner" ? "You" : "Foreman"}:</strong> {m.text}
                 {m.role === "assistant" && index === messages.length - 1 && specialist && (
                   <Badge variant="outline" className="ml-2">{specialist}</Badge>
                 )}
               </p>
-            ))}
+              ),
+            )}
             {optimistic && (
               <div>
                 <p className="font-medium"><strong>You:</strong> {optimistic.text}</p>

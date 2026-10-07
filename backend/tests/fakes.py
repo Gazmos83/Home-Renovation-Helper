@@ -34,7 +34,8 @@ class FakeChatModel(BaseChatModel):
     tool_call_scripts: list[list[dict[str, Any]]] = Field(default_factory=list)
     # An ordered script mixing both: a string is a text reply, a list is a set of
     # tool calls. Used when a test needs calls and replies interleaved across turns.
-    steps: list[str | list[dict[str, Any]]] = Field(default_factory=list)
+    # A step is a text reply, a list of tool calls, or (text, tool calls) sent together.
+    steps: list[str | list[dict[str, Any]] | tuple[str, list[dict[str, Any]]]] = Field(default_factory=list)
     # The Foreman's decisions, as `{"specialist": ..., "reason": ...}` dicts or
     # schema instances, popped by `with_structured_output`.
     decisions: list[Any] = Field(default_factory=list)
@@ -73,8 +74,9 @@ class FakeChatModel(BaseChatModel):
                         ChatGeneration(message=AIMessage(step, usage_metadata=usage_metadata))  # type: ignore[arg-type]
                     ]
                 )
+            text, calls = step if isinstance(step, tuple) else ("", step)
             message = AIMessage(
-                content="", tool_calls=step, usage_metadata=usage_metadata  # type: ignore[arg-type]
+                content=text, tool_calls=calls, usage_metadata=usage_metadata  # type: ignore[arg-type]
             )
             return ChatResult(generations=[ChatGeneration(message=message)])
         # A scripted tool call only fires while tools are bound: `bind_tools([])`

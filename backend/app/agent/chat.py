@@ -14,7 +14,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import psycopg
-from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from langgraph.types import Command
 
 from app.agent.models.openrouter_client import GatewayError
@@ -178,13 +178,37 @@ def brief_confirmed(graph: Any, *, thread_id: UUID, owner_id: UUID) -> bool:
     return bool(snapshot.values.get("brief"))
 
 
+def _confirmation_line(answered: dict[str, Any]) -> str:
+    """One answered confirmation as the owner saw it: subject, summary and answer."""
+    line = f"{answered.get('subject', '')}: {answered.get('summary', '')} — {answered.get('answer', '')}"
+    if answered.get("reason"):
+        line += f" ({answered['reason']})"
+    return line
+
+
 def history(graph: Any, *, thread_id: UUID, owner_id: UUID) -> list[dict[str, str]]:
-    """The owner's messages and the replies, in order; tool traffic is left out."""
-    snapshot = graph.get_state(_config(thread_id, owner_id))
+    """The owner's messages, every reply with text, and each answered confirmation, in order.
+
+    A reply sent together with tool calls is shown; tool calls, arguments and
+    results are not. An answered confirmation is one line from the tool message
+    it was recorded on.
+    """
+    config = _config(thread_id, owner_id)
+    snapshot = graph.get_state(config)
+    messages = list(snapshot.values.get("messages", []))
+    if snapshot.interrupts:
+        # A paused specialist's messages stay in its own sub-graph until the owner answers;
+        # its words before the card are shown now, above the pending confirmation.
+        known = {m.id for m in messages}
+        for task in graph.get_state(config, subgraphs=True).tasks:
+            values = getattr(task.state, "values", None) or {}
+            messages += [m for m in values.get("messages", []) if m.id not in known]
     shown = []
-    for message in snapshot.values.get("messages", []):
+    for message in messages:
         if isinstance(message, HumanMessage):
             shown.append({"role": "owner", "text": _text(message.content)})
-        elif isinstance(message, AIMessage) and message.content and not message.tool_calls:
+        elif isinstance(message, AIMessage) and _text(message.content).strip():
             shown.append({"role": "assistant", "text": _text(message.content)})
+        elif isinstance(message, ToolMessage) and isinstance(message.additional_kwargs.get("confirmation"), dict):
+            shown.append({"role": "confirmation", "text": _confirmation_line(message.additional_kwargs["confirmation"])})
     return shown
