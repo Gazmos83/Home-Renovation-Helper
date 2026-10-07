@@ -54,6 +54,7 @@ from app.api.uploads import router as uploads_router
 from app.auth.accounts import ensure_owner
 from app.blender import storage
 from app.config import Settings, get_settings
+from app.db.migrate import current_revision, upgrade_to_head
 from app.db.session import make_engine
 from app.guidelines.rules import load_rules
 from app.ingestion.live_fetcher import make_live_fetcher
@@ -75,6 +76,20 @@ async def _lifespan(app: FastAPI):
     # worker threads (sync routes), so it needs this handle to reach the loop
     # that owns the Blender semaphore.
     app.state.loop = asyncio.get_running_loop()
+
+    # Bring the migration-owned schema to head before anything reads a table.
+    # An unreachable database is /health's business, same as the owner ensure.
+    schema = "unknown"
+    try:
+        was = current_revision(app.state.engine)
+        schema = upgrade_to_head(str(settings.database_url)) or "unknown"
+        app_logging.logger.info(
+            "schema ready", extra={"context": {"revision": schema, "was": was}}
+        )
+    except Exception as error:  # noqa: BLE001 - reported, not fatal when the DB is down
+        app_logging.logger.warning(
+            "schema upgrade failed at startup: %s", type(error).__name__
+        )
 
     # The checkpointer owns its own schema and creates it here (§6). `.setup()`
     # is idempotent, so every boot runs it. An unreachable database leaves the
@@ -201,6 +216,7 @@ async def _lifespan(app: FastAPI):
                 "routing": dict(app.state.routing.items()),
                 "tiers": app.state.tiers.summary(),
                 "benchmark": benchmark,
+                "schema": schema,
                 **settings.safe_summary(),
             }
         },

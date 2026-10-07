@@ -4,12 +4,22 @@ summary reports tracing and routing without a secret (tasks 8.1, 6.3)."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+import pytest
+from alembic import command
+from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.db.migrate import head_revision
+from app.db.session import make_engine
 from app.main import create_app
 from conftest import OWNER_EMAIL, OWNER_PASSWORD
+
+BACKEND = Path(__file__).resolve().parents[1]
 
 
 def _settings(database_url: str) -> Settings:
@@ -51,6 +61,7 @@ def test_the_startup_summary_names_tracing_and_routing_without_a_secret(
     record = summary[0]
     assert record["tracing"] == "off"
     assert record["probe"] == "skipped"
+    assert record["schema"] == head_revision()
     assert record["routing"]["reviewer"] == "deepseek/deepseek-v4.1-flash"
 
     # No secret anywhere in any record.
@@ -105,6 +116,26 @@ def test_the_summary_reports_a_stored_benchmark_without_running_one(
     with TestClient(create_app(_settings(migrated_database))):
         pass
     assert _ready_record(capsys)["benchmark"] == "stored"
+
+
+def test_startup_brings_a_behind_schema_to_head(
+    migrated_database: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ALEMBIC_DATABASE_URL", migrated_database)
+    config = Config(str(BACKEND / "alembic.ini"))
+    head = ScriptDirectory.from_config(config).get_current_head()
+    previous = ScriptDirectory.from_config(config).get_revision(head).down_revision
+    assert previous, "there must be an older revision to stand behind"
+    command.downgrade(config, previous)
+    engine = make_engine(migrated_database)
+    try:
+        with TestClient(create_app(_settings(migrated_database))):
+            pass
+        with engine.connect() as connection:
+            assert MigrationContext.configure(connection).get_current_revision() == head
+    finally:
+        command.upgrade(config, "head")
+        engine.dispose()
 
 
 def test_the_app_registers_the_render_state_and_routes(migrated_database: str) -> None:

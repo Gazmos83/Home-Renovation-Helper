@@ -10,6 +10,7 @@ schema Alembic never created (CLAUDE.md §6).
 
 from __future__ import annotations
 
+import logging
 import os
 from logging.config import fileConfig
 from typing import Any
@@ -21,11 +22,9 @@ from app.db.models import Base
 from app.db.session import to_sqlalchemy_url
 
 config = context.config
-if config.config_file_name is not None:
-    # disable_existing_loggers defaults to True, which would switch off the
-    # application's own loggers whenever migrations run in-process (tests, or a
-    # startup that migrates before serving). Alembic's logging config should
-    # configure Alembic, not silence the app.
+# Alembic's ini would replace the root handlers. Skip that when the app has
+# already configured logging (in-process upgrade at startup or in tests).
+if config.config_file_name is not None and not logging.getLogger().handlers:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
