@@ -137,6 +137,7 @@ def piece_progress(
         "package_id": package_id if piece else None,
         "name": piece["name"] if piece else None,
         "latest_version": latest,
+        "approved_version": piece["approved_version"] if piece else None,
         "build_status": build_status if has_piece else None,
         "steps": steps,
         "next_step": _next_step(steps, build_status, has_piece),

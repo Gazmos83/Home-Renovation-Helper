@@ -35,7 +35,10 @@ class OpeningArg(BaseModel):
 
 
 class RecordBriefArgs(BaseModel):
-    room_name: str = Field(description="the room's name, e.g. 'Hall'")
+    room_name: str | None = Field(
+        default=None,
+        description="the room's name, e.g. 'Hall'; leave out when the owner has not named a room",
+    )
     corners_mm: list[list[float]] | None = Field(
         default=None,
         description="the room outline as [x, y] corners in mm; leave out for a room already in the house file",
@@ -52,13 +55,24 @@ class RecordBriefArgs(BaseModel):
 
 
 def _resolve(args: RecordBriefArgs, ctx: ToolContext) -> tuple[dict[str, Any] | None, str]:
-    """The room to store (or `None` to keep the stored one), or a refusal."""
+    """The room to store (or `None` to keep the stored one, or none), or a refusal."""
+    name = (args.room_name or "").strip()
+    if not name:
+        given = (
+            args.corners_mm is not None
+            or args.ceiling_height_mm is not None
+            or args.openings is not None
+            or args.wall_thickness_mm is not None
+        )
+        if given:
+            return None, "a room needs a name; ask the owner what the room is called"
+        return None, ""
     with ctx.deps.session() as session:
-        stored = house_file.room_by_name(session, args.room_name)
+        stored = house_file.room_by_name(session, name)
         if args.corners_mm is None and args.ceiling_height_mm is None and args.openings is None:
             if stored is None:
                 return None, (
-                    f"the room {args.room_name!r} is not in the house file; give its corner points "
+                    f"the room {name!r} is not in the house file; give its corner points "
                     "and ceiling height"
                 )
             return None, ""
@@ -76,7 +90,7 @@ def _resolve(args: RecordBriefArgs, ctx: ToolContext) -> tuple[dict[str, Any] | 
         thickness = args.wall_thickness_mm or (stored.wall_thickness_mm if stored else None)
         try:
             return (
-                house_file.validate_room(args.room_name, corners, height, openings, thickness),
+                house_file.validate_room(name, corners, height, openings, thickness),
                 "",
             )
         except HouseFileError as error:
@@ -85,7 +99,7 @@ def _resolve(args: RecordBriefArgs, ctx: ToolContext) -> tuple[dict[str, Any] | 
 
 def _brief(args: RecordBriefArgs) -> dict[str, Any]:
     brief = {
-        "room": args.room_name.strip(),
+        "room": (args.room_name or "").strip() or None,
         "purpose": args.purpose,
         "max_piece_height_mm": args.max_piece_height_mm,
         "style": args.style,
@@ -113,8 +127,10 @@ def preview_brief(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation |
             f"Room {room['name']}: {_size(room['corners_mm'])}, ceiling {room['height_mm']:g} mm, "
             f"{len(room['openings'])} opening(s)"
         )
-    else:
+    elif (args.room_name or "").strip():
         lines.append(f"Room {args.room_name.strip()}: as already in the house file")
+    else:
+        lines.append("Room: not given yet")
     lines.append(f"Piece: {args.purpose}")
     if args.max_piece_height_mm is not None:
         lines.append(f"Highest the piece may be: {args.max_piece_height_mm:g} mm")
@@ -163,9 +179,9 @@ def run_brief(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
 record_brief = AgentTool(
     name="record_brief",
     description=(
-        "Propose the owner's confirmed numbers: the room (its name, and its corner points and "
-        "ceiling height if it is not in the house file yet), what the piece is for, heights, "
-        "style and budget. The owner is shown a summary and answers yes or no; nothing is saved "
+        "Propose the owner's confirmed numbers: what the piece is for, heights, style and budget, "
+        "and the room when the owner gives one (its name, and its corner points and ceiling "
+        "height if it is not in the house file yet); a brief without a room is complete. The owner is shown a summary and answers yes or no; nothing is saved "
         "before yes. Use only figures the owner gave."
     ),
     schema=RecordBriefArgs,

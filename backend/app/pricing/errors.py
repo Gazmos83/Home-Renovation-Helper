@@ -11,5 +11,9 @@ class Refused(ValueError):
     """The request is understood but refused; the message says why."""
 
 
+class NotApproved(Refused):
+    """Refused because the version has not been approved by the owner."""
+
+
 class Conflict(Refused):
     """Refused because of the current state (a duplicate key, an entry still in use)."""

@@ -12,11 +12,11 @@ from sqlalchemy.orm import Session
 from app.blender import storage
 from app.db.models import CutListPricing
 from app.pricing import price_list, remnants
-from app.pricing.errors import Refused
+from app.pricing.errors import NotApproved, Refused
 from app.pricing.pricing import describe_pricing, list_pricings, price_cut_list
 from app.pricing.store import StoreCapture, UnknownStore, upsert_store
 from tests.api_helpers import desk
-from tests.pricing_helpers import clean_pricing
+from tests.pricing_helpers import approve_version, clean_pricing
 
 KEY = "berlin-friedrichshain"
 BIRCH = "panel:oak-veneer-birch:18"
@@ -39,6 +39,13 @@ def session(migrated_database: str):
 @pytest.fixture
 def settings(tool_state):
     return tool_state.settings
+
+
+@pytest.fixture(autouse=True)
+def approved_desk(settings, session: Session) -> None:
+    """Pricing needs an approved version; the desk is approved unless a test says otherwise."""
+    approve_version(session, "hall-desk", 1)
+    session.flush()
 
 
 def write_version(root: Path, document: dict | None = None, package_id: str = "hall-desk", version: int = 1) -> None:
@@ -213,7 +220,80 @@ def test_a_pricing_describes_itself_as_plain_data(session, settings) -> None:
     home_store(session)
     price_the_desk(session)
     row = price_cut_list(session, settings.render_root, "hall-desk", 1, settings)
-    described = describe_pricing(row)
+    described = describe_pricing(session, row)
     assert described["package_id"] == "hall-desk" and described["version"] == 1
     assert described["total_cents"] == row.total_cents and isinstance(described["result"], dict)
     assert session.get(CutListPricing, row.id) is row
+
+
+# --- only an approved version is priced -------------------------------------------------------
+
+
+def test_an_unapproved_version_is_refused_and_no_record_is_written(session, settings) -> None:
+    from app.agent import house_file
+
+    write_version(settings.render_root)
+    home_store(session)
+    price_the_desk(session)
+    house_file.unapprove_version(session, "hall-desk", 1)
+    session.flush()
+
+    with pytest.raises(NotApproved, match="approve it first on the Pieces page"):
+        price_cut_list(session, settings.render_root, "hall-desk", 1, settings)
+
+    assert list_pricings(session, "hall-desk", 1) == []
+
+
+def test_a_version_with_no_house_file_record_is_not_priced(session, settings) -> None:
+    write_version(settings.render_root, package_id="folder-only")
+    home_store(session)
+    price_the_desk(session)
+    with pytest.raises(NotApproved):
+        price_cut_list(session, settings.render_root, "folder-only", 1, settings)
+
+
+def test_the_approved_version_is_priced_and_another_version_is_not(session, settings) -> None:
+    from app.agent import house_file
+
+    write_version(settings.render_root)
+    write_version(settings.render_root, package_id="hall-desk", version=2)
+    house_file.record_version(session, "hall-desk", 2, revised_from=1)
+    home_store(session)
+    price_the_desk(session)
+
+    assert price_cut_list(session, settings.render_root, "hall-desk", 1, settings).complete
+    with pytest.raises(NotApproved):
+        price_cut_list(session, settings.render_root, "hall-desk", 2, settings)
+
+
+def test_a_pricing_stays_readable_after_unapproval_and_reports_it(session, settings) -> None:
+    from app.agent import house_file
+
+    write_version(settings.render_root)
+    home_store(session)
+    price_the_desk(session)
+    row = price_cut_list(session, settings.render_root, "hall-desk", 1, settings)
+    total = row.total_cents
+    assert describe_pricing(session, row)["version_approved"] is True
+
+    house_file.unapprove_version(session, "hall-desk", 1)
+    session.flush()
+    described = describe_pricing(session, row)
+    assert described["version_approved"] is False
+    assert described["total_cents"] == total
+
+
+def test_a_pricing_reports_the_approval_moving_to_another_version(session, settings) -> None:
+    from app.agent import house_file
+
+    write_version(settings.render_root)
+    home_store(session)
+    price_the_desk(session)
+    row = price_cut_list(session, settings.render_root, "hall-desk", 1, settings)
+
+    house_file.record_version(session, "hall-desk", 2, revised_from=1)
+    house_file.approve_version(session, "hall-desk", 2)
+    session.flush()
+
+    assert describe_pricing(session, row)["version_approved"] is False
+    assert describe_pricing(session, row)["total_cents"] == row.total_cents

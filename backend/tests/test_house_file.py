@@ -190,3 +190,65 @@ def test_a_second_write_replaces_a_room_and_checks_it_against_the_ones_kept(db_s
     clashing = {**BEDROOM, "corners_mm": [[4000, 0], [9000, 0], [9000, 3800], [4000, 3800]]}
     with pytest.raises(HouseFileError, match="overlap"):
         house_file.upsert_apartment(db_session, "Flat", 2550, 120, [clashing])
+
+
+# --- version approval ---------------------------------------------------------
+
+
+def _bench_with_versions(db_session, count: int = 3) -> None:
+    house_file.record_piece(db_session, "hall-bench", "Hall bench")
+    for number in range(1, count + 1):
+        house_file.record_version(db_session, "hall-bench", number, revised_from=number - 1 or None)
+
+
+def test_a_new_version_starts_unapproved(db_session) -> None:
+    _bench_with_versions(db_session, 1)
+    assert house_file.approved_version_of(db_session, "hall-bench") is None
+
+
+def test_approving_a_version_moves_the_approval(db_session, render_root: Path) -> None:
+    _bench_with_versions(db_session)
+    house_file.approve_version(db_session, "hall-bench", 2)
+    assert house_file.approved_version_of(db_session, "hall-bench") == 2
+    house_file.approve_version(db_session, "hall-bench", 3)
+    assert house_file.approved_version_of(db_session, "hall-bench") == 3
+    listed = house_file.pieces(db_session, render_root)[0]
+    assert listed["approved_version"] == 3
+    assert [v["approved_at"] is not None for v in listed["versions"]] == [False, False, True]
+
+
+def test_approving_and_unapproving_are_idempotent(db_session) -> None:
+    _bench_with_versions(db_session, 2)
+    first = house_file.approve_version(db_session, "hall-bench", 1).approved_at
+    assert house_file.approve_version(db_session, "hall-bench", 1).approved_at == first
+    house_file.unapprove_version(db_session, "hall-bench", 1)
+    house_file.unapprove_version(db_session, "hall-bench", 1)
+    house_file.unapprove_version(db_session, "hall-bench", 2)
+    assert house_file.approved_version_of(db_session, "hall-bench") is None
+
+
+def test_a_revision_creates_an_unapproved_version_and_keeps_the_approval(db_session) -> None:
+    _bench_with_versions(db_session, 2)
+    house_file.approve_version(db_session, "hall-bench", 2)
+    house_file.record_version(db_session, "hall-bench", 3, revised_from=2, changes=["shelves 2 → 3"])
+    assert house_file.version_row(db_session, "hall-bench", 3).approved_at is None
+    assert house_file.approved_version_of(db_session, "hall-bench") == 2
+
+
+def test_a_version_with_no_record_cannot_be_approved(db_session) -> None:
+    house_file.record_piece(db_session, "hall-bench", "Hall bench")
+    with pytest.raises(HouseFileError, match="not recorded"):
+        house_file.approve_version(db_session, "hall-bench", 1)
+    with pytest.raises(HouseFileError, match="not recorded"):
+        house_file.unapprove_version(db_session, "hall-bench", 1)
+
+
+def test_the_house_note_names_the_approved_version_or_none(db_session, render_root: Path) -> None:
+    from app.agent.prompts import house_note
+
+    _bench_with_versions(db_session, 2)
+    note = house_note([], {}, house_file.pieces(db_session, render_root), [])
+    assert "hall-bench (Hall bench): v2, approved: none" in note
+    house_file.approve_version(db_session, "hall-bench", 1)
+    note = house_note([], {}, house_file.pieces(db_session, render_root), [])
+    assert "hall-bench (Hall bench): v2, approved: v1" in note

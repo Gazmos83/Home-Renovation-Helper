@@ -199,13 +199,14 @@ def _last_human_text(state: ChatState) -> str:
 
 def _designer_note() -> str:
     templates = []
-    for name in ("fold-down-desk", "blank-build"):
+    for name in ("custom-build", "fold-down-desk", "blank-build"):
         document = json.loads((TEMPLATES_DIR / f"{name}.json").read_text(encoding="utf-8"))
         templates.append(f"Template {name}:\n{json.dumps(document, separators=(',', ':'))}")
     return (
         "A custom_build document is positioned modules (boxes, in whole millimetres) with "
         "shelves and fronts (door, drawer, flap), drawing materials from named slots. "
-        "Start from one of these templates and change only what the brief supports.\n\n"
+        "Start from the custom-build template unless another one fits the brief better, and "
+        "change only what the brief supports.\n\n"
         + "\n\n".join(templates)
     )
 
@@ -299,7 +300,8 @@ def build_graph(
         if bound:
             latest = f"version {bound['latest_version']}" if bound["latest_version"] else "no version"
             status = f", {bound['status']}" if bound["status"] else ""
-            piece_line = f"{package_id} ({latest}{status})"
+            approved = f"v{bound['approved_version']}" if bound["approved_version"] else "none"
+            piece_line = f"{package_id} ({latest}{status}, approved: {approved})"
         else:
             piece_line = "none"
         confirmed = "yes" if state.get("brief") else "no"

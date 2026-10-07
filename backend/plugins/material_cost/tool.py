@@ -105,7 +105,7 @@ def run_price(arguments: dict[str, Any], ctx: ToolContext) -> str:
         except Refused as error:
             return f"the cut list cannot be priced: {error}"
         session.commit()
-        return summarise(describe_pricing(row))
+        return summarise(describe_pricing(session, row))
 
 
 def _rack_line(row) -> str:

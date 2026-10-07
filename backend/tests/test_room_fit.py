@@ -63,6 +63,24 @@ def test_an_unknown_room_lists_the_known_ones(make_ctx, tool_deps, tool_state) -
     assert "no room 'Attic'" in result and "Living room" in result
 
 
+def test_an_unknown_room_names_intake_as_the_way_to_record_one(make_ctx, tool_deps, tool_state) -> None:
+    setup(tool_deps, tool_state)
+    result = fit(make_ctx, room_name="Attic")
+    assert "Intake records a room from its measurements or a plan" in result
+
+
+def test_with_no_rooms_recorded_the_refusal_says_so(make_ctx, tool_deps, tool_state) -> None:
+    setup(tool_deps, tool_state)
+    with tool_deps.session() as session:
+        for room in house_file.rooms(session):
+            session.delete(room)
+        session.commit()
+    result = fit(make_ctx, room_name="Wohnen")
+    assert "no room 'Wohnen'" in result
+    assert "no rooms are recorded yet" in result
+    assert "Intake records a room" in result
+
+
 def test_a_wall_that_does_not_exist_is_refused(make_ctx, tool_deps, tool_state) -> None:
     setup(tool_deps, tool_state)
     assert "valid wall index" in fit(make_ctx, wall=9)

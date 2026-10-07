@@ -1,7 +1,8 @@
 """Packages and their versions (furniture-packages). Owner-gated.
 
-A package is `<render root>/<package-id>/v<N>/`; nothing here touches the
-database. A spec is validated before anything is written; a field the schema
+A package is `<render root>/<package-id>/v<N>/`; only a version's approval
+(the owner's acceptance of a built version) is read from and written to the
+house file. A spec is validated before anything is written; a field the schema
 does not define is refused by name. Building and rendering are background jobs
 run by `app.blender.runner` behind the render guard.
 """
@@ -16,7 +17,9 @@ from typing import Any, Final
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
+from sqlalchemy.orm import Session
 
+from app.agent import house_file
 from app.api.gate import require_owner
 from app.blender import runner, storage
 from app.blender.launch import subprocess_launch
@@ -115,7 +118,9 @@ def _frame_count(folder: Path) -> int:
     return len(list(frames.glob("frame_*.png"))) if frames.is_dir() else 0
 
 
-def describe_version(root: Path, package_id: str, version: int) -> dict[str, Any]:
+def describe_version(
+    root: Path, package_id: str, version: int, approved_at: str | None = None
+) -> dict[str, Any]:
     folder = storage.version_dir(root, package_id, version)
     state = storage.read_status(folder) or {}
     files = sorted(name for name in storage.SERVED_FILES if (folder / name).is_file())
@@ -127,6 +132,7 @@ def describe_version(root: Path, package_id: str, version: int) -> dict[str, Any
         "started_at": state.get("started_at"),
         "finished_at": state.get("finished_at"),
         "error": state.get("error"),
+        "approved_at": approved_at,
         "files": files,
         "renders": {
             "still": (folder / "still.png").is_file(),
@@ -138,6 +144,16 @@ def describe_version(root: Path, package_id: str, version: int) -> dict[str, Any
         },
         "jobs": state.get("renders") or {},
     }
+
+
+def _approvals(request: Request, package_id: str) -> dict[int, str]:
+    """When each approved version of the piece was approved (at most one entry)."""
+    with Session(request.app.state.engine) as session:
+        number = house_file.approved_version_of(session, package_id)
+        if number is None:
+            return {}
+        row = house_file.version_row(session, package_id, number)
+        return {number: row.approved_at.isoformat()}
 
 
 def _start_build(
@@ -197,10 +213,11 @@ def read_package(package_id: str, request: Request):
         raise not_found() from None
     if not found:
         raise not_found()
+    approvals = _approvals(request, package_id)
     return {
         "package_id": package_id,
         "versions": [
-            describe_version(render_root(request), package_id, number)
+            describe_version(render_root(request), package_id, number, approvals.get(number))
             for number in sorted(found, reverse=True)
         ],
     }
@@ -209,6 +226,38 @@ def read_package(package_id: str, request: Request):
 @router.get("/{package_id}/versions/{version}")
 def read_version(package_id: str, version: int, request: Request):
     existing_version(request, package_id, version)
+    approved_at = _approvals(request, package_id).get(version)
+    return describe_version(render_root(request), package_id, version, approved_at)
+
+
+@router.put("/{package_id}/versions/{version}/approval")
+def approve_version(package_id: str, version: int, request: Request):
+    folder = existing_version(request, package_id, version)
+    if (storage.read_status(folder) or {}).get("status") != "succeeded":
+        raise refused(
+            409, "not_built", f"version {version} must be built before it can be approved"
+        )
+    with Session(request.app.state.engine) as session:
+        if house_file.version_row(session, package_id, version) is None:
+            raise refused(
+                409,
+                "not_recorded",
+                f"version {version} of {package_id!r} is not in the house file; "
+                "only versions made in a conversation can be approved",
+            )
+        row = house_file.approve_version(session, package_id, version)
+        session.commit()
+        approved_at = row.approved_at.isoformat()
+    return describe_version(render_root(request), package_id, version, approved_at)
+
+
+@router.delete("/{package_id}/versions/{version}/approval")
+def unapprove_version(package_id: str, version: int, request: Request):
+    existing_version(request, package_id, version)
+    with Session(request.app.state.engine) as session:
+        if house_file.version_row(session, package_id, version) is not None:
+            house_file.unapprove_version(session, package_id, version)
+            session.commit()
     return describe_version(render_root(request), package_id, version)
 
 

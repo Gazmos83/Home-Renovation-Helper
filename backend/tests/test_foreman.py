@@ -7,7 +7,7 @@ from dataclasses import replace
 from langchain_core.messages import HumanMessage
 
 from app.agent import house_file
-from app.agent.foreman import MAX_TOOL_ROUNDS, last_reply
+from app.agent.foreman import MAX_TOOL_ROUNDS, _designer_note, last_reply
 from app.agent.prompts import UNTRUSTED_CONTENT_PREAMBLE
 from app.agent.tools.base import ToolDeps
 from app.agent.tools.create_piece import run as create_run
@@ -70,6 +70,49 @@ def test_with_a_confirmed_brief_but_no_piece_the_builder_request_goes_to_the_des
     state = harness.turn("now render it")
     assert state["specialist"] == "designer"
     assert models["builder"].calls == 0
+
+
+def test_a_room_less_brief_routes_design_it_to_the_designer(tool_state) -> None:
+    piece_only = {
+        "purpose": "a listening wall about 2200 mm wide and 2200 mm tall",
+        "style": "light oak",
+        "budget_eur": 900,
+    }
+    models = fake_models(
+        foreman={"decisions": [decision("intake"), decision("designer")]},
+        intake={"tool_call_scripts": [[tool_call("record_brief", piece_only)]], "replies": ["Saved."]},
+        designer={"replies": ["Here is a first design."]},
+    )
+    harness = make_harness(tool_state, models)
+    harness.turn("a listening wall, light oak, 900 EUR")
+    harness.answer("yes")
+    state = harness.turn("design it")
+    assert state["brief"] == piece_only
+    assert state["specialist"] == "designer"
+    assert models["intake"].calls == 2
+
+
+def test_the_designer_note_offers_the_custom_build_starter_first() -> None:
+    note = _designer_note()
+    assert note.index("Template custom-build:") < note.index("Template fold-down-desk:")
+    assert note.index("Template fold-down-desk:") < note.index("Template blank-build:")
+    assert "Start from the custom-build template" in note
+
+
+def test_the_facts_name_the_approved_version_of_the_bound_piece(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("designer"), decision("designer")]},
+        designer={"replies": ["Not yet.", "Version 1."]},
+    )
+    harness = make_harness(tool_state, models)
+    _bind_piece(tool_state, harness, screenshot=False)
+    state = harness.turn("which version is approved?")
+    assert "piece hall-bench (version 1, approved: none)" in state["facts"]
+    with ToolDeps(tool_state).session() as session:
+        house_file.approve_version(session, "hall-bench", 1)
+        session.commit()
+    state = harness.turn("and now?")
+    assert "piece hall-bench (version 1, approved: v1)" in state["facts"]
 
 
 def test_a_bound_piece_with_a_version_lets_the_builder_answer(tool_state, make_ctx) -> None:

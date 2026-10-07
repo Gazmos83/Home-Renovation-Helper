@@ -11,7 +11,7 @@ type Reply = { status?: number; body?: unknown };
 const STEPS = ["brief", "piece", "built", "rendered", "reviewed", "detail", "final"];
 function progress(done: string[], extra: Record<string, unknown> = {}) {
   return {
-    package_id: "hall-bench", name: "Hall bench", latest_version: 1, build_status: "succeeded",
+    package_id: "hall-bench", name: "Hall bench", latest_version: 1, approved_version: null, build_status: "succeeded",
     steps: STEPS.map((step) => ({ step, done: done.includes(step), detail: null })),
     next_step: "Ask for a draft render", open_review_items: 0, open_requests: [],
     screenshot: null, still: null, ...extra,
@@ -54,6 +54,12 @@ beforeEach(() => {
         return json({ body: { thread_id: "t1", title: "Hall bench", package_id: null, created_at: "", last_turn_at: "", messages, pending } });
       if (call === "GET /chat/threads/t1/progress") return json({ body: progressNow });
       if (call === "GET /chat/threads/t1/tools") return json({ body: tools });
+      const approval = /^(PUT|DELETE) \/packages\/hall-bench\/versions\/(\d)\/approval$/.exec(call);
+      if (approval) {
+        const version = Number(approval[2]);
+        progressNow = { ...(progressNow as object), approved_version: approval[1] === "PUT" ? version : null };
+        return json({ body: { package_id: "hall-bench", version, status: "succeeded", approved_at: null } });
+      }
       if (call === "PUT /chat/threads/t1/tools/room_fit") return json({ body: { ...tools[0], enabled: false } });
       if (call === "POST /chat/threads/t1/turns") return json(await turn(body));
       if (call === "POST /chat/threads/t1/resume") return json(resume(body));
@@ -240,4 +246,36 @@ test("a non-toggleable tool is shown always on", async () => {
   expect(checkbox).toBeChecked();
   expect(checkbox).toBeDisabled();
   expect(screen.getByText("Always on")).toBeInTheDocument();
+});
+
+test("the panel shows latest v5 beside approved v4 and approving v5 refreshes it without a reload", async () => {
+  const user = userEvent.setup();
+  progressNow = progress(["brief", "piece", "built"], { latest_version: 5, approved_version: 4 });
+  show();
+  const panel = await screen.findByRole("group", { name: "Approval" });
+  expect(await screen.findByText("version 5")).toBeInTheDocument();
+  expect(within(panel).getByText("Approved")).toBeInTheDocument();
+  expect(within(panel).getByText("version 4")).toBeInTheDocument();
+  await user.click(within(panel).getByRole("button", { name: "Approve version 5" }));
+  await waitFor(() => expect(within(panel).queryByRole("button", { name: "Approve version 5" })).toBeNull());
+  expect(within(panel).getByRole("button", { name: "Unapprove version 5" })).toBeInTheDocument();
+  expect(calls.some(([m, u]) => m === "PUT" && u === "/packages/hall-bench/versions/5/approval")).toBe(true);
+});
+
+test("no approve control is offered while the latest version is still building", async () => {
+  progressNow = progress(["brief", "piece"], { build_status: "running" });
+  show();
+  const panel = await screen.findByRole("group", { name: "Approval" });
+  expect(within(panel).getByText("No version approved yet.")).toBeInTheDocument();
+  expect(within(panel).queryByRole("button")).toBeNull();
+});
+
+test("unapproving from the panel clears the approved version", async () => {
+  const user = userEvent.setup();
+  progressNow = progress(["brief", "piece", "built"], { approved_version: 1 });
+  show();
+  const panel = await screen.findByRole("group", { name: "Approval" });
+  await user.click(within(panel).getByRole("button", { name: "Unapprove version 1" }));
+  expect(await within(panel).findByText("No version approved yet.")).toBeInTheDocument();
+  expect(calls.some(([m]) => m === "DELETE")).toBe(true);
 });

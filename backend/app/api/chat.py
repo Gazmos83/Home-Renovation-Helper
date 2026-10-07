@@ -91,6 +91,7 @@ class ProgressOut(BaseModel):
     package_id: str | None
     name: str | None
     latest_version: int | None
+    approved_version: int | None
     build_status: str | None
     steps: list[StepOut]
     next_step: str

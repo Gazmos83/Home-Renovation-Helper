@@ -17,7 +17,7 @@ from app.api.gate import require_owner
 from app.auth.sessions import AuthSessionRecord
 from app.blender import storage
 from app.pricing import remnants, store
-from app.pricing.errors import NotFound, Refused
+from app.pricing.errors import NotApproved, NotFound, Refused
 from app.pricing.pricing import (
     describe_pricing,
     get_pricing,
@@ -75,24 +75,26 @@ def create_pricing(package_id: str, version: int, body: PricingIn, request: Requ
             )
         except store.UnknownStore as error:
             raise _refusal(status.HTTP_404_NOT_FOUND, "unknown_store", str(error)) from None
+        except NotApproved as error:
+            raise _refusal(status.HTTP_409_CONFLICT, "not_approved", str(error)) from None
         except Refused as error:
             raise _refusal(422, "refused", str(error)) from None
         session.commit()
-        return describe_pricing(row)
+        return describe_pricing(session, row)
 
 
 @router.get("/packages/{package_id}/versions/{version}/pricings")
 def list_version_pricings(package_id: str, version: int, request: Request) -> list[dict[str, Any]]:
     _version_exists(request, package_id, version)
     with Session(request.app.state.engine) as session:
-        return [describe_pricing(row) for row in list_pricings(session, package_id, version)]
+        return [describe_pricing(session, row) for row in list_pricings(session, package_id, version)]
 
 
 @router.get("/pricings/{pricing_id}")
 def read_pricing(pricing_id: UUID, request: Request) -> dict[str, Any]:
     with Session(request.app.state.engine) as session:
         try:
-            return describe_pricing(get_pricing(session, pricing_id))
+            return describe_pricing(session, get_pricing(session, pricing_id))
         except NotFound:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not Found") from None
 

@@ -88,6 +88,20 @@ def test_the_blank_build_template_is_valid_and_derives_nothing() -> None:
     assert parts == [] and hardware == []
 
 
+def test_the_custom_build_starter_is_valid_and_shows_a_cabinet() -> None:
+    starter = json.loads((TEMPLATES / "custom-build.json").read_text(encoding="utf-8"))
+    spec = CustomBuildSpec.model_validate(starter)
+
+    assert starter["template"] == "custom-build"
+    assert len(starter["modules"]) == 1
+    cabinet = starter["modules"][0]
+    assert cabinet["carcass"] and cabinet["back"] and cabinet["shelves"] >= 1
+    assert cabinet["fronts"] == [{"type": "door", "count": 2, "opening": "hinge"}]
+    assert spec.context.overall == {"w": 800, "h": 1800, "d": 400}
+    parts, hardware, assembly = derive(spec.model_dump(mode="json"))
+    assert parts and hardware and assembly
+
+
 def test_an_unknown_field_is_refused_naming_it(desk: dict) -> None:
     desk["modules"][0]["script"] = "__import__('os').system('true')"
 

@@ -32,9 +32,22 @@ def make_fetcher(pages: dict[str, tuple[int, str]], *, robots: str = "User-agent
     return LiveFetcher(contact="owner@example.com", min_interval_seconds=0.0, client=client), seen
 
 
+def approve_version(session: Session, package_id: str, version: int = 1) -> None:
+    """Record the piece and the version when absent and approve it. Flushes; the caller commits."""
+    from app.agent import house_file
+    from app.db.models import Piece, PieceVersion
+
+    if session.get(Piece, package_id) is None:
+        house_file.record_piece(session, package_id, package_id)
+    if session.get(PieceVersion, (package_id, version)) is None:
+        house_file.record_version(session, package_id, version)
+    house_file.approve_version(session, package_id, version)
+
+
 def clean_pricing(engine) -> None:
     """Empty the pricing tables but keep the seeded planning rows (non-manual-by-hand)."""
     with Session(engine) as session:
+        session.execute(text("DELETE FROM pieces"))
         session.execute(text("DELETE FROM cut_list_pricing_entries"))
         session.execute(text("DELETE FROM cut_list_pricings"))
         session.execute(text("DELETE FROM remnant_sheets"))

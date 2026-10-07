@@ -13,7 +13,7 @@ from app.pricing import price_list
 from app.pricing.store import StoreCapture, upsert_store
 from tests.api_helpers import create, make_client, sign_in
 from tests.blender_fakes import fake_pipeline_launch
-from tests.pricing_helpers import clean_pricing
+from tests.pricing_helpers import approve_version, clean_pricing
 from tests.test_pricing import KEY, price_the_desk
 
 PRICINGS = "/packages/hall-bench/versions/1/pricings"
@@ -30,8 +30,10 @@ def client(migrated_database: str, render_root: Path, fake_blender: Path) -> Ite
     c.__exit__(None, None, None)
 
 
-def seed(client: TestClient, *, store: bool = True) -> None:
+def seed(client: TestClient, *, store: bool = True, approved: bool = True) -> None:
     with Session(client.app.state.engine) as session:
+        if approved:
+            approve_version(session, "hall-bench", 1)
         if store:
             upsert_store(session, StoreCapture(store_key=KEY, name="Friedrichshain", url="https://toom.de/m/x/", offers_cutting=True))
         price_the_desk(session)
@@ -115,3 +117,31 @@ def test_a_used_entry_cannot_be_deleted_after_a_pricing(client: TestClient) -> N
     assert response.status_code == 409 and "hall-bench version 1" in response.json()["detail"]["reason"]
     with Session(client.app.state.engine) as session:
         assert price_list.get_entry(session, "hinge-flap") is not None
+
+
+# --- only an approved version is priced -------------------------------------------------------
+
+
+def test_an_unapproved_version_is_refused_with_409_and_writes_no_record(client: TestClient) -> None:
+    seed(client, approved=False)
+    response = client.post(PRICINGS, json={})
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["failure_class"] == "not_approved"
+    assert "approve it first on the Pieces page" in detail["reason"]
+    assert client.get(PRICINGS).json() == []
+
+
+def test_a_pricing_is_readable_after_unapproval_and_says_so(client: TestClient) -> None:
+    seed(client)
+    created = client.post(PRICINGS, json={}).json()
+    assert created["version_approved"] is True
+    with Session(client.app.state.engine) as session:
+        from app.agent import house_file
+
+        house_file.unapprove_version(session, "hall-bench", 1)
+        session.commit()
+    read = client.get(f"/pricings/{created['id']}").json()
+    assert read["version_approved"] is False and read["total_cents"] == created["total_cents"]
+    assert client.get(PRICINGS).json()[0]["version_approved"] is False
+    assert client.post(PRICINGS, json={}).status_code == 409

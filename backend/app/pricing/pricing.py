@@ -27,12 +27,13 @@ from app.config import Settings
 from app.db.models import (
     CutListPricing,
     CutListPricingEntry,
+    PieceVersion,
     SupplierPrice,
     SupplierPriceUnit,
 )
 from app.pricing import price_list
 from app.pricing import remnants as remnant_rack
-from app.pricing.errors import NotFound, Refused
+from app.pricing.errors import NotApproved, NotFound, Refused
 from app.pricing.price_list import PERSONAL_SUPPLY_KEY
 from app.pricing.store import (
     SERVICE_FOR_GEOMETRY,
@@ -633,6 +634,12 @@ def _charge_bands(
     return lines, materials_added, unpriced_added
 
 
+def version_approved(session: Session, package_id: str, version: int) -> bool:
+    """Whether the owner has approved this version (a version with no record is not approved)."""
+    row = session.get(PieceVersion, (package_id, version))
+    return row is not None and row.approved_at is not None
+
+
 def price_cut_list(
     session: Session,
     root: Path,
@@ -649,7 +656,8 @@ def price_cut_list(
     Parts are packed onto sheets (remnants first), cuts are classified against the
     store and the owner's recorded limits, bands are bought in whole bundles, and
     every line without a price is listed by name and marks the pricing incomplete:
-    nothing is guessed. Each call writes a new immutable record; nothing here calls a
+    nothing is guessed. Only an approved version is priced; an unapproved one is refused
+    before anything is packed or written. Each call writes a new immutable record; nothing here calls a
     language model, starts Blender or changes the rack. Flushes; the caller commits.
     """
     charge_mode = _known_charge_mode(cut_charge_mode)
@@ -658,6 +666,11 @@ def price_cut_list(
         document = json.loads((folder / storage.INPUT_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         raise Refused(f"{package_id} version {version} has no readable document to price") from None
+    if not version_approved(session, package_id, version):
+        raise NotApproved(
+            f"{package_id} version {version} is not approved; approve it first on the Pieces "
+            "page or in the conversation's project panel, then ask for the price again"
+        )
     # The rows are what the version derives from its own document: the same rows
     # `cut_list` shows and the cut list a build writes, so an unbuilt version is priced too.
     parts, hardware, _assembly = derive(document)
@@ -1065,12 +1078,16 @@ def price_cut_list(
     return pricing_row
 
 
-def describe_pricing(row: CutListPricing) -> dict[str, Any]:
-    """A pricing as a plain dict: totals in cents, counts, completeness and every line."""
+def describe_pricing(session: Session, row: CutListPricing) -> dict[str, Any]:
+    """A pricing as a plain dict: totals in cents, counts, completeness and every line.
+
+    `version_approved` is read from the version now; the immutable record keeps nothing about it.
+    """
     return {
         "id": str(row.id),
         "package_id": row.package_id,
         "version": row.version,
+        "version_approved": version_approved(session, row.package_id, row.version),
         "store_key": row.store_key,
         "computed_at": row.computed_at.isoformat(),
         "materials_cents": row.materials_cents,

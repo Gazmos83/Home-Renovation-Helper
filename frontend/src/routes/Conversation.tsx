@@ -70,10 +70,24 @@ function ProjectPanel({ threadId }: { threadId: string }) {
     },
   });
 
+  const queryClient = useQueryClient();
+  const change = useMutation({
+    mutationFn: ({ approve, version }: { approve: boolean; version: number }) => {
+      const id = progress.data?.package_id ?? "";
+      return approve ? api.approveVersion(id, version) : api.unapproveVersion(id, version);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["progress", threadId] });
+      queryClient.invalidateQueries({ queryKey: ["version"] });
+    },
+  });
+
   if (progress.error) return <FieldError message={message(progress.error)} />;
   if (!progress.data) return <p>Loading project…</p>;
   const p: Progress = progress.data;
   const picture = p.screenshot ?? p.still;
+  const canApproveLatest =
+    p.latest_version !== null && p.build_status === "succeeded" && p.approved_version !== p.latest_version;
 
   return (
     <section className={cardClass} aria-label="Project">
@@ -86,6 +100,43 @@ function ProjectPanel({ threadId }: { threadId: string }) {
         </p>
       ) : (
         <p className="text-muted-foreground">No piece yet.</p>
+      )}
+      {p.package_id && p.latest_version !== null && (
+        <div className="space-y-2" role="group" aria-label="Approval">
+          <p>
+            {p.approved_version !== null ? (
+              <>
+                <Badge>Approved</Badge> version {p.approved_version}
+              </>
+            ) : (
+              <span className="text-muted-foreground">No version approved yet.</span>
+            )}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {canApproveLatest && p.latest_version !== null && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={change.isPending}
+                onClick={() => change.mutate({ approve: true, version: p.latest_version as number })}
+              >
+                Approve version {p.latest_version}
+              </Button>
+            )}
+            {p.approved_version !== null && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={change.isPending}
+                onClick={() => change.mutate({ approve: false, version: p.approved_version as number })}
+              >
+                Unapprove version {p.approved_version}
+              </Button>
+            )}
+          </div>
+          <FieldError message={message(change.error)} />
+        </div>
       )}
       {picture && <img src={picture} alt={`Latest picture of ${p.package_id}`} className="max-h-56 rounded-md border" />}
       <ol className="space-y-1">

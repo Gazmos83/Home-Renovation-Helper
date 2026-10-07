@@ -34,6 +34,7 @@ export type Progress = {
   package_id: string | null;
   name: string | null;
   latest_version: number | null;
+  approved_version: number | null;
   build_status: string | null;
   steps: ProgressStep[];
   next_step: string;
@@ -143,6 +144,13 @@ export type GuidelineNote = {
 export type NewGuidelineNote = Omit<GuidelineNote, "id">;
 
 export type PieceSummary = { package_id: string; versions: number[] };
+
+export type VersionInfo = {
+  package_id: string;
+  version: number;
+  status: string | null;
+  approved_at: string | null;
+};
 
 export type RenderItem = {
   render: string;
@@ -312,6 +320,16 @@ export const api = {
   invocations: (name: string) =>
     request<{ outcome: string; duration_ms: number | null }[]>(`/admin/plugins/${name}/invocations`),
   pieces: () => request<PieceSummary[]>("/packages"),
+  version: (packageId: string, version: number) =>
+    request<VersionInfo>(`/packages/${encodeURIComponent(packageId)}/versions/${version}`),
+  approveVersion: (packageId: string, version: number) =>
+    request<VersionInfo>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/approval`, {
+      method: "PUT",
+    }),
+  unapproveVersion: (packageId: string, version: number) =>
+    request<VersionInfo>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/approval`, {
+      method: "DELETE",
+    }),
   renders: (packageId: string, version: number) =>
     request<RenderItem[]>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/renders`),
   rateRender: (packageId: string, version: number, render: string, rating: "up" | "down", comment: string | null) =>

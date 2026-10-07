@@ -189,8 +189,11 @@ def house_note(
             latest = piece.get("latest_version")
             version = f"v{latest}" if latest else "no version yet"
             state = f", {piece['status']}" if piece.get("status") else ""
+            approved = piece.get("approved_version")
+            approval = f", approved: v{approved}" if approved else ", approved: none"
             lines.append(
-                f"- {neutralise(piece['package_id'])} ({neutralise(piece['name'])}): {version}{state}"
+                f"- {neutralise(piece['package_id'])} ({neutralise(piece['name'])}): "
+                f"{version}{state}{approval}"
             )
     if requests:
         lines.append("Open generator-extension requests:")

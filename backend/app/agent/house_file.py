@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.blender import storage
@@ -336,6 +336,50 @@ def record_version(
     return row
 
 
+def version_row(session: Session, package_id: str, version: int) -> PieceVersion | None:
+    return session.get(PieceVersion, (package_id, version))
+
+
+def approved_version_of(session: Session, package_id: str) -> int | None:
+    """The piece's approved version number, or `None` when none is approved."""
+    return session.scalar(
+        select(PieceVersion.version).where(
+            PieceVersion.package_id == package_id, PieceVersion.approved_at.is_not(None)
+        )
+    )
+
+
+def approve_version(session: Session, package_id: str, version: int) -> PieceVersion:
+    """Approve one version, clearing any other approval of the piece, in the caller's transaction.
+
+    Approving an approved version changes nothing. A version with no record is refused.
+    """
+    row = version_row(session, package_id, version)
+    if row is None:
+        raise HouseFileError(f"version {version} of {package_id!r} is not recorded in the house file")
+    if row.approved_at is not None:
+        return row
+    session.execute(
+        update(PieceVersion)
+        .where(PieceVersion.package_id == package_id, PieceVersion.approved_at.is_not(None))
+        .values(approved_at=None)
+    )
+    row.approved_at = _now()
+    session.flush()
+    return row
+
+
+def unapprove_version(session: Session, package_id: str, version: int) -> PieceVersion:
+    """Clear a version's approval; unapproving an unapproved version changes nothing."""
+    row = version_row(session, package_id, version)
+    if row is None:
+        raise HouseFileError(f"version {version} of {package_id!r} is not recorded in the house file")
+    if row.approved_at is not None:
+        row.approved_at = None
+        session.flush()
+    return row
+
+
 def pieces(session: Session, root: Path) -> list[dict[str, Any]]:
     """Every piece: the recorded ones, then packages found only as folders."""
     recorded = {piece.package_id: piece for piece in session.scalars(select(Piece))}
@@ -366,8 +410,16 @@ def pieces(session: Session, root: Path) -> list[dict[str, Any]]:
                 "room_id": piece.room_id if piece else None,
                 "latest_version": latest,
                 "status": state,
+                "approved_version": next(
+                    (r.version for r in records.get(package_id, []) if r.approved_at is not None), None
+                ),
                 "versions": [
-                    {"version": r.version, "revised_from": r.revised_from, "changes": r.changes}
+                    {
+                        "version": r.version,
+                        "revised_from": r.revised_from,
+                        "changes": r.changes,
+                        "approved_at": r.approved_at.isoformat() if r.approved_at else None,
+                    }
                     for r in records.get(package_id, [])
                 ],
             }

@@ -17,6 +17,7 @@ from tests.blender_fakes import (
     fake_failure_launch,
     fake_success_launch,
 )
+from tests.conftest import clean_house_file
 
 
 @pytest.fixture
@@ -245,7 +246,8 @@ def test_a_symlink_leading_outside_the_root_is_not_served(
 @pytest.mark.parametrize(
     ("method", "path"),
     [("GET", "/packages"), ("GET", "/packages/x"), ("POST", "/packages"),
-     ("GET", "/packages/x/versions/1/files/spec.json"), ("PUT", "/packages/x/spec")],
+     ("GET", "/packages/x/versions/1/files/spec.json"), ("PUT", "/packages/x/spec"),
+     ("PUT", "/packages/x/versions/1/approval"), ("DELETE", "/packages/x/versions/1/approval")],
 )
 def test_every_route_needs_the_owner_cookie(
     migrated_database: str, render_root: Path, fake_blender: Path, method: str, path: str
@@ -275,3 +277,95 @@ def test_a_missing_binary_refuses_builds_but_listing_and_files_still_work(
     assert c.get("/packages/hall-bench/versions/1/files/spec.json").status_code == 200
     c.__exit__(None, None, None)
     shutil.rmtree(render_root, ignore_errors=True)
+
+
+# --- approval -------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def record(client: TestClient) -> Iterator:
+    """Record a piece and its versions in the house file; the rows are removed afterwards."""
+    from sqlalchemy.orm import Session
+
+    from app.agent import house_file
+    from app.db.models import Piece
+
+    made: list[str] = []
+    clean_house_file(client.app.state.engine)
+
+    def _record(package_id: str = "hall-bench", versions: tuple[int, ...] = (1,)) -> None:
+        with Session(client.app.state.engine) as session:
+            house_file.record_piece(session, package_id, "Hall bench")
+            for number in versions:
+                house_file.record_version(session, package_id, number)
+            session.commit()
+        made.append(package_id)
+
+    yield _record
+    with Session(client.app.state.engine) as session:
+        for package_id in made:
+            piece = session.get(Piece, package_id)
+            if piece is not None:
+                session.delete(piece)
+        session.commit()
+
+
+def test_a_built_version_is_approved_and_read_back_approved(client: TestClient, record) -> None:
+    create(client)
+    record()
+    response = client.put("/packages/hall-bench/versions/1/approval")
+    assert response.status_code == 200
+    approved_at = response.json()["approved_at"]
+    assert approved_at
+    assert client.get("/packages/hall-bench/versions/1").json()["approved_at"] == approved_at
+    listed = client.get("/packages/hall-bench").json()["versions"]
+    assert [v["approved_at"] is not None for v in listed] == [True]
+
+
+def test_approving_another_version_moves_the_approval(client: TestClient, record) -> None:
+    create(client)
+    wider = desk()
+    wider["modules"][0]["width"] = 1100
+    assert client.put("/packages/hall-bench/spec", json={"spec": wider}).status_code == 202
+    record(versions=(1, 2))
+    assert client.put("/packages/hall-bench/versions/1/approval").status_code == 200
+    assert client.put("/packages/hall-bench/versions/2/approval").status_code == 200
+    assert client.get("/packages/hall-bench/versions/1").json()["approved_at"] is None
+    assert client.get("/packages/hall-bench/versions/2").json()["approved_at"] is not None
+
+
+def test_unapproving_clears_the_approval_and_repeats_quietly(client: TestClient, record) -> None:
+    create(client)
+    record()
+    client.put("/packages/hall-bench/versions/1/approval")
+    for _ in range(2):
+        response = client.delete("/packages/hall-bench/versions/1/approval")
+        assert response.status_code == 200 and response.json()["approved_at"] is None
+    assert client.get("/packages/hall-bench/versions/1").json()["approved_at"] is None
+
+
+def test_a_version_still_building_cannot_be_approved(
+    client: TestClient, render_root: Path, record
+) -> None:
+    create(client)
+    record()
+    storage.write_status(render_root / "hall-bench" / "v1", status="running")
+    response = client.put("/packages/hall-bench/versions/1/approval")
+    assert response.status_code == 409
+    assert response.json()["detail"]["failure_class"] == "not_built"
+    assert client.get("/packages/hall-bench/versions/1").json()["approved_at"] is None
+
+
+def test_a_folder_only_package_cannot_be_approved(client: TestClient) -> None:
+    create(client)
+    response = client.put("/packages/hall-bench/versions/1/approval")
+    assert response.status_code == 409
+    assert response.json()["detail"]["failure_class"] == "not_recorded"
+    assert client.delete("/packages/hall-bench/versions/1/approval").status_code == 200
+
+
+def test_approving_an_unknown_version_is_not_found(client: TestClient) -> None:
+    create(client)
+    assert client.put("/packages/hall-bench/versions/9/approval").status_code == 404
+    assert client.put("/packages/nothing/versions/1/approval").status_code == 404
+    assert client.delete("/packages/hall-bench/versions/9/approval").status_code == 404

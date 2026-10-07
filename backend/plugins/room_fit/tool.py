@@ -76,8 +76,12 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
     with ctx.deps.session() as session:
         room = house_file.room_by_name(session, args.room_name)
         if room is None:
-            known = ", ".join(r.name for r in house_file.rooms(session)) or "none"
-            return f"there is no room {args.room_name!r} in the house file; its rooms are: {known}"
+            names = [r.name for r in house_file.rooms(session)]
+            known = f"its rooms are: {', '.join(names)}" if names else "no rooms are recorded yet"
+            return (
+                f"there is no room {args.room_name!r} in the house file; {known}. "
+                "Intake records a room from its measurements or a plan"
+            )
         document = room_document(room, args.wall, args.offset_mm)
 
     folder, number, problem = version_folder(ctx.deps, args.package_id, args.version)

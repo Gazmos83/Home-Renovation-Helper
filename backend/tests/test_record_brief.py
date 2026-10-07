@@ -101,3 +101,48 @@ def test_an_l_shaped_room_can_be_proposed(make_ctx) -> None:
     )
     assert isinstance(shown, Confirmation)
     assert shown.proposal["room"]["corners_mm"][3] == [2000, 2000]
+
+
+PIECE_ONLY = {
+    "purpose": "a listening wall about 2200 mm wide and 2200 mm tall",
+    "max_piece_height_mm": 2200,
+    "style": "light oak",
+    "budget_eur": 900,
+}
+
+
+def test_a_brief_without_a_room_previews_with_the_room_not_given(make_ctx) -> None:
+    shown = preview(PIECE_ONLY, make_ctx())
+    assert isinstance(shown, Confirmation)
+    assert "Room: not given yet" in shown.summary
+    assert "Style: light oak" in shown.summary
+    assert shown.proposal["room"] is None
+    assert "room" not in shown.proposal["brief"]
+
+
+def test_yes_without_a_room_stores_the_brief_and_preferences_and_no_room(make_ctx, tool_deps) -> None:
+    output = run(PIECE_ONLY, replace(make_ctx(), approved=True))
+    assert output.update["brief"] == {
+        "purpose": "a listening wall about 2200 mm wide and 2200 mm tall",
+        "max_piece_height_mm": 2200,
+        "style": "light oak",
+        "budget_eur": 900,
+    }
+    with tool_deps.session() as session:
+        assert house_file.rooms(session) == []
+        assert house_file.preferences(session) == {"style": "light oak", "budget_eur": "900"}
+
+
+def test_a_blank_room_name_counts_as_no_room(make_ctx) -> None:
+    shown = preview({**PIECE_ONLY, "room_name": "  "}, make_ctx())
+    assert isinstance(shown, Confirmation)
+    assert "Room: not given yet" in shown.summary
+
+
+def test_measurements_without_a_room_name_are_refused(make_ctx) -> None:
+    refused = preview(
+        {**PIECE_ONLY, "corners_mm": [[0, 0], [1200, 0], [1200, 3000], [0, 3000]], "ceiling_height_mm": 2400},
+        make_ctx(),
+    )
+    assert isinstance(refused, str)
+    assert "a room needs a name" in refused

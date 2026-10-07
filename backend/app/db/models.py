@@ -260,9 +260,17 @@ class PieceVersion(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         CheckConstraint("version >= 1", name="ck_piece_versions_version_positive"),
+        # At most one approved version per piece.
+        Index(
+            "uq_piece_versions_one_approved",
+            "package_id",
+            unique=True,
+            postgresql_where=text("approved_at IS NOT NULL"),
+        ),
     )
 
 

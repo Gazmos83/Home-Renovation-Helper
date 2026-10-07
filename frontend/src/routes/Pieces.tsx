@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ThumbsDown, ThumbsUp } from "lucide-react";
 import { useState } from "react";
 import { api, ApiError, type RenderItem } from "../lib/api";
@@ -104,28 +104,76 @@ function RenderCard({ packageId, version, item }: { packageId: string; version: 
   );
 }
 
+function Approval({ packageId, version }: { packageId: string; version: number }) {
+  const queryClient = useQueryClient();
+  const info = useQuery({
+    queryKey: ["version", packageId, version],
+    queryFn: () => api.version(packageId, version),
+  });
+  const change = useMutation({
+    mutationFn: (approve: boolean) =>
+      approve ? api.approveVersion(packageId, version) : api.unapproveVersion(packageId, version),
+    onSuccess: () => {
+      // Approving one version clears another, so every version of the piece is read again.
+      queryClient.invalidateQueries({ queryKey: ["version", packageId] });
+      queryClient.invalidateQueries({ queryKey: ["progress"] });
+    },
+  });
+  // No control until the version is read, and none for a version that is not built.
+  if (!info.data || info.data.status !== "succeeded") return null;
+  const approved = info.data.approved_at !== null;
+  return (
+    <div className="flex flex-wrap items-center gap-2" role="group" aria-label={`Approval of ${packageId} version ${version}`}>
+      {approved && <Badge>Approved</Badge>}
+      <Button type="button" variant={approved ? "outline" : "default"} disabled={change.isPending} onClick={() => change.mutate(!approved)}>
+        {approved ? "Unapprove" : "Approve"} version {version}
+      </Button>
+      <FieldError message={message(change.error)} />
+    </div>
+  );
+}
+
 function Version({ packageId, version }: { packageId: string; version: number }) {
   const renders = useQuery({
     queryKey: ["renders", packageId, version],
     queryFn: () => api.renders(packageId, version),
   });
-  if (renders.error) return <FieldError message={message(renders.error)} />;
-  if (!renders.data) return <p>Loading…</p>;
-  if (renders.data.length === 0) return <p>No renders of this version yet.</p>;
+  let shown;
+  if (renders.error) shown = <FieldError message={message(renders.error)} />;
+  else if (!renders.data) shown = <p>Loading…</p>;
+  else if (renders.data.length === 0) shown = <p>No renders of this version yet.</p>;
+  else {
+    shown = (
+      <div className="grid gap-4 sm:grid-cols-2">
+        {renders.data.map((item) => (
+          <RenderCard key={item.render} packageId={packageId} version={version} item={item} />
+        ))}
+      </div>
+    );
+  }
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
-      {renders.data.map((item) => (
-        <RenderCard key={item.render} packageId={packageId} version={version} item={item} />
-      ))}
+    <div className="grid gap-4">
+      <Approval packageId={packageId} version={version} />
+      {shown}
     </div>
   );
 }
 
 function Piece({ id, versions }: { id: string; versions: number[] }) {
   const [version, setVersion] = useState(versions[0]);
+  const infos = useQueries({
+    queries: versions.map((n) => ({
+      queryKey: ["version", id, n],
+      queryFn: () => api.version(id, n),
+    })),
+  });
+  const approved = infos.find((q) => q.data?.approved_at)?.data?.version;
   return (
     <section className={cardClass} aria-label={id}>
       <h2>{id}</h2>
+      <p className="text-sm text-muted-foreground">
+        {approved ? `Approved: version ${approved}` : "No version approved yet."}
+      </p>
       <div className="flex flex-wrap gap-2" role="group" aria-label={`Versions of ${id}`}>
         {versions.map((n) => (
           <Button

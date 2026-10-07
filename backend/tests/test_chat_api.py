@@ -392,6 +392,7 @@ def test_a_built_and_reviewed_piece_shows_in_the_progress(client: TestClient, re
     body = client.get(f"/chat/threads/{thread}/progress").json()
     done = {s["step"]: s for s in body["steps"]}
     assert body["latest_version"] == 1
+    assert body["approved_version"] is None
     assert done["built"]["done"] and done["rendered"]["done"] and done["reviewed"]["done"]
     assert not done["detail"]["done"] and not done["final"]["done"]
     assert done["reviewed"]["detail"] == "2 open"
@@ -400,3 +401,9 @@ def test_a_built_and_reviewed_piece_shows_in_the_progress(client: TestClient, re
     text = json.dumps(body).lower()
     for word in ("deepseek", "gpt-", "token", "cost", "/home/", str(render_root).lower()):
         assert word not in text
+
+    with Session(client.app.state.engine) as session:
+        house_file.approve_version(session, "hall-bench", 1)
+        session.commit()
+    body = client.get(f"/chat/threads/{thread}/progress").json()
+    assert body["approved_version"] == 1
