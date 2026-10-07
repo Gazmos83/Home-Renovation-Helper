@@ -23,6 +23,8 @@ export default defineConfig({
       // is the SPA HTML and the Pieces page never leaves Loading.
       "/packages": API,
       "/design-import": API,
+      "/compositions": API,
+      "/models": API,
       "/uploads": API,
       "/apartments": API,
       "/reviews": API,

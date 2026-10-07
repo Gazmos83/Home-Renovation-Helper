@@ -145,6 +145,37 @@ export type NewGuidelineNote = Omit<GuidelineNote, "id">;
 
 export type PieceSummary = { package_id: string; versions: number[] };
 
+export type CompositionItem = {
+  id: string;
+  type: "piece" | "stand-in" | "model";
+  name: string;
+  version?: number;
+  approved?: boolean;
+  no_longer_approved?: boolean;
+};
+
+export type Composition = {
+  scope: "room" | "apartment";
+  name: string;
+  slug: string;
+  latest_version: number | null;
+  status: string | null;
+  items: CompositionItem[];
+  picture: string | null;
+  viewer: string | null;
+};
+
+export type ModelAsset = {
+  model_id: string;
+  name: string;
+  kind: string;
+  width_mm: number;
+  depth_mm: number;
+  height_mm: number;
+  state: "checking" | "ready" | "refused";
+  reason: string | null;
+};
+
 export type VersionInfo = {
   package_id: string;
   version: number;
@@ -330,6 +361,18 @@ export const api = {
   invocations: (name: string) =>
     request<{ outcome: string; duration_ms: number | null }[]>(`/admin/plugins/${name}/invocations`),
   pieces: () => request<PieceSummary[]>("/packages"),
+  compositions: () => request<Composition[]>("/compositions"),
+  modelLibrary: () => request<ModelAsset[]>("/models"),
+  uploadModel: (file: File, name: string, width: string, depth: string, height: string) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("name", name);
+    form.append("width_mm", width);
+    form.append("depth_mm", depth);
+    form.append("height_mm", height);
+    return request<ModelAsset>("/models", { method: "POST", body: form, headers: {} });
+  },
+  deleteModel: (modelId: string) => request<void>(`/models/${modelId}`, { method: "DELETE" }),
   version: (packageId: string, version: number) =>
     request<VersionInfo>(`/packages/${encodeURIComponent(packageId)}/versions/${version}`),
   approveVersion: (packageId: string, version: number) =>

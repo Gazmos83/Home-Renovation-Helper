@@ -382,3 +382,19 @@ def test_the_design_upload_cap_defaults_to_256_kib_and_must_be_positive() -> Non
     with pytest.raises(ValidationError) as caught:
         _settings(upload_max_design_bytes=0)
     assert "upload limits must be positive" in str(caught.value)
+
+
+def test_the_model_library_limits_have_the_decided_defaults_and_refuse_zero() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    settings = _settings()
+    assert settings.model_max_bytes == 50 * 1024 * 1024
+    assert settings.model_zip_max_entries == 200
+    assert settings.model_zip_max_unpacked_bytes == 200 * 1024 * 1024
+    assert settings.model_max_triangles == 500_000
+    assert settings.composition_max_items == 30
+    for field in ("model_max_bytes", "model_zip_max_entries", "model_zip_max_unpacked_bytes",
+                  "model_max_triangles", "composition_max_items"):
+        with pytest.raises(ValidationError):
+            _settings(**{field: 0})

@@ -433,3 +433,86 @@ def test_a_model_ticket_cannot_launch_a_detail_render(render_root: Path) -> None
             cwd=render_root, timeout=5, semaphore=aio.Semaphore(1), launch=launch,
         ))
     assert calls == []
+
+
+# --- room compositions (room-composition) ------------------------------------------------
+
+
+def new_composition(root: Path, items: list[dict], *, built: bool = False) -> Path:
+    folder = storage.composition_version_dir(root, "wohnen", 1)
+    folder.mkdir(parents=True)
+    (folder / storage.INPUT_FILE).write_text(
+        json.dumps({"kind": "room_composition", "scope": {"room": "Wohnen"}, "items": items}), encoding="utf-8"
+    )
+    mark_build_queued(folder)
+    if built:
+        from tests.blender_fakes import write_composition_files
+
+        seed = folder / "_seed"
+        write_composition_files(seed)
+        for name in storage.COMPOSITION_FILES:
+            (seed / name).replace(folder / name)
+        shutil.rmtree(seed)
+        storage.write_status(folder, status="succeeded")
+    return folder
+
+
+PIECE = {"id": "desk", "type": "piece", "package_id": "desk", "version": 1}
+
+
+def build_room(root: Path, launch, models_root: Path):
+    return run_build(
+        root=root, blender_bin=BIN, timeout=60, package_id="wohnen", version=1,
+        semaphore=asyncio.Semaphore(1), launch=launch, record="room", models_root=models_root,
+    )
+
+
+def test_a_composition_build_runs_its_generator_and_publishes_three_files(render_root: Path, tmp_path: Path) -> None:
+    from tests.blender_fakes import fake_pipeline_launch
+
+    new_version(render_root, built=True)
+    folder = new_composition(render_root, [PIECE])
+    calls: list[list[str]] = []
+    run(build_room(render_root, fake_pipeline_launch(calls=calls), tmp_path / "models"))
+    assert storage.read_status(folder)["status"] == "succeeded"
+    assert {p.name for p in folder.iterdir()} == {*storage.COMPOSITION_FILES, storage.INPUT_FILE, storage.STATUS_FILE}
+    argv = calls[0]
+    assert Path(argv[argv.index("--python") + 1]).name == "build_composition.py"
+    assert arg_value(argv, "--pieces") == str(render_root)
+    assert arg_value(argv, "--models") == str(tmp_path / "models")
+    assert "--tier-frames" not in argv, "a composition build never renders"
+
+
+def test_a_placed_piece_that_is_not_built_fails_the_build_naming_it(render_root: Path, tmp_path: Path) -> None:
+    new_version(render_root)  # queued, never built
+    folder = new_composition(render_root, [PIECE])
+    calls: list[list[str]] = []
+    run(build_room(render_root, fake_success_launch(calls=calls), tmp_path / "models"))
+    status = storage.read_status(folder)
+    assert status["status"] == "failed"
+    assert status["error"] == "desk version 1 is not built; a placed piece must be built before the room is"
+    assert calls == [], "nothing is launched, and the piece is never built implicitly"
+    assert not (folder / "model.blend").exists()
+
+
+def test_a_composition_turntable_renders_through_its_own_script_into_the_version(render_root: Path, tmp_path: Path) -> None:
+    from tests.blender_fakes import fake_pipeline_launch
+
+    folder = new_composition(render_root, [], built=True)
+    t = authorise(package_id="wohnen", version=1, kind="turntable", tier="draft", tiers=TIERS,
+                  benchmark=BENCH, record="room")
+    calls: list[list[str]] = []
+    run(render(render_root, t, fake_pipeline_launch(calls=calls), models_root=tmp_path / "models"))
+    assert storage.read_status(folder)["renders"]["turntable"]["status"] == "succeeded"
+    assert len(list((folder / "frames").iterdir())) == 12 and (folder / "viewer.html").is_file()
+    argv = calls[0]
+    assert Path(argv[argv.index("--python") + 1]).name == "render_composition.py"
+    assert arg_value(argv, "--kind") == "turntable"
+    assert (arg_value(argv, "--tier-frames"), arg_value(argv, "--tier-resolution")) == ("12", "600")
+
+
+def test_the_composition_renderer_is_a_render_script_a_build_cannot_launch() -> None:
+    from app.blender.runner import RENDER_SCRIPTS
+
+    assert "render_composition.py" in RENDER_SCRIPTS
+    assert "build_composition.py" not in RENDER_SCRIPTS

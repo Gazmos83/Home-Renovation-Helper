@@ -178,3 +178,33 @@ def test_a_closed_blender_does_not_stop_the_final(bound, live, tool_state) -> No
     assert result.startswith("Started a final still")
     wait_job(folder_of(tool_state), "detail-still")
     assert (storage.detail_dir(folder_of(tool_state)) / "still.png").is_file()
+
+
+# --- a composed room (room-composition) -------------------------------------------------
+
+
+def test_a_detail_pass_lights_a_composed_room_on_a_copy(make_ctx, tool_deps, tool_state, live) -> None:
+    from tests.test_builder_tools import composed
+
+    composed(make_ctx, tool_deps, tool_state)
+    room = storage.composition_version_dir(tool_state.settings.render_root, "wohnen", 1)
+    document_before = (room / storage.INPUT_FILE).read_bytes()
+    blend_before = (room / "model.blend").read_bytes()
+    target = {"composition": "Wohnen"}
+
+    shown = start_detail_pass.preview(target, make_ctx())
+    assert isinstance(shown, Confirmation) and "wohnen version 1" in shown.summary
+    result = start_detail_pass.run(target, replace(make_ctx(), approved=True))
+    assert "detail pass is open on wohnen version 1" in result
+    detail = storage.detail_blend_path(room)
+    assert detail.read_bytes() == blend_before and live.open_file == str(detail)
+
+    script = {**target, "code": "import bpy\nbpy.data.lights['LGT_Ceiling'].energy = 400\n", "purpose": "warmer ceiling light"}
+    assert "refused" not in run_detail_script.run(script, make_ctx()).lower()
+    shot = detail_screenshot.run(target, make_ctx())
+    assert "/compositions/wohnen/versions/1/files/detail/screens/0" in shot
+
+    assert "final" in render_detail.run({**target, "tier": "draft"}, make_ctx())
+    pause = render_detail.preview({**target, "tier": "final", "kind": "still"}, make_ctx())
+    assert isinstance(pause, Confirmation) and pause.subject == "detail_render"
+    assert (room / storage.INPUT_FILE).read_bytes() == document_before, "nothing is written to the composition"

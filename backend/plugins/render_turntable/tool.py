@@ -39,6 +39,9 @@ class RenderArgs(BaseModel):
     shell: str | None = Field(
         default=None, description="an apartment's name, to render its shell instead of a piece"
     )
+    composition: str | None = Field(
+        default=None, description="a composed room's (or apartment's) name, to render that composition"
+    )
     version: int | None = Field(default=None, description="a version number; the latest when left out")
     kind: str = Field(default="turntable", description="'turntable' or 'still'")
     tier: str | None = Field(default=None, description="required: draft, preview or final")
@@ -50,6 +53,8 @@ class RenderArgs(BaseModel):
 def viewer_route(package_id: str, version: int, kind: str, room: bool, record: str = "piece") -> str:
     if record == "shell":
         base = f"/apartments/{package_id}/shell/versions/{version}/files/"
+    elif record == "room":
+        base = f"/compositions/{package_id}/versions/{version}/files/"
     else:
         base = f"/packages/{package_id}/versions/{version}/files/"
     prefix = "room/" if room else ""
@@ -76,8 +81,32 @@ def _price_args(
 
 def _target(args: RenderArgs, ctx: ToolContext):
     """`(record, id, folder, version)` of what to render, or a refusal string."""
-    if bool(args.package_id) == bool(args.shell):
-        return "name either a package_id (a piece) or a shell (an apartment), not both and not neither"
+    if sum(bool(target) for target in (args.package_id, args.shell, args.composition)) != 1:
+        return (
+            "name exactly one target: a package_id (a piece), a shell (an apartment) or a composition "
+            "(a composed room)"
+        )
+    if args.composition:
+        if args.room is not None:
+            return "a composition is already a room; do not pass a room document with it"
+        with ctx.deps.session() as session:
+            found = house_file.composition_by_scope(session, "room", args.composition) or (
+                house_file.composition_by_scope(session, "apartment", args.composition)
+            )
+            if found is None:
+                return f"there is no composition {args.composition!r}; compose the room first"
+            slug = found.slug
+        root = ctx.deps.render_root
+        number = args.version if args.version is not None else (storage.composition_versions(root, slug) or [None])[-1]
+        if number is None:
+            return f"{args.composition!r} has no version yet; compose it first"
+        try:
+            folder = storage.composition_version_dir(root, slug, number)
+        except ValueError:
+            return f"version {number} is not a valid version"
+        if not folder.is_dir():
+            return f"{args.composition!r} has no version {number}"
+        return "room", slug, folder, number
     if args.shell:
         if args.room is not None:
             return "a shell cannot be rendered placed in a room"
@@ -195,25 +224,37 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
             on_outcome=lambda outcome: feedback_runs.finish_run(deps.engine, run_id, outcome),
             offload=deps.offload,
             on_remote_job=lambda record: offload_jobs.record_job(deps.engine, record),
+            models_root=settings.upload_root / "models",
         ),
         deps.loop,
     )
     what = "still" if priced.kind == "still" else "turntable"
-    label = f"the {args.shell} shell" if args.shell else args.package_id
+    label = (
+        f"the {args.shell} shell" if args.shell else args.composition if args.composition else args.package_id
+    )
     route = viewer_route(
         priced.package_id, number, priced.kind, scene_document is not None, priced.record
     )
+    note = ""
+    if priced.record == "room":
+        from app import compositions
+
+        with deps.session() as session:
+            placed = house_file.placed_items(session, compositions.read_document(folder) or {})
+        stale = [item["name"] for item in placed if item.get("no_longer_approved")]
+        if stale:
+            note = f" Note: {', '.join(stale)} {'is' if len(stale) == 1 else 'are'} no longer approved."
     return (
         f"Started a {priced.tier.name} {what} of {label} version {number}: "
-        f"{priced.estimate_text}. When it finishes it will be at {route}."
+        f"{priced.estimate_text}. When it finishes it will be at {route}.{note}"
     )
 
 
 render_turntable = AgentTool(
     name="render_turntable",
     description=(
-        "Render a still or a turntable of a built piece (package_id) or of an apartment's shell "
-        "(shell). A tier is required (draft, preview or final) and decides frames, resolution and "
+        "Render a still or a turntable of a built piece (package_id), of an apartment's shell "
+        "(shell) or of a composed room (composition). A tier is required (draft, preview or final) and decides frames, resolution and "
         "engine; never pass those. Optionally pass the room document from room_fit to render a "
         "piece in its room. Draft and preview start now; final waits for the owner's yes."
     ),

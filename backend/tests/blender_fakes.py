@@ -91,6 +91,13 @@ def write_shell_files(out: Path) -> None:
     (out / "screenshot.png").write_bytes(png_bytes(800, 500))
 
 
+def write_composition_files(out: Path) -> None:
+    out.mkdir()
+    (out / "model.blend").write_bytes(b"BLENDER-fake")
+    (out / "screenshot.png").write_bytes(png_bytes(800, 500))
+    (out / "report.json").write_text(json.dumps({"kind": "room_composition_build", "items": []}), encoding="utf-8")
+
+
 def write_frames(out: Path, *, frames: int, size: int, skip_empty: int | None = None) -> None:
     out.mkdir()
     folder = out / "frames"
@@ -171,6 +178,23 @@ def fake_pipeline_launch(
             return
         if script == "build_shell.py":
             write_shell_files(out)
+            return
+        if script == "build_composition.py":
+            write_composition_files(out)
+            return
+        if script == "render_composition.py":
+            size = int(arg_value(argv, "--tier-resolution"))
+            if arg_value(argv, "--kind") == "still":
+                write_still(out, size=size)
+            else:
+                write_frames(out, frames=int(arg_value(argv, "--tier-frames")), size=size)
+            return
+        if script == "check_model.py":
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "check.json").write_text(
+                json.dumps({"size_mm": {"x": 900.0, "y": 800.0, "z": 1000.0}, "triangles": 12, "meshes": 1}),
+                encoding="utf-8",
+            )
             return
         size = int(arg_value(argv, "--tier-resolution"))
         frames = int(arg_value(argv, "--tier-frames"))

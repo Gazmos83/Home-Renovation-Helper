@@ -252,3 +252,48 @@ def test_the_house_note_names_the_approved_version_or_none(db_session, render_ro
     house_file.approve_version(db_session, "hall-bench", 1)
     note = house_note([], {}, house_file.pieces(db_session, render_root), [])
     assert "hall-bench (Hall bench): v2, approved: v1" in note
+
+
+# --- room compositions ------------------------------------------------------------------
+
+
+def _composition_folder(render_root: Path, slug: str, version: int, items: list[dict]) -> None:
+    from app.blender import storage
+
+    folder = storage.composition_version_dir(render_root, slug, version)
+    folder.mkdir(parents=True)
+    (folder / storage.INPUT_FILE).write_text(
+        json.dumps({"kind": "room_composition", "scope": {"room": "Wohnen"}, "items": items}), encoding="utf-8"
+    )
+    storage.write_status(folder, status="succeeded")
+
+
+def test_a_confirmed_composition_is_recorded_with_its_version(db_session, render_root: Path) -> None:
+    composition = house_file.record_composition(db_session, "room", "Wohnen")
+    assert composition.slug == "wohnen"
+    assert house_file.record_composition(db_session, "room", "Wohnen").id == composition.id
+    house_file.record_composition_version(db_session, composition, 1, None, ["placed: sofa"])
+    _composition_folder(render_root, "wohnen", 1, [{"id": "sofa", "type": "stand-in", "name": "Sofa"}])
+    listed = house_file.compositions(db_session, render_root)
+    assert listed == [{
+        "scope": "room", "name": "Wohnen", "slug": "wohnen", "latest_version": 1, "status": "succeeded",
+        "items": [{"id": "sofa", "type": "stand-in", "name": "Sofa"}], "versions": [1],
+    }]
+
+
+def test_a_placed_piece_unapproved_later_is_kept_and_marked(db_session, render_root: Path) -> None:
+    house_file.record_piece(db_session, "listening-wall", "Listening wall")
+    house_file.record_version(db_session, "listening-wall", 4)
+    house_file.approve_version(db_session, "listening-wall", 4)
+    composition = house_file.record_composition(db_session, "room", "Wohnen")
+    house_file.record_composition_version(db_session, composition, 1, None, [])
+    _composition_folder(render_root, "wohnen", 1, [
+        {"id": "listening-wall", "type": "piece", "package_id": "listening-wall", "version": 4},
+    ])
+    item = house_file.compositions(db_session, render_root)[0]["items"][0]
+    assert item["approved"] is True and item["no_longer_approved"] is False
+
+    house_file.unapprove_version(db_session, "listening-wall", 4)
+    item = house_file.compositions(db_session, render_root)[0]["items"][0]
+    assert item["name"] == "listening-wall v4"
+    assert item["approved"] is False and item["no_longer_approved"] is True

@@ -12,6 +12,7 @@ is still listed, read through from its folders, without a brief.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,8 @@ from app.blender.shell_contract import ShellContext, normalise_shell
 from app.blender.spec_contract import SpecValidationError
 from app.db.models import (
     Apartment,
+    Composition,
+    CompositionVersion,
     GeneratorExtensionRequest,
     Piece,
     PieceVersion,
@@ -422,6 +425,91 @@ def pieces(session: Session, root: Path) -> list[dict[str, Any]]:
                     }
                     for r in records.get(package_id, [])
                 ],
+            }
+        )
+    return listing
+
+
+# --- room compositions (room-composition) ---------------------------------------------
+
+
+def composition_by_scope(session: Session, scope: str, name: str) -> Composition | None:
+    return session.scalar(select(Composition).where(Composition.scope == scope, Composition.name == name))
+
+
+def record_composition(session: Session, scope: str, name: str) -> Composition:
+    """The composition for a scope, created on first use. Flushes; the caller commits."""
+    found = composition_by_scope(session, scope, name)
+    if found is not None:
+        return found
+    row = Composition(scope=scope, name=name, slug=storage.composition_slug(scope, name))
+    session.add(row)
+    session.flush()
+    return row
+
+
+def record_composition_version(
+    session: Session, composition: Composition, version: int, revised_from: int | None, changes: list[str]
+) -> CompositionVersion:
+    row = CompositionVersion(
+        composition_id=composition.id, version=version, revised_from=revised_from, changes=changes
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+def composition_version_rows(session: Session, composition: Composition) -> list[CompositionVersion]:
+    return list(
+        session.scalars(
+            select(CompositionVersion)
+            .where(CompositionVersion.composition_id == composition.id)
+            .order_by(CompositionVersion.version)
+        )
+    )
+
+
+def placed_items(session: Session, document: dict[str, Any]) -> list[dict[str, Any]]:
+    """The document's items as the owner reads them; a piece carries its current approval.
+
+    A placed piece version that is no longer approved stays and is marked, never dropped.
+    """
+    listed = []
+    for item in document.get("items", []):
+        entry: dict[str, Any] = {"id": item.get("id"), "type": item.get("type")}
+        if item.get("type") == "piece":
+            approved = approved_version_of(session, str(item.get("package_id"))) == item.get("version")
+            entry.update(
+                name=f"{item.get('package_id')} v{item.get('version')}",
+                package_id=item.get("package_id"), version=item.get("version"),
+                approved=approved, no_longer_approved=not approved,
+            )
+        else:
+            entry["name"] = item.get("name")
+        listed.append(entry)
+    return listed
+
+
+def compositions(session: Session, root: Path) -> list[dict[str, Any]]:
+    """Every recorded composition with its latest version, build status and placed items."""
+    listing = []
+    for row in session.scalars(select(Composition).order_by(Composition.scope, Composition.name)):
+        versions = composition_version_rows(session, row)
+        latest = versions[-1].version if versions else None
+        status = None
+        items: list[dict[str, Any]] = []
+        if latest is not None:
+            folder = storage.composition_version_dir(root, row.slug, latest)
+            status = (storage.read_status(folder) or {}).get("status")
+            try:
+                document = json.loads((folder / storage.INPUT_FILE).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                document = {}
+            items = placed_items(session, document)
+        listing.append(
+            {
+                "scope": row.scope, "name": row.name, "slug": row.slug, "latest_version": latest,
+                "status": status, "items": items, "versions": [v.version for v in versions],
             }
         )
     return listing

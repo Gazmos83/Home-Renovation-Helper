@@ -10,6 +10,7 @@ import Login from "./routes/Login";
 import Pieces from "./routes/Pieces";
 import PriceList from "./routes/PriceList";
 import Remnants from "./routes/Remnants";
+import Rooms from "./routes/Rooms";
 import Snapshots from "./routes/Snapshots";
 import Feedback from "./routes/admin/Feedback";
 import Models from "./routes/admin/Models";
@@ -20,6 +21,7 @@ import Usage from "./routes/admin/Usage";
 const links = [
   ["/conversations", "Conversations"],
   ["/pieces", "Pieces"],
+  ["/rooms", "Rooms"],
   ["/price-list", "Price list"],
   ["/snapshots", "Snapshots"],
   ["/remnants", "Remnants"],
@@ -108,6 +110,7 @@ export default function App() {
           element={signedIn ? <Conversation /> : <Navigate to="/login" replace />}
         />
         <Route path="/pieces" element={signedIn ? <Pieces /> : <Navigate to="/login" replace />} />
+        <Route path="/rooms" element={signedIn ? <Rooms /> : <Navigate to="/login" replace />} />
         <Route path="/price-list" element={signedIn ? <PriceList /> : <Navigate to="/login" replace />} />
         <Route path="/snapshots" element={signedIn ? <Snapshots /> : <Navigate to="/login" replace />} />
         <Route path="/remnants" element={signedIn ? <Remnants /> : <Navigate to="/login" replace />} />

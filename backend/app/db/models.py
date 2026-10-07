@@ -274,6 +274,77 @@ class PieceVersion(Base):
     )
 
 
+class ModelAsset(Base):
+    """A 3D model in the owner's library (model-assets). The files live under
+    `<upload_root>/models/<id>/`; only checked (`ready`) models are placeable."""
+
+    __tablename__ = "model_assets"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    entry: Mapped[str] = mapped_column(String(255), nullable=False)
+    original_name: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    width_mm: Mapped[int] = mapped_column(Integer, nullable=False)
+    depth_mm: Mapped[int] = mapped_column(Integer, nullable=False)
+    height_mm: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="checking")
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    measured_mm: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    triangles: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('glb', 'gltf', 'obj')", name="ck_model_assets_kind"),
+        CheckConstraint("state IN ('checking', 'ready', 'refused')", name="ck_model_assets_state"),
+        CheckConstraint(
+            "width_mm > 0 AND depth_mm > 0 AND height_mm > 0", name="ck_model_assets_size_positive"
+        ),
+    )
+
+
+class Composition(Base):
+    """A room composition (room-composition): one per scope, a room or an apartment."""
+
+    __tablename__ = "compositions"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("scope IN ('room', 'apartment')", name="ck_compositions_scope"),
+        UniqueConstraint("scope", "name", name="uq_compositions_scope_name"),
+    )
+
+
+class CompositionVersion(Base):
+    """A version record mirroring a `docs/renders/rooms/<slug>/v<N>` folder."""
+
+    __tablename__ = "composition_versions"
+
+    composition_id: Mapped[UUID] = mapped_column(
+        ForeignKey("compositions.id", ondelete="CASCADE"), primary_key=True
+    )
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    revised_from: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    changes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("version >= 1", name="ck_composition_versions_version_positive"),
+    )
+
+
 class GeneratorExtensionRequest(Base):
     """A change the schema cannot express yet (ladder step 2, CLAUDE.md §3)."""
 

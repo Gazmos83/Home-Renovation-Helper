@@ -135,3 +135,51 @@ def test_status_round_trips_and_merges(tmp_path: Path) -> None:
 def test_an_unknown_status_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         storage.write_status(tmp_path / "v1", status="done")
+
+
+# --- room compositions (room-composition) -------------------------------------------
+
+
+def test_composition_slugs_keep_rooms_and_apartments_apart() -> None:
+    assert storage.composition_slug("room", "Wohnen") == "wohnen"
+    assert storage.composition_slug("apartment", "Wohnen") == "apt-wohnen"
+    # A room named like an apartment slug cannot take the apartment's folder.
+    assert storage.composition_slug("room", "apt wohnen") == "room-apt-wohnen"
+    assert storage.composition_slug("room", "x" * 80).startswith("x") and len(storage.composition_slug("room", "x" * 80)) <= 64
+    with pytest.raises(storage.InvalidPackageId):
+        storage.composition_slug("room", "!!!")
+    with pytest.raises(storage.InvalidPackageId):
+        storage.composition_slug("house", "Wohnen")
+
+
+def test_composition_versions_live_under_rooms_and_count_on(tmp_path: Path) -> None:
+    folder = storage.composition_version_dir(tmp_path, "wohnen", 1)
+    assert folder == tmp_path / "rooms" / "wohnen" / "v1"
+    assert storage.record_version_dir(tmp_path, "room", "wohnen", 1) == folder
+    assert storage.next_composition_version(tmp_path, "wohnen") == 1
+    folder.mkdir(parents=True)
+    (tmp_path / "rooms" / "wohnen" / "v2").mkdir()
+    assert storage.composition_versions(tmp_path, "wohnen") == [1, 2]
+    assert storage.next_composition_version(tmp_path, "wohnen") == 3
+    assert storage.list_compositions(tmp_path) == [("wohnen", [1, 2])]
+
+
+@pytest.mark.parametrize("version", [0, -1, True, "1"])
+def test_a_composition_version_must_be_a_positive_integer(tmp_path: Path, version) -> None:
+    with pytest.raises(ValueError):
+        storage.composition_version_dir(tmp_path, "wohnen", version)
+
+
+def test_rooms_is_reserved_and_not_listed_as_a_package(tmp_path: Path) -> None:
+    with pytest.raises(storage.InvalidPackageId):
+        storage.validate_package_id("rooms")
+    (tmp_path / "rooms" / "wohnen" / "v1").mkdir(parents=True)
+    assert storage.list_packages(tmp_path) == []
+
+
+def test_an_orphaned_composition_build_is_marked_failed(tmp_path: Path) -> None:
+    folder = storage.composition_version_dir(tmp_path, "wohnen", 1)
+    folder.mkdir(parents=True)
+    storage.write_status(folder, status="running")
+    assert storage.sweep_orphaned_statuses(tmp_path) == 1
+    assert storage.read_status(folder)["status"] == "failed"

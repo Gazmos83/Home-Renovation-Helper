@@ -177,3 +177,22 @@ def load_shell(path: Path) -> dict:
     except SpecValidationError as error:
         raise InputError(f"validation: {error}") from error
     return document
+
+
+def parse_composition_render_arguments(argv: list[str]) -> tuple[Path, Path, Path, Path, str, TierArguments]:
+    """`render_composition.py`'s arguments: spec, pieces root, models root, out, kind and tier."""
+    parser = argparse.ArgumentParser(prog="render_composition.py", add_help=False)
+    parser.add_argument("--spec", required=True)
+    parser.add_argument("--pieces", required=True)
+    parser.add_argument("--models", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--kind", required=True, choices=("still", "turntable"))
+    _add_tier_arguments(parser)
+    try:
+        parsed = parser.parse_args(_after_separator(argv, "--spec"))
+    except SystemExit:
+        raise InputError("arguments: render_composition.py needs --spec, --pieces, --models, --out, --kind and the tier") from None
+    return (
+        _readable_file(parsed.spec, "--spec"), Path(parsed.pieces), Path(parsed.models), Path(parsed.out),
+        parsed.kind, _tier_from(parsed),
+    )

@@ -1,0 +1,7 @@
+name: compose_room
+description: Place approved pieces, stand-ins and library models together in a room.
+kind: builtin
+role: designer
+tools: [compose_room]
+enabled_by_default: true
+toggleable: true

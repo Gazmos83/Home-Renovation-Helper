@@ -147,7 +147,7 @@ Dropped: public studio site, client area and Styler Bot, quotes, contracts, proj
 ## 8. Security guard
 
 - Prompt-injection delimiters on every retrieved chunk, live page, snapshot, plugin result and upload, with the guard composed by code after any editable prompt.
-- `bpy` allow-list for step 3: permit `bpy.ops.mesh.*`, `bpy.ops.object.*`, `bpy.data.*`, modifiers, materials, render settings; block `os`, `subprocess`, `shutil`, `open()` outside `docs/renders/` and the package folder, and `bpy.ops.wm.*` except `save_mainfile` to the project `.blend` and `open_mainfile` of the detail pass's own `detail.blend` (a literal path, nothing else). The backend's own scripts go through the same allow-list.
+- `bpy` allow-list for step 3: permit `bpy.ops.mesh.*`, `bpy.ops.object.*`, `bpy.data.*`, modifiers, materials, render settings; block `os`, `subprocess`, `shutil`, `open()` outside `docs/renders/` and the package folder, and `bpy.ops.wm.*` except `save_mainfile` to the project `.blend` and `open_mainfile` of the detail pass's own `detail.blend` (a literal path, nothing else). The backend's own scripts go through the same allow-list. The checked-in headless generators are not live scripts: they may call `bpy.ops.import_scene.gltf` and `bpy.ops.wm.obj_import`, and only on a built package's `model.glb` or a model-library file that passed the upload checks (room-composition). A live script may not import a file.
 - Single-user password login; the developer route is additionally gated. Session, project and scope come from the cookie and path, never from a model argument; every model-generated argument is Pydantic-validated; no model-run SQL.
 - Secrets never enter graph state, prompts, tool output or logs.
 

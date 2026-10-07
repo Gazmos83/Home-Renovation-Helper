@@ -167,6 +167,13 @@ class Settings(BaseSettings):
     # A design file (design-import) is read whole to be checked, so it has its own, smaller cap.
     upload_max_design_bytes: int = 256 * 1024
 
+    # --- Model library and room compositions (room-composition) ----------------
+    model_max_bytes: int = 50 * 1024 * 1024
+    model_zip_max_entries: int = 200
+    model_zip_max_unpacked_bytes: int = 200 * 1024 * 1024
+    model_max_triangles: int = 500_000
+    composition_max_items: int = 30
+
     # --- Guideline files (the owner's own PDFs and notes) ----------------------
     guideline_root: Path = DEFAULT_GUIDELINE_ROOT
     turn_max_images: int = 4
@@ -326,7 +333,16 @@ class Settings(BaseSettings):
         return self
 
     @field_validator(
-        "upload_max_bytes", "upload_max_per_thread", "upload_max_design_bytes", "turn_max_images", mode="after"
+        "upload_max_bytes",
+        "upload_max_per_thread",
+        "upload_max_design_bytes",
+        "turn_max_images",
+        "model_max_bytes",
+        "model_zip_max_entries",
+        "model_zip_max_unpacked_bytes",
+        "model_max_triangles",
+        "composition_max_items",
+        mode="after",
     )
     @classmethod
     def _reject_non_positive_upload_limit(cls, value: int) -> int:

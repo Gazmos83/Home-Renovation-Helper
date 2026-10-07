@@ -9,7 +9,7 @@ import csv
 import json
 from pathlib import Path
 
-from app.blender.storage import BUILD_FILES, SHELL_FILES
+from app.blender.storage import BUILD_FILES, COMPOSITION_FILES, SHELL_FILES
 
 
 class VerificationError(RuntimeError):
@@ -88,3 +88,18 @@ def verify_shell(directory: Path) -> None:
     json.loads((directory / "shell.json").read_text(encoding="utf-8"))
     verify_glb(directory / "model.glb")
     png_size(directory / "screenshot.png")
+
+
+def verify_composition(directory: Path) -> None:
+    """The three composition build files exist (exactly), are non-empty and parse."""
+    names = {entry.name for entry in directory.iterdir()}
+    if names != set(COMPOSITION_FILES):
+        raise VerificationError(
+            f"expected the composition files only, got {sorted(names)} (missing "
+            f"{sorted(set(COMPOSITION_FILES) - names)}, extra {sorted(names - set(COMPOSITION_FILES))})"
+        )
+    for entry in directory.iterdir():
+        if entry.stat().st_size == 0:
+            raise VerificationError(f"{entry.name} is empty")
+    json.loads((directory / "report.json").read_text(encoding="utf-8"))
+    verify_png(directory / "screenshot.png")

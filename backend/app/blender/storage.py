@@ -21,9 +21,10 @@ from typing import Any, Final
 from uuid import uuid4
 
 PACKAGE_ID_PATTERN: Final = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
-RESERVED_IDS: Final = frozenset({"benchmark", "shells"})
+RESERVED_IDS: Final = frozenset({"benchmark", "shells", "rooms"})
 BENCHMARK_DIRNAME: Final = "benchmark"
 SHELLS_DIRNAME: Final = "shells"
+ROOMS_DIRNAME: Final = "rooms"
 
 INPUT_FILE: Final = "input.json"
 STATUS_FILE: Final = "status.json"
@@ -44,6 +45,14 @@ SHELL_FILES: Final[dict[str, str]] = {
     "model.blend": "application/octet-stream",
     "shell.json": "application/json",
     "screenshot.png": "image/png",
+}
+
+# What a successful room-composition build publishes (room-composition): no GLB,
+# because a composition is rendered from its own scene, never re-imported.
+COMPOSITION_FILES: Final[dict[str, str]] = {
+    "model.blend": "application/octet-stream",
+    "screenshot.png": "image/png",
+    "report.json": "application/json",
 }
 
 # Every file the API serves by name (closed set; `frames/<n>` is handled apart).
@@ -174,10 +183,61 @@ def list_shells(root: Path) -> list[tuple[str, list[int]]]:
     return shells
 
 
+# --- room compositions: `<root>/rooms/<scope-slug>/v<N>/` (room-composition) -----------------
+
+
+def composition_slug(scope: str, name: str) -> str:
+    """The folder slug of a composition. An apartment's starts with `apt-`; a room whose own
+    slug would start with `apt-` gets `room-` in front, so the two never collide."""
+    if scope not in ("room", "apartment"):
+        raise InvalidPackageId(f"a composition scope is 'room' or 'apartment', not {scope!r}")
+    base = re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-")[:59].strip("-")
+    if not base:
+        raise InvalidPackageId(f"a {scope} name needs letters or digits to make an id: {name!r}")
+    if scope == "apartment":
+        return validate_package_id(f"apt-{base}")
+    return validate_package_id(f"room-{base}" if base.startswith("apt-") else base)
+
+
+def composition_dir(root: Path, slug: str) -> Path:
+    return resolve(root, Path(ROOMS_DIRNAME) / validate_package_id(slug))
+
+
+def composition_version_dir(root: Path, slug: str, version: int) -> Path:
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise ValueError("version must be a positive integer")
+    return resolve(root, Path(ROOMS_DIRNAME) / validate_package_id(slug) / f"v{version}")
+
+
+def composition_versions(root: Path, slug: str) -> list[int]:
+    return _version_numbers(composition_dir(root, slug))
+
+
+def next_composition_version(root: Path, slug: str) -> int:
+    existing = composition_versions(root, slug)
+    return (existing[-1] + 1) if existing else 1
+
+
+def list_compositions(root: Path) -> list[tuple[str, list[int]]]:
+    """Every composition slug with its versions (ascending), ordered by slug."""
+    base = root / ROOMS_DIRNAME
+    if not base.is_dir():
+        return []
+    found_all = []
+    for entry in sorted(base.iterdir()):
+        if entry.is_dir() and PACKAGE_ID_PATTERN.match(entry.name):
+            found = _version_numbers(entry)
+            if found:
+                found_all.append((entry.name, found))
+    return found_all
+
+
 def record_version_dir(root: Path, record: str, record_id: str, version: int) -> Path:
-    """The version folder of a `piece` or a `shell`."""
+    """The version folder of a `piece`, a `shell` or a `room` composition."""
     if record == "shell":
         return shell_version_dir(root, record_id, version)
+    if record == "room":
+        return composition_version_dir(root, record_id, version)
     return version_dir(root, record_id, version)
 
 
@@ -325,6 +385,10 @@ def sweep_orphaned_statuses(root: Path, *, reason: str = "the service restarted"
     ] + [
         shell_version_dir(root, slug, number)
         for slug, found in list_shells(root)
+        for number in found
+    ] + [
+        composition_version_dir(root, slug, number)
+        for slug, found in list_compositions(root)
         for number in found
     ]
     for folder in folders:

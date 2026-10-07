@@ -136,6 +136,7 @@ class ToolDeps:
             semaphore=self.semaphore,
             launch=self.launch,
             record=record,
+            models_root=settings.upload_root / "models",
         )
 
     def start_build(

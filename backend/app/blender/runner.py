@@ -29,6 +29,7 @@ from app.blender.launch import Launch, LaunchResult, subprocess_launch
 from app.blender.verify import (
     VerificationError,
     verify_build,
+    verify_composition,
     verify_frames,
     verify_png,
     verify_shell,
@@ -60,11 +61,14 @@ STILL_GENERATOR: Final = GENERATORS / "render_still.py"
 TURNTABLE_GENERATOR: Final = GENERATORS / "render_turntable.py"
 ROOM_GENERATOR: Final = GENERATORS / "build_room_scene.py"
 SHELL_GENERATOR: Final = GENERATORS / "build_shell.py"
+CHECK_MODEL_GENERATOR: Final = GENERATORS / "check_model.py"
+COMPOSITION_GENERATOR: Final = GENERATORS / "build_composition.py"
+COMPOSITION_RENDERER: Final = GENERATORS / "render_composition.py"
 
 # Every script that writes an Eevee or Cycles frame. A build is not on this list
 # (it writes a Workbench screenshot; render-guard design decision 5).
 RENDER_SCRIPTS: Final = frozenset(
-    {STILL_GENERATOR.name, TURNTABLE_GENERATOR.name, ROOM_GENERATOR.name}
+    {STILL_GENERATOR.name, TURNTABLE_GENERATOR.name, ROOM_GENERATOR.name, COMPOSITION_RENDERER.name}
 )
 
 
@@ -179,17 +183,20 @@ async def run_build(
     semaphore: asyncio.Semaphore,
     launch: Launch = subprocess_launch,
     record: str = "piece",
+    models_root: Path | None = None,
 ) -> None:
     """Build one version from its stored `input.json`; never raises.
 
-    `record` is `piece` (a furniture package) or `shell` (an apartment shell,
-    built by its own generator into `shells/<slug>/v<N>/`).
+    `record` is `piece` (a furniture package), `shell` (an apartment shell, built
+    by its own generator into `shells/<slug>/v<N>/`) or `room` (a room composition
+    in `rooms/<slug>/v<N>/`, which also needs the model library's `models_root`).
     """
     shell = record == "shell"
+    room = record == "room"
     folder = storage.record_version_dir(root, record, package_id, version)
-    script = SHELL_GENERATOR if shell else BUILD_GENERATOR
-    verify = verify_shell if shell else verify_build
-    names = storage.SHELL_FILES if shell else storage.BUILD_FILES
+    script = SHELL_GENERATOR if shell else COMPOSITION_GENERATOR if room else BUILD_GENERATOR
+    verify = verify_shell if shell else verify_composition if room else verify_build
+    names = storage.SHELL_FILES if shell else storage.COMPOSITION_FILES if room else storage.BUILD_FILES
     context = {"package_id": package_id, "version": version, "kind": "build", "record": record}
 
     def running() -> None:
@@ -206,10 +213,15 @@ async def run_build(
     started = time.perf_counter()
     error: str | None = None
     try:
+        argv = [str(blender_bin), "--background", "--python", str(script), "--",
+                "--spec", str(folder / storage.INPUT_FILE), "--out", str(stage)]
+        if room:
+            unbuilt = composition_unbuilt_pieces(root, folder)
+            if unbuilt:
+                raise _NotBuilt(unbuilt)
+            argv += ["--pieces", str(root), "--models", str(models_root or root / "models")]
         result = await launch_unguarded(
-            [str(blender_bin), "--background", "--python", str(script), "--",
-             "--spec", str(folder / storage.INPUT_FILE), "--out", str(stage)],
-            cwd=folder, timeout=timeout, semaphore=semaphore, launch=starting,
+            argv, cwd=folder, timeout=timeout, semaphore=semaphore, launch=starting,
         )
         if result.exit_code != 0 or result.timed_out:
             error = safe_error(result.stderr_tail, root)
@@ -219,6 +231,8 @@ async def run_build(
                 _move_build_files(stage, folder, names)
             except (VerificationError, OSError, ValueError) as problem:
                 error = safe_error(f"publish: {problem}", root)
+    except _NotBuilt as problem:
+        error = str(problem)
     except Exception as problem:  # noqa: BLE001 - a background job must record, not raise
         error = safe_error(f"build: {type(problem).__name__}: {problem}", root)
     finally:
@@ -237,6 +251,36 @@ async def run_build(
         extra={"context": {**context, "outcome": "failed" if error else "succeeded",
                            "elapsed_seconds": elapsed, **({"error": error} if error else {})}},
     )
+
+
+class _NotBuilt(Exception):
+    """A composition places a piece version whose build has not succeeded."""
+
+    def __init__(self, unbuilt: list[str]) -> None:
+        super().__init__(
+            f"{', '.join(unbuilt)} {'is' if len(unbuilt) == 1 else 'are'} not built; "
+            "a placed piece must be built before the room is"
+        )
+
+
+def composition_unbuilt_pieces(root: Path, folder: Path) -> list[str]:
+    """Each placed piece version without a successful build, as "<package> version <N>"."""
+    try:
+        document = json.loads((folder / storage.INPUT_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    unbuilt = []
+    for item in document.get("items", []):
+        if item.get("type") != "piece":
+            continue
+        try:
+            piece_folder = storage.version_dir(root, item["package_id"], item["version"])
+        except (storage.InvalidPackageId, ValueError, KeyError):
+            unbuilt.append(f"{item.get('package_id')} version {item.get('version')}")
+            continue
+        if (storage.read_status(piece_folder) or {}).get("status") != "succeeded":
+            unbuilt.append(f"{item['package_id']} version {item['version']}")
+    return unbuilt
 
 
 def _verify_render(stage: Path, kind: str, tier_resolution: int, tier_frames: int) -> None:
@@ -342,6 +386,7 @@ async def run_render(
     on_outcome: Callable[[str], None] | None = None,
     offload: OffloadRuntime | None = None,
     on_remote_job: Callable[[dict], None] | None = None,
+    models_root: Path | None = None,
 ) -> None:
     """Run one guarded render; never raises (a failure is recorded).
 
@@ -386,7 +431,12 @@ async def run_render(
             raise RenderNotAuthorised("a room render needs its scene document")
         argv: list[str] = []
         if not remote:
-            if quote.room:
+            if quote.record == "room" and not detail:
+                argv = [str(blender_bin), "--background", "--python", str(COMPOSITION_RENDERER), "--",
+                        "--spec", str(folder / storage.INPUT_FILE), "--pieces", str(root),
+                        "--models", str(models_root or root / "models"), "--out", str(stage),
+                        "--kind", quote.kind]
+            elif quote.room:
                 scene_path = folder / f".{key}.{uuid4().hex}.scene.json"
                 scene_path.write_text(json.dumps(scene_document), encoding="utf-8")
                 argv = [str(blender_bin), "--background", "--python", str(ROOM_GENERATOR), "--",
@@ -486,3 +536,48 @@ async def run_render(
             on_finished(quote, remote_times.render_seconds if remote_times else actual)
         except Exception:  # noqa: BLE001 - calibration must never fail a finished render
             logger.warning("render.calibration_failed")
+
+
+async def run_model_check(
+    *,
+    model_folder: Path,
+    entry: str,
+    kind: str,
+    blender_bin: Path,
+    timeout: float,
+    semaphore: asyncio.Semaphore,
+    on_done: Callable[[dict | None, str | None], None],
+    launch: Launch = subprocess_launch,
+) -> None:
+    """Import one library model headless and measure it (model-assets); never raises.
+
+    Not a render: no tier applies, and it waits for the same one-process lock and
+    timeout as a build. `on_done(report, error)` records the outcome; the report is
+    also kept as the model's `check.json`.
+    """
+    stage = model_folder.parent / f".check-{model_folder.name}"
+    shutil.rmtree(stage, ignore_errors=True)
+    report: dict | None = None
+    error: str | None = None
+    try:
+        result = await launch_unguarded(
+            [str(blender_bin), "--background", "--factory-startup", "--python", str(CHECK_MODEL_GENERATOR), "--",
+             "--model", str(model_folder / entry), "--kind", kind, "--out", str(stage)],
+            cwd=model_folder, timeout=timeout, semaphore=semaphore, launch=launch,
+        )
+        if result.timed_out:
+            error = "the model check took too long"
+        elif result.exit_code != 0:
+            error = "the model could not be imported: " + safe_error(result.stderr_tail, model_folder.parent)
+        else:
+            report = json.loads((stage / "check.json").read_text(encoding="utf-8"))
+            os.replace(stage / "check.json", model_folder / "check.json")
+    except Exception as problem:  # noqa: BLE001 - a background job must record, not raise
+        error = f"the model check failed: {type(problem).__name__}"
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+    try:
+        on_done(report, error)
+    except Exception:  # noqa: BLE001 - recording must never crash the worker
+        logger.warning("model_check.not_recorded")
+    logger.info("model_check.finished", extra={"context": {"outcome": "failed" if error else "measured"}})

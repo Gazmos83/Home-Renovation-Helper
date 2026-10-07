@@ -47,6 +47,7 @@ from app.agent.models.routing import IMAGE_SLOTS
 from app.agent.prompts import (
     TOOL_ROUND_CAP_NOTE,
     compose_agent_prompt,
+    composition_note,
     house_note,
     neutralise,
     render_feedback_note,
@@ -59,6 +60,7 @@ from app.agent.tools.base import (
     ToolDeps,
     ToolOutput,
 )
+from app.assets import models as model_library
 from app.blender import storage
 from app.config import Settings
 from app.feedback import ratings
@@ -105,6 +107,7 @@ DECLINED: Final[dict[str, str]] = {
     "plan": "The plan was not saved.",
     "create_piece": "The piece was not created.",
     "import_design": "The design was not imported.",
+    "compose_room": "No room version was created.",
     "revise": "No revision was created.",
     "final_render": "The final render was not started.",
     "detail_pass": "The detail pass was not started.",
@@ -128,6 +131,9 @@ class ChatState(TypedDict, total=False):
     package_id: str | None
     piece_ready: bool
     shell_ready: bool
+    composition_ready: bool
+    compose_ready: bool
+    composition_note: str
     review_ready: bool
     detail_ready: bool
     image_attached: bool
@@ -371,6 +377,19 @@ def build_graph(
             piece_line = "none"
         confirmed = "yes" if state.get("brief") else "no"
         shell_ready = any(a["shell_version"] for a in apartments)
+        with Session(engine) as session:
+            composed = house_file.compositions(session, settings.render_root)
+            ready_models = [
+                {"id": str(m.id), "name": m.name, "width_mm": m.width_mm, "depth_mm": m.depth_mm, "height_mm": m.height_mm}
+                for m in model_library.list_models(session)
+                if m.state == "ready"
+            ]
+        composition_ready = any(c["status"] == "succeeded" for c in composed)
+        # Something to compose a room from: an approved piece version, or a composition already made.
+        with Session(engine) as session:
+            compose_ready = bool(composed) or any(
+                house_file.approved_version_of(session, p["package_id"]) for p in pieces
+            )
         facts = f"This conversation: piece {piece_line}; confirmed brief: {confirmed}."
         if apartments:
             listed = ", ".join(
@@ -391,6 +410,9 @@ def build_graph(
             "package_id": package_id,
             "piece_ready": piece_ready,
             "shell_ready": shell_ready,
+            "composition_ready": composition_ready,
+            "compose_ready": compose_ready,
+            "composition_note": composition_note(composed, ready_models),
             "review_ready": review_ready,
             "detail_ready": detail_ready,
             "image_attached": image_attached,
@@ -470,14 +492,15 @@ def build_graph(
 
         # Application rules bound the model's choice (design-agents spec).
         # A piece with a version, or an apartment with a shell, gives the Builder something to work on.
-        buildable = state.get("piece_ready") or state.get("shell_ready")
+        buildable = state.get("piece_ready") or state.get("shell_ready") or state.get("composition_ready")
         if not buildable and chosen == "builder":
             chosen = "designer" if state.get("brief") else "intake"
         if chosen == "reviewer" and not state.get("review_ready"):
             chosen = "builder" if buildable else ("designer" if state.get("brief") else "intake")
         if chosen == "lighting" and not state.get("detail_ready"):
             chosen = "builder" if buildable else ("designer" if state.get("brief") else "intake")
-        if not buildable and not state.get("brief") and chosen not in ("reviewer", "researcher"):
+        composing = chosen == "designer" and state.get("compose_ready")
+        if not buildable and not state.get("brief") and chosen not in ("reviewer", "researcher") and not composing:
             chosen = "intake"
         # Only Intake reads plans and photos, so an image turn the model gave the Designer goes to Intake.
         if chosen == "designer" and state.get("image_attached"):
@@ -503,6 +526,8 @@ def build_graph(
             notes = [state.get("facts", "")]
             if name in ("intake", "designer"):
                 notes.append(state.get("house_note", ""))
+            if name in ("designer", "builder"):
+                notes.append(state.get("composition_note", ""))
             if name in ("designer", "lighting"):
                 notes.append(state.get("feedback_note", ""))
             if name == "designer":

@@ -44,7 +44,7 @@ def test_each_agent_names_exactly_its_tools() -> None:
     )
     assert loaded["intake"].tools == ("record_brief", "record_plan")
     assert set(loaded["designer"].tools) == {
-        "create_piece", "import_design", "revise_package", "cut_list", "room_fit", "search_guidelines",
+        "create_piece", "import_design", "revise_package", "cut_list", "room_fit", "compose_room", "search_guidelines",
     }
     assert set(loaded["builder"].tools) == {
         "blender_build", "build_shell", "render_turntable", "record_render_feedback",
@@ -171,3 +171,11 @@ def test_no_specialist_promises_to_report_back_after_the_turn() -> None:
     for name, instruction in loaded.items():
         lowered = instruction.text.lower()
         assert "i'll tell you" not in lowered and "let you know" not in lowered, name
+
+
+def test_the_designer_composes_rooms_and_the_builder_renders_them() -> None:
+    loaded = load_instructions()
+    designer, builder = loaded["designer"].text, loaded["builder"].text
+    assert "`compose_room`" in designer and "approved piece versions only" in designer
+    assert "state the refusal plainly" in designer
+    assert "pass `composition`" in builder and "no longer approved" in builder

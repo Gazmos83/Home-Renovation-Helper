@@ -20,6 +20,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.agent import house_file
 from app.agent.tools.base import AgentTool, Confirmation, ToolContext, parse_args
 from app.agent.tools.shared import NOT_APPROVED, builds_unavailable, version_folder
 from app.blender import runner, storage
@@ -47,7 +48,11 @@ NO_PASS = (
 
 class VersionArgs(BaseModel):
     version: int | None = Field(
-        default=None, description="a version number; the bound piece's latest when left out"
+        default=None, description="a version number; the bound piece's (or the composition's) latest when left out"
+    )
+    composition: str | None = Field(
+        default=None,
+        description="a composed room's name, to detail that room (its lighting and look) instead of the bound piece",
     )
 
 
@@ -70,8 +75,32 @@ class RenderDetailArgs(VersionArgs):
     tier: str | None = Field(default=None, description="required; a detail render is 'final' only")
 
 
-def _folder(ctx: ToolContext, version: int | None) -> tuple[str, Path, int] | str:
-    """`(package_id, folder, version)` of the bound piece, or a refusal."""
+def _record(args: VersionArgs) -> str:
+    return "room" if args.composition else "piece"
+
+
+def _folder(ctx: ToolContext, args: VersionArgs) -> tuple[str, Path, int] | str:
+    """`(id, folder, version)` of the bound piece, or of the named composition; or a refusal."""
+    version = args.version
+    if args.composition:
+        with ctx.deps.session() as session:
+            found = house_file.composition_by_scope(session, "room", args.composition) or (
+                house_file.composition_by_scope(session, "apartment", args.composition)
+            )
+            if found is None:
+                return f"there is no composition {args.composition!r}; compose the room first"
+            slug = found.slug
+        root = ctx.deps.render_root
+        number = version if version is not None else (storage.composition_versions(root, slug) or [None])[-1]
+        if number is None:
+            return f"{args.composition!r} has no version yet"
+        try:
+            folder = storage.composition_version_dir(root, slug, number)
+        except ValueError:
+            return f"version {number} is not a valid version"
+        if not folder.is_dir():
+            return f"{args.composition!r} has no version {number}"
+        return slug, folder, number
     if not ctx.package_id:
         return "there is no piece bound to this conversation; ask the owner which piece to detail"
     folder, number, problem = version_folder(ctx.deps, ctx.package_id, version)
@@ -105,7 +134,9 @@ def _session(ctx: ToolContext, folder: Path) -> DetailPass:
     return DetailPass(folder, ctx.deps.live, tracing=ctx.deps.tracing)
 
 
-def _files_route(package_id: str, version: int, name: str) -> str:
+def _files_route(package_id: str, version: int, name: str, record: str = "piece") -> str:
+    if record == "room":
+        return f"/compositions/{package_id}/versions/{version}/files/{name}"
     return f"/packages/{package_id}/versions/{version}/files/{name}"
 
 
@@ -116,7 +147,7 @@ def start_preview(arguments: dict[str, Any], ctx: ToolContext):
     args, problem = parse_args(VersionArgs, arguments)
     if args is None:
         return problem
-    target = _folder(ctx, args.version)
+    target = _folder(ctx, args)
     if isinstance(target, str):
         return target
     package_id, folder, number = target
@@ -144,7 +175,7 @@ def start_run(arguments: dict[str, Any], ctx: ToolContext) -> str:
     args, problem = parse_args(VersionArgs, arguments)
     if args is None:
         return problem
-    target = _folder(ctx, args.version)
+    target = _folder(ctx, args)
     if isinstance(target, str):
         return target
     package_id, folder, number = target
@@ -182,7 +213,7 @@ def script_run(arguments: dict[str, Any], ctx: ToolContext) -> str:
     args, problem = parse_args(ScriptArgs, arguments)
     if args is None:
         return problem
-    target = _folder(ctx, args.version)
+    target = _folder(ctx, args)
     if isinstance(target, str):
         return target
     package_id, folder, number = target
@@ -214,7 +245,7 @@ def screenshot_run(arguments: dict[str, Any], ctx: ToolContext) -> str:
     args, problem = parse_args(VersionArgs, arguments)
     if args is None:
         return problem
-    target = _folder(ctx, args.version)
+    target = _folder(ctx, args)
     if isinstance(target, str):
         return target
     package_id, folder, number = target
@@ -224,7 +255,7 @@ def screenshot_run(arguments: dict[str, Any], ctx: ToolContext) -> str:
         index, _path = _call(ctx, _session(ctx, folder).screenshot())
     except DetailPassError as error:
         return error.reason
-    route = _files_route(package_id, number, f"detail/screens/{index}")
+    route = _files_route(package_id, number, f"detail/screens/{index}", _record(args))
     return (
         f"A screenshot was saved for the owner at {route}. You cannot see images: tell the "
         "owner it is there and ask them to say what to change."
@@ -248,7 +279,7 @@ detail_screenshot = AgentTool(
 def _price_args(args: RenderDetailArgs, ctx: ToolContext, package_id: str, number: int) -> dict[str, Any]:
     engine = ctx.deps.engine
     return {
-        "record": "piece",
+        "record": _record(args),
         "package_id": package_id,
         "version": number,
         "kind": args.kind,
@@ -267,7 +298,7 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext):
     args, problem = parse_args(RenderDetailArgs, arguments)
     if args is None:
         return problem
-    target = _folder(ctx, args.version)
+    target = _folder(ctx, args)
     if isinstance(target, str):
         return target
     package_id, folder, number = target
@@ -345,7 +376,9 @@ def render_run(arguments: dict[str, Any], ctx: ToolContext) -> str:
         deps.loop,
     )
     what = "still" if priced.kind == "still" else "turntable"
-    route = _files_route(package_id, number, "detail/still.png" if priced.kind == "still" else "detail/viewer.html")
+    route = _files_route(
+        package_id, number, "detail/still.png" if priced.kind == "still" else "detail/viewer.html", priced.record
+    )
     return (
         f"Started a final {what} of the detailed {package_id} version {number}: "
         f"{priced.estimate_text}. When it finishes it will be at {route}."

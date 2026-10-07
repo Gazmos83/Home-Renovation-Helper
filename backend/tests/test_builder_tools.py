@@ -263,9 +263,73 @@ def test_a_shell_render_needs_a_tier_refuses_raw_frames_and_pauses_for_final(mak
 def test_a_render_names_a_piece_or_a_shell_not_both_nor_neither(make_ctx, tool_deps) -> None:
     seed_apartment(tool_deps)
     for args in ({"tier": "draft"}, {"tier": "draft", "package_id": "bench", "shell": "Flat"}):
-        assert "either a package_id" in render_run(args, make_ctx())
+        assert "name exactly one target" in render_run(args, make_ctx())
 
 
 def test_an_unbuilt_shell_cannot_be_rendered(make_ctx, tool_deps) -> None:
     seed_apartment(tool_deps)
     assert "no built shell yet" in render_run({"shell": "Flat", "tier": "draft"}, make_ctx())
+
+
+# --- a composed room (room-composition) ---------------------------------------------------
+
+
+def composed(make_ctx, tool_deps, tool_state, *, wait: bool = True) -> None:
+    from plugins.compose_room.tool import run as compose_run
+
+    with tool_deps.session() as session:
+        house_file.upsert_room(session, "Wohnen", [[0, 0], [5000, 0], [5000, 4000], [0, 4000]], 2600)
+        session.commit()
+    made(make_ctx, tool_state)
+    with tool_deps.session() as session:
+        house_file.approve_version(session, "bench", 1)
+        session.commit()
+    items = [{"id": "bench", "type": "piece", "package_id": "bench", "version": 1,
+              "placement": {"wall": 1, "offset_mm": 500}}]
+    compose_run({"room": "Wohnen", "items": items}, replace(make_ctx(), approved=True))
+    if wait:
+        wait_for_status(storage.composition_version_dir(tool_state.settings.render_root, "wohnen", 1))
+
+
+def test_a_draft_turntable_of_a_composition_starts_with_its_estimate(make_ctx, tool_deps, tool_state) -> None:
+    composed(make_ctx, tool_deps, tool_state)
+    args = {"composition": "Wohnen", "tier": "draft"}
+    assert render_preview(args, make_ctx()) is None
+    result = render_run(args, make_ctx())
+    assert result.startswith("Started a draft turntable of Wohnen version 1: about")
+    assert "/compositions/wohnen/versions/1/files/viewer.html" in result and "no longer approved" not in result
+    folder = storage.composition_version_dir(tool_state.settings.render_root, "wohnen", 1)
+    job = wait_job(folder, "turntable")
+    assert job["tier"] == "draft"
+    assert png_size(folder / "frames" / "frame_000.png") == (600, 600)
+
+
+def test_a_composition_final_pauses_and_raw_values_are_refused(make_ctx, tool_deps, tool_state) -> None:
+    composed(make_ctx, tool_deps, tool_state)
+    launched = len(tool_state.launched)
+    pause = render_preview({"composition": "Wohnen", "tier": "final", "kind": "still"}, make_ctx())
+    assert isinstance(pause, Confirmation) and pause.subject == "final_render"
+    assert "resolution" in render_run({"composition": "Wohnen", "tier": "draft", "resolution": 4000}, make_ctx())
+    assert len(tool_state.launched) == launched
+
+
+def test_a_piece_and_a_composition_together_are_refused(make_ctx, tool_deps, tool_state) -> None:
+    composed(make_ctx, tool_deps, tool_state)
+    result = render_run({"composition": "Wohnen", "package_id": "bench", "tier": "draft"}, make_ctx())
+    assert "name exactly one target" in result
+
+
+def test_an_unbuilt_composition_cannot_be_rendered(make_ctx, tool_deps, tool_state) -> None:
+    tool_state.blender_launch = fake_pipeline_launch(delay=1.0, calls=tool_state.launched)
+    composed(make_ctx, tool_deps, tool_state, wait=False)
+    result = render_run({"composition": "Wohnen", "tier": "draft"}, make_ctx())
+    assert "wohnen version 1 is not built yet" in result
+
+
+def test_the_reply_says_when_a_placed_version_is_no_longer_approved(make_ctx, tool_deps, tool_state) -> None:
+    composed(make_ctx, tool_deps, tool_state)
+    with tool_deps.session() as session:
+        house_file.unapprove_version(session, "bench", 1)
+        session.commit()
+    result = render_run({"composition": "Wohnen", "tier": "draft", "kind": "still"}, make_ctx())
+    assert result.endswith("Note: bench v1 is no longer approved.")
