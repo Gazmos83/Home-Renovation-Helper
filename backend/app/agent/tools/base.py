@@ -2,8 +2,9 @@
 
 A tool is a name, a description, the schema the model is shown, a `run` and an
 optional `preview`. `preview(args, ctx)` returns a `Confirmation` (the turn
-pauses for the owner's answer), a string (a refusal returned to the model with
-no pause) or `None` (run without a pause). `run(args, ctx)` returns the text the
+pauses for the owner's answer), `Questions` (the turn pauses for the owner's
+answers, which `run` reads from `ctx.answer`), a string (a refusal returned to
+the model with no pause) or `None` (run without a pause). `run(args, ctx)` returns the text the
 model reads, or a `ToolOutput` that also updates graph state.
 
 Ownership, thread and piece come from `ToolContext`, built by code from the
@@ -163,6 +164,8 @@ class ToolContext:
     trace_id: str | None = None
     slot: str | None = None
     model: str | None = None
+    # The owner's answer to a `Questions` pause: `{"answers": [...]}` or `{"declined": "..."}`.
+    answer: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -175,12 +178,19 @@ class Confirmation:
 
 
 @dataclass(frozen=True)
+class Questions:
+    """A pause for the owner's answers. Each question is `{text, unit, choices}`."""
+
+    questions: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
 class ToolOutput:
     text: str
     update: dict[str, Any] = field(default_factory=dict)
 
 
-Preview = Confirmation | str | None
+Preview = Confirmation | Questions | str | None
 
 
 @dataclass(frozen=True)

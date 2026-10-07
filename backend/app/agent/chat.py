@@ -1,15 +1,19 @@
 """One owner turn through the Foreman graph, and the owner's answer to a pause.
 
 `answer` runs a turn, `resume` answers the pending confirmation, `pending` reads
-it, `history` reads the thread's messages. A gateway failure on a turn forgets
-the unanswered message (the thread never holds a question with no answer);
-absent memory is a stated failure, never a half-stored turn.
+it, `history` reads the thread's messages. Both run through `run_events`, which
+streams the graph and reports each specialist and tool as it starts, then one
+ending event (studio-chat-polish), so the streamed and the JSON routes cannot
+drift. A gateway failure on a turn forgets the unanswered message (the thread
+never holds a question with no answer); absent memory is a stated failure,
+never a half-stored turn.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from collections.abc import Iterator
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -17,6 +21,7 @@ import psycopg
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from langgraph.types import Command
 
+from app.agent import titles
 from app.agent.models.openrouter_client import GatewayError
 
 logger = logging.getLogger("app")
@@ -30,6 +35,10 @@ class Pending:
     subject: str
     summary: str
     proposal: dict[str, Any]
+    # `confirmation` or `questions` (studio-chat-polish); a question set has no subject,
+    # summary or proposal, and a confirmation no questions.
+    kind: str = "confirmation"
+    questions: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -39,7 +48,28 @@ class TurnResult:
     pending: Pending | None = None
     failure_class: str | None = None
     failure_reason: str | None = None
+    # The specialists that ran in this turn, by role (studio-chat-polish). Reporting
+    # detail, so it is left out of comparing two results.
+    specialists: tuple[str, ...] = field(default=(), compare=False)
 
+
+@dataclass(frozen=True)
+class TurnEvent:
+    """One step of a running turn: `specialist`, `tool`, or an ending event (`reply`,
+    `pending`, `error`) that also carries the turn's `result`. `data` holds only
+    role names, plain tool names, reply text and the pending item."""
+
+    kind: str
+    data: dict[str, Any] = field(default_factory=dict)
+    result: TurnResult | None = None
+
+
+ENDING_EVENTS = frozenset({"reply", "pending", "error"})
+
+
+def plain_tool_name(tool: str) -> str:
+    """How a tool is named to the owner while it runs: `revise_package` → `revise package`."""
+    return tool.replace("_", " ")
 
 def checkpoint_thread(thread_id: UUID) -> str:
     """The checkpointer's id for a conversation."""
@@ -71,6 +101,8 @@ def _pending_of(interrupt_obj: Any) -> Pending:
         subject=str(value.get("subject", "")),
         summary=str(value.get("summary", "")),
         proposal=dict(value.get("proposal") or {}),
+        kind=str(value.get("kind") or "confirmation"),
+        questions=[dict(q) for q in value.get("questions") or []],
     )
 
 
@@ -85,19 +117,116 @@ def _last_assistant_text(state: dict[str, Any]) -> str:
     return ""
 
 
-def _result(state: dict[str, Any]) -> TurnResult:
-    interrupts = state.get("__interrupt__")
-    if interrupts:
-        return TurnResult(
-            reply=_last_assistant_text(state),
-            specialist=state.get("specialist") or None,
-            pending=_pending_of(interrupts[0]),
-        )
-    return TurnResult(reply=_last_assistant_text(state), specialist=state.get("specialist") or None)
+def _result(state: dict[str, Any], interrupts: Any, specialists: tuple[str, ...]) -> TurnResult:
+    specialist = state.get("specialist") or None
+    if not specialists and specialist:
+        # A resumed turn continues inside the specialist that paused; the Foreman does not choose again.
+        specialists = (specialist,)
+    return TurnResult(
+        reply=_last_assistant_text(state),
+        specialist=specialist,
+        pending=_pending_of(interrupts[0]) if interrupts else None,
+        specialists=specialists,
+    )
 
 
 def _unavailable() -> TurnResult:
     return TurnResult(failure_class="unavailable", failure_reason=MEMORY_UNAVAILABLE_REASON)
+
+
+def _failed(result: TurnResult) -> TurnEvent:
+    return TurnEvent(
+        "error", {"failure_class": result.failure_class, "reason": result.failure_reason}, result
+    )
+
+
+def _ending(result: TurnResult) -> TurnEvent:
+    if result.pending is not None:
+        return TurnEvent("pending", {"pending": result.pending, "specialists": list(result.specialists)}, result)
+    return TurnEvent("reply", {"reply": result.reply or "", "specialists": list(result.specialists)}, result)
+
+
+def run_events(
+    graph: Any, graph_input: Any, config: dict[str, Any], *, human: HumanMessage | None = None
+) -> Iterator[TurnEvent]:
+    """Run the graph on `graph_input`, yielding each specialist and tool as it starts and
+    then exactly one ending event. `human` is the turn's owner message, forgotten again
+    when the gateway fails (a resume has none)."""
+    specialists: list[str] = []
+    try:
+        for _namespace, mode, chunk in graph.stream(
+            graph_input, config=config, stream_mode=["updates", "custom"], subgraphs=True
+        ):
+            if mode == "custom" and isinstance(chunk, dict) and chunk.get("tool"):
+                yield TurnEvent("tool", {"plugin": plain_tool_name(str(chunk["tool"]))})
+            elif mode == "updates" and isinstance(chunk, dict):
+                role = (chunk.get("foreman") or {}).get("specialist") if isinstance(chunk.get("foreman"), dict) else None
+                if role:
+                    specialists.append(role)
+                    yield TurnEvent("specialist", {"role": role})
+        snapshot = graph.get_state(config)
+    except GatewayError as error:
+        if human is not None:
+            _forget_unanswered(graph, config, human)
+        yield _failed(TurnResult(failure_class=error.error_class, failure_reason=error.reason))
+        return
+    except psycopg.OperationalError as error:
+        _log_store_failure(error)
+        yield _failed(_unavailable())
+        return
+    yield _ending(_result(snapshot.values, snapshot.interrupts, tuple(specialists)))
+
+
+def owner_message(message: str, upload_ids: list[UUID] | None = None) -> HumanMessage:
+    """The owner's message as stored: its text and the ids of the files sent with it."""
+    return HumanMessage(
+        message,
+        id=str(uuid4()),
+        additional_kwargs={"upload_ids": [str(i) for i in upload_ids]} if upload_ids else {},
+    )
+
+
+def turn_events(
+    graph: Any,
+    *,
+    thread_id: UUID,
+    owner_id: UUID,
+    message: str,
+    upload_ids: list[UUID] | None = None,
+    run_config: dict[str, Any] | None = None,
+) -> Iterator[TurnEvent]:
+    """`run_events` for one owner turn."""
+    if graph is None:
+        yield _failed(_unavailable())
+        return
+    human = owner_message(message, upload_ids)
+    yield from run_events(
+        graph, {"messages": [human]}, _config(thread_id, owner_id, run_config), human=human
+    )
+
+
+def resume_events(
+    graph: Any,
+    *,
+    thread_id: UUID,
+    owner_id: UUID,
+    value: dict[str, Any],
+    run_config: dict[str, Any] | None = None,
+) -> Iterator[TurnEvent]:
+    """`run_events` for the owner's answer to the pending item."""
+    if graph is None:
+        yield _failed(_unavailable())
+        return
+    yield from run_events(graph, Command(resume=value), _config(thread_id, owner_id, run_config))
+
+
+def final_result(events: Iterator[TurnEvent]) -> TurnResult:
+    """The turn's result: run the events to their ending."""
+    result = _unavailable()
+    for event in events:
+        if event.result is not None:
+            result = event.result
+    return result
 
 
 def _log_store_failure(error: Exception) -> None:
@@ -132,24 +261,17 @@ def answer(
     upload_ids: list[UUID] | None = None,
     run_config: dict[str, Any] | None = None,
 ) -> TurnResult:
-    """Run one turn of one thread for the owner. `upload_ids` are images from the thread."""
-    if graph is None:
-        return _unavailable()
-    config = _config(thread_id, owner_id, run_config)
-    human = HumanMessage(
-        message,
-        id=str(uuid4()),
-        additional_kwargs={"upload_ids": [str(i) for i in upload_ids]} if upload_ids else {},
+    """Run one turn of one thread for the owner. `upload_ids` are files from the thread."""
+    return final_result(
+        turn_events(
+            graph,
+            thread_id=thread_id,
+            owner_id=owner_id,
+            message=message,
+            upload_ids=upload_ids,
+            run_config=run_config,
+        )
     )
-    try:
-        state = graph.invoke({"messages": [human]}, config=config)
-    except GatewayError as error:
-        _forget_unanswered(graph, config, human)
-        return TurnResult(failure_class=error.error_class, failure_reason=error.reason)
-    except psycopg.OperationalError as error:
-        _log_store_failure(error)
-        return _unavailable()
-    return _result(state)
 
 
 def resume(
@@ -162,17 +284,37 @@ def resume(
     run_config: dict[str, Any] | None = None,
 ) -> TurnResult:
     """Answer the pending confirmation (`yes` or `no`); a second pause may follow."""
-    if graph is None:
-        return _unavailable()
+    return final_result(
+        resume_events(
+            graph,
+            thread_id=thread_id,
+            owner_id=owner_id,
+            value={"answer": answer_value, "reason": reason},
+            run_config=run_config,
+        )
+    )
+
+
+def title_for(
+    graph: Any, *, thread_id: UUID, owner_id: UUID, run_config: dict[str, Any] | None = None
+) -> str | None:
+    """A title for the thread from the owner's first message, written by the Foreman slot's
+    model or, when that call is refused or fails, cut from the message; `None` when the
+    thread holds no owner message. Not stored here. Never raises."""
     config = _config(thread_id, owner_id, run_config)
     try:
-        state = graph.invoke(Command(resume={"answer": answer_value, "reason": reason}), config=config)
-    except GatewayError as error:
-        return TurnResult(failure_class=error.error_class, failure_reason=error.reason)
-    except psycopg.OperationalError as error:
+        messages = graph.get_state(config).values.get("messages", [])
+    except Exception as error:  # noqa: BLE001 - no title is better than a failed turn
         _log_store_failure(error)
-        return _unavailable()
-    return _result(state)
+        return None
+    first = next((m for m in messages if isinstance(m, HumanMessage)), None)
+    if first is None or not _text(first.content).strip():
+        return None
+
+    def call(system: str, prompt: list[Any], max_output: int) -> str:
+        return graph.side_call("chat.title", system, prompt, max_output, config)
+
+    return titles.title_for(call, _text(first.content))
 
 
 def pending(graph: Any, *, thread_id: UUID, owner_id: UUID) -> Pending | None:
@@ -202,7 +344,8 @@ def history(graph: Any, *, thread_id: UUID, owner_id: UUID) -> list[dict[str, An
 
     A reply sent together with tool calls is shown; tool calls, arguments and
     results are not. An answered confirmation is one line from the tool message
-    it was recorded on.
+    it was recorded on; an answered question set is its question and answer rows,
+    and a declined one the owner's own words (studio-chat-polish).
     """
     config = _config(thread_id, owner_id)
     snapshot = graph.get_state(config)
@@ -225,4 +368,10 @@ def history(graph: Any, *, thread_id: UUID, owner_id: UUID) -> list[dict[str, An
             shown.append({"role": "assistant", "text": _text(message.content)})
         elif isinstance(message, ToolMessage) and isinstance(message.additional_kwargs.get("confirmation"), dict):
             shown.append({"role": "confirmation", "text": _confirmation_line(message.additional_kwargs["confirmation"])})
+        elif isinstance(message, ToolMessage) and isinstance(message.additional_kwargs.get("answers"), dict):
+            answered = message.additional_kwargs["answers"]
+            if answered.get("declined"):
+                shown.append({"role": "owner", "text": str(answered["declined"])})
+            else:
+                shown.append({"role": "assistant", "kind": "answers", "text": "", "rows": list(answered.get("rows") or [])})
     return shown

@@ -567,6 +567,39 @@ def list_threads(session: Session) -> list[Thread]:
     return list(session.scalars(select(Thread).order_by(Thread.last_turn_at.desc())))
 
 
+def set_title(session: Session, thread_id: UUID, title: str) -> bool:
+    """The owner's title for a thread. Whether the thread exists."""
+    renamed = session.execute(update(Thread).where(Thread.id == thread_id).values(title=title.strip()[:200]))
+    session.flush()
+    return bool(renamed.rowcount)
+
+
+def set_title_if_empty(session: Session, thread_id: UUID, title: str) -> bool:
+    """A generated title, written only while the thread has none, so an owner's
+    rename that lands first is kept. Whether it was written."""
+    written = session.execute(
+        update(Thread).where(Thread.id == thread_id, Thread.title == "").values(title=title.strip()[:200])
+    )
+    session.flush()
+    return bool(written.rowcount)
+
+
+def read_summary(session: Session, thread_id: UUID) -> tuple[str | None, str | None]:
+    """The thread's summary of earlier exchanges and the id of the last message it covers."""
+    thread = session.get(Thread, thread_id)
+    if thread is None:
+        return None, None
+    return thread.summary, thread.summary_through
+
+
+def write_summary(session: Session, thread_id: UUID, summary: str, through: str) -> None:
+    """Store a refreshed summary; a deleted thread is left alone."""
+    session.execute(
+        update(Thread).where(Thread.id == thread_id).values(summary=summary, summary_through=through[:64])
+    )
+    session.flush()
+
+
 def record_review(
     session: Session,
     package_id: str,

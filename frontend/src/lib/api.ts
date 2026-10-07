@@ -13,18 +13,59 @@ export type Thread = {
   last_turn_at: string;
 };
 
+export type Question = { text: string; unit: string | null; choices: string[] };
+
+/** A paused turn: a confirmation (subject, summary) or a question set (studio-chat-polish). */
 export type Pending = {
   confirmation_id: string;
+  kind?: "confirmation" | "questions";
   subject: string;
   summary: string;
   proposal: Record<string, unknown>;
+  questions?: Question[];
 };
 
-export type ChatMessage = { role: "owner" | "assistant" | "confirmation"; text: string; upload_ids?: string[] };
+export type AnswerRow = { question: string; answer: string };
+
+export type ChatMessage = {
+  role: "owner" | "assistant" | "confirmation";
+  text: string;
+  /** `answers` is an answered question set, shown as its rows. */
+  kind?: "text" | "answers";
+  rows?: AnswerRow[];
+  upload_ids?: string[];
+};
 
 export type ThreadDetail = Thread & { messages: ChatMessage[]; pending: Pending | null };
 
 export type Turn = { reply: string; specialist: string | null; pending: Pending | null };
+
+/** One step of a followed turn, as the streamed routes send it. */
+export type TurnEvent =
+  | { event: "specialist"; data: { role: string } }
+  | { event: "tool"; data: { plugin: string } }
+  | { event: "reply"; data: { reply: string; specialists: string[] } }
+  | { event: "pending"; data: { pending: Pending; specialists: string[] } }
+  | { event: "title"; data: { title: string } }
+  | { event: "error"; data: { failure_class: string; reason: string } }
+  | { event: "done"; data: Record<string, never> };
+
+/** The owner's answer to the pending item. */
+export type ResumeBody =
+  | { answer: "yes" | "no"; reason?: string }
+  | { answers: string[] }
+  | { declined: string };
+
+/** One model call of a conversation (developer panel). */
+export type ThreadCall = {
+  time: string;
+  slot: string;
+  operation: string;
+  model: string;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  estimated: boolean;
+};
 
 export type Upload = { upload_id: string; kind: string; size_bytes: number; original_name: string };
 
@@ -306,6 +347,32 @@ export class ApiError extends Error {
   }
 }
 
+/** The refusal a non-2xx response carries, in the service's words. */
+async function failure(response: Response): Promise<ApiError> {
+  let field: string | null = null;
+  let message = response.statusText;
+  try {
+    const body = (await response.json()) as {
+      detail?: { reason?: string; field?: string } | { loc: (string | number)[]; msg: string }[] | string;
+    };
+    if (typeof body.detail === "string") message = body.detail;
+    else if (Array.isArray(body.detail)) {
+      // FastAPI's own validation: the first problem, named by its last location part.
+      const first = body.detail[0];
+      if (first) {
+        message = first.msg;
+        field = String(first.loc[first.loc.length - 1]);
+      }
+    } else if (body.detail) {
+      message = body.detail.reason ?? message;
+      field = body.detail.field ?? null;
+    }
+  } catch {
+    /* keep statusText */
+  }
+  return new ApiError(response.status, field, message);
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     credentials: "include",
@@ -313,32 +380,69 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers: init.body instanceof FormData ? init.headers : { "Content-Type": "application/json", ...init.headers },
   });
   if (response.status === 401 && path !== "/auth/login") unauthorized.forEach((listener) => listener());
-  if (!response.ok) {
-    let field: string | null = null;
-    let message = response.statusText;
-    try {
-      const body = (await response.json()) as {
-        detail?: { reason?: string; field?: string } | { loc: (string | number)[]; msg: string }[] | string;
-      };
-      if (typeof body.detail === "string") message = body.detail;
-      else if (Array.isArray(body.detail)) {
-        // FastAPI's own validation: the first problem, named by its last location part.
-        const first = body.detail[0];
-        if (first) {
-          message = first.msg;
-          field = String(first.loc[first.loc.length - 1]);
-        }
-      } else if (body.detail) {
-        message = body.detail.reason ?? message;
-        field = body.detail.field ?? null;
-      }
-    } catch {
-      /* keep statusText */
-    }
-    throw new ApiError(response.status, field, message);
-  }
+  if (!response.ok) throw await failure(response);
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+/**
+ * A Server-Sent Events reader: feed it text as it arrives, in chunks of any size, and it
+ * calls `onEvent` once per complete event, in order.
+ */
+export function sseParser(onEvent: (event: TurnEvent) => void) {
+  let buffer = "";
+  const flush = (block: string) => {
+    let name = "message";
+    const data: string[] = [];
+    for (const line of block.split("\n")) {
+      if (line.startsWith("event:")) name = line.slice(6).trim();
+      else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
+    }
+    if (data.length) onEvent({ event: name, data: JSON.parse(data.join("\n")) } as TurnEvent);
+  };
+  return {
+    push(chunk: string) {
+      buffer += chunk.replaceAll("\r\n", "\n");
+      let end = buffer.indexOf("\n\n");
+      while (end !== -1) {
+        flush(buffer.slice(0, end));
+        buffer = buffer.slice(end + 2);
+        end = buffer.indexOf("\n\n");
+      }
+    },
+    end() {
+      if (buffer.trim()) flush(buffer);
+      buffer = "";
+    },
+  };
+}
+
+/** POST `body` to a streamed route and hand each event to `onEvent`; a refusal before the
+ * stream opens is thrown as an `ApiError`, like any other request. */
+async function stream(path: string, body: unknown, onEvent: (event: TurnEvent) => void): Promise<void> {
+  const response = await fetch(path, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify(body),
+  });
+  if (response.status === 401) unauthorized.forEach((listener) => listener());
+  if (!response.ok) throw await failure(response);
+  const parser = sseParser(onEvent);
+  if (!response.body) {
+    parser.push(await response.text());
+    parser.end();
+    return;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parser.push(decoder.decode(value, { stream: true }));
+  }
+  parser.push(decoder.decode());
+  parser.end();
 }
 
 const versionPath = (packageId: string, version: number) =>
@@ -362,8 +466,16 @@ export const api = {
   threads: () => request<Thread[]>("/chat/threads"),
   deleteThread: (threadId: string) =>
     request<void>(`/chat/threads/${threadId}`, { method: "DELETE" }),
-  createThread: (title: string) =>
-    request<Thread>("/chat/threads", { method: "POST", body: JSON.stringify({ title }) }),
+  /** A new conversation; with no title, its first reply brings a generated one. */
+  createThread: (title?: string) =>
+    request<Thread>("/chat/threads", { method: "POST", body: JSON.stringify(title ? { title } : {}) }),
+  renameThread: (threadId: string, title: string) =>
+    request<Thread>(`/chat/threads/${threadId}`, { method: "PATCH", body: JSON.stringify({ title }) }),
+  streamTurn: (threadId: string, message: string, uploadIds: string[], onEvent: (event: TurnEvent) => void) =>
+    stream(`/chat/threads/${threadId}/turns/stream`, { message, upload_ids: uploadIds }, onEvent),
+  streamResume: (threadId: string, confirmationId: string, answer: ResumeBody, onEvent: (event: TurnEvent) => void) =>
+    stream(`/chat/threads/${threadId}/resume/stream`, { confirmation_id: confirmationId, ...answer }, onEvent),
+  threadCalls: (threadId: string) => request<ThreadCall[]>(`/admin/threads/${threadId}/calls`),
   thread: (threadId: string) => request<ThreadDetail>(`/chat/threads/${threadId}`),
   sendTurn: (threadId: string, message: string, uploadIds: string[]) =>
     request<Turn>(`/chat/threads/${threadId}/turns`, {

@@ -33,6 +33,11 @@ class SpyGraph:
         self.configs.append(config)
         return self._graph.invoke(value, config=config, **kwargs)
 
+    def stream(self, value: Any, config: Any = None, **kwargs: Any) -> Any:
+        # Turns run through `graph.stream` (studio-chat-polish), streamed or not.
+        self.configs.append(config)
+        return self._graph.stream(value, config=config, **kwargs)
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._graph, name)
 
@@ -84,6 +89,7 @@ def test_the_turns_run_config_carries_owner_thread_and_piece_and_usage_names_eac
     mine = [row for row in rows if str(row.user_id) == owner_id]
     assert {row.model_id for row in mine} == {routing.model_for("foreman"), routing.model_for("intake")}
     assert all(len(row.trace_id) == 32 for row in mine)
-    assert {row.operation for row in mine} == {"chat.foreman", "chat.intake"}
+    # The untitled thread's first turn is followed by its title call (studio-chat-polish).
+    assert {row.operation for row in mine} == {"chat.foreman", "chat.intake", "chat.title"}
     # The turn and its resume are separate traces.
     assert len({row.trace_id for row in mine}) == 2

@@ -106,8 +106,10 @@ class UsageRecorder(BaseCallbackHandler):
         project_id: UUID | None = None,
         trace_id: str | None = None,
         estimated_tokens: int | None = None,
+        thread_id: UUID | None = None,
     ) -> None:
         self._engine = engine
+        self._thread_id = thread_id
         self._model_id = model_id
         self._owner_user_id = owner_user_id
         self._project_id = project_id
@@ -129,6 +131,7 @@ class UsageRecorder(BaseCallbackHandler):
                         project_id=self._project_id,
                         trace_id=self._trace_id,
                         estimated_tokens=self._estimated_tokens,
+                        thread_id=self._thread_id,
                     )
                 )
                 session.commit()

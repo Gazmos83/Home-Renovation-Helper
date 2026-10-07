@@ -66,7 +66,8 @@ def test_a_png_and_a_jpeg_are_accepted_listed_and_served(client: TestClient, upl
 
 def test_a_pdf_renamed_png_is_refused_and_nothing_is_stored(client: TestClient, upload_root: Path) -> None:
     t = thread(client)
-    response = post(client, t, b"%PDF-1.7 not an image", "plan.png")
+    # A real PDF header: the second line is the binary marker every PDF writer adds.
+    response = post(client, t, b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n", "plan.png")
     assert response.status_code == 415
     assert response.json()["detail"]["failure_class"] == "unsupported_type"
     assert not (upload_root / t).exists() or list((upload_root / t).iterdir()) == []
@@ -209,3 +210,65 @@ def test_a_design_does_not_count_towards_the_image_limit(client: TestClient) -> 
     ids = [post(client, t, png_bytes(8, 8)).json()["upload_id"], post(client, t, design_bytes(), "w.json").json()["upload_id"]]
     response = client.post(f"/chat/threads/{t}/turns", json={"message": "a photo and a design", "upload_ids": ids})
     assert response.status_code == 200, response.text
+
+
+NOTE = "# Living room\n\n| Wall | Length |\n|---|---|\n| north | 4000 mm |\n\tCeiling 2450 mm — measured.\r\n".encode()
+
+
+def test_a_markdown_note_is_accepted_stored_as_md_and_served_as_plain_text(
+    client: TestClient, upload_root: Path
+) -> None:
+    t = thread(client)
+    response = post(client, t, NOTE, "living-room.md")
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["kind"] == "text" and body["original_name"] == "living-room.md"
+    assert [p.suffix for p in (upload_root / t).iterdir()] == [".md"]
+    fetched = client.get(f"/uploads/{body['upload_id']}")
+    assert fetched.headers["content-type"] == "text/plain; charset=utf-8"
+    assert fetched.headers["x-content-type-options"] == "nosniff"
+    assert fetched.content == NOTE
+    assert [u["kind"] for u in client.get(f"/chat/threads/{t}/uploads").json()] == ["text"]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [b"PK\x03\x04\x14\x00\x00\x00\x08\x00notes.md", b"plain text with a \x00 null", b"bell \x07 ring"],
+    ids=["zip", "nul", "control"],
+)
+def test_binary_named_md_is_refused_and_nothing_is_stored(
+    client: TestClient, upload_root: Path, content: bytes
+) -> None:
+    t = thread(client)
+    response = post(client, t, content, "notes.md")
+    assert response.status_code == 415
+    assert response.json()["detail"]["failure_class"] == "unsupported_type"
+    assert not (upload_root / t).exists() or list((upload_root / t).iterdir()) == []
+
+
+def test_an_oversized_note_is_refused_and_no_partial_file_remains(client: TestClient, upload_root: Path) -> None:
+    client.app.state.settings.upload_max_note_bytes = 1024
+    t = thread(client)
+    response = post(client, t, b"measurements " * 200, "living-room.md")
+    assert response.status_code == 413
+    assert "note is larger than 1 KiB" in response.json()["detail"]["reason"]
+    assert not (upload_root / t).exists() or list((upload_root / t).iterdir()) == []
+
+
+def test_a_note_far_over_every_cap_is_refused_as_a_note(client: TestClient, upload_root: Path) -> None:
+    client.app.state.settings.upload_max_note_bytes = 1024
+    client.app.state.settings.upload_max_design_bytes = 1024
+    t = thread(client)
+    # The checked prefix (cap + 1 bytes) ends inside the two-byte "ß", which must not read as binary.
+    content = b"xx" + "Maße ".encode() * 600
+    assert content[1024:1025] == b"\xc3"
+    response = post(client, t, content, "living-room.md")
+    assert response.status_code == 413
+    assert "note is larger" in response.json()["detail"]["reason"]
+
+
+def test_a_design_still_needs_its_kind_although_notes_are_text(client: TestClient) -> None:
+    """Text that opens like JSON is a design file or nothing (design-import stays as it was)."""
+    t = thread(client)
+    assert post(client, t, b'  {"kind": "room_scene"}', "wall-unit.md").status_code == 415
+    assert post(client, t, design_bytes(), "wall-unit.txt").json()["kind"] == "design"

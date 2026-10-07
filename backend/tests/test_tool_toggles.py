@@ -88,4 +88,5 @@ def test_a_resumed_confirmation_keeps_the_turns_tools(tool_state) -> None:
     assert "room_fit" not in next_turn["bound_tools"]["designer"]
     assert set(models["designer"].bound_tools) == {
         "create_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "compose_room", "search_guidelines",
+        "ask_owner",
     }

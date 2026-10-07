@@ -195,3 +195,54 @@ def test_refusal_names_the_role_and_not_a_slug() -> None:
     assert "midnight" in text
     assert "deepseek" not in text
     assert "token" not in text
+
+
+def _long_thread() -> tuple[list[BaseMessage], HumanMessage]:
+    history: list[BaseMessage] = []
+    for n in range(40):
+        history += _exchange(n)
+    return history, HumanMessage("what did you say about the last board?", id="now")
+
+
+def test_dropped_exchanges_are_replaced_by_their_summary() -> None:
+    from app.agent.prompts import CLOSE_TOKEN, SUMMARY_LABEL
+
+    history, current = _long_thread()
+    seen: list[list[BaseMessage]] = []
+
+    def summarize(dropped: list[BaseMessage]) -> str:
+        seen.append(dropped)
+        return "Rooms: hall 1200 × 3000 mm. Pieces: hall-bench v2. Open: the wood."
+
+    budget = RequestBudget(limit=3_000, output_reserve=500)
+    request = fit(budget, SYSTEM, [*history, current], summarize=summarize)
+
+    assert count(request) <= budget.usable
+    assert len(seen) == 1 and seen[0][0].id == "h0"
+    kept_ids = {m.id for m in request}
+    assert not kept_ids & {m.id for m in seen[0]}
+    summary = request[len(SYSTEM)]
+    assert isinstance(summary, SystemMessage)
+    assert summary.content.startswith(SUMMARY_LABEL)
+    assert "hall 1200 × 3000 mm" in summary.content and summary.content.endswith(CLOSE_TOKEN)
+    assert "earlier exchange(s)" not in str([m.content for m in request])
+    assert request[-1] is current
+
+
+def test_no_summary_or_one_too_large_falls_back_to_the_note() -> None:
+    history, current = _long_thread()
+    budget = RequestBudget(limit=3_000, output_reserve=500)
+    for answer in (None, "", "decisions " * 5_000):
+        request = fit(budget, SYSTEM, [*history, current], summarize=lambda _dropped, a=answer: a)
+        note = request[len(SYSTEM)]
+        assert "earlier exchange(s)" in note.content
+        assert count(request) <= budget.usable
+
+
+def test_nothing_is_summarised_when_everything_fits() -> None:
+    history = [*_exchange(1), *_exchange(2), HumanMessage("and now?")]
+
+    def summarize(_dropped):
+        raise AssertionError("no summary call when nothing is dropped")
+
+    assert fit(RequestBudget(limit=32_000, output_reserve=2_048), SYSTEM, history, summarize=summarize) == [*SYSTEM, *history]

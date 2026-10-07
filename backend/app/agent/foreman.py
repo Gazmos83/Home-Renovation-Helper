@@ -31,6 +31,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.runnables import RunnableConfig
+from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import Command, interrupt
@@ -38,7 +39,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from app.agent import house_file, progress, uploads
+from app.agent import house_file, progress, summaries, uploads
 from app.agent.budget import BudgetRefused, RequestBudget, prepare, refusal_message
 from app.agent.instructions import AgentInstruction, load_instructions
 from app.agent.models.budgets import Budgets
@@ -46,17 +47,20 @@ from app.agent.models.openrouter_client import gateway_errors
 from app.agent.models.routing import IMAGE_SLOTS
 from app.agent.prompts import (
     EMPTY_ANSWER_NOTE,
+    FORMATTING_NOTE,
     TOOL_ROUND_CAP_NOTE,
     compose_agent_prompt,
     composition_note,
     house_note,
     neutralise,
     render_feedback_note,
+    wrap_note,
 )
 from app.agent.tools import loaded_plugins
 from app.agent.tools.base import (
     AgentTool,
     Confirmation,
+    Questions,
     ToolContext,
     ToolDeps,
     ToolOutput,
@@ -182,25 +186,38 @@ def _attached(engine: Engine, messages: list[AnyMessage]) -> tuple[bool, bool]:
     ids = newest.additional_kwargs.get("upload_ids") if newest is not None else None
     if not ids:
         return False, False
-    images, designs = _designs(engine, list(ids))
+    images, designs, _notes = _designs(engine, list(ids))
     return bool(images), bool(designs)
 
 
-def _designs(engine: Engine, upload_ids: list[str]) -> tuple[list[str], list[tuple[str, str]]]:
-    """The image ids, and `(id, file name)` of each design file, among `upload_ids`."""
+def _designs(
+    engine: Engine, upload_ids: list[str]
+) -> tuple[list[str], list[tuple[str, str]], list[tuple[str, UUID, UUID]]]:
+    """Among `upload_ids`: the image ids, `(id, file name)` of each design file, and
+    `(file name, thread id, upload id)` of each text note."""
     images: list[str] = []
     designs: list[tuple[str, str]] = []
+    notes: list[tuple[str, UUID, UUID]] = []
     with Session(engine) as session:
         for raw in upload_ids:
             upload = uploads.get_upload(session, UUID(raw))
             if upload is not None and upload.kind == "design":
                 designs.append((raw, upload.original_name))
+            elif upload is not None and upload.kind == "text":
+                notes.append((upload.original_name, upload.thread_id, upload.id))
             else:
                 images.append(raw)
-    return images, designs
+    return images, designs, notes
 
 
-def with_images(
+def _note_text(name: str, path: Path) -> str:
+    """One attached note as a delimited untrusted block, or a line saying it is gone."""
+    if not path.is_file():
+        return f"\n(The owner attached the note '{neutralise(name)}', which is no longer available.)"
+    return "\n\n" + wrap_note(name, path.read_text(encoding="utf-8"))
+
+
+def with_attachments(
     messages: list[AnyMessage], *, capable: bool, engine: Engine, settings: Settings
 ) -> list[AnyMessage]:
     """Expand attached upload ids for the model call; the stored messages are untouched.
@@ -208,6 +225,8 @@ def with_images(
     An image-capable slot receives each image beside the owner's text; any other
     slot receives a note that images were attached, never the images. A design
     file is never sent: every slot receives a note naming it and its upload id.
+    Every slot receives each text note's content inside the untrusted-content
+    delimiters, named by its file (studio-chat-polish).
     """
     expanded: list[AnyMessage] = []
     for message in messages:
@@ -215,13 +234,15 @@ def with_images(
         if not ids:
             expanded.append(message)
             continue
-        image_ids, designs = _designs(engine, list(ids))
+        image_ids, designs, notes = _designs(engine, list(ids))
         text = _text_of(message.content)
         for upload_id, name in designs:
             text += (
                 f"\n(The owner attached the design file '{neutralise(name)}' as upload {upload_id}; "
                 "import it with import_design.)"
             )
+        for name, thread_id, upload_id in notes:
+            text += _note_text(name, uploads.upload_path(settings.upload_root, thread_id, upload_id, "text"))
         if not image_ids:
             content: Any = text
         elif capable:
@@ -317,11 +338,31 @@ def _designer_note() -> str:
 
 def _confirmation_payload(confirmation: Confirmation, tool: str) -> dict[str, Any]:
     return {
+        "kind": "confirmation",
         "tool": tool,
         "subject": confirmation.subject,
         "summary": confirmation.summary,
         "proposal": confirmation.proposal,
     }
+
+
+def _questions_payload(questions: Questions, tool: str) -> dict[str, Any]:
+    return {"kind": "questions", "tool": tool, "questions": questions.questions}
+
+
+def _answered_rows(questions: Questions, answer: Any) -> dict[str, Any]:
+    """An answered question set as the owner saw it, kept for the history (studio-chat-polish)."""
+    answer = answer if isinstance(answer, dict) else {}
+    declined = answer.get("declined")
+    if isinstance(declined, str) and declined.strip():
+        return {"rows": [], "declined": declined.strip()}
+    given = list(answer.get("answers") or [])
+    rows = []
+    for index, question in enumerate(questions.questions):
+        value = str(given[index]) if index < len(given) else ""
+        unit = question.get("unit")
+        rows.append({"question": question["text"], "answer": f"{value} {unit}" if unit and value else value})
+    return {"rows": rows, "declined": None}
 
 
 def build_graph(
@@ -349,6 +390,11 @@ def build_graph(
     for plugin in loaded_plugins_set.https_plugins():
         tools_by_name.update(plugin.tools)
     designer_note = _designer_note()
+
+    def plugin_name(tool: str) -> str:
+        """The plugin a tool comes from, named to the owner while it runs (studio-chat-polish)."""
+        plugin = loaded_plugins_set.plugin_for_tool(tool)
+        return plugin.name if plugin is not None else tool
 
     # --- context ------------------------------------------------------------
 
@@ -471,9 +517,13 @@ def build_graph(
             owner_user_id=UUID(str(configurable["owner_id"])),
             trace_id=configurable.get("trace_id"),
             estimated_tokens=estimated_tokens,
+            # The conversation the call is made for (studio-chat-polish).
+            thread_id=UUID(str(configurable["chat_thread"])) if configurable.get("chat_thread") else None,
         )
 
-    def prompt_for(slot: str, system: str, state: ChatState, tools: list) -> tuple[list, int]:
+    def prompt_for(
+        slot: str, system: str, state: ChatState, tools: list, config: RunnableConfig | None = None
+    ) -> tuple[list, int]:
         slug = model_ids(slot)
         restrictions = budget_store.for_model(slug)
         model = model_provider(slot)
@@ -483,13 +533,23 @@ def build_graph(
             context_budget_tokens=restrictions.context_budget_tokens,
             max_output_tokens=max_tokens if isinstance(max_tokens, int) else None,
         )
-        history = with_images(
+        history = with_attachments(
             list(state.get("messages", [])),
             capable=slot in IMAGE_SLOTS,
             engine=engine,
             settings=settings,
         )
         used = tokens_today(engine, slug, settings.budget_timezone)
+        # Dropped exchanges are summarised for the thread; the summary call itself is a
+        # side call with no summarizer, so it cannot recurse.
+        raw_thread = (config or {}).get("configurable", {}).get("chat_thread")
+        summarize = None
+        if raw_thread:
+
+            def call(summary_system: str, messages: list, max_output: int) -> str:
+                return side_call("chat.summary", summary_system, messages, max_output, config or {})
+
+            summarize = summaries.summarizer(engine, UUID(str(raw_thread)), call)
         return prepare(
             budget,
             system,
@@ -497,7 +557,34 @@ def build_graph(
             tools=tools or None,
             used_today=used,
             daily_ceiling=restrictions.daily_token_ceiling,
+            summarize=summarize,
         )
+
+    def side_call(
+        operation: str, system: str, messages: list[AnyMessage], max_output: int, config: RunnableConfig
+    ) -> str:
+        """One tool-less call on the Foreman slot (a title, a summary), counted, capped and
+        metered like any other. Raises `BudgetRefused` or `GatewayError`; the caller falls back."""
+        slot = loaded["foreman"].slot
+        slug = model_ids(slot)
+        restrictions = budget_store.for_model(slug)
+        budget = RequestBudget.for_model(
+            slug, context_budget_tokens=restrictions.context_budget_tokens, max_output_tokens=max_output
+        )
+        prompt, counted = prepare(
+            budget,
+            system,
+            messages,
+            used_today=tokens_today(engine, slug, settings.budget_timezone),
+            daily_ceiling=restrictions.daily_token_ceiling,
+        )
+        with gateway_errors(operation=operation):
+            reply = model_provider(slot).invoke(
+                prompt,
+                config=with_callbacks(config, recorder(slot, config, estimated_tokens=counted)),
+                max_tokens=max_output,
+            )
+        return _text_of(getattr(reply, "content", ""))
 
     def foreman(
         state: ChatState, config: RunnableConfig
@@ -507,7 +594,7 @@ def build_graph(
         instruction = loaded["foreman"]
         system = compose_agent_prompt(instruction.text, state.get("facts", ""), state.get("house_note", ""))
         try:
-            prompt, counted = prompt_for(instruction.slot, system, state, [])
+            prompt, counted = prompt_for(instruction.slot, system, state, [], config)
         except BudgetRefused as error:
             return Command(
                 update={"messages": [AIMessage(refusal_message("foreman", error))], "specialist": ""},
@@ -580,6 +667,7 @@ def build_graph(
                 notes.append(state.get("feedback_note", ""))
             if name == "designer":
                 notes.append(designer_note)
+            notes.append(FORMATTING_NOTE)
             capped = round_count >= MAX_TOOL_ROUNDS
             if capped:
                 notes.append(TOOL_ROUND_CAP_NOTE)
@@ -588,7 +676,7 @@ def build_graph(
 
             def answer(extra: list[str]) -> Any:
                 system = compose_agent_prompt(instruction.text, *notes, *extra)
-                prompt, counted = prompt_for(instruction.slot, system, state, selected)
+                prompt, counted = prompt_for(instruction.slot, system, state, selected, config)
                 with gateway_errors(operation=f"chat.{name}"):
                     return (
                         model_provider(instruction.slot)
@@ -635,6 +723,9 @@ def build_graph(
             )
             calls = _last_ai_tool_calls(state)
             bound_tools = bound_for(state)
+            # Each tool is reported as it starts, by its plugin's plain name only; a
+            # gated tool starts with its preview, so a pause still names it.
+            writer = get_stream_writer()
 
             # The round's first gated call decides whether the turn pauses. Its
             # preview is code, so an invalid call is refused with no pause; the
@@ -644,13 +735,16 @@ def build_graph(
                 (c for c in calls if c.get("name") in bound_tools and bound_tools[c["name"]].gated),
                 None,
             )
-            outcome: Confirmation | str | None = None
+            outcome: Confirmation | Questions | str | None = None
             answer: Any = None
             if first_gated is not None:
                 tool = bound_tools[first_gated["name"]]
+                writer({"tool": plugin_name(tool.name)})
                 outcome = tool.preview(first_gated.get("args") or {}, ctx)  # type: ignore[misc]
                 if isinstance(outcome, Confirmation):
                     answer = interrupt(_confirmation_payload(outcome, tool.name))
+                elif isinstance(outcome, Questions):
+                    answer = interrupt(_questions_payload(outcome, tool.name))
 
             approved = isinstance(answer, dict) and answer.get("answer") == "yes"
             reason = answer.get("reason") if isinstance(answer, dict) else None
@@ -681,6 +775,10 @@ def build_graph(
                         messages.append(ToolMessage(text, tool_call_id=call_id))
                         continue
                 run_ctx = replace(ctx, approved=True) if isinstance(outcome, Confirmation) else ctx
+                if call is first_gated and isinstance(outcome, Questions):
+                    run_ctx = replace(ctx, answer=answer if isinstance(answer, dict) else {})
+                if call is not first_gated:
+                    writer({"tool": plugin_name(tool.name)})
                 try:
                     result = tool.run(args, run_ctx)
                 except Exception as error:  # noqa: BLE001 - a tool must not end the turn
@@ -714,6 +812,10 @@ def build_graph(
                 for message in messages:
                     if message.tool_call_id == (first_gated.get("id") or ""):
                         message.additional_kwargs["confirmation"] = answered
+            if isinstance(outcome, Questions) and first_gated is not None:
+                for message in messages:
+                    if message.tool_call_id == (first_gated.get("id") or ""):
+                        message.additional_kwargs["answers"] = _answered_rows(outcome, answer)
             return Command(update={"messages": messages, **update}, goto="agent")
 
         builder = StateGraph(ChatState)
@@ -733,7 +835,10 @@ def build_graph(
         graph.add_edge(name, END)
     graph.add_edge(START, "load_house")
     graph.add_edge("load_house", "foreman")
-    return graph.compile(checkpointer=checkpointer)
+    compiled = graph.compile(checkpointer=checkpointer)
+    # Calls outside a turn's graph run (the conversation's title) share its budgets and metering.
+    compiled.side_call = side_call
+    return compiled
 
 
 def last_reply(state: dict[str, Any]) -> str:

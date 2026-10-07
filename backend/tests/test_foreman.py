@@ -483,8 +483,9 @@ def test_the_prompt_carries_the_guard_once_and_binds_only_the_headers_tools(tool
     assert system.endswith(UNTRUSTED_CONTENT_PREAMBLE)
     assert set(models["designer"].bound_tools) == {
         "create_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit", "compose_room", "search_guidelines",
+        "ask_owner",
     }
-    assert models["intake"].bound_tools == ["record_brief", "record_plan"]
+    assert models["intake"].bound_tools == ["record_brief", "record_plan", "ask_owner"]
     # The Foreman's own prompt is guarded and binds nothing.
     foreman_prompt = "\n".join(str(m.content) for m in models["foreman"].decision_prompts[-1])
     assert foreman_prompt.count(UNTRUSTED_CONTENT_PREAMBLE) == 1
@@ -761,3 +762,43 @@ def test_the_fixed_reply_names_the_designer_by_role(tool_state, make_ctx) -> Non
     harness.start(package_id="bench")
     state = harness.turn("Revise it")
     assert last_reply(state) == "The Designer gave no answer. Please rephrase your message or ask again."
+
+
+def test_a_followed_turn_reports_the_designer_then_its_tool_then_the_pause(tool_state, make_ctx) -> None:
+    """studio-chat-polish: `run_events` reports each start in order and one ending."""
+    from app.agent import chat
+    from app.blender import storage
+
+    create_run({"package_id": "bench", "spec": desk()}, replace(make_ctx(), approved=True))
+    wait_for_status(storage.version_dir(tool_state.settings.render_root, "bench", 1))
+    revise = {"package_id": "bench", "changes": {"modules": {"cabinet": {"shelves": 3}}}}
+    models = fake_models(
+        foreman={"decisions": [decision("designer")]},
+        designer={"tool_call_scripts": [[tool_call("revise_package", revise)]], "replies": ["Revised."]},
+    )
+    harness = make_harness(tool_state, models)
+    harness.start(package_id="bench")
+
+    events = list(
+        chat.turn_events(
+            harness.graph, thread_id=harness.thread, owner_id=harness.owner_id, message="three shelves please"
+        )
+    )
+    assert [(e.kind, e.data.get("role") or e.data.get("plugin")) for e in events] == [
+        ("specialist", "designer"),
+        ("tool", "revise package"),
+        ("pending", None),
+    ]
+    assert events[-1].result.pending.subject == "revise"
+    assert events[-1].data["specialists"] == ["designer"]
+
+    resumed = list(
+        chat.resume_events(
+            harness.graph,
+            thread_id=harness.thread,
+            owner_id=harness.owner_id,
+            value={"answer": "no", "reason": "keep it"},
+        )
+    )
+    assert [e.kind for e in resumed] == ["tool", "reply"]
+    assert resumed[-1].data == {"reply": "Revised.", "specialists": ["designer"]}

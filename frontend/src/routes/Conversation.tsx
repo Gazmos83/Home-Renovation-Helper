@@ -1,15 +1,34 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Circle } from "lucide-react";
-import { useRef, useState } from "react";
+import { Check, Circle, Pencil } from "lucide-react";
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, type Pending, type Progress, type ToolToggle, type Upload } from "../lib/api";
+import {
+  api,
+  type ChatMessage,
+  type Pending,
+  type Progress,
+  type ResumeBody,
+  type ThreadDetail,
+  type ToolToggle,
+  type TurnEvent,
+  type Upload,
+} from "../lib/api";
 import { FieldError } from "../lib/form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cardClass } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Page } from "@/components/Page";
+import { Attachment } from "@/components/chat/Attachment";
+import { Bubble } from "@/components/chat/Bubble";
+import { Composer } from "@/components/chat/Composer";
+import { QuestionForm } from "@/components/chat/QuestionForm";
+import { Rail } from "@/components/chat/Rail";
+import { Reply } from "@/components/chat/Reply";
+import { ROLE_LABELS } from "@/components/chat/roles";
+import { WaitingBubble } from "@/components/chat/WaitingBubble";
 
 const STEP_LABELS: Record<string, string> = {
   brief: "Brief confirmed",
@@ -23,30 +42,6 @@ const STEP_LABELS: Record<string, string> = {
 
 function message(error: unknown): string | null {
   return error instanceof Error ? error.message : null;
-}
-
-// A render file's route in a reply: a piece's, a composition's or a shell's, and nothing
-// else, so a reply cannot send the owner to another site. A route is made of ids, version
-// numbers and file names only, so quotes or backticks around it and a trailing full stop
-// are not part of it.
-const FILE_ROUTE = /(?<![\w:/.])(\/(?:packages|compositions|apartments)\/[\w./-]*?\/files\/[\w./-]*[\w/-])/;
-
-/** A reply's text with each render file route as a link that opens in a new tab. */
-function ReplyText({ text }: { text: string }) {
-  const parts = text.split(new RegExp(FILE_ROUTE.source, "g"));
-  return (
-    <>
-      {parts.map((part, index) =>
-        index % 2 === 1 ? (
-          <a key={index} href={part} target="_blank" rel="noreferrer" className="underline">
-            {part}
-          </a>
-        ) : (
-          part
-        ),
-      )}
-    </>
-  );
 }
 
 function Tools({ threadId }: { threadId: string }) {
@@ -115,8 +110,7 @@ function ProjectPanel({ threadId }: { threadId: string }) {
     p.latest_version !== null && p.build_status === "succeeded" && p.approved_version !== p.latest_version;
 
   return (
-    <section className={cardClass} aria-label="Project">
-      <h2>Project</h2>
+    <section className="space-y-3" aria-label="Project">
       {p.package_id ? (
         <p>
           <strong>{p.name}</strong> <Badge variant="secondary">{p.package_id}</Badge>{" "}
@@ -215,137 +209,117 @@ function ProjectPanel({ threadId }: { threadId: string }) {
   );
 }
 
-function ConfirmationCard({ threadId, pending, disabled, onAnswered }: {
-  threadId: string;
+function ConfirmationCard({ pending, disabled, onAnswer }: {
   pending: Pending;
   disabled: boolean;
-  onAnswered: (specialist: string | null) => void;
+  onAnswer: (answer: ResumeBody) => void;
 }) {
   const [reason, setReason] = useState("");
-  const answer = useMutation({
-    mutationFn: (value: "yes" | "no") => api.resume(threadId, pending.confirmation_id, value, reason.trim() || null),
-    onSuccess: (turn) => {
-      setReason("");
-      onAnswered(turn.specialist);
-    },
-  });
+  const answer = (value: "yes" | "no") => onAnswer(reason.trim() ? { answer: value, reason: reason.trim() } : { answer: value });
   return (
-    <section className={cardClass} aria-label="Confirmation needed">
+    <section className={`${cardClass} mx-auto w-full max-w-xl`} aria-label="Confirmation needed">
       <h3>Confirm: {pending.subject}</h3>
-      <pre className="whitespace-pre-wrap font-sans">{pending.summary}</pre>
+      <pre className="whitespace-pre-wrap font-chat">{pending.summary}</pre>
       <Input aria-label="Reason (optional)" placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} />
       <div className="flex gap-2">
-        <Button type="button" disabled={disabled || answer.isPending} onClick={() => answer.mutate("yes")}>Yes</Button>
-        <Button type="button" variant="outline" disabled={disabled || answer.isPending} onClick={() => answer.mutate("no")}>No</Button>
+        <Button type="button" disabled={disabled} onClick={() => answer("yes")}>Yes</Button>
+        <Button type="button" variant="outline" disabled={disabled} onClick={() => answer("no")}>No</Button>
       </div>
-      <FieldError message={message(answer.error)} />
     </section>
   );
 }
 
-/** An attached file: a thumbnail for an image, a named chip for a design file. */
-function Attachment({ upload }: { upload: Upload }) {
-  if (upload.kind === "design") {
-    return (
-      <Badge variant="secondary" aria-label={`Design file ${upload.original_name}`}>
-        {upload.original_name}
-      </Badge>
-    );
-  }
-  return <img src={`/uploads/${upload.upload_id}`} alt={upload.original_name} className="h-16 rounded-md border" />;
+/** An answered question set: one row per question. */
+function AnswersTable({ rows }: { rows: { question: string; answer: string }[] }) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Question</TableHead>
+          <TableHead>Answer</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((row, index) => (
+          <TableRow key={index}>
+            <TableCell>{row.question}</TableCell>
+            <TableCell>{row.answer}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
 }
 
-function Composer({ threadId, onStart, onDone, onFailed }: {
-  threadId: string;
-  onStart: (text: string, uploads: Upload[]) => void;
-  onDone: (specialist: string | null) => Promise<void>;
-  onFailed: () => Promise<void>;
-}) {
-  const [text, setText] = useState("");
-  const [uploads, setUploads] = useState<Upload[]>([]);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const files = useRef<HTMLInputElement>(null);
-
-  const send = useMutation({
-    mutationFn: ({ body, ids }: { body: string; ids: string[]; sent: Upload[] }) => api.sendTurn(threadId, body, ids),
-    onSuccess: (turn) => onDone(turn.specialist),
-    onError: (_error, vars) => {
-      // The unanswered message is not kept: give the owner their words back.
-      setText(vars.body);
-      setUploads(vars.sent);
-      return onFailed();
+/** The heading, editable in place; an empty title is refused in words. */
+function Title({ threadId, title }: { threadId: string; title: string }) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState<string | null>(null);
+  const [refused, setRefused] = useState<string | null>(null);
+  const rename = useMutation({
+    mutationFn: (value: string) => api.renameThread(threadId, value),
+    onSuccess: (thread) => {
+      queryClient.setQueryData<ThreadDetail>(["thread", threadId], (old) => (old ? { ...old, title: thread.title } : old));
+      queryClient.invalidateQueries({ queryKey: ["threads"] });
+      setEditing(null);
     },
   });
 
-  async function attach(list: FileList | null) {
-    setUploadError(null);
-    for (const file of Array.from(list ?? [])) {
-      try {
-        const added = await api.upload(threadId, file);
-        setUploads((current) => [...current, added]);
-      } catch (error) {
-        setUploadError(message(error));
-      }
-    }
-    if (files.current) files.current.value = "";
+  if (editing === null) {
+    return (
+      <div className="flex items-center gap-2">
+        <h1>{title || "Untitled"}</h1>
+        <Button type="button" variant="ghost" size="sm" aria-label="Rename" onClick={() => setEditing(title)}>
+          <Pencil aria-hidden size={16} />
+        </Button>
+      </div>
+    );
   }
-
-  function submit() {
-    const body = text.trim();
-    if (!body) return;
-    onStart(body, uploads);
-    send.mutate({ body, ids: uploads.map((u) => u.upload_id), sent: uploads });
-    setText("");
-    setUploads([]);
-  }
-
   return (
     <form
-      className="space-y-2"
+      className="flex flex-wrap items-center gap-2"
       onSubmit={(event) => {
         event.preventDefault();
-        submit();
+        if (!editing.trim()) {
+          setRefused("A conversation needs a title.");
+          return;
+        }
+        setRefused(null);
+        rename.mutate(editing.trim());
       }}
     >
-      {uploads.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {uploads.map((u) => <Attachment key={u.upload_id} upload={u} />)}
-        </div>
-      )}
-      <Input
-        aria-label="Message"
-        value={text}
-        placeholder="Describe what you want…"
-        disabled={send.isPending}
-        onChange={(event) => setText(event.target.value)}
-      />
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="submit" disabled={send.isPending || !text.trim()}>Send</Button>
-        <Label className="cursor-pointer text-sm underline">
-          Add a plan, photo or design
-          <input
-            ref={files}
-            type="file"
-            accept="image/png,image/jpeg,application/json,.json"
-            multiple
-            className="sr-only"
-            aria-label="Add a plan, photo or design"
-            disabled={send.isPending}
-            onChange={(event) => void attach(event.target.files)}
-          />
-        </Label>
-        {send.isPending && <span role="status">Waiting for the reply…</span>}
-      </div>
-      <FieldError message={uploadError ?? message(send.error)} />
+      <Input aria-label="Conversation title" value={editing} maxLength={200} onChange={(e) => setEditing(e.target.value)} className="max-w-md" />
+      <Button type="submit" disabled={rename.isPending}>Save</Button>
+      <Button type="button" variant="outline" onClick={() => { setEditing(null); setRefused(null); }}>Cancel</Button>
+      <FieldError message={refused ?? message(rename.error)} />
     </form>
   );
 }
 
+function OwnerMessage({ m, uploadById }: { m: ChatMessage; uploadById: Map<string, Upload> }) {
+  const files = (m.upload_ids ?? []).map((id) => uploadById.get(id)).filter((u): u is Upload => Boolean(u));
+  return (
+    <Bubble side="right" speaker="You">
+      <p className="font-chat text-base leading-relaxed whitespace-pre-wrap">{m.text}</p>
+      {files.length > 0 && (
+        <span className="mt-2 flex flex-wrap gap-2">
+          {files.map((u) => <Attachment key={u.upload_id} upload={u} />)}
+        </span>
+      )}
+    </Bubble>
+  );
+}
+
+type Running = { working: string | null; tool: string | null };
+
 export default function Conversation() {
   const { threadId = "" } = useParams();
   const queryClient = useQueryClient();
-  const [specialist, setSpecialist] = useState<string | null>(null);
+  const [specialists, setSpecialists] = useState<string[]>([]);
+  const [running, setRunning] = useState<Running | null>(null);
+  const [answerError, setAnswerError] = useState<string | null>(null);
   const [optimistic, setOptimistic] = useState<{ text: string; uploads: Upload[] } | null>(null);
+  const [panel, setPanel] = useState<string | null>(null);
   const thread = useQuery({ queryKey: ["thread", threadId], queryFn: () => api.thread(threadId) });
   const sentFiles = Boolean(thread.data?.messages.some((m) => m.upload_ids?.length));
   const uploads = useQuery({ queryKey: ["uploads", threadId], queryFn: () => api.uploads(threadId), enabled: sentFiles });
@@ -360,6 +334,40 @@ export default function Conversation() {
     ]);
   }
 
+  /** Follow one turn's events; resolves to its refusal in words, or `null`. */
+  async function follow(run: (onEvent: (event: TurnEvent) => void) => Promise<void>): Promise<string | null> {
+    setRunning({ working: null, tool: null });
+    setSpecialists([]);
+    let refused: string | null = null;
+    try {
+      await run((event) => {
+        if (event.event === "specialist") setRunning({ working: event.data.role, tool: null });
+        else if (event.event === "tool") setRunning((now) => ({ working: now?.working ?? null, tool: event.data.plugin }));
+        else if (event.event === "reply" || event.event === "pending") setSpecialists(event.data.specialists);
+        else if (event.event === "title") {
+          queryClient.setQueryData<ThreadDetail>(["thread", threadId], (old) => (old ? { ...old, title: event.data.title } : old));
+        } else if (event.event === "error") refused = event.data.reason;
+      });
+    } catch (error) {
+      refused = message(error) ?? "the turn failed";
+    }
+    await refresh();
+    setRunning(null);
+    return refused;
+  }
+
+  async function send(text: string, files: Upload[]): Promise<string | null> {
+    setOptimistic({ text, uploads: files });
+    const refused = await follow((onEvent) => api.streamTurn(threadId, text, files.map((u) => u.upload_id), onEvent));
+    setOptimistic(null);
+    return refused;
+  }
+
+  async function answer(pending: Pending, value: ResumeBody) {
+    setAnswerError(null);
+    setAnswerError(await follow((onEvent) => api.streamResume(threadId, pending.confirmation_id, value, onEvent)));
+  }
+
   if (thread.error) {
     return (
       <Page>
@@ -370,80 +378,80 @@ export default function Conversation() {
   }
   if (!thread.data) return <Page>Loading…</Page>;
   const { messages, pending } = thread.data;
+  const lastReply = messages.reduce((found, m, index) => (m.role === "assistant" && m.kind !== "answers" ? index : found), -1);
 
   return (
     <Page>
       <p><Link to="/conversations" className="underline">All conversations</Link></p>
-      <h1>{thread.data.title || "Untitled"}</h1>
-      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <div className="space-y-4">
-          <section className={cardClass} aria-label="Messages">
+      <Title key={thread.data.title} threadId={threadId} title={thread.data.title} />
+      <div className="relative flex gap-2">
+        <Rail
+          open={panel}
+          onOpen={setPanel}
+          panels={[
+            { id: "tools", label: "Tools", icon: "tools", content: <Tools threadId={threadId} /> },
+            { id: "project", label: "Project", icon: "project", content: <ProjectPanel threadId={threadId} /> },
+          ]}
+        />
+        <div className="min-w-0 flex-1 space-y-4">
+          <section className={`${cardClass} space-y-4`} aria-label="Messages">
             {messages.length === 0 && !optimistic && <p className="text-muted-foreground">Nothing said yet. Describe the piece you want.</p>}
-            {messages.map((m, index) =>
-              m.role === "confirmation" ? (
-                <p key={index} className="rounded-md border px-3 py-2 text-sm text-muted-foreground" data-role="confirmation">
-                  Answered: {m.text}
-                </p>
-              ) : (
-              <p key={index} className={m.role === "owner" ? "font-medium" : ""}>
-                <strong>{m.role === "owner" ? "You" : "Foreman"}:</strong>{" "}
-                {m.role === "assistant" ? <ReplyText text={m.text} /> : m.text}
-                {m.role === "assistant" && index === messages.length - 1 && specialist && (
-                  <Badge variant="outline" className="ml-2">{specialist}</Badge>
-                )}
-                {m.upload_ids && m.upload_ids.some((id) => uploadById.has(id)) && (
-                  <span className="mt-1 flex flex-wrap gap-2">
-                    {m.upload_ids.map((id) => {
-                      const upload = uploadById.get(id);
-                      return upload ? <Attachment key={id} upload={upload} /> : null;
-                    })}
-                  </span>
-                )}
-              </p>
-              ),
-            )}
+            {messages.map((m, index) => {
+              if (m.role === "confirmation") {
+                return (
+                  <p key={index} className="mx-auto w-fit rounded-md border px-3 py-2 text-sm text-muted-foreground" data-role="confirmation">
+                    Answered: {m.text}
+                  </p>
+                );
+              }
+              if (m.kind === "answers") {
+                return (
+                  <div key={index} className="mx-auto w-full max-w-xl" data-role="answers">
+                    <AnswersTable rows={m.rows ?? []} />
+                  </div>
+                );
+              }
+              if (m.role === "owner") return <OwnerMessage key={index} m={m} uploadById={uploadById} />;
+              return (
+                <Bubble key={index} side="left" speaker="Foreman">
+                  <Reply text={m.text} />
+                  {index === lastReply && specialists.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1" aria-label="Specialists in this turn">
+                      {specialists.map((role) => (
+                        <Badge key={role} variant="outline">{ROLE_LABELS[role] ?? role}</Badge>
+                      ))}
+                    </div>
+                  )}
+                </Bubble>
+              );
+            })}
             {optimistic && (
-              <div>
-                <p className="font-medium"><strong>You:</strong> {optimistic.text}</p>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {optimistic.uploads.map((u) => <Attachment key={u.upload_id} upload={u} />)}
-                </div>
-              </div>
+              <OwnerMessage m={{ role: "owner", text: optimistic.text, upload_ids: optimistic.uploads.map((u) => u.upload_id) }} uploadById={new Map(optimistic.uploads.map((u) => [u.upload_id, u]))} />
             )}
+            {running && <WaitingBubble working={running.working} tool={running.tool} />}
           </section>
           {pending ? (
-            <ConfirmationCard
-              key={pending.confirmation_id}
-              threadId={threadId}
-              pending={pending}
-              disabled={false}
-              onAnswered={(who) => {
-                setSpecialist(who);
-                void refresh();
-              }}
-            />
+            <>
+              {pending.kind === "questions" ? (
+                <QuestionForm
+                  key={pending.confirmation_id}
+                  questions={pending.questions ?? []}
+                  disabled={running !== null}
+                  onAnswer={(value) => void answer(pending, value)}
+                />
+              ) : (
+                <ConfirmationCard
+                  key={pending.confirmation_id}
+                  pending={pending}
+                  disabled={running !== null}
+                  onAnswer={(value) => void answer(pending, value)}
+                />
+              )}
+              <FieldError message={answerError} />
+            </>
           ) : (
-            <Composer
-              threadId={threadId}
-              onStart={(text, uploads) => setOptimistic({ text, uploads })}
-              onDone={async (who) => {
-                setSpecialist(who);
-                await refresh();
-                setOptimistic(null);
-              }}
-              onFailed={async () => {
-                setOptimistic(null);
-                await refresh();
-              }}
-            />
+            <Composer threadId={threadId} running={running !== null} onSend={send} />
           )}
-        </div>
-        <div className="space-y-4">
-          <ProjectPanel threadId={threadId} />
-          <section className={cardClass} aria-label="Tools">
-            <h2>Tools</h2>
-            <Tools threadId={threadId} />
-          </section>
         </div>
       </div>
     </Page>

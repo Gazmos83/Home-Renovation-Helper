@@ -5,7 +5,6 @@ import { api, type Thread } from "../lib/api";
 import { FieldError } from "../lib/form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { cardClass } from "@/components/ui/card";
 import { Page } from "@/components/Page";
 
@@ -70,10 +69,10 @@ function Entry({ thread }: { thread: Thread }) {
 export default function Conversations() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [title, setTitle] = useState("New conversation");
   const threads = useQuery({ queryKey: ["threads"], queryFn: api.threads });
+  // No title to type: the first reply brings a generated one, and the heading can be renamed.
   const create = useMutation({
-    mutationFn: () => api.createThread(title),
+    mutationFn: () => api.createThread(),
     onSuccess: (thread) => {
       queryClient.invalidateQueries({ queryKey: ["threads"] });
       navigate(`/conversations/${thread.thread_id}`);
@@ -82,19 +81,14 @@ export default function Conversations() {
 
   return (
     <Page>
-      <h1>Conversations</h1>
-      <form
-        className="flex items-center justify-between gap-4"
-        onSubmit={(event) => {
-          event.preventDefault();
-          create.mutate();
-        }}
-      >
-        <Input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Conversation title" />
-        <Button type="submit">Start</Button>
-      </form>
+      <div className="flex items-center justify-between gap-4">
+        <h1>Conversations</h1>
+        <Button type="button" disabled={create.isPending} onClick={() => create.mutate()}>
+          New conversation
+        </Button>
+      </div>
       <FieldError message={create.error instanceof Error ? create.error.message : null} />
-      {threads.data?.length === 0 && <p>No conversations yet. Start one above and describe what you want.</p>}
+      {threads.data?.length === 0 && <p>No conversations yet. Start a new one and describe what you want.</p>}
       {threads.data?.map((thread) => <Entry key={thread.thread_id} thread={thread} />)}
     </Page>
   );

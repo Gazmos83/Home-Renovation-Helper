@@ -2,13 +2,16 @@
 
 The budget trims the request copy only. `state["messages"]` is never modified.
 Images are counted at a fixed cost. A request whose mandatory part does not fit,
-or that would pass the day's ceiling, is refused before the call.
+or that would pass the day's ceiling, is refused before the call. Exchanges
+trimmed from a request are replaced by a summary of them when a `summarize`
+callback gives one that fits, else by a note that history was shortened
+(studio-chat-polish).
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Literal
 
@@ -17,6 +20,7 @@ from langchain_core.messages.utils import count_tokens_approximately, trim_messa
 from langchain_core.tools import BaseTool
 
 from app.agent.models.registry import BY_ID
+from app.agent.prompts import wrap_summary
 
 SAFETY_FACTOR: Final = 1.2
 IMAGE_TOKENS: Final = 1100
@@ -32,6 +36,9 @@ HISTORY_OMITTED_NOTE: Final = (
 )
 
 RefusalKind = Literal["input_too_large", "daily_limit"]
+
+# Given the exchanges a request drops (oldest first), their summary or `None`.
+Summarize = Callable[[list[BaseMessage]], str | None]
 
 ROLE_TITLES: Final = {
     "foreman": "Foreman",
@@ -125,8 +132,13 @@ def fit(
     history: Sequence[BaseMessage],
     *,
     tools: Sequence[Any] | None = None,
+    summarize: Summarize | None = None,
 ) -> list[BaseMessage]:
-    """The request to send. Raises `BudgetRefused` when the mandatory part does not fit."""
+    """The request to send. Raises `BudgetRefused` when the mandatory part does not fit.
+
+    Pure given `summarize`: the dropped exchanges go to it once, and its answer is
+    sent in their place when it fits in the note's space plus what the trim freed.
+    """
     earlier, current = _split_current(history)
     mandatory = count([*system, *current], tools)
     usable = budget.usable
@@ -154,6 +166,13 @@ def fit(
         else []
     )
     dropped = earlier[: len(earlier) - len(kept)]
+    if summarize is not None and dropped:
+        summary = summarize(list(dropped))
+        if summary and summary.strip():
+            summarised = SystemMessage(wrap_summary(summary.strip()))
+            freed = remaining - (count(kept) if kept else 0)
+            if count([summarised]) <= note_cost + freed:
+                return [*system, summarised, *kept, *current]
     omitted = sum(1 for message in dropped if isinstance(message, HumanMessage))
     note = SystemMessage(HISTORY_OMITTED_NOTE.format(count=max(omitted, 1)))
     return [*system, note, *kept, *current]
@@ -172,12 +191,13 @@ def prepare(
     tools: Sequence[Any] | None = None,
     used_today: int = 0,
     daily_ceiling: int = DEFAULT_DAILY_CEILING,
+    summarize: Summarize | None = None,
 ) -> tuple[list[BaseMessage], int]:
     """Fit the request, then refuse if it would pass the day's ceiling.
 
     Returns the messages to send and the counted estimate (input + output reserve).
     """
-    fitted = fit(budget, [SystemMessage(system)], history, tools=tools)
+    fitted = fit(budget, [SystemMessage(system)], history, tools=tools, summarize=summarize)
     counted = count(fitted, tools)
     needed = counted + budget.output_reserve
     check_daily(used_today, needed, daily_ceiling)

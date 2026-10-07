@@ -5,8 +5,17 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import Conversation from "./Conversation";
 
-type Msg = { role: "owner" | "assistant" | "confirmation"; text: string; upload_ids?: string[] };
+type Msg = {
+  role: "owner" | "assistant" | "confirmation";
+  text: string;
+  upload_ids?: string[];
+  kind?: "text" | "answers";
+  rows?: { question: string; answer: string }[];
+};
 type Reply = { status?: number; body?: unknown };
+type Event = { event: string; data: unknown };
+/** A streamed route's answer: a refusal before the stream opens, or its events. */
+type Streamed = Reply | { events: Event[] | ReadableStream<Uint8Array> };
 
 const STEPS = ["brief", "piece", "built", "rendered", "reviewed", "detail", "final"];
 function progress(done: string[], extra: Record<string, unknown> = {}) {
@@ -24,23 +33,52 @@ const tools = [
 ];
 
 let messages: Msg[];
+let title: string;
 let pending: unknown;
 let progressNow: unknown;
-let turn: (body: Record<string, unknown>) => Promise<Reply> | Reply;
-let resume: (body: Record<string, unknown>) => Reply;
+let turn: (body: Record<string, unknown>) => Promise<Streamed> | Streamed;
+let resume: (body: Record<string, unknown>) => Promise<Streamed> | Streamed;
 let upload: () => Reply;
 let calls: [string, string, unknown][];
 
 const json = (reply: Reply) =>
   new Response(JSON.stringify(reply.body ?? {}), { status: reply.status ?? 200, headers: { "Content-Type": "application/json" } });
 
+const sseText = (events: Event[]) => events.map((e) => `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`).join("");
+
+function streamed(reply: Streamed): Response {
+  if (!("events" in reply)) return json(reply);
+  const body = Array.isArray(reply.events) ? sseText(reply.events) : reply.events;
+  return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+}
+
+/** The events of a turn that ends with `reply`. */
+const replied = (text: string, ...roles: string[]): Event[] => [
+  ...roles.map((role) => ({ event: "specialist", data: { role } })),
+  { event: "reply", data: { reply: text, specialists: roles } },
+  { event: "done", data: {} },
+];
+
+/** A stream whose events the test sends one at a time. */
+function controlledStream() {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const stream = new ReadableStream<Uint8Array>({ start: (c) => void (controller = c) });
+  const encoder = new TextEncoder();
+  return {
+    stream,
+    send: (event: Event) => controller.enqueue(encoder.encode(sseText([event]))),
+    close: () => controller.close(),
+  };
+}
+
 beforeEach(() => {
   messages = [];
+  title = "Hall bench";
   pending = null;
   progressNow = progress([]);
   calls = [];
-  turn = () => ({ body: { reply: "ok", specialist: "intake", pending: null } });
-  resume = () => ({ body: { reply: "ok", specialist: "designer", pending: null } });
+  turn = () => ({ events: replied("ok", "intake") });
+  resume = () => ({ events: replied("ok", "designer") });
   upload = () => ({ status: 201, body: { upload_id: "u1", kind: "jpeg", size_bytes: 3, original_name: "blueprint.jpeg" } });
   vi.stubGlobal(
     "fetch",
@@ -51,7 +89,7 @@ beforeEach(() => {
       calls.push([method, url, body]);
       const call = `${method} ${url}`;
       if (call === "GET /chat/threads/t1")
-        return json({ body: { thread_id: "t1", title: "Hall bench", package_id: null, created_at: "", last_turn_at: "", messages, pending } });
+        return json({ body: { thread_id: "t1", title, package_id: null, created_at: "", last_turn_at: "", messages, pending } });
       if (call === "GET /chat/threads/t1/progress") return json({ body: progressNow });
       if (call === "GET /chat/threads/t1/tools") return json({ body: tools });
       if (call === "GET /chat/threads/t1/uploads")
@@ -63,8 +101,12 @@ beforeEach(() => {
         return json({ body: { package_id: "hall-bench", version, status: "succeeded", approved_at: null } });
       }
       if (call === "PUT /chat/threads/t1/tools/room_fit") return json({ body: { ...tools[0], enabled: false } });
-      if (call === "POST /chat/threads/t1/turns") return json(await turn(body));
-      if (call === "POST /chat/threads/t1/resume") return json(resume(body));
+      if (call === "POST /chat/threads/t1/turns/stream") return streamed(await turn(body));
+      if (call === "POST /chat/threads/t1/resume/stream") return streamed(await resume(body));
+      if (call === "PATCH /chat/threads/t1") {
+        title = String(body.title);
+        return json({ body: { thread_id: "t1", title, package_id: null, created_at: "", last_turn_at: "" } });
+      }
       if (call === "POST /chat/threads/t1/uploads") return json(upload());
       return json({ status: 404, body: { detail: "not found" } });
     }),
@@ -72,6 +114,15 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.useRealTimers());
+
+async function openProject() {
+  await userEvent.setup().click(await screen.findByRole("button", { name: "Project" }));
+  return screen.findByRole("region", { name: "Project" });
+}
+
+async function openTools(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: "Tools" }));
+}
 
 function show() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -96,30 +147,38 @@ test("the history is shown in order", async () => {
   expect(list.getByText("How wide?")).toBeInTheDocument();
 });
 
-test("sending shows the message at once, locks the composer, then shows the reply by role", async () => {
+test("sending shows the message on the right, a waiting bubble naming the Foreman then Intake, then the reply", async () => {
   const user = userEvent.setup();
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => (release = resolve));
-  turn = async (body) => {
-    await gate;
-    messages = [owner(String(body.message)), reply("How wide is the hall?")];
-    return { body: { reply: "How wide is the hall?", specialist: "intake", pending: null } };
-  };
+  const live = controlledStream();
+  turn = () => ({ events: live.stream });
   show();
   await user.type(await screen.findByLabelText("Message"), "I want a bench for the hall");
   await user.click(screen.getByRole("button", { name: "Send" }));
 
   const list = within(screen.getByRole("region", { name: "Messages" }));
-  expect(list.getByText("I want a bench for the hall")).toBeInTheDocument();
+  const sent = list.getByText("I want a bench for the hall");
+  expect(sent.closest("[data-side]")).toHaveAttribute("data-side", "right");
   expect(screen.getByLabelText("Message")).toBeDisabled();
-  expect(screen.getByRole("status")).toHaveTextContent("Waiting for the reply");
+  const waiting = await screen.findByRole("status");
+  expect(waiting).toHaveTextContent("The Foreman is working…");
+  expect(waiting.closest("[data-side]")).toHaveAttribute("data-side", "left");
+  expect(waiting.className).toContain("border-2");
 
-  release();
-  expect(await list.findByText("How wide is the hall?")).toBeInTheDocument();
-  expect(list.getByText("intake")).toBeInTheDocument();
+  live.send({ event: "specialist", data: { role: "intake" } });
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Intake is working…"));
+
+  messages = [owner("I want a bench for the hall"), reply("How wide is the hall?")];
+  live.send({ event: "reply", data: { reply: "How wide is the hall?", specialists: ["intake"] } });
+  live.send({ event: "done", data: {} });
+  live.close();
+
+  const answer = await list.findByText("How wide is the hall?");
+  expect(answer.closest("[data-side]")).toHaveAttribute("data-side", "left");
+  expect(within(list.getByLabelText("Specialists in this turn")).getByText("Intake")).toBeInTheDocument();
   expect(list.getAllByText("I want a bench for the hall")).toHaveLength(1);
+  await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
   await waitFor(() => expect(screen.getByLabelText("Message")).toBeEnabled());
-  expect(calls).toContainEqual(["POST", "/chat/threads/t1/turns", { message: "I want a bench for the hall", upload_ids: [] }]);
+  expect(calls).toContainEqual(["POST", "/chat/threads/t1/turns/stream", { message: "I want a bench for the hall", upload_ids: [] }]);
 });
 
 test("a refused turn shows its reason, keeps no message and gives the words back", async () => {
@@ -131,6 +190,7 @@ test("a refused turn shows its reason, keeps no message and gives the words back
   expect(await screen.findByRole("alert")).toHaveTextContent("the conversation memory is not available right now");
   const list = within(screen.getByRole("region", { name: "Messages" }));
   expect(list.queryByText("a bench")).not.toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
   expect(screen.getByLabelText("Message")).toHaveValue("a bench");
 });
 
@@ -161,13 +221,13 @@ test("Yes sends the answer, shows the reply that follows and brings the composer
   resume = () => {
     pending = null;
     messages = [reply("Version 2 is created.")];
-    return { body: { reply: "Version 2 is created.", specialist: "designer", pending: null } };
+    return { events: replied("Version 2 is created.", "designer") };
   };
   show();
   await user.click(await screen.findByRole("button", { name: "Yes" }));
   expect(await screen.findByText("Version 2 is created.")).toBeInTheDocument();
   expect(await screen.findByLabelText("Message")).toBeInTheDocument();
-  expect(calls).toContainEqual(["POST", "/chat/threads/t1/resume", { confirmation_id: "c1", answer: "yes" }]);
+  expect(calls).toContainEqual(["POST", "/chat/threads/t1/resume/stream", { confirmation_id: "c1", answer: "yes" }]);
 });
 
 test("No sends the reason with the answer", async () => {
@@ -176,24 +236,24 @@ test("No sends the reason with the answer", async () => {
   resume = () => {
     pending = null;
     messages = [reply("Shall I make it 4 shelves?")];
-    return { body: { reply: "Shall I make it 4 shelves?", specialist: "designer", pending: null } };
+    return { events: replied("Shall I make it 4 shelves?", "designer") };
   };
   show();
   await user.type(await screen.findByLabelText("Reason (optional)"), "make it 4 shelves");
   await user.click(screen.getByRole("button", { name: "No" }));
   expect(await screen.findByText("Shall I make it 4 shelves?")).toBeInTheDocument();
-  expect(calls).toContainEqual(["POST", "/chat/threads/t1/resume", { confirmation_id: "c1", answer: "no", reason: "make it 4 shelves" }]);
+  expect(calls).toContainEqual(["POST", "/chat/threads/t1/resume/stream", { confirmation_id: "c1", answer: "no", reason: "make it 4 shelves" }]);
 });
 
 test("an attached plan is shown as a thumbnail and sent with the turn", async () => {
   const user = userEvent.setup();
   show();
-  await user.upload(await screen.findByLabelText("Add a plan, photo or design"), new File(["x"], "blueprint.jpeg", { type: "image/jpeg" }));
+  await user.upload(await screen.findByLabelText("Add a plan, photo, design or note"), new File(["x"], "blueprint.jpeg", { type: "image/jpeg" }));
   expect(await screen.findByRole("img", { name: "blueprint.jpeg" })).toHaveAttribute("src", "/uploads/u1");
   await user.type(screen.getByLabelText("Message"), "This is my flat");
   await user.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() =>
-    expect(calls).toContainEqual(["POST", "/chat/threads/t1/turns", { message: "This is my flat", upload_ids: ["u1"] }]),
+    expect(calls).toContainEqual(["POST", "/chat/threads/t1/turns/stream", { message: "This is my flat", upload_ids: ["u1"] }]),
   );
 });
 
@@ -215,7 +275,7 @@ test("a refused upload shows the service's reason and attaches nothing", async (
   const user = userEvent.setup();
   upload = () => ({ status: 413, body: { detail: { failure_class: "too_large", reason: "the image is too large" } } });
   show();
-  await user.upload(await screen.findByLabelText("Add a plan, photo or design"), new File(["x"], "huge.jpeg", { type: "image/jpeg" }));
+  await user.upload(await screen.findByLabelText("Add a plan, photo, design or note"), new File(["x"], "huge.jpeg", { type: "image/jpeg" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("the image is too large");
   expect(screen.queryByRole("img", { name: "huge.jpeg" })).not.toBeInTheDocument();
 });
@@ -224,7 +284,7 @@ test("the panel follows a build to its end without a reload", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   progressNow = progress(["brief", "piece"], { build_status: "running", next_step: "Wait for the build to finish" });
   show();
-  const panel = within(await screen.findByRole("region", { name: "Project" }));
+  const panel = within(await openProject());
   expect(await panel.findByText("running")).toBeInTheDocument();
   expect(panel.getByText(/Wait for the build to finish/)).toBeInTheDocument();
 
@@ -242,7 +302,7 @@ test("the panel follows a build to its end without a reload", async () => {
 test("open review items are counted and link to the piece's page", async () => {
   progressNow = progress(["brief", "piece", "built", "rendered", "reviewed"], { open_review_items: 2 });
   show();
-  const panel = within(await screen.findByRole("region", { name: "Project" }));
+  const panel = within(await openProject());
   expect(await panel.findByText(/2 open review items/)).toBeInTheDocument();
   expect(panel.getByRole("link", { name: "Open the piece's page" })).toHaveAttribute("href", "/pieces");
 });
@@ -254,7 +314,7 @@ test("a finished turntable shows its still and a link to its viewer", async () =
     viewer: "/packages/hall-bench/versions/1/files/viewer.html",
   });
   show();
-  const panel = within(await screen.findByRole("region", { name: "Project" }));
+  const panel = within(await openProject());
   const link = await panel.findByRole("link", { name: "Open the turntable viewer" });
   expect(link).toHaveAttribute("href", "/packages/hall-bench/versions/1/files/viewer.html");
   expect(link).toHaveAttribute("target", "_blank");
@@ -264,7 +324,7 @@ test("a finished turntable shows its still and a link to its viewer", async () =
 test("no viewer link is offered before the turntable is published", async () => {
   progressNow = progress(["brief", "piece", "built"]);
   show();
-  const panel = within(await screen.findByRole("region", { name: "Project" }));
+  const panel = within(await openProject());
   await panel.findByText("Built");
   expect(panel.queryByRole("link", { name: "Open the turntable viewer" })).not.toBeInTheDocument();
 });
@@ -272,7 +332,7 @@ test("no viewer link is offered before the turntable is published", async () => 
 test("a built piece links to its inspector, a building one does not", async () => {
   progressNow = progress(["brief", "piece", "built"]);
   show();
-  const panel = within(await screen.findByRole("region", { name: "Project" }));
+  const panel = within(await openProject());
   expect(await panel.findByRole("link", { name: "Inspect version 1" })).toHaveAttribute(
     "href", "/pieces/hall-bench/versions/1",
   );
@@ -281,7 +341,7 @@ test("a built piece links to its inspector, a building one does not", async () =
 test("no inspector link while the build is running", async () => {
   progressNow = progress(["brief", "piece"], { build_status: "running" });
   show();
-  const panel = within(await screen.findByRole("region", { name: "Project" }));
+  const panel = within(await openProject());
   await panel.findByText("Built");
   expect(panel.queryByRole("link", { name: /Inspect/ })).not.toBeInTheDocument();
 });
@@ -320,6 +380,7 @@ test("a route the owner typed stays text", async () => {
 test("the owner can switch a toggleable tool off", async () => {
   const user = userEvent.setup();
   show();
+  await openTools(user);
   const checkbox = await screen.findByLabelText("room_fit");
   expect(checkbox).toBeChecked();
   await user.click(checkbox);
@@ -328,6 +389,7 @@ test("the owner can switch a toggleable tool off", async () => {
 
 test("a non-toggleable tool is shown always on", async () => {
   show();
+  await openTools(userEvent.setup());
   const checkbox = await screen.findByLabelText("create_piece");
   expect(checkbox).toBeChecked();
   expect(checkbox).toBeDisabled();
@@ -338,6 +400,7 @@ test("the panel shows latest v5 beside approved v4 and approving v5 refreshes it
   const user = userEvent.setup();
   progressNow = progress(["brief", "piece", "built"], { latest_version: 5, approved_version: 4 });
   show();
+  await openProject();
   const panel = await screen.findByRole("group", { name: "Approval" });
   expect(await screen.findByText("version 5")).toBeInTheDocument();
   expect(within(panel).getByText("Approved")).toBeInTheDocument();
@@ -351,6 +414,7 @@ test("the panel shows latest v5 beside approved v4 and approving v5 refreshes it
 test("no approve control is offered while the latest version is still building", async () => {
   progressNow = progress(["brief", "piece"], { build_status: "running" });
   show();
+  await openProject();
   const panel = await screen.findByRole("group", { name: "Approval" });
   expect(within(panel).getByText("No version approved yet.")).toBeInTheDocument();
   expect(within(panel).queryByRole("button")).toBeNull();
@@ -360,6 +424,7 @@ test("unapproving from the panel clears the approved version", async () => {
   const user = userEvent.setup();
   progressNow = progress(["brief", "piece", "built"], { approved_version: 1 });
   show();
+  await openProject();
   const panel = await screen.findByRole("group", { name: "Approval" });
   await user.click(within(panel).getByRole("button", { name: "Unapprove version 1" }));
   expect(await within(panel).findByText("No version approved yet.")).toBeInTheDocument();
@@ -371,7 +436,7 @@ test("an attached design file shows as a named chip, not a thumbnail, and is sen
   upload = () => ({ status: 201, body: { upload_id: "d1", kind: "design", size_bytes: 900, original_name: "wall-unit.json" } });
   show();
   await user.upload(
-    await screen.findByLabelText("Add a plan, photo or design"),
+    await screen.findByLabelText("Add a plan, photo, design or note"),
     new File(['{"kind":"custom_build"}'], "wall-unit.json", { type: "application/json" }),
   );
   expect(await screen.findByLabelText("Design file wall-unit.json")).toHaveTextContent("wall-unit.json");
@@ -379,7 +444,7 @@ test("an attached design file shows as a named chip, not a thumbnail, and is sen
   await user.type(screen.getByLabelText("Message"), "Import this");
   await user.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() =>
-    expect(calls).toContainEqual(["POST", "/chat/threads/t1/turns", { message: "Import this", upload_ids: ["d1"] }]),
+    expect(calls).toContainEqual(["POST", "/chat/threads/t1/turns/stream", { message: "Import this", upload_ids: ["d1"] }]),
   );
 });
 
@@ -391,7 +456,7 @@ test("a file that is not a design is refused in plain words", async () => {
   });
   show();
   await user.upload(
-    await screen.findByLabelText("Add a plan, photo or design"),
+    await screen.findByLabelText("Add a plan, photo, design or note"),
     new File(["[]"], "list.json", { type: "application/json" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent("design files (.json) are accepted");
@@ -409,4 +474,239 @@ test("an answered confirmation stays in the history as one muted line", async ()
   const line = list.getByText("Answered: brief: Room Hall: 1200 × 3000 mm — no (make it 4 shelves)");
   expect(line).toHaveAttribute("data-role", "confirmation");
   expect(list.getByText("Four shelves, then?")).toBeInTheDocument();
+});
+
+// --- studio-chat-polish -------------------------------------------------------------
+
+test("a Markdown table in a reply is a table with a header row", async () => {
+  messages = [
+    reply(
+      "Cut list:\n\n| Part | Qty | Size |\n|---|---|---|\n| Side | 2 | 430 × 300 |\n| Top | 1 | 1200 × 300 |\n" +
+        "| Shelf | 2 | 1160 × 280 |\n| Back | 1 | 1200 × 430 |\n| Plinth | 1 | 1200 × 100 |",
+    ),
+  ];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  const table = await list.findByRole("table");
+  expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Part", "Qty", "Size"]);
+  expect(within(table).getAllByRole("row")).toHaveLength(6);
+  expect(list.queryByText(/\|/)).not.toBeInTheDocument();
+});
+
+test("a calc block is a framed box between the paragraphs around it", async () => {
+  messages = [reply("The height adds up:\n\n```calc\n430 + 430 + 400 + 100 + 100 = 1460\n```\n\nThat fits under the window.")];
+  show();
+  const box = await screen.findByRole("figure", { name: "Calculation" });
+  expect(box).toHaveTextContent("430 + 430 + 400 + 100 + 100 = 1460");
+  expect(box.className).toContain("border-2");
+  const before = screen.getByText("The height adds up:");
+  const after = screen.getByText("That fits under the window.");
+  expect(before.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(box.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test("HTML in a reply is shown literally and creates no element", async () => {
+  messages = [reply("Look: <img src=x onerror=alert(1)> and <b>bold</b>")];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  expect(await list.findByText(/<img src=x onerror=alert\(1\)>/)).toBeInTheDocument();
+  expect(list.queryByRole("img")).not.toBeInTheDocument();
+  expect(document.querySelector("b")).toBeNull();
+});
+
+test("an image in a reply is shown only from the app's own routes", async () => {
+  messages = [reply("![the still](/packages/hall-bench/versions/1/files/still.png) and ![tracker](https://example.com/x.png)")];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  expect(await list.findByRole("img", { name: "the still" })).toHaveAttribute("src", "/packages/hall-bench/versions/1/files/still.png");
+  expect(list.queryByRole("img", { name: "tracker" })).not.toBeInTheDocument();
+  expect(list.getByText("tracker")).toBeInTheDocument();
+});
+
+test("an attachment removed before sending is not sent and not shown", async () => {
+  const user = userEvent.setup();
+  const replies = [
+    { status: 201, body: { upload_id: "u1", kind: "jpeg", size_bytes: 3, original_name: "blueprint.jpeg" } },
+    { status: 201, body: { upload_id: "n1", kind: "text", size_bytes: 40, original_name: "notes.md" } },
+  ];
+  upload = () => replies.shift() ?? { status: 500 };
+  const live = controlledStream();
+  turn = () => ({ events: live.stream });
+  show();
+  const input = await screen.findByLabelText("Add a plan, photo, design or note");
+  await user.upload(input, new File(["x"], "blueprint.jpeg", { type: "image/jpeg" }));
+  await user.upload(input, new File(["# notes"], "notes.md", { type: "text/markdown" }));
+  expect(await screen.findByLabelText("Note notes.md")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Remove blueprint.jpeg" }));
+  expect(screen.queryByRole("img", { name: "blueprint.jpeg" })).not.toBeInTheDocument();
+
+  await user.type(screen.getByLabelText("Message"), "measurements attached");
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() =>
+    expect(calls).toContainEqual(["POST", "/chat/threads/t1/turns/stream", { message: "measurements attached", upload_ids: ["n1"] }]),
+  );
+  const list = within(screen.getByRole("region", { name: "Messages" }));
+  expect(list.getByLabelText("Note notes.md")).toBeInTheDocument();
+  expect(list.queryByRole("img", { name: "blueprint.jpeg" })).not.toBeInTheDocument();
+  live.close();
+});
+
+const questions = {
+  confirmation_id: "q1",
+  kind: "questions",
+  subject: "",
+  summary: "",
+  proposal: {},
+  questions: [
+    { text: "Ceiling height?", unit: "mm", choices: [] },
+    { text: "Budget?", unit: "EUR", choices: [] },
+  ],
+};
+
+test("two questions are asked one at a time and the answers become a Question | Answer table", async () => {
+  const user = userEvent.setup();
+  pending = questions;
+  resume = () => {
+    pending = null;
+    messages = [
+      owner("a hall bench"),
+      { role: "assistant", text: "", kind: "answers", rows: [{ question: "Ceiling height?", answer: "2500 mm" }, { question: "Budget?", answer: "900 EUR" }] },
+      reply("Thanks, noted."),
+    ];
+    return { events: replied("Thanks, noted.", "intake") };
+  };
+  show();
+  const form = within(await screen.findByRole("region", { name: "Questions" }));
+  expect(screen.queryByLabelText("Message")).not.toBeInTheDocument();
+  expect(form.getByLabelText("Ceiling height?")).toBeInTheDocument();
+  expect(form.queryByLabelText("Budget?")).not.toBeInTheDocument();
+  expect(form.getByText("mm")).toBeInTheDocument();
+  expect(form.getByRole("button", { name: "Next" })).toBeDisabled();
+
+  await user.type(form.getByLabelText("Ceiling height?"), "2500");
+  await user.click(form.getByRole("button", { name: "Next" }));
+  expect(form.getByLabelText("Budget?")).toBeInTheDocument();
+  await user.click(form.getByRole("button", { name: "Back" }));
+  expect(form.getByLabelText("Ceiling height?")).toHaveValue("2500");
+  await user.click(form.getByRole("button", { name: "Next" }));
+  await user.type(form.getByLabelText("Budget?"), "900");
+  await user.click(form.getByRole("button", { name: "Send answers" }));
+
+  expect(calls).toContainEqual(["POST", "/chat/threads/t1/resume/stream", { confirmation_id: "q1", answers: ["2500", "900"] }]);
+  const table = await within(screen.getByRole("region", { name: "Messages" })).findByRole("table");
+  expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Question", "Answer"]);
+  expect(within(table).getByText("2500 mm")).toBeInTheDocument();
+  expect(within(table).getByText("900 EUR")).toBeInTheDocument();
+  expect(await screen.findByLabelText("Message")).toBeInTheDocument();
+});
+
+test("a question's choices are buttons and choosing one answers it", async () => {
+  const user = userEvent.setup();
+  pending = { ...questions, questions: [{ text: "Which wood?", unit: null, choices: ["oak", "birch"] }] };
+  show();
+  const choices = within(await screen.findByRole("group", { name: "Choices" }));
+  expect(choices.getByRole("button", { name: "oak" })).toBeInTheDocument();
+  await user.click(choices.getByRole("button", { name: "birch" }));
+  await waitFor(() =>
+    expect(calls).toContainEqual(["POST", "/chat/threads/t1/resume/stream", { confirmation_id: "q1", answers: ["birch"] }]),
+  );
+});
+
+test("questions can be declined in the owner's own words", async () => {
+  const user = userEvent.setup();
+  pending = questions;
+  show();
+  await user.click(await screen.findByRole("button", { name: "Answer in my own words" }));
+  await user.type(screen.getByLabelText("Your answer"), "I'll measure tomorrow");
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() =>
+    expect(calls).toContainEqual(["POST", "/chat/threads/t1/resume/stream", { confirmation_id: "q1", declined: "I'll measure tomorrow" }]),
+  );
+});
+
+test("a conversation reopened with questions pending shows the form from its first question", async () => {
+  pending = questions;
+  show();
+  const form = within(await screen.findByRole("region", { name: "Questions" }));
+  expect(form.getByText("Question 1 of 2")).toBeInTheDocument();
+  expect(form.getByLabelText("Ceiling height?")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Message")).not.toBeInTheDocument();
+});
+
+test("the rail opens a flyout, switches, and closes on Escape and on its icon", async () => {
+  const user = userEvent.setup();
+  show();
+  const projectIcon = await screen.findByRole("button", { name: "Project" });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await user.click(projectIcon);
+  expect(screen.getByRole("dialog", { name: "Project" })).toHaveFocus();
+  expect(projectIcon).toHaveAttribute("aria-expanded", "true");
+
+  await user.click(screen.getByRole("button", { name: "Tools" }));
+  expect(screen.queryByRole("dialog", { name: "Project" })).not.toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "Tools" })).toBeInTheDocument();
+
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Tools" })).toHaveFocus();
+
+  await user.click(projectIcon);
+  await user.click(projectIcon);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await user.click(projectIcon);
+  await user.click(screen.getByRole("button", { name: "Close Project" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+test("the heading is renamed in place and an empty title is refused in words", async () => {
+  const user = userEvent.setup();
+  show();
+  await user.click(await screen.findByRole("button", { name: "Rename" }));
+  const field = screen.getByLabelText("Conversation title");
+  await user.clear(field);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("A conversation needs a title.");
+  expect(calls.some(([m]) => m === "PATCH")).toBe(false);
+
+  await user.type(field, "Listening wall");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("heading", { level: 1, name: "Listening wall" })).toBeInTheDocument();
+  expect(calls).toContainEqual(["PATCH", "/chat/threads/t1", { title: "Listening wall" }]);
+});
+
+test("a title event updates the heading without a reload", async () => {
+  const user = userEvent.setup();
+  title = "";
+  const live = controlledStream();
+  turn = () => ({ events: live.stream });
+  show();
+  expect(await screen.findByRole("heading", { level: 1, name: "Untitled" })).toBeInTheDocument();
+  await user.type(screen.getByLabelText("Message"), "I want a listening wall");
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  live.send({ event: "specialist", data: { role: "intake" } });
+  live.send({ event: "reply", data: { reply: "How wide?", specialists: ["intake"] } });
+  live.send({ event: "title", data: { title: "Listening wall for records" } });
+  expect(await screen.findByRole("heading", { level: 1, name: "Listening wall for records" })).toBeInTheDocument();
+  title = "Listening wall for records";
+  messages = [owner("I want a listening wall"), reply("How wide?")];
+  live.send({ event: "done", data: {} });
+  live.close();
+  await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+});
+
+test("a turn that fails while it runs gives the words back with the reason", async () => {
+  const user = userEvent.setup();
+  turn = () => ({
+    events: [
+      { event: "specialist", data: { role: "designer" } },
+      { event: "error", data: { failure_class: "timeout", reason: "the model did not answer in time" } },
+      { event: "done", data: {} },
+    ],
+  });
+  show();
+  await user.type(await screen.findByLabelText("Message"), "make it wider");
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("the model did not answer in time");
+  expect(screen.getByLabelText("Message")).toHaveValue("make it wider");
+  expect(within(screen.getByRole("region", { name: "Messages" })).queryByText("make it wider")).not.toBeInTheDocument();
 });

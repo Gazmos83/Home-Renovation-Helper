@@ -323,3 +323,34 @@ def test_deleting_a_thread_takes_its_settings_and_upload_records_and_keeps_the_p
     # A turn that touches a deleted thread changes nothing.
     house_file.touch_thread(db_session, thread_id, package_id="hall-bench")
     assert house_file.get_thread(db_session, thread_id) is None
+
+
+def test_a_generated_title_never_replaces_the_owners(db_session) -> None:
+    untitled = house_file.create_thread(db_session)
+    assert house_file.set_title_if_empty(db_session, untitled.id, "  Listening wall for records ") is True
+    db_session.expire_all()
+    assert house_file.get_thread(db_session, untitled.id).title == "Listening wall for records"
+
+    renamed = house_file.create_thread(db_session)
+    assert house_file.set_title(db_session, renamed.id, "Listening wall") is True
+    assert house_file.set_title_if_empty(db_session, renamed.id, "Record shelf plan") is False
+    db_session.expire_all()
+    assert house_file.get_thread(db_session, renamed.id).title == "Listening wall"
+
+
+def test_renaming_an_unknown_thread_reports_it(db_session) -> None:
+    from uuid import uuid4
+
+    assert house_file.set_title(db_session, uuid4(), "Listening wall") is False
+
+
+def test_a_summary_is_stored_and_goes_with_its_thread(db_session) -> None:
+    thread = house_file.create_thread(db_session, "Hall bench")
+    assert house_file.read_summary(db_session, thread.id) == (None, None)
+    house_file.write_summary(db_session, thread.id, "Decisions so far: hall 1800 mm.", "message-12")
+    db_session.expire_all()
+    assert house_file.read_summary(db_session, thread.id) == ("Decisions so far: hall 1800 mm.", "message-12")
+
+    thread_id = thread.id
+    assert house_file.delete_thread(db_session, thread_id) is True
+    assert house_file.read_summary(db_session, thread_id) == (None, None)

@@ -615,3 +615,318 @@ def test_the_running_mark_is_cleared_after_a_turn_that_fails(client: TestClient)
         client.post(f"/chat/threads/{thread}/turns", json={"message": "hello"})
     assert chat_api._running == set()
 
+
+
+# --- streamed turns (studio-chat-polish) -------------------------------------------
+
+
+def events_of(response) -> list[tuple[str, dict]]:
+    """The Server-Sent Events of a streamed response, in order."""
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = []
+    for block in response.text.split("\n\n"):
+        if not block.strip():
+            continue
+        lines = dict(line.split(": ", 1) for line in block.splitlines())
+        events.append((lines["event"], json.loads(lines["data"])))
+    return events
+
+
+def _built_bench(client: TestClient, render_root: Path) -> None:
+    from app.blender import storage
+    from tests.api_helpers import create
+    from tests.conftest import wait_for_status
+
+    assert create(client).status_code == 202
+    wait_for_status(storage.version_dir(render_root, "hall-bench", 1))
+
+
+def _designer_revises():
+    return fake_models(
+        foreman={"decisions": [{"specialist": "designer", "reason": "t"}]},
+        designer={"steps": [
+            [tool_call("revise_package", {
+                "package_id": "hall-bench",
+                "changes": {"modules": {"cabinet": {"shelves": _shelves() + 1}}},
+            })],
+            "Revised.",
+        ]},
+    )
+
+
+def test_a_streamed_turn_reports_the_designer_its_tool_and_the_pause(client: TestClient, render_root: Path) -> None:
+    _built_bench(client, render_root)
+    install(client, _designer_revises())
+    thread = start(client, title="Hall bench", package_id="hall-bench")
+
+    response = client.post(f"/chat/threads/{thread}/turns/stream", json={"message": "one more shelf"})
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["x-accel-buffering"] == "no"
+    events = events_of(response)
+    assert [kind for kind, _ in events] == ["specialist", "tool", "pending", "done"]
+    assert events[0][1] == {"role": "designer"}
+    assert events[1][1] == {"plugin": "revise package"}
+    pending = events[2][1]["pending"]
+    assert pending["subject"] == "revise"
+
+    resumed = events_of(client.post(
+        f"/chat/threads/{thread}/resume/stream",
+        json={"confirmation_id": pending["confirmation_id"], "answer": "no", "reason": "keep it"},
+    ))
+    assert [kind for kind, _ in resumed] == ["tool", "reply", "done"]
+    assert resumed[1][1] == {"reply": "Revised.", "specialists": ["designer"]}
+    assert client.get(f"/chat/threads/{thread}").json()["pending"] is None
+
+
+def test_no_internals_reach_a_streamed_event(client: TestClient, render_root: Path) -> None:
+    _built_bench(client, render_root)
+    install(client, _designer_revises())
+    thread = start(client, title="Hall bench", package_id="hall-bench")
+    first = client.post(f"/chat/threads/{thread}/turns/stream", json={"message": "one more shelf"})
+    pending = events_of(first)[2][1]["pending"]
+    second = client.post(
+        f"/chat/threads/{thread}/resume/stream",
+        json={"confirmation_id": pending["confirmation_id"], "answer": "yes"},
+    )
+    routing = client.app.state.routing
+    for response in (first, second):
+        for kind, data in events_of(response):
+            body = json.dumps(data)
+            for slug in routing.distinct_slugs():
+                assert slug not in body
+            assert "token" not in body.lower()
+            assert str(render_root) not in body and str(client.app.state.settings.upload_root) not in body
+            if kind == "tool":
+                assert set(data) == {"plugin"}  # never the tool's arguments
+            if kind == "specialist":
+                assert set(data) == {"role"}
+
+
+def test_refusals_before_the_turn_open_no_stream(client: TestClient, render_root: Path) -> None:
+    _built_bench(client, render_root)
+    install(client, _designer_revises())
+    thread = start(client, title="Hall bench", package_id="hall-bench")
+    events_of(client.post(f"/chat/threads/{thread}/turns/stream", json={"message": "one more shelf"}))
+
+    pending = client.post(f"/chat/threads/{thread}/turns/stream", json={"message": "and paint it"})
+    assert pending.status_code == 409
+    assert pending.headers["content-type"].startswith("application/json")
+    assert pending.json()["detail"]["reason"] == "answer the pending revise confirmation first"
+
+    assert TestClient(client.app).post(f"/chat/threads/{thread}/turns/stream", json={"message": "x"}).status_code == 401
+    assert client.post(f"/chat/threads/{uuid4()}/turns/stream", json={"message": "x"}).status_code == 404
+    unknown = client.post(
+        f"/chat/threads/{thread}/turns/stream", json={"message": "x", "upload_ids": [str(uuid4())]}
+    )
+    assert unknown.status_code == 422 and unknown.json()["detail"]["failure_class"] == "unknown_upload"
+    stale = client.post(f"/chat/threads/{thread}/resume/stream", json={"confirmation_id": "stale", "answer": "yes"})
+    assert stale.status_code == 409
+
+    client.app.state.graph = None
+    down = client.post(f"/chat/threads/{thread}/turns/stream", json={"message": "x"})
+    assert down.status_code == 503 and down.json()["detail"]["failure_class"] == "unavailable"
+
+
+def test_a_gateway_timeout_ends_the_stream_and_forgets_the_message(client: TestClient) -> None:
+    timeout = openai.APITimeoutError(request=httpx2.Request("POST", "https://openrouter.ai/x"))
+    install(client, fake_models(foreman={"decisions": [{"specialist": "intake", "reason": "t"}]}, intake={"error": timeout}))
+    thread = start(client, title="Hall bench")
+
+    events = events_of(client.post(f"/chat/threads/{thread}/turns/stream", json={"message": "a bench please"}))
+    assert [kind for kind, _ in events] == ["specialist", "error", "done"]
+    assert events[1][1]["failure_class"] == "timeout"
+    assert client.get(f"/chat/threads/{thread}").json()["messages"] == []
+    # The streamed turn has ended, so the thread is no longer running and can be deleted.
+    assert client.delete(f"/chat/threads/{thread}").status_code == 204
+
+
+# --- titles (studio-chat-polish) ----------------------------------------------------
+
+FIRST = "I want a listening wall for my records in the living room next to the window"
+
+
+def _titled_models(title_reply: str = "Listening wall for records"):
+    return fake_models(
+        foreman={"decisions": [{"specialist": "intake", "reason": "t"}], "replies": [title_reply]},
+        intake={"replies": ["How wide is the wall?"]},
+    )
+
+
+def _title_of(client: TestClient, thread: str) -> str:
+    listed = {t["thread_id"]: t["title"] for t in client.get("/chat/threads").json()}
+    assert listed[thread] == client.get(f"/chat/threads/{thread}").json()["title"]
+    return listed[thread]
+
+
+def test_an_untitled_thread_is_titled_by_the_foremans_model_after_its_first_turn(client: TestClient) -> None:
+    from sqlalchemy import select
+
+    from app.db.models import ModelUsage
+
+    install(client, _titled_models('"Listening wall for records."'))
+    thread = start(client)
+    assert _title_of(client, thread) == ""
+    turn = client.post(f"/chat/threads/{thread}/turns", json={"message": FIRST})
+    assert turn.status_code == 200 and turn.json()["reply"] == "How wide is the wall?"
+    assert _title_of(client, thread) == "Listening wall for records"
+
+    with Session(client.app.state.engine) as session:
+        rows = session.scalars(select(ModelUsage).where(ModelUsage.operation == "chat.title")).all()
+    assert [row.model_id for row in rows] == [client.app.state.routing.model_for("foreman")]
+
+    # Only the first turn writes a title.
+    client.post(f"/chat/threads/{thread}/turns", json={"message": "about 3 m"})
+    assert _title_of(client, thread) == "Listening wall for records"
+
+
+def test_a_refused_title_call_falls_back_to_the_first_words(client: TestClient) -> None:
+    from datetime import UTC, datetime
+
+    from app.db.models import ModelUsage, OperatorSetting
+
+    slug = client.app.state.routing.model_for("foreman")
+    with Session(client.app.state.engine) as session:
+        session.merge(OperatorSetting(
+            key=f"budget:{slug}",
+            value=json.dumps({"context_budget_tokens": 32000, "daily_token_ceiling": 50}),
+            updated_at=datetime.now(UTC),
+        ))
+        session.add(ModelUsage(id=uuid4(), model_id=slug, operation="chat.foreman", estimated_tokens=80))
+        session.commit()
+    install(client, _titled_models())
+    thread = start(client)
+    turn = client.post(f"/chat/threads/{thread}/turns", json={"message": FIRST})
+    assert turn.status_code == 200
+    assert "today's limit is reached" in turn.json()["reply"]
+    assert _title_of(client, thread) == "I want a listening wall for my records in the living room"
+
+
+def test_an_owner_title_set_during_the_turn_is_kept(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agent import chat as chat_module
+
+    install(client, _titled_models())
+    thread = start(client)
+    generated = chat_module.title_for
+
+    def rename_first(graph, **kwargs):
+        assert client.patch(f"/chat/threads/{thread}", json={"title": "Listening wall"}).status_code == 200
+        return generated(graph, **kwargs)
+
+    monkeypatch.setattr(chat_module, "title_for", rename_first)
+    events = events_of(client.post(f"/chat/threads/{thread}/turns/stream", json={"message": FIRST}))
+    assert [kind for kind, _ in events] == ["specialist", "reply", "done"]
+    assert _title_of(client, thread) == "Listening wall"
+
+
+def test_a_streamed_first_turn_reports_its_title_before_closing(client: TestClient) -> None:
+    install(client, _titled_models())
+    thread = start(client)
+    events = events_of(client.post(f"/chat/threads/{thread}/turns/stream", json={"message": FIRST}))
+    assert [kind for kind, _ in events] == ["specialist", "reply", "title", "done"]
+    assert events[2][1] == {"title": "Listening wall for records"}
+    assert _title_of(client, thread) == "Listening wall for records"
+
+
+def test_a_renamed_thread_keeps_its_title_through_later_turns(client: TestClient) -> None:
+    install(client, _titled_models())
+    thread = start(client)
+    renamed = client.patch(f"/chat/threads/{thread}", json={"title": "  Listening wall "})
+    assert renamed.status_code == 200 and renamed.json()["title"] == "Listening wall"
+    client.post(f"/chat/threads/{thread}/turns", json={"message": FIRST})
+    assert _title_of(client, thread) == "Listening wall"
+
+
+def test_renaming_refuses_an_empty_title_and_an_unknown_thread(client: TestClient) -> None:
+    thread = start(client, title="Hall bench")
+    assert client.patch(f"/chat/threads/{thread}", json={"title": "   "}).status_code == 422
+    assert client.patch(f"/chat/threads/{thread}", json={"title": "x" * 201}).status_code == 422
+    assert _title_of(client, thread) == "Hall bench"
+    assert client.patch(f"/chat/threads/{uuid4()}", json={"title": "Listening wall"}).status_code == 404
+    assert TestClient(client.app).patch(f"/chat/threads/{thread}", json={"title": "x"}).status_code == 401
+
+
+# --- question sets (studio-chat-polish) ---------------------------------------------
+
+QUESTIONS = {"questions": [{"text": "Ceiling height?", "unit": "mm"}, {"text": "Budget?", "unit": "EUR"}]}
+
+
+def _asking(client: TestClient, reply: str = "Thanks, noted.") -> tuple[str, dict]:
+    install(client, fake_models(
+        foreman={"decisions": [{"specialist": "intake", "reason": "t"}]},
+        intake={"steps": [[tool_call("ask_owner", QUESTIONS)], reply]},
+    ))
+    thread = start(client, title="Hall bench")
+    paused = client.post(f"/chat/threads/{thread}/turns", json={"message": "a hall bench"})
+    assert paused.status_code == 200, paused.text
+    return thread, paused.json()["pending"]
+
+
+def test_questions_are_pending_and_answered_in_one_step(client: TestClient) -> None:
+    thread, pending = _asking(client)
+    assert pending["kind"] == "questions"
+    assert pending["questions"] == [
+        {"text": "Ceiling height?", "unit": "mm", "choices": []},
+        {"text": "Budget?", "unit": "EUR", "choices": []},
+    ]
+    assert client.get(f"/chat/threads/{thread}").json()["pending"]["kind"] == "questions"
+    blocked = client.post(f"/chat/threads/{thread}/turns", json={"message": "hello?"})
+    assert blocked.status_code == 409 and blocked.json()["detail"]["reason"] == "answer the pending questions first"
+
+    answered = client.post(
+        f"/chat/threads/{thread}/resume",
+        json={"confirmation_id": pending["confirmation_id"], "answers": ["2500", "900"]},
+    )
+    assert answered.status_code == 200 and answered.json()["reply"] == "Thanks, noted."
+    read = client.get(f"/chat/threads/{thread}").json()
+    assert read["pending"] is None
+    assert {
+        "role": "assistant", "text": "", "kind": "answers",
+        "rows": [{"question": "Ceiling height?", "answer": "2500 mm"}, {"question": "Budget?", "answer": "900 EUR"}],
+    } in read["messages"]
+
+
+def test_the_wrong_number_or_kind_of_answer_is_refused_and_stays_pending(client: TestClient) -> None:
+    thread, pending = _asking(client)
+    for body in (
+        {"answers": ["2500"]},
+        {"answer": "yes"},
+        {"answers": ["2500", "900"], "declined": "later"},
+        {},
+    ):
+        refused = client.post(f"/chat/threads/{thread}/resume", json={"confirmation_id": pending["confirmation_id"], **body})
+        assert refused.status_code == 422, body
+    assert client.get(f"/chat/threads/{thread}").json()["pending"]["confirmation_id"] == pending["confirmation_id"]
+
+
+def test_declined_questions_continue_with_the_owners_message(client: TestClient) -> None:
+    thread, pending = _asking(client, reply="Measure tomorrow, then.")
+    declined = client.post(
+        f"/chat/threads/{thread}/resume",
+        json={"confirmation_id": pending["confirmation_id"], "declined": "I'll measure tomorrow"},
+    )
+    assert declined.status_code == 200 and declined.json()["pending"] is None
+    messages = client.get(f"/chat/threads/{thread}").json()["messages"]
+    assert {"role": "owner", "text": "I'll measure tomorrow"} in messages
+
+
+def test_a_stale_question_id_is_refused(client: TestClient) -> None:
+    thread, pending = _asking(client)
+    client.post(f"/chat/threads/{thread}/resume", json={"confirmation_id": pending["confirmation_id"], "answers": ["2500", "900"]})
+    stale = client.post(
+        f"/chat/threads/{thread}/resume",
+        json={"confirmation_id": pending["confirmation_id"], "answers": ["2500", "900"]},
+    )
+    assert stale.status_code == 409
+
+
+def test_a_confirmation_refuses_answers_meant_for_questions(client: TestClient) -> None:
+    install(client, brief_models())
+    thread = start(client, title="Hall bench")
+    pending = client.post(f"/chat/threads/{thread}/turns", json={"message": "a hall bench"}).json()["pending"]
+    assert pending["kind"] == "confirmation" and pending["questions"] == []
+    wrong = client.post(f"/chat/threads/{thread}/resume", json={"confirmation_id": pending["confirmation_id"], "answers": ["yes"]})
+    assert wrong.status_code == 422
+    # The old body shape still answers a confirmation.
+    right = client.post(f"/chat/threads/{thread}/resume", json={"confirmation_id": pending["confirmation_id"], "answer": "yes"})
+    assert right.status_code == 200

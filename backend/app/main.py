@@ -31,6 +31,7 @@ from app.api.admin_models import router as admin_models_router
 from app.api.admin_offload import router as admin_offload_router
 from app.api.admin_plugins import router as admin_plugins_router
 from app.api.admin_render import router as admin_render_router
+from app.api.admin_threads import router as admin_threads_router
 from app.api.admin_usage import router as admin_usage_router
 from app.api.apartments import router as apartments_router
 from app.api.auth import router as auth_router
@@ -301,6 +302,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_models_router)
     app.include_router(admin_plugins_router)
     app.include_router(admin_usage_router)
+    app.include_router(admin_threads_router)
     app.include_router(admin_feedback_router)
     app.include_router(admin_offload_router)
 

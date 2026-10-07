@@ -398,3 +398,13 @@ def test_the_model_library_limits_have_the_decided_defaults_and_refuse_zero() ->
                   "model_max_triangles", "composition_max_items"):
         with pytest.raises(ValidationError):
             _settings(**{field: 0})
+
+
+def test_the_note_upload_cap_defaults_to_256_kib_and_must_be_positive() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    assert _settings().upload_max_note_bytes == 256 * 1024
+    with pytest.raises(ValidationError) as caught:
+        _settings(upload_max_note_bytes=0)
+    assert "upload limits must be positive" in str(caught.value)

@@ -43,19 +43,23 @@ test("clicking a conversation opens it", async () => {
   expect(await screen.findByText("the conversation")).toBeInTheDocument();
 });
 
-test("starting a conversation sends the title and opens it", async () => {
+test("New conversation starts an untitled conversation in one click and opens it", async () => {
   const user = userEvent.setup();
   const calls = stubFetch((call) => {
     if (call === "GET /chat/threads") return { body: [] };
-    if (call === "POST /chat/threads") return { status: 201, body: { ...fresh, thread_id: "t9" } };
+    if (call === "POST /chat/threads") return { status: 201, body: { ...fresh, thread_id: "t9", title: "" } };
   });
   show();
-  const title = await screen.findByLabelText("Conversation title");
-  await user.clear(title);
-  await user.type(title, "Kitchen");
-  await user.click(screen.getByRole("button", { name: "Start" }));
+  expect(screen.queryByLabelText("Conversation title")).not.toBeInTheDocument();
+  await user.click(await screen.findByRole("button", { name: "New conversation" }));
   expect(await screen.findByText("the conversation")).toBeInTheDocument();
-  expect(calls).toContainEqual(["POST", "/chat/threads", { title: "Kitchen" }]);
+  expect(calls).toContainEqual(["POST", "/chat/threads", {}]);
+});
+
+test("an untitled conversation is listed as Untitled", async () => {
+  stubFetch((call) => (call === "GET /chat/threads" ? { body: [{ ...fresh, title: "" }] } : undefined));
+  show();
+  expect(await screen.findByRole("link", { name: /Untitled/ })).toBeInTheDocument();
 });
 
 test("a confirmed delete removes the conversation from the list", async () => {

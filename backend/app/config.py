@@ -166,6 +166,8 @@ class Settings(BaseSettings):
     upload_max_per_thread: int = 20
     # A design file (design-import) is read whole to be checked, so it has its own, smaller cap.
     upload_max_design_bytes: int = 256 * 1024
+    # A text note (studio-chat-polish) is read whole to be checked, so it has its own cap too.
+    upload_max_note_bytes: int = 256 * 1024
 
     # --- Model library and room compositions (room-composition) ----------------
     model_max_bytes: int = 50 * 1024 * 1024
@@ -336,6 +338,7 @@ class Settings(BaseSettings):
         "upload_max_bytes",
         "upload_max_per_thread",
         "upload_max_design_bytes",
+        "upload_max_note_bytes",
         "turn_max_images",
         "model_max_bytes",
         "model_zip_max_entries",

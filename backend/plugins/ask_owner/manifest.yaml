@@ -1,0 +1,8 @@
+name: ask_owner
+description: Ask the owner several questions as a form, answered one at a time.
+kind: builtin
+role: intake
+also_for: [designer]
+tools: [ask_owner]
+enabled_by_default: true
+toggleable: false
