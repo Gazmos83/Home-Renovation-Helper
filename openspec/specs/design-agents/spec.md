@@ -106,7 +106,7 @@ When the Designer's document names a field the schema does not define, `create_p
 - **THEN** the result lists every derived part with its dimensions and no process is started
 
 ### Requirement: Room fit checks a placement against a house-file room
-`room_fit` SHALL take a piece version, a room name, a wall index and an offset, read the piece's overall size and the room from the house file, and either refuse naming the wall and the excess in millimetres (or the ceiling, an opening or a furnishing in the way) or return the placement and the room-scene document a room render uses.
+`room_fit` SHALL take a piece version, a room name, a wall index and an offset, read the piece's overall size and the room from the house file, and either refuse naming the wall and the excess in millimetres (or the ceiling, an opening or a furnishing in the way, or a design rule of severity `refuse`) or return the placement, any design-rule warnings with their sources, and the room-scene document a room render uses.
 
 #### Scenario: Fits
 - **WHEN** the bench is 1000 mm wide and placed at offset 500 on a 4000 mm wall with no opening there
@@ -115,6 +115,10 @@ When the Designer's document names a field the schema does not define, `create_p
 #### Scenario: Too wide
 - **WHEN** the piece is wider than the remaining wall from its offset
 - **THEN** it is refused naming the wall and the excess
+
+#### Scenario: Fits with a guideline warning
+- **WHEN** the piece fits but leaves less clear passage than a `warn` placement rule's limit
+- **THEN** the placement is returned with the warning naming the rule and its source
 
 ### Requirement: The Builder builds and renders only through the guard
 `blender_build` SHALL build a version that has not succeeded yet, wait for it within the Blender timeout, and report the outcome with the screenshot route; a version already built SHALL be reported as such without rebuilding. `render_turntable` SHALL require a tier, SHALL refuse raw frame, resolution or engine values by name, SHALL render a still or a turntable of a version alone or placed with a `room_fit` placement, and SHALL start the run and report the estimate for `draft` and `preview`; for `final` it SHALL pause with the estimate and run only on `yes`. The Builder SHALL never write or run Blender Python.
