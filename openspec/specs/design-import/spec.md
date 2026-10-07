@@ -1,7 +1,7 @@
 # design-import Specification
 
 ## Purpose
-TBD - created by archiving change package-import. Update Purpose after archive.
+Defines how a furniture design written outside the app, typically by another AI chat, enters it and leaves it again: the import document and its two forms, the shipped template with its guide, importing an attached design file as a new piece after the owner's confirmation, and exporting a version as a design document and as a shop bundle.
 
 ## Requirements
 
