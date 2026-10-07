@@ -183,3 +183,31 @@ test("an approval refusal is shown next to the version it names", async () => {
   expect(refusal.closest("[role=group]")).toHaveAccessibleName("Approval of bench version 2");
   expect(screen.getByRole("button", { name: "Approve version 2" })).toBeEnabled();
 });
+
+test("the import template is offered with how to use it", async () => {
+  serve([turntable]);
+  show();
+  const link = await screen.findByRole("link", { name: "Download the import template" });
+  expect(link).toHaveAttribute("href", "/design-import/template");
+  expect(link).toHaveAttribute("download", "import-template.json");
+  expect(screen.getByText(/give it to another AI chat to fill in/)).toBeInTheDocument();
+});
+
+test("a built version offers the design and the bundle downloads", async () => {
+  serve([turntable]);
+  show();
+  const design = await screen.findByRole("link", { name: "Download design (version 2)" });
+  expect(design).toHaveAttribute("href", "/packages/bench/versions/2/design");
+  expect(design).toHaveAttribute("download", "bench-v2.json");
+  const bundle = await screen.findByRole("link", { name: "Download bundle (version 2)" });
+  expect(bundle).toHaveAttribute("href", "/packages/bench/versions/2/bundle");
+  expect(bundle).toHaveAttribute("download", "bench-v2.zip");
+});
+
+test("a version still building offers the design but not the bundle", async () => {
+  serve([turntable], undefined, { approved: null, status: "running" });
+  show();
+  expect(await screen.findByRole("link", { name: "Download design (version 2)" })).toBeInTheDocument();
+  await screen.findByRole("img");
+  expect(screen.queryByRole("link", { name: /Download bundle/ })).toBeNull();
+});

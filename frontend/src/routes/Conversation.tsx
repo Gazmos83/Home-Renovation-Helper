@@ -204,6 +204,18 @@ function ConfirmationCard({ threadId, pending, disabled, onAnswered }: {
   );
 }
 
+/** An attached file: a thumbnail for an image, a named chip for a design file. */
+function Attachment({ upload }: { upload: Upload }) {
+  if (upload.kind === "design") {
+    return (
+      <Badge variant="secondary" aria-label={`Design file ${upload.original_name}`}>
+        {upload.original_name}
+      </Badge>
+    );
+  }
+  return <img src={`/uploads/${upload.upload_id}`} alt={upload.original_name} className="h-16 rounded-md border" />;
+}
+
 function Composer({ threadId, onStart, onDone, onFailed }: {
   threadId: string;
   onStart: (text: string, uploads: Upload[]) => void;
@@ -258,9 +270,7 @@ function Composer({ threadId, onStart, onDone, onFailed }: {
     >
       {uploads.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {uploads.map((u) => (
-            <img key={u.upload_id} src={`/uploads/${u.upload_id}`} alt={u.original_name} className="h-16 rounded-md border" />
-          ))}
+          {uploads.map((u) => <Attachment key={u.upload_id} upload={u} />)}
         </div>
       )}
       <Input
@@ -273,14 +283,14 @@ function Composer({ threadId, onStart, onDone, onFailed }: {
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" disabled={send.isPending || !text.trim()}>Send</Button>
         <Label className="cursor-pointer text-sm underline">
-          Add a plan or photo
+          Add a plan, photo or design
           <input
             ref={files}
             type="file"
-            accept="image/png,image/jpeg"
+            accept="image/png,image/jpeg,application/json,.json"
             multiple
             className="sr-only"
-            aria-label="Add a plan or photo"
+            aria-label="Add a plan, photo or design"
             disabled={send.isPending}
             onChange={(event) => void attach(event.target.files)}
           />
@@ -337,9 +347,9 @@ export default function Conversation() {
             {optimistic && (
               <div>
                 <p className="font-medium"><strong>You:</strong> {optimistic.text}</p>
-                {optimistic.uploads.map((u) => (
-                  <img key={u.upload_id} src={`/uploads/${u.upload_id}`} alt={u.original_name} className="mt-1 h-16 rounded-md border" />
-                ))}
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {optimistic.uploads.map((u) => <Attachment key={u.upload_id} upload={u} />)}
+                </div>
               </div>
             )}
           </section>

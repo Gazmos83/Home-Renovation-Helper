@@ -372,3 +372,13 @@ def test_an_unsafe_or_unknown_offload_value_is_refused_naming_it(field: str, val
 @pytest.mark.parametrize("device", ["OPTIX", "CUDA", "HIP"])
 def test_the_known_gpu_devices_are_accepted(device: str) -> None:
     assert _settings(render_offload_cycles_device=device).render_offload_cycles_device == device
+
+
+def test_the_design_upload_cap_defaults_to_256_kib_and_must_be_positive() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    assert _settings().upload_max_design_bytes == 256 * 1024
+    with pytest.raises(ValidationError) as caught:
+        _settings(upload_max_design_bytes=0)
+    assert "upload limits must be positive" in str(caught.value)

@@ -47,6 +47,7 @@ from app.agent.prompts import (
     TOOL_ROUND_CAP_NOTE,
     compose_agent_prompt,
     house_note,
+    neutralise,
     render_feedback_note,
 )
 from app.agent.tools import loaded_plugins
@@ -80,6 +81,7 @@ DECLINED: Final[dict[str, str]] = {
     "brief": "The brief was not saved.",
     "plan": "The plan was not saved.",
     "create_piece": "The piece was not created.",
+    "import_design": "The design was not imported.",
     "revise": "No revision was created.",
     "final_render": "The final render was not started.",
     "detail_pass": "The detail pass was not started.",
@@ -105,6 +107,7 @@ class ChatState(TypedDict, total=False):
     shell_ready: bool
     review_ready: bool
     detail_ready: bool
+    design_attached: bool
     brief: dict[str, Any]
     bound_tools: dict[str, list[str]]
 
@@ -139,13 +142,35 @@ def _image_blocks(
     return blocks, missing
 
 
+def _design_attached(engine: Engine, messages: list[AnyMessage]) -> bool:
+    """Whether the newest owner message carries a design file."""
+    newest = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
+    ids = newest.additional_kwargs.get("upload_ids") if newest is not None else None
+    return bool(ids) and bool(_designs(engine, list(ids))[1])
+
+
+def _designs(engine: Engine, upload_ids: list[str]) -> tuple[list[str], list[tuple[str, str]]]:
+    """The image ids, and `(id, file name)` of each design file, among `upload_ids`."""
+    images: list[str] = []
+    designs: list[tuple[str, str]] = []
+    with Session(engine) as session:
+        for raw in upload_ids:
+            upload = uploads.get_upload(session, UUID(raw))
+            if upload is not None and upload.kind == "design":
+                designs.append((raw, upload.original_name))
+            else:
+                images.append(raw)
+    return images, designs
+
+
 def with_images(
     messages: list[AnyMessage], *, capable: bool, engine: Engine, settings: Settings
 ) -> list[AnyMessage]:
     """Expand attached upload ids for the model call; the stored messages are untouched.
 
     An image-capable slot receives each image beside the owner's text; any other
-    slot receives a note that images were attached, never the images.
+    slot receives a note that images were attached, never the images. A design
+    file is never sent: every slot receives a note naming it and its upload id.
     """
     expanded: list[AnyMessage] = []
     for message in messages:
@@ -153,14 +178,22 @@ def with_images(
         if not ids:
             expanded.append(message)
             continue
+        image_ids, designs = _designs(engine, list(ids))
         text = _text_of(message.content)
-        if capable:
-            blocks, missing = _image_blocks(engine, settings, list(ids))
+        for upload_id, name in designs:
+            text += (
+                f"\n(The owner attached the design file '{neutralise(name)}' as upload {upload_id}; "
+                "import it with import_design.)"
+            )
+        if not image_ids:
+            content: Any = text
+        elif capable:
+            blocks, missing = _image_blocks(engine, settings, image_ids)
             if missing:
                 text += f"\n(The owner attached {missing} image(s) that are no longer available.)"
-            content: Any = [{"type": "text", "text": text}, *blocks]
+            content = [{"type": "text", "text": text}, *blocks]
         else:
-            content = f"{text}\n(The owner attached {len(ids)} image(s); Intake reads them.)"
+            content = f"{text}\n(The owner attached {len(image_ids)} image(s); Intake reads them.)"
         expanded.append(HumanMessage(content, id=message.id, additional_kwargs=message.additional_kwargs))
     return expanded
 
@@ -327,6 +360,7 @@ def build_graph(
             "shell_ready": shell_ready,
             "review_ready": review_ready,
             "detail_ready": detail_ready,
+            "design_attached": _design_attached(engine, state.get("messages", [])),
             "round_count": 0,
             "specialist": "",
             "bound_tools": tools_this_turn,
@@ -411,6 +445,9 @@ def build_graph(
             chosen = "builder" if buildable else ("designer" if state.get("brief") else "intake")
         if not buildable and not state.get("brief") and chosen not in ("reviewer", "researcher"):
             chosen = "intake"
+        # An attached design file is the Designer's to import, whatever the thread holds (design-import).
+        if state.get("design_attached"):
+            chosen = "designer"
         return Command(update={"specialist": chosen, "reason": reason}, goto=chosen)
 
     # --- a specialist ------------------------------------------------------------

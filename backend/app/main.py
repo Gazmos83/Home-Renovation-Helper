@@ -35,6 +35,7 @@ from app.api.admin_usage import router as admin_usage_router
 from app.api.apartments import router as apartments_router
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
+from app.api.design_import import router as design_import_router
 from app.api.feedback import admin_router as admin_feedback_router
 from app.api.feedback import router as feedback_router
 from app.api.guideline_notes import router as guideline_notes_router
@@ -264,6 +265,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(health_router)
     app.include_router(packages_router)
+    app.include_router(design_import_router)
     app.include_router(package_reviews_router)
     app.include_router(review_item_router)
     app.include_router(chat_router)

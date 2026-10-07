@@ -1,7 +1,7 @@
-"""Uploading blueprints and photos to a conversation (plan-uploads). Owner-gated.
+"""Uploading blueprints, photos and design files to a conversation (plan-uploads). Owner-gated.
 
-One image per request, PNG or JPEG identified from its bytes, size- and
-count-capped. Files are served back only by upload id with a fixed content type.
+One file per request: a PNG or JPEG image, or a design file (design-import),
+identified from its bytes, size- and count-capped. Files are served back only by upload id with a fixed content type.
 """
 
 from __future__ import annotations
@@ -63,6 +63,7 @@ def upload_image(
                 original_name=file.filename or "",
                 max_bytes=settings.upload_max_bytes,
                 max_per_thread=settings.upload_max_per_thread,
+                max_design_bytes=settings.upload_max_design_bytes,
             )
         except uploads.UploadRefused as error:
             raise _refusal(error) from None

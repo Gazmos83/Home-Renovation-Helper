@@ -137,3 +137,75 @@ def test_a_turn_takes_at_most_the_configured_images(client: TestClient) -> None:
     response = client.post(f"/chat/threads/{t}/turns", json={"message": "hi", "upload_ids": ids})
     assert response.status_code == 422
     assert response.json()["detail"]["failure_class"] == "too_many_images"
+
+
+# --- design files (design-import) ---------------------------------------------------
+
+
+def design_bytes(**extra) -> bytes:
+    import json as _json
+
+    from app.design_import import load_template
+
+    return _json.dumps({**load_template(), **extra}).encode("utf-8")
+
+
+def test_a_design_file_is_accepted_stored_as_json_and_served_as_json(client: TestClient, upload_root: Path) -> None:
+    t = thread(client)
+    response = post(client, t, design_bytes(), "wall-unit.json")
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["kind"] == "design" and body["original_name"] == "wall-unit.json"
+    assert [p.suffix for p in (upload_root / t).iterdir()] == [".json"]
+    fetched = client.get(f"/uploads/{body['upload_id']}")
+    assert fetched.headers["content-type"] == "application/json"
+    assert fetched.headers["x-content-type-options"] == "nosniff"
+    assert fetched.content == design_bytes()
+    assert [u["kind"] for u in client.get(f"/chat/threads/{t}/uploads").json()] == ["design"]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [b'["not", "a", "design"]', b'{"kind": "room_scene"}', b'{"kind": "custom_build"', b"\xff\xfe{}"],
+    ids=["array", "room-scene", "broken-json", "not-utf8"],
+)
+def test_json_that_is_not_a_design_is_refused(client: TestClient, upload_root: Path, content: bytes) -> None:
+    t = thread(client)
+    response = post(client, t, content, "wall-unit.json")
+    assert response.status_code == 415
+    assert "design files" in response.json()["detail"]["reason"]
+    assert not (upload_root / t).exists() or list((upload_root / t).iterdir()) == []
+
+
+def test_an_oversized_design_is_refused_and_no_partial_file_remains(client: TestClient, upload_root: Path) -> None:
+    client.app.state.settings.upload_max_design_bytes = 1024
+    t = thread(client)
+    response = post(client, t, design_bytes(), "wall-unit.json")
+    assert response.status_code == 413
+    assert "design file is larger than 1 KiB" in response.json()["detail"]["reason"]
+    assert not (upload_root / t).exists() or list((upload_root / t).iterdir()) == []
+
+
+def test_a_turn_takes_at_most_one_design_file(client: TestClient) -> None:
+    from tests.graph_helpers import fake_models
+    from tests.test_chat_api import install
+
+    install(client, fake_models())
+    client.app.state.settings.upload_max_per_thread = 5
+    t = thread(client)
+    ids = [post(client, t, design_bytes(), "wall-unit.json").json()["upload_id"] for _ in range(2)]
+    response = client.post(f"/chat/threads/{t}/turns", json={"message": "import both", "upload_ids": ids})
+    assert response.status_code == 422
+    assert response.json()["detail"]["failure_class"] == "too_many_designs"
+
+
+def test_a_design_does_not_count_towards_the_image_limit(client: TestClient) -> None:
+    from tests.graph_helpers import fake_models
+    from tests.test_chat_api import install
+
+    install(client, fake_models(foreman={"decisions": [{"specialist": "intake", "reason": "t"}]}, intake={"replies": ["ok"]}))
+    client.app.state.settings.turn_max_images = 1
+    t = thread(client)
+    ids = [post(client, t, png_bytes(8, 8)).json()["upload_id"], post(client, t, design_bytes(), "w.json").json()["upload_id"]]
+    response = client.post(f"/chat/threads/{t}/turns", json={"message": "a photo and a design", "upload_ids": ids})
+    assert response.status_code == 200, response.text

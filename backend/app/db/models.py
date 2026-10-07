@@ -345,7 +345,7 @@ class Upload(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("kind IN ('png', 'jpeg')", name="ck_uploads_kind"),
+        CheckConstraint("kind IN ('png', 'jpeg', 'design')", name="ck_uploads_kind"),
         Index("ix_uploads_thread_id", "thread_id"),
     )
 

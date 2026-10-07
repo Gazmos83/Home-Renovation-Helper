@@ -1,0 +1,7 @@
+name: design_import
+description: Import a design file the owner attached as a new piece.
+kind: builtin
+role: designer
+tools: [import_design]
+enabled_by_default: true
+toggleable: false

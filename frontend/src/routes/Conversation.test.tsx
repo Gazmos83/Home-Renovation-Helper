@@ -186,7 +186,7 @@ test("No sends the reason with the answer", async () => {
 test("an attached plan is shown as a thumbnail and sent with the turn", async () => {
   const user = userEvent.setup();
   show();
-  await user.upload(await screen.findByLabelText("Add a plan or photo"), new File(["x"], "blueprint.jpeg", { type: "image/jpeg" }));
+  await user.upload(await screen.findByLabelText("Add a plan, photo or design"), new File(["x"], "blueprint.jpeg", { type: "image/jpeg" }));
   expect(await screen.findByRole("img", { name: "blueprint.jpeg" })).toHaveAttribute("src", "/uploads/u1");
   await user.type(screen.getByLabelText("Message"), "This is my flat");
   await user.click(screen.getByRole("button", { name: "Send" }));
@@ -199,7 +199,7 @@ test("a refused upload shows the service's reason and attaches nothing", async (
   const user = userEvent.setup();
   upload = () => ({ status: 413, body: { detail: { failure_class: "too_large", reason: "the image is too large" } } });
   show();
-  await user.upload(await screen.findByLabelText("Add a plan or photo"), new File(["x"], "huge.jpeg", { type: "image/jpeg" }));
+  await user.upload(await screen.findByLabelText("Add a plan, photo or design"), new File(["x"], "huge.jpeg", { type: "image/jpeg" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("the image is too large");
   expect(screen.queryByRole("img", { name: "huge.jpeg" })).not.toBeInTheDocument();
 });
@@ -278,4 +278,36 @@ test("unapproving from the panel clears the approved version", async () => {
   await user.click(within(panel).getByRole("button", { name: "Unapprove version 1" }));
   expect(await within(panel).findByText("No version approved yet.")).toBeInTheDocument();
   expect(calls.some(([m]) => m === "DELETE")).toBe(true);
+});
+
+test("an attached design file shows as a named chip, not a thumbnail, and is sent with the turn", async () => {
+  const user = userEvent.setup();
+  upload = () => ({ status: 201, body: { upload_id: "d1", kind: "design", size_bytes: 900, original_name: "wall-unit.json" } });
+  show();
+  await user.upload(
+    await screen.findByLabelText("Add a plan, photo or design"),
+    new File(['{"kind":"custom_build"}'], "wall-unit.json", { type: "application/json" }),
+  );
+  expect(await screen.findByLabelText("Design file wall-unit.json")).toHaveTextContent("wall-unit.json");
+  expect(screen.queryByRole("img", { name: "wall-unit.json" })).not.toBeInTheDocument();
+  await user.type(screen.getByLabelText("Message"), "Import this");
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() =>
+    expect(calls).toContainEqual(["POST", "/chat/threads/t1/turns", { message: "Import this", upload_ids: ["d1"] }]),
+  );
+});
+
+test("a file that is not a design is refused in plain words", async () => {
+  const user = userEvent.setup();
+  upload = () => ({
+    status: 415,
+    body: { detail: { failure_class: "unsupported_type", reason: "only PNG and JPEG images and design files (.json) are accepted" } },
+  });
+  show();
+  await user.upload(
+    await screen.findByLabelText("Add a plan, photo or design"),
+    new File(["[]"], "list.json", { type: "application/json" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("design files (.json) are accepted");
+  expect(screen.queryByLabelText("Design file list.json")).not.toBeInTheDocument();
 });

@@ -9,13 +9,16 @@ run by `app.blender.runner` behind the render guard.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+import tempfile
+import zipfile
 from pathlib import Path
 from typing import Any, Final
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
@@ -25,6 +28,7 @@ from app.blender import runner, storage
 from app.blender.launch import subprocess_launch
 from app.blender.schemas import CustomBuildSpec, describe_validation_error
 from app.blender.spec_contract import SpecValidationError
+from app.design_import import export_document
 from app.packages import service
 
 logger = logging.getLogger("app")
@@ -329,3 +333,57 @@ def read_file(package_id: str, version: int, name: str, request: Request):
     if not resolved.is_file():
         raise not_found()
     return FileResponse(resolved, media_type=media_type)
+
+
+# --- export (design-import) -----------------------------------------------------------------
+
+# The bundle's members besides the design file, by fixed name; `still.png` only when rendered.
+BUNDLE_FILES: Final = ("cutlist.csv", "hardware.csv", "model.glb", "screenshot.png")
+
+
+def _design_document(folder: Path) -> dict[str, Any]:
+    try:
+        design = json.loads((folder / storage.INPUT_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise not_found() from None
+    return export_document(design)
+
+
+@router.get("/{package_id}/versions/{version}/design")
+def export_design(package_id: str, version: int, request: Request) -> JSONResponse:
+    """The version's design as an import document that re-imports unchanged."""
+    folder = existing_version(request, package_id, version)
+    return JSONResponse(
+        _design_document(folder),
+        headers={"Content-Disposition": f'attachment; filename="{package_id}-v{version}.json"'},
+    )
+
+
+@router.get("/{package_id}/versions/{version}/bundle")
+def export_bundle(package_id: str, version: int, request: Request) -> StreamingResponse:
+    """A zip of the design file, the shop files, the model and the pictures of a built version."""
+    folder = existing_version(request, package_id, version)
+    if (storage.read_status(folder) or {}).get("status") != "succeeded":
+        raise refused(409, "not_built", f"version {version} must be built before its bundle can be downloaded")
+    design_name = f"{package_id}-v{version}.json"
+    spool = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)  # noqa: SIM115 - closed by the stream
+    with zipfile.ZipFile(spool, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        bundle.writestr(design_name, json.dumps(_design_document(folder), indent=2, ensure_ascii=False))
+        for name in (*BUNDLE_FILES, "still.png"):
+            path = folder / name
+            if path.is_file():
+                bundle.write(path, arcname=name)
+    spool.seek(0)
+
+    def chunks():
+        try:
+            while chunk := spool.read(1024 * 1024):
+                yield chunk
+        finally:
+            spool.close()
+
+    return StreamingResponse(
+        chunks(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{package_id}-v{version}.zip"'},
+    )

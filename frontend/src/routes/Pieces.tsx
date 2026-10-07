@@ -1,7 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ThumbsDown, ThumbsUp } from "lucide-react";
 import { useState } from "react";
-import { api, ApiError, type RenderItem } from "../lib/api";
+import { api, ApiError, downloads, type RenderItem } from "../lib/api";
 import { FieldError } from "../lib/form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -133,6 +133,25 @@ function Approval({ packageId, version }: { packageId: string; version: number }
   );
 }
 
+function Downloads({ packageId, version }: { packageId: string; version: number }) {
+  const info = useQuery({
+    queryKey: ["version", packageId, version],
+    queryFn: () => api.version(packageId, version),
+  });
+  return (
+    <p className="flex flex-wrap gap-4 text-sm">
+      <a href={downloads.design(packageId, version)} download={`${packageId}-v${version}.json`} className="underline">
+        Download design (version {version})
+      </a>
+      {info.data?.status === "succeeded" && (
+        <a href={downloads.bundle(packageId, version)} download={`${packageId}-v${version}.zip`} className="underline">
+          Download bundle (version {version})
+        </a>
+      )}
+    </p>
+  );
+}
+
 function Version({ packageId, version }: { packageId: string; version: number }) {
   const renders = useQuery({
     queryKey: ["renders", packageId, version],
@@ -154,6 +173,7 @@ function Version({ packageId, version }: { packageId: string; version: number })
   return (
     <div className="grid gap-4">
       <Approval packageId={packageId} version={version} />
+      <Downloads packageId={packageId} version={version} />
       {shown}
     </div>
   );
@@ -208,6 +228,12 @@ export default function Pieces() {
     <Page>
       <h1>Pieces</h1>
       <p>Your designs and their renders. Tell us what you think of a render; it helps the next one.</p>
+      <p className="text-sm">
+        <a href={downloads.importTemplate} download="import-template.json" className="underline">
+          Download the import template
+        </a>{" "}
+        — give it to another AI chat to fill in, then attach the file it returns in a new conversation.
+      </p>
       {pieces.data.length === 0 && <p>No pieces yet. Describe one in a conversation.</p>}
       {pieces.data.map((piece) => (
         <Piece key={piece.package_id} id={piece.package_id} versions={piece.versions} />

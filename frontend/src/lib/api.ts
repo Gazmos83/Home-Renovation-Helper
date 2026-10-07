@@ -275,6 +275,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await response.json()) as T;
 }
 
+const versionPath = (packageId: string, version: number) =>
+  `/packages/${encodeURIComponent(packageId)}/versions/${version}`;
+
+/** Download links: plain URLs, so the browser sends the session cookie and saves the file. */
+export const downloads = {
+  importTemplate: "/design-import/template",
+  design: (packageId: string, version: number) => `${versionPath(packageId, version)}/design`,
+  bundle: (packageId: string, version: number) => `${versionPath(packageId, version)}/bundle`,
+};
+
 export const api = {
   login: (email: string, password: string) =>
     request("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),

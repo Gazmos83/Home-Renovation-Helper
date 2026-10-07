@@ -115,6 +115,49 @@ def test_the_facts_name_the_approved_version_of_the_bound_piece(tool_state) -> N
     assert "piece hall-bench (version 1, approved: v1)" in state["facts"]
 
 
+def test_a_design_file_in_an_empty_thread_goes_to_the_designer_and_is_imported(tool_state, tmp_path) -> None:
+    import io
+    import json
+
+    from langchain_core.messages import HumanMessage
+
+    from app.agent import uploads
+    from app.blender import storage
+    from app.design_import import load_template
+
+    tool_state.settings.upload_root = tmp_path / "uploads"
+    models = fake_models(
+        foreman={"decisions": [decision("intake")]},
+        designer={"replies": ["Imported; it is building."]},
+    )
+    harness = make_harness(tool_state, models)
+    with ToolDeps(tool_state).session() as session:
+        upload_id = str(
+            uploads.add_upload(
+                session, tool_state.settings.upload_root, harness.thread,
+                io.BytesIO(json.dumps(load_template()).encode("utf-8")),
+                original_name="wall-unit.json", max_bytes=1_000_000, max_per_thread=10,
+            ).id
+        )
+    models["designer"].tool_call_scripts.append(
+        [tool_call("import_design", {"upload_id": upload_id, "package_id": "wall-unit"})]
+    )
+
+    state = harness.graph.invoke(
+        {"messages": [HumanMessage("import this", additional_kwargs={"upload_ids": [upload_id]})]},
+        config=harness.config,
+    )
+    assert state["specialist"] == "designer"
+    assert models["intake"].calls == 0
+    assert state["__interrupt__"][0].value["subject"] == "import_design"
+
+    state = harness.answer("yes")
+    assert last_reply(state) == "Imported; it is building."
+    wait_for_status(storage.version_dir(tool_state.settings.render_root, "wall-unit", 1))
+    with ToolDeps(tool_state).session() as session:
+        assert house_file.get_thread(session, harness.thread).package_id == "wall-unit"
+
+
 def test_a_bound_piece_with_a_version_lets_the_builder_answer(tool_state, make_ctx) -> None:
     create_run({"package_id": "bench", "spec": desk()}, replace(make_ctx(), approved=True))
     from app.blender import storage
@@ -187,7 +230,7 @@ def test_the_prompt_carries_the_guard_once_and_binds_only_the_headers_tools(tool
     assert system.count(UNTRUSTED_CONTENT_PREAMBLE) == 1
     assert system.endswith(UNTRUSTED_CONTENT_PREAMBLE)
     assert set(models["designer"].bound_tools) == {
-        "create_piece", "revise_package", "cut_list", "room_fit", "search_guidelines",
+        "create_piece", "import_design", "revise_package", "cut_list", "room_fit", "search_guidelines",
     }
     assert models["intake"].bound_tools == ["record_brief", "record_plan"]
     # The Foreman's own prompt is guarded and binds nothing.

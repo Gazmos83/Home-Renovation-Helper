@@ -247,7 +247,8 @@ def test_a_symlink_leading_outside_the_root_is_not_served(
     ("method", "path"),
     [("GET", "/packages"), ("GET", "/packages/x"), ("POST", "/packages"),
      ("GET", "/packages/x/versions/1/files/spec.json"), ("PUT", "/packages/x/spec"),
-     ("PUT", "/packages/x/versions/1/approval"), ("DELETE", "/packages/x/versions/1/approval")],
+     ("PUT", "/packages/x/versions/1/approval"), ("DELETE", "/packages/x/versions/1/approval"),
+     ("GET", "/packages/x/versions/1/design"), ("GET", "/packages/x/versions/1/bundle")],
 )
 def test_every_route_needs_the_owner_cookie(
     migrated_database: str, render_root: Path, fake_blender: Path, method: str, path: str
@@ -369,3 +370,59 @@ def test_approving_an_unknown_version_is_not_found(client: TestClient) -> None:
     assert client.put("/packages/hall-bench/versions/9/approval").status_code == 404
     assert client.put("/packages/nothing/versions/1/approval").status_code == 404
     assert client.delete("/packages/hall-bench/versions/9/approval").status_code == 404
+
+
+# --- export (design-import) -----------------------------------------------------------------
+
+
+def test_the_design_downloads_as_an_import_document_that_re_imports_unchanged(
+    client: TestClient, render_root: Path
+) -> None:
+    from app.design_import import parse_import
+
+    create(client)
+    response = client.get("/packages/hall-bench/versions/1/design")
+    assert response.status_code == 200
+    assert 'filename="hall-bench-v1.json"' in response.headers["content-disposition"]
+    document = response.json()
+    assert document["kind"] == "package_import" and "guide" not in document
+    stored = json.loads((render_root / "hall-bench" / "v1" / storage.INPUT_FILE).read_text())
+    assert parse_import(document) == (stored, "")
+
+
+def _members(response) -> set[str]:
+    import io
+    import zipfile
+
+    return set(zipfile.ZipFile(io.BytesIO(response.content)).namelist())
+
+
+def test_the_bundle_holds_exactly_the_design_shop_files_model_and_pictures(
+    client: TestClient, render_root: Path
+) -> None:
+    create(client)
+    response = client.get("/packages/hall-bench/versions/1/bundle")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    assert 'filename="hall-bench-v1.zip"' in response.headers["content-disposition"]
+    expected = {"hall-bench-v1.json", "cutlist.csv", "hardware.csv", "model.glb", "screenshot.png"}
+    assert _members(response) == expected
+
+    (render_root / "hall-bench" / "v1" / "still.png").write_bytes(b"png")
+    assert _members(client.get("/packages/hall-bench/versions/1/bundle")) == expected | {"still.png"}
+
+
+def test_the_bundle_of_a_version_still_building_is_refused(client: TestClient, render_root: Path) -> None:
+    create(client)
+    storage.write_status(render_root / "hall-bench" / "v1", status="running")
+    response = client.get("/packages/hall-bench/versions/1/bundle")
+    assert response.status_code == 409
+    assert response.json()["detail"]["failure_class"] == "not_built"
+    assert client.get("/packages/hall-bench/versions/1/design").status_code == 200
+
+
+def test_exports_of_an_unknown_version_are_not_found(client: TestClient) -> None:
+    create(client)
+    for kind in ("design", "bundle"):
+        assert client.get(f"/packages/hall-bench/versions/9/{kind}").status_code == 404
+        assert client.get(f"/packages/nothing/versions/1/{kind}").status_code == 404

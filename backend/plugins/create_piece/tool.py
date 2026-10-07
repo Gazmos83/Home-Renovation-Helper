@@ -47,22 +47,75 @@ def _taken(ctx: ToolContext, package_id: str) -> bool:
         return session.get(Piece, package_id) is not None
 
 
+def checked_new_id(ctx: ToolContext, raw: str) -> tuple[str | None, str]:
+    """A valid package id that no piece uses yet, or a refusal."""
+    package_id, problem = checked_package_id(raw)
+    if package_id is None:
+        return None, problem
+    if _taken(ctx, package_id):
+        return None, (
+            f"the package id {package_id!r} is already in use; choose another id, "
+            "or revise that piece instead"
+        )
+    return package_id, ""
+
+
 def _checked(arguments: dict[str, Any], ctx: ToolContext) -> tuple[str | None, dict[str, Any] | None, str]:
     args, problem = parse_args(CreatePieceArgs, arguments)
     if args is None:
         return None, None, problem
-    package_id, problem = checked_package_id(args.package_id)
+    package_id, problem = checked_new_id(ctx, args.package_id)
     if package_id is None:
         return None, None, problem
-    if _taken(ctx, package_id):
-        return None, None, (
-            f"the package id {package_id!r} is already in use; choose another id, "
-            "or revise that piece instead"
-        )
     spec, problem = validated_custom_build(ctx, args.spec, package_id)
     if spec is None:
         return None, None, problem
     return package_id, spec, ""
+
+
+def summarise(package_id: str, spec: dict[str, Any], warnings: str) -> tuple[str, dict[str, Any]]:
+    """The owner's summary of a new piece and the proposal it carries."""
+    parts, hardware, _assembly = custom_derive.derive(spec)
+    overall = custom_derive.overall(spec)
+    modules = len(spec["modules"])
+    summary = (
+        f"New piece {spec['name']!r} as {package_id}: "
+        f"{overall['w']} × {overall['h']} × {overall['d']} mm (w × h × d), "
+        f"{modules} module(s), {len(parts)} cut-list rows, {len(hardware)} hardware lines"
+    )
+    if warnings:
+        summary += f"\nDesign-rule warnings: {warnings}"
+    proposal = {
+        "package_id": package_id,
+        "name": spec["name"],
+        "overall": overall,
+        "modules": modules,
+        "cut_list_rows": len(parts),
+        "hardware_lines": len(hardware),
+    }
+    return summary, proposal
+
+
+def create_and_record(
+    ctx: ToolContext, package_id: str, spec: dict[str, Any], changes: list[str] | None = None
+) -> int:
+    """Create version 1, record the piece and the version, bind the thread and start the build."""
+    created = service.create_version(
+        ctx.deps.render_root,
+        package_id,
+        spec,
+        lambda version: ctx.deps.start_build(package_id, version),
+    )
+    with ctx.deps.session() as session:
+        room = house_file.room_by_name(session, str(ctx.brief.get("room") or ""))
+        house_file.record_piece(
+            session, package_id, spec["name"], brief=dict(ctx.brief), room_id=room.id if room else None
+        )
+        house_file.record_version(session, package_id, created["version"], changes=changes)
+        if ctx.thread_id is not None:
+            house_file.touch_thread(session, ctx.thread_id, package_id=package_id)
+        session.commit()
+    return created["version"]
 
 
 def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
@@ -75,28 +128,8 @@ def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
     refusal, warnings = piece_outcome(ctx.deps.design_rules, spec)
     if refusal:
         return refusal
-    parts, hardware, _assembly = custom_derive.derive(spec)
-    overall = custom_derive.overall(spec)
-    modules = len(spec["modules"])
-    summary = (
-        f"New piece {spec['name']!r} as {package_id}: "
-        f"{overall['w']} × {overall['h']} × {overall['d']} mm (w × h × d), "
-        f"{modules} module(s), {len(parts)} cut-list rows, {len(hardware)} hardware lines"
-    )
-    if warnings:
-        summary += f"\nDesign-rule warnings: {warnings}"
-    return Confirmation(
-        subject="create_piece",
-        summary=summary,
-        proposal={
-            "package_id": package_id,
-            "name": spec["name"],
-            "overall": overall,
-            "modules": modules,
-            "cut_list_rows": len(parts),
-            "hardware_lines": len(hardware),
-        },
-    )
+    summary, proposal = summarise(package_id, spec, warnings)
+    return Confirmation(subject="create_piece", summary=summary, proposal=proposal)
 
 
 def run(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
@@ -112,24 +145,10 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
     if refusal:
         return refusal
 
-    created = service.create_version(
-        ctx.deps.render_root,
-        package_id,
-        spec,
-        lambda version: ctx.deps.start_build(package_id, version),
-    )
-    with ctx.deps.session() as session:
-        room = house_file.room_by_name(session, str(ctx.brief.get("room") or ""))
-        house_file.record_piece(
-            session, package_id, spec["name"], brief=dict(ctx.brief), room_id=room.id if room else None
-        )
-        house_file.record_version(session, package_id, created["version"])
-        if ctx.thread_id is not None:
-            house_file.touch_thread(session, ctx.thread_id, package_id=package_id)
-        session.commit()
+    version = create_and_record(ctx, package_id, spec)
     return ToolOutput(
         text=(
-            f"Created {package_id} version {created['version']}; the build has started. "
+            f"Created {package_id} version {version}; the build has started. "
             "It can be built and viewed by the Builder next."
         ),
         update={"package_id": package_id},

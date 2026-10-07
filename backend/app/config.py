@@ -164,6 +164,8 @@ class Settings(BaseSettings):
     upload_root: Path = DEFAULT_UPLOAD_ROOT
     upload_max_bytes: int = 10 * 1024 * 1024
     upload_max_per_thread: int = 20
+    # A design file (design-import) is read whole to be checked, so it has its own, smaller cap.
+    upload_max_design_bytes: int = 256 * 1024
 
     # --- Guideline files (the owner's own PDFs and notes) ----------------------
     guideline_root: Path = DEFAULT_GUIDELINE_ROOT
@@ -323,7 +325,9 @@ class Settings(BaseSettings):
                 raise ValueError(f"{variable} must be a readable file")
         return self
 
-    @field_validator("upload_max_bytes", "upload_max_per_thread", "turn_max_images", mode="after")
+    @field_validator(
+        "upload_max_bytes", "upload_max_per_thread", "upload_max_design_bytes", "turn_max_images", mode="after"
+    )
     @classmethod
     def _reject_non_positive_upload_limit(cls, value: int) -> int:
         if value <= 0:

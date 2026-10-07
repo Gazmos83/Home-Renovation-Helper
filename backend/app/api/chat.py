@@ -143,17 +143,19 @@ def _load_thread(request: Request, thread_id: UUID) -> Any:
 
 
 def _check_uploads(request: Request, thread_id: UUID, upload_ids: list[UUID]) -> None:
-    """Every attached id must be an upload of this thread, and within the per-turn limit."""
-    limit = request.app.state.settings.turn_max_images
-    if len(upload_ids) > limit:
-        raise _refusal(422, "too_many_images", f"a turn takes at most {limit} images")
+    """Every attached id must be an upload of this thread; images within the per-turn limit, one design."""
     if not upload_ids:
         return
     with Session(request.app.state.engine) as session:
-        owned = {upload.id for upload in uploads.list_uploads(session, thread_id)}
+        owned = {upload.id: upload.kind for upload in uploads.list_uploads(session, thread_id)}
     for upload_id in upload_ids:
         if upload_id not in owned:
             raise _refusal(422, "unknown_upload", f"upload {upload_id} does not belong to this conversation")
+    limit = request.app.state.settings.turn_max_images
+    if sum(1 for i in upload_ids if owned[i] in uploads.IMAGE_KINDS) > limit:
+        raise _refusal(422, "too_many_images", f"a turn takes at most {limit} images")
+    if sum(1 for i in upload_ids if owned[i] == "design") > 1:
+        raise _refusal(422, "too_many_designs", "a turn takes at most one design file")
 
 
 def _current_pending(request: Request, graph: Any, thread_id: UUID, owner: UUID) -> chat.Pending | None:

@@ -44,7 +44,7 @@ def test_each_agent_names_exactly_its_tools() -> None:
     )
     assert loaded["intake"].tools == ("record_brief", "record_plan")
     assert set(loaded["designer"].tools) == {
-        "create_piece", "revise_package", "cut_list", "room_fit", "search_guidelines",
+        "create_piece", "import_design", "revise_package", "cut_list", "room_fit", "search_guidelines",
     }
     assert set(loaded["builder"].tools) == {
         "blender_build", "build_shell", "render_turntable", "record_render_feedback",

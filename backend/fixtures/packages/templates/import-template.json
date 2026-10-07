@@ -1,0 +1,71 @@
+{
+  "kind": "package_import",
+  "schema_version": 1,
+  "units": "mm",
+  "guide": [
+    "This file is a furniture design for the Home Renovation app. Fill in 'build' and return the whole document as JSON only: no prose before or after it, no code fences, no comments. Keep 'kind', 'schema_version' and 'units' as they are. The app reads nothing from this guide.",
+    "Every field is validated strictly: an unknown field anywhere is refused by name and written down as a request, so never invent a field. Every dimension is a whole millimetre from 1 to 10000, and every position from 0 to 10000. Positions are x (width), y (depth), z (height) from the build's front-left-bottom corner.",
+    "Design only: there is no 'survey' or room section. A document with a 'survey' is refused; the app records rooms separately.",
+    "build.materials: slot names match ^[a-z][a-z0-9_]{0,31}$; thickness_mm is 1 to 100. A string the price list reads starts with its thickness ('18 mm ...'), equal to thickness_mm, and names a family: 'oak-veneered birch', 'birch plywood', 'birch', 'black mdf', 'mdf', 'Multiplex birch', 'Tischlerplatte', 'Leimholz spruce' or 'beech', 'Möbelbauplatte'. Other wording is accepted, but its parts cannot be priced until the wording is corrected.",
+    "build.modules (at most 20): id is a slug (lowercase letters, digits and hyphens, starting and ending with a letter or digit, at most 40 characters), name 1 to 120 characters, x/y/z positions, width/height/depth, carcass and optional back name a slot, shelves 0 to 20, fronts at most 10, hardware at most 50 lines. Width and height must exceed twice the carcass thickness, depth must exceed the back thickness, and modules may touch but not overlap.",
+    "build.modules[].fronts: {type: 'door', count: 1-20, opening: 'hinge' | 'push_latch', height?} or {type: 'drawer', count: 1-20, height?} or {type: 'flap', hinged: 'bottom' | 'top', height?}. Every front is at least 100 mm; a drawer needs a runner length and a box width.",
+    "build.envelope: {width, height, depth}. Optional when there are modules, required when modules is empty; no module may lie outside it.",
+    "build.extra_parts (at most 100), one cut part each, exactly these fields: id (slug as for modules), name (1 to 120 characters), qty (1 to 100), length, width, material (a slot name; the thickness comes from that slot), grain ('length' or 'none', default 'length'), and optional notes (at most 500 characters), hardware (at most 50 lines), supply ('Personal_Supply' or null). There is no thickness, assembly, edge_band or grain_direction field; put such detail in notes or the id.",
+    "Placement: only modules are drawn assembled. A module's x/y/z and size place its sides, top, bottom, back, shelves and fronts in the model and every picture. Extra parts have no position and are laid flat beside the build, so a document with only extra_parts shows loose boards inside an empty envelope.",
+    "To draw a carcass assembled, describe it as one module (its position, size, carcass and back slots, shelves and fronts) and leave its panels out of extra_parts, or they are counted twice. Keep only what the rules cannot express (frames, slats, trim) in extra_parts, and correct any derived row with part_overrides.",
+    "build.hardware and every hardware list: id matches ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$, item 1 to 200 characters, qty 1 to 10000, notes at most 500 characters. An id starting with 'Personal_Supply-' is priced at the reserved Personal_Supply entry.",
+    "build.assembly_notes: at most 20 notes of at most 500 characters each; they become workshop steps. build.name is 1 to 120 characters; build.template is a slug or null. The derived cut list may hold at most 200 rows, and no two rows may share an id.",
+    "build.part_overrides (at most 200) correct derived rows: id names a derived row (a slug of at most 80 characters, as the app's cut list shows it), then any of qty (1 to 10000), length, width, thickness (1 to 100), material (a recognised material string), banding (1 to 60 characters), notes, supply ('Personal_Supply'). A row may be overridden once.",
+    "The build below is a starter cabinet with placeholder sizes: replace its name, sizes, shelves, fronts, materials and hardware with the design you were asked for."
+  ],
+  "build": {
+    "kind": "custom_build",
+    "schema_version": 1,
+    "units": "mm",
+    "name": "Custom build",
+    "template": "custom-build",
+    "materials": {
+      "carcass": {
+        "material": "18 mm oak-veneered birch",
+        "thickness_mm": 18
+      },
+      "back": {
+        "material": "12 mm birch plywood",
+        "thickness_mm": 12
+      }
+    },
+    "modules": [
+      {
+        "id": "cabinet",
+        "name": "Cabinet",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "width": 800,
+        "height": 1800,
+        "depth": 400,
+        "carcass": "carcass",
+        "back": "back",
+        "shelves": 4,
+        "fronts": [
+          {
+            "type": "door",
+            "count": 2,
+            "opening": "hinge"
+          }
+        ],
+        "hardware": [
+          {
+            "id": "cabinet-hanger",
+            "item": "Cabinet wall hanger",
+            "qty": 2,
+            "notes": "Wall fixing, one each side"
+          }
+        ]
+      }
+    ],
+    "assembly_notes": [
+      "The sizes are placeholders: replace width, height, depth, shelves and fronts with the brief's figures."
+    ]
+  }
+}
