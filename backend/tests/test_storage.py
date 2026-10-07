@@ -9,9 +9,10 @@ import pytest
 from app.blender import storage
 
 
-def test_the_build_files_are_exactly_the_six() -> None:
+def test_the_build_files_are_exactly_the_nine() -> None:
     assert set(storage.BUILD_FILES) == {
         "model.glb", "model.blend", "spec.json", "cutlist.csv", "hardware.csv", "screenshot.png",
+        "front.png", "side.png", "top.png",
     }
     assert storage.BUILD_FILES["model.glb"] == "model/gltf-binary"
 

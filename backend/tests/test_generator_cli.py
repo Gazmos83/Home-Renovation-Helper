@@ -79,6 +79,11 @@ def test_a_render_resolves_blend_output_and_tier(tmp_path: Path) -> None:
     )
     assert (got_blend, got_out) == (blend.resolve(), out.resolve())
     assert (tier.frames, tier.resolution, tier.engine) == (12, 600, "BLENDER_EEVEE")
+    assert tier.dimensions is False
+    _b, _o, shown = parse_render_arguments(
+        ["blender", "--", "--blend", str(blend), "--out", str(tmp_path / "s"), *TIER, "--dimensions"]
+    )
+    assert shown.dimensions is True
 
 
 @pytest.mark.parametrize(

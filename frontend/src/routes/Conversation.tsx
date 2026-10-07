@@ -25,6 +25,30 @@ function message(error: unknown): string | null {
   return error instanceof Error ? error.message : null;
 }
 
+// A render file's route in a reply: a piece's, a composition's or a shell's, and nothing
+// else, so a reply cannot send the owner to another site. A route is made of ids, version
+// numbers and file names only, so quotes or backticks around it and a trailing full stop
+// are not part of it.
+const FILE_ROUTE = /(?<![\w:/.])(\/(?:packages|compositions|apartments)\/[\w./-]*?\/files\/[\w./-]*[\w/-])/;
+
+/** A reply's text with each render file route as a link that opens in a new tab. */
+function ReplyText({ text }: { text: string }) {
+  const parts = text.split(new RegExp(FILE_ROUTE.source, "g"));
+  return (
+    <>
+      {parts.map((part, index) =>
+        index % 2 === 1 ? (
+          <a key={index} href={part} target="_blank" rel="noreferrer" className="underline">
+            {part}
+          </a>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
+
 function Tools({ threadId }: { threadId: string }) {
   const queryClient = useQueryClient();
   const tools = useQuery({ queryKey: ["tools", threadId], queryFn: () => api.tools(threadId) });
@@ -85,7 +109,8 @@ function ProjectPanel({ threadId }: { threadId: string }) {
   if (progress.error) return <FieldError message={message(progress.error)} />;
   if (!progress.data) return <p>Loading project…</p>;
   const p: Progress = progress.data;
-  const picture = p.screenshot ?? p.still;
+  // A render replaces the blockout screenshot once there is one.
+  const picture = p.still ?? p.screenshot;
   const canApproveLatest =
     p.latest_version !== null && p.build_status === "succeeded" && p.approved_version !== p.latest_version;
 
@@ -139,6 +164,20 @@ function ProjectPanel({ threadId }: { threadId: string }) {
         </div>
       )}
       {picture && <img src={picture} alt={`Latest picture of ${p.package_id}`} className="max-h-56 rounded-md border" />}
+      {p.viewer && (
+        <p>
+          <a href={p.viewer} target="_blank" rel="noreferrer" className="underline">
+            Open the turntable viewer
+          </a>
+        </p>
+      )}
+      {p.package_id && p.latest_version !== null && p.build_status === "succeeded" && (
+        <p>
+          <Link to={`/pieces/${encodeURIComponent(p.package_id)}/versions/${p.latest_version}`} className="underline">
+            Inspect version {p.latest_version}
+          </Link>
+        </p>
+      )}
       <ol className="space-y-1">
         {p.steps.map((step) => (
           <li key={step.step} className="flex items-center gap-2" data-done={step.done}>
@@ -308,11 +347,15 @@ export default function Conversation() {
   const [specialist, setSpecialist] = useState<string | null>(null);
   const [optimistic, setOptimistic] = useState<{ text: string; uploads: Upload[] } | null>(null);
   const thread = useQuery({ queryKey: ["thread", threadId], queryFn: () => api.thread(threadId) });
+  const sentFiles = Boolean(thread.data?.messages.some((m) => m.upload_ids?.length));
+  const uploads = useQuery({ queryKey: ["uploads", threadId], queryFn: () => api.uploads(threadId), enabled: sentFiles });
+  const uploadById = new Map((uploads.data ?? []).map((u) => [u.upload_id, u]));
 
   async function refresh() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["thread", threadId] }),
       queryClient.invalidateQueries({ queryKey: ["progress", threadId] }),
+      queryClient.invalidateQueries({ queryKey: ["uploads", threadId] }),
       queryClient.invalidateQueries({ queryKey: ["threads"] }),
     ]);
   }
@@ -343,9 +386,18 @@ export default function Conversation() {
                 </p>
               ) : (
               <p key={index} className={m.role === "owner" ? "font-medium" : ""}>
-                <strong>{m.role === "owner" ? "You" : "Foreman"}:</strong> {m.text}
+                <strong>{m.role === "owner" ? "You" : "Foreman"}:</strong>{" "}
+                {m.role === "assistant" ? <ReplyText text={m.text} /> : m.text}
                 {m.role === "assistant" && index === messages.length - 1 && specialist && (
                   <Badge variant="outline" className="ml-2">{specialist}</Badge>
+                )}
+                {m.upload_ids && m.upload_ids.some((id) => uploadById.has(id)) && (
+                  <span className="mt-1 flex flex-wrap gap-2">
+                    {m.upload_ids.map((id) => {
+                      const upload = uploadById.get(id);
+                      return upload ? <Attachment key={id} upload={upload} /> : null;
+                    })}
+                  </span>
                 )}
               </p>
               ),

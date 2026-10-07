@@ -61,6 +61,8 @@ After a turn ends without failure on a thread whose title is empty, `app/agent/t
 *Alternative:* code-only title from the first words (cheaper; the owner chose the model).
 
 ### 4. Delete: checkpointer first, then the index row and files
+Built by `piece-versions-and-chat-delete` (its design decision 5), which refuses a delete while a turn runs instead of letting the turn finish into a discarded thread. Kept here for the summary and usage notes.
+
 `DELETE /chat/threads/{id}` → `checkpointer.delete_thread("chat:<id>")` (fails → 503 memory reason, nothing else touched), then delete the `threads` row (cascades `uploads`, `thread_tool_settings`), then remove `<upload_root>/<id>/`. `model_usage.thread_id` is `ON DELETE SET NULL`, so spend stays. Pieces, versions, rooms and reviews are keyed by package or room, not thread, and are untouched. A turn still running on the thread finishes into a checkpointer thread nobody reads; `touch_thread` on a missing row becomes a no-op instead of an error.
 
 ### 5. Text notes: a third upload kind, expanded for every slot

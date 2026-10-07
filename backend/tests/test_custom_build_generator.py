@@ -57,11 +57,27 @@ def built(blender_bin: Path, tmp_path_factory: pytest.TempPathFactory):
     return spec, out
 
 
-def test_the_template_builds_exactly_the_six_files(built) -> None:
+def test_the_template_builds_exactly_the_nine_files(built) -> None:
     _spec, out = built
     assert {entry.name for entry in out.iterdir()} == set(storage.BUILD_FILES)
     assert all(entry.stat().st_size > 0 for entry in out.iterdir())
-    assert png_size(out / "screenshot.png") == (800, 500)
+    for name in ("screenshot.png", "front.png", "side.png", "top.png"):
+        assert png_size(out / name) == (800, 500), name
+
+
+def test_the_blend_file_carries_the_overall_dimensions_and_the_model_does_not(built, blender_bin: Path) -> None:
+    _spec, out = built
+    overall = json.loads((out / "spec.json").read_text(encoding="utf-8"))["overall"]
+    objects = {o["name"]: o for o in _inspect(blender_bin, out / "model.blend")["objects"]}
+    for axis, figure in (("W", overall["w"]), ("H", overall["h"]), ("D", overall["d"])):
+        assert objects[f"DIM_Overall{axis}"]["type"] == "MESH"
+        assert objects[f"DIM_Overall{axis}"]["parent"] == "MOD_Dimensions"
+        label = objects[f"DIM_Label_{axis}"]
+        assert (label["type"], label["text"], label["dimension"]) == ("FONT", f"{figure} mm", axis)
+        assert label["faces"] == "CAM_Iso"
+    assert objects["MOD_Dimensions"]["parent"] == "CustomBuild"
+    glb = (out / "model.glb").read_bytes()
+    assert b"DIM_" not in glb and b"MOD_Dimensions" not in glb
 
 
 def test_the_emitted_spec_covers_every_mesh_in_one_layer(built, blender_bin: Path) -> None:
@@ -72,7 +88,8 @@ def test_the_emitted_spec_covers_every_mesh_in_one_layer(built, blender_bin: Pat
     layered = [name for names in emitted["layers"].values() for name in names]
     assert len(layered) == len(set(layered)), "each mesh is in exactly one layer"
     meshes = {o["name"] for o in _inspect(blender_bin, out / "model.blend")["objects"] if o["type"] == "MESH"}
-    assert set(layered) == meshes - {"StudioFloor"}
+    dimensions = {name for name in meshes if name.startswith("DIM_")}
+    assert set(layered) == meshes - {"StudioFloor"} - dimensions
 
 
 def test_shop_data_equals_the_derived_and_every_part_is_an_object(built, blender_bin: Path) -> None:

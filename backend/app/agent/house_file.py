@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.blender import storage
@@ -548,6 +548,15 @@ def create_thread(session: Session, title: str = "", package_id: str | None = No
     session.add(thread)
     session.flush()
     return thread
+
+
+def delete_thread(session: Session, thread_id: UUID) -> bool:
+    """Remove a thread's index entry; its upload records and tool settings go with it
+    (foreign keys cascade). Pieces, versions, rooms and reviews are keyed by piece or
+    room and stay. Whether a row was deleted."""
+    deleted = session.execute(delete(Thread).where(Thread.id == thread_id))
+    session.flush()
+    return bool(deleted.rowcount)
 
 
 def get_thread(session: Session, thread_id: UUID) -> Thread | None:

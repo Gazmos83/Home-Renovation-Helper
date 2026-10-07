@@ -17,7 +17,7 @@ See proposal.md for the motivation. What exists today:
 **Non-Goals:**
 - Streaming replies or a progress bar for a running turn. A turn stays one request; the composer waits.
 - Starting builds, renders or reviews from buttons. Every action still goes through the Foreman in words, so the guard and the confirmations stay where they are.
-- Rendering the turntable viewer inside the chat. The panel shows the latest still or screenshot and links to the Pieces page.
+- Rendering the turntable viewer inside the chat. The panel links to the viewer and a reply's file route is a link (decision 8); the viewer opens in its own tab.
 - Apartment shells in the panel. The thread's piece is a furniture package; shells keep their own routes.
 
 ## Decisions
@@ -40,3 +40,12 @@ See proposal.md for the motivation. What exists today:
 - [The optimistic message is removed on a model-gateway failure, but the service also forgets the unanswered message, so the two agree; if a future failure class keeps the message server-side, the view would hide it until reload] → the view refetches the thread after any error, so the server's history wins.
 - [Polling the progress route while a build runs costs one folder read every 3 s] → the read is a few `stat` calls and a short query; polling stops as soon as the status leaves `queued`/`running`.
 - [Moving `_review_ready`/`_detail_ready` touches the Foreman] → pure extraction with the existing Foreman tests unchanged; the new module's tests cover the step rules directly.
+
+## Decision added after the browser check (2026-10-07)
+
+8. **The turntable is reachable from the view.** The first run of task 4.1 found no way to open a finished turntable: the reply named `/packages/<id>/versions/<n>/files/viewer.html` as plain text, which reads like a file path, and the panel showed only the screenshot.
+   - *Progress.* `piece_progress` gains `viewer`: the package route of the latest version's `viewer.html` when its turntable is published (the same check `describe_renders` uses: `frames/frame_000.png` and `viewer.html`), else null. The picture prefers the still over the screenshot once a still exists, so a render replaces the blockout picture.
+   - *Panel.* When `viewer` is set the panel shows "Open the turntable viewer" opening in a new tab, as the Pieces page does.
+   - *Replies.* In a reply's text, a route of the form `/packages/…/files/…`, `/compositions/…/files/…` or `/apartments/…/files/…` is rendered as a link that opens in a new tab; a trailing full stop is not part of the link. Only these three prefixes are linked, so a reply cannot point the owner anywhere else. The tool's reply text stays as it is; the Builder's words are unchanged.
+   - *Frames by file name.* The viewer loads `frames/frame_<nnn>.png` relative to itself. The package, shell and composition files routes serve that name as well as `frames/<n>`, so a viewer opened through the app finds its frames.
+   - *Files on a sent message.* The thread history names the uploads sent with an owner's message (`upload_ids`, left out when none were), so the thumbnail stays on the message after the reply.

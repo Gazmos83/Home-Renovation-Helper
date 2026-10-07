@@ -122,6 +122,20 @@ def hidden(predicate) -> Iterator[None]:
             obj.hide_render = hide_render
 
 
+def is_dimension(obj: bpy.types.Object) -> bool:
+    """A dimension line, tick or figure (piece-inspector), or the empty holding them."""
+    return obj.name.startswith("DIM_") or obj.name.startswith("MOD_Dimensions")
+
+
+def face_camera(camera: bpy.types.Object) -> None:
+    """Turn every dimension figure to face `camera`, so it reads in that camera's frames."""
+    for obj in bpy.context.scene.objects:
+        if obj.type == "FONT" and obj.name.startswith("DIM_"):
+            constraint = obj.constraints.get("Face camera") or obj.constraints.new("COPY_ROTATION")
+            constraint.name = "Face camera"
+            constraint.target = camera
+
+
 def hidden_for_presentation() -> hidden:
     """Hide the studio floor and dimension helpers (the piece alone)."""
     return hidden(_is_presentation_helper)

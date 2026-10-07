@@ -14,6 +14,11 @@ further ones ``<id>#<n>``), parented to one empty per module so the studio can
 explode them, fronts modelled closed, and each object in exactly one of the
 layers ``carcass``, ``backs``, ``shelves``, ``fronts`` and ``extras``.
 
+It also draws the overall width, height and depth as dimension lines with their
+figures in mm (``DIM_*`` under ``MOD_Dimensions``), kept out of ``model.glb`` and
+the iso screenshot, and writes Workbench views from the front, side and top with
+the lines each view faces (piece-inspector).
+
 It imports only the backend's standard-library contracts, never the FastAPI
 environment. A build is not a render: it publishes `screenshot.png`, a Workbench
 (solid-shading) frame for progress checks, and no Eevee or Cycles image
@@ -49,7 +54,10 @@ from app.blender.custom_build import derive as rules
 from app.blender.generators._scene import (
     GeneratorError,
     export_glb,
+    face_camera,
+    hidden,
     hidden_for_presentation,
+    is_dimension,
     set_engine,
 )
 from app.blender.generators._scene import (
@@ -77,6 +85,15 @@ from app.blender.verify import VerificationError, verify_build
 
 MM = 0.001
 SCREENSHOT_SIZE = (800, 500)
+# Each straight-on view: its camera, its file, and the dimensions it faces.
+VIEWS: tuple[tuple[str, str, frozenset[str]], ...] = (
+    ("CAM_Front", "front.png", frozenset({"W", "H"})),
+    ("CAM_Side", "side.png", frozenset({"D", "H"})),
+    ("CAM_Top", "top.png", frozenset({"W", "D"})),
+)
+DIMENSION_OFFSET_MM = 100
+INK = (0.03, 0.03, 0.035)
+PAPER = (0.93, 0.9, 0.84)
 
 Box = tuple[tuple[float, float, float], tuple[float, float, float]]  # (size, centre), mm
 
@@ -335,12 +352,97 @@ def _build_scene(state: BuildState, parts: list[dict[str, Any]]) -> None:
             name = row["id"] if n == 1 else f"{row['id']}#{n}"
             _box(state, name, at(box), row["material"], layer, collections[owner], empties[owner])
 
+    _build_dimensions(overall, z0, root_collection, root)
     _build_cameras_lights(overall, z0)
     bpy.ops.mesh.primitive_plane_add(size=max(6.0, m(max(overall.values())) * 3), location=(0, 0, 0))
     floor = bpy.context.active_object
     floor.name = "StudioFloor"
     floor.data.name = "StudioFloor"
     floor.data.materials.append(_material(state, "Studio floor birch"))
+
+
+def _label_size(overall: Mapping[str, int]) -> float:
+    """A dimension figure's height in mm: 4 % of the largest overall size, at least 40."""
+    return max(40.0, max(overall["w"], overall["h"], overall["d"]) * 0.04)
+
+
+def _ink() -> bpy.types.Material:
+    material = bpy.data.materials.new("Ink")
+    material.diffuse_color = (*INK, 1)
+    material.use_nodes = True
+    shader = next((node for node in material.node_tree.nodes if node.type == "BSDF_PRINCIPLED"), None)
+    if shader is not None:
+        shader.inputs["Base Color"].default_value = (*INK, 1)
+        shader.inputs["Roughness"].default_value = 0.9
+    return material
+
+
+def _dimension_box(name: str, axis: str, size: tuple[float, float, float], centre: tuple[float, float, float],
+                   material: bpy.types.Material, collection: bpy.types.Collection, parent: bpy.types.Object) -> None:
+    mesh = bpy.data.meshes.new(name)
+    sx, sy, sz = (m(value) / 2 for value in size)
+    verts = [(x, y, z) for z in (-sz, sz) for y in (-sy, sy) for x in (-sx, sx)]
+    faces = [(0, 2, 3, 1), (4, 5, 7, 6), (0, 1, 5, 4), (2, 6, 7, 3), (0, 4, 6, 2), (1, 3, 7, 5)]
+    mesh.from_pydata(verts, [], faces)
+    mesh.materials.append(material)
+    obj = bpy.data.objects.new(name, mesh)
+    obj.location = tuple(m(value) for value in centre)
+    obj.parent = parent
+    obj["dimension"] = axis
+    collection.objects.link(obj)
+
+
+def _dimension_label(axis: str, figure: int, size_mm: float, centre: tuple[float, float, float], align: str,
+                     material: bpy.types.Material, collection: bpy.types.Collection, parent: bpy.types.Object) -> None:
+    curve = bpy.data.curves.new(f"DIM_Label_{axis}", type="FONT")
+    curve.body = f"{figure} mm"
+    curve.size = m(size_mm)
+    curve.align_x = align
+    curve.align_y = "CENTER"
+    curve.materials.append(material)
+    obj = bpy.data.objects.new(f"DIM_Label_{axis}", curve)
+    obj.location = tuple(m(value) for value in centre)
+    obj.parent = parent
+    obj["dimension"] = axis
+    collection.objects.link(obj)
+
+
+def _build_dimensions(overall: Mapping[str, int], z0: float, root_collection: bpy.types.Collection,
+                      root: bpy.types.Object) -> None:
+    """The overall width, height and depth as lines with ticks and their figures in mm.
+
+    The piece spans x -w/2..w/2, y -d/2..d/2 (front at -y) and z z0..z0+h. Each line
+    sits outside those bounds, where the views that face it can see it: width along
+    the front's foot, height up the front-left corner, depth under the left side
+    (the extra parts lie to the right). Each figure is set beside its line in both
+    views that show it.
+    """
+    w, h, d = overall["w"], overall["h"], overall["d"]
+    largest = max(w, h, d)
+    thick = max(6.0, largest * 0.004)
+    tick = thick * 8
+    text = _label_size(overall)
+    gap = DIMENSION_OFFSET_MM
+    collection = _collection("09_Dimensions", root_collection)
+    holder = _empty("MOD_Dimensions", (0, 0, 0), collection, root)
+    ink = _ink()
+    front, left, top = -d / 2 - gap, -w / 2 - gap, z0 + h
+    below = z0 - gap
+    lines = {
+        # axis: (line size, line centre, end centres, tick size, label centre, label alignment)
+        "W": ((w, thick, thick), (0, front, z0), [(-w / 2, front, z0), (w / 2, front, z0)],
+              (thick, tick, tick), (0, front - text * 0.9, z0 - text * 0.9), "CENTER"),
+        "H": ((thick, thick, h), (left, front, z0 + h / 2), [(left, front, z0), (left, front, top)],
+              (tick, tick, thick), (left - text * 0.4, front, z0 + h / 2), "RIGHT"),
+        "D": ((thick, d, thick), (left, 0, below), [(left, -d / 2, below), (left, d / 2, below)],
+              (tick, thick, tick), (left - text * 0.4, d / 2, below - text * 0.9), "RIGHT"),
+    }
+    figures = {"W": w, "H": h, "D": d}
+    for axis, (size, centre, ends, tick_size, label_centre, align) in lines.items():
+        _dimension_box(f"DIM_Overall{axis}", axis, size, centre, ink, collection, holder)
+        for n, end in enumerate(ends, start=1):
+            _dimension_box(f"DIM_Overall{axis}_tick{n}", axis, tick_size, end, ink, collection, holder)
+        _dimension_label(axis, figures[axis], text, label_centre, align, ink, collection, holder)
 
 
 def _build_cameras_lights(overall: Mapping[str, int], z0: float) -> None:
@@ -354,10 +456,18 @@ def _build_cameras_lights(overall: Mapping[str, int], z0: float) -> None:
     direction = Vector((3.2, -4.5, 2.5)).normalized()
     iso = _add_camera("CAM_Iso", tuple(Vector(target) + direction * distance), (0, 0, 0))
     _aim_at(iso, target)
-    scale = max(1.0, reach * 1.4)
-    _add_camera("CAM_Front", (0, -distance, target[2]), (math.radians(90), 0, 0), ortho=True, scale=scale)
-    _add_camera("CAM_Side", (distance, 0, target[2]), (math.radians(90), 0, math.radians(90)), ortho=True, scale=scale)
-    _add_camera("CAM_Top", (0, 0, target[2] + distance), (0, 0, 0), ortho=True, scale=scale)
+    # Each straight-on camera frames its two sides of the build and the dimension
+    # lines and figures beside them, in the views' 800 × 500 frame.
+    margin = m(2 * (DIMENSION_OFFSET_MM + _label_size(overall) * 5))
+    aspect = SCREENSHOT_SIZE[1] / SCREENSHOT_SIZE[0]
+
+    def ortho(across: float, up: float) -> float:
+        return max(1.0, max(m(across) + margin, (m(up) + margin) / aspect) * 1.05)
+
+    w, h, d = overall["w"], overall["h"], overall["d"]
+    _add_camera("CAM_Front", (0, -distance, target[2]), (math.radians(90), 0, 0), ortho=True, scale=ortho(w, h))
+    _add_camera("CAM_Side", (distance, 0, target[2]), (math.radians(90), 0, math.radians(90)), ortho=True, scale=ortho(d, h))
+    _add_camera("CAM_Top", (0, 0, target[2] + distance), (0, 0, 0), ortho=True, scale=ortho(w, d))
     for camera in ("CAM_Iso", "CAM_Front", "CAM_Side", "CAM_Top"):
         bpy.data.objects[camera].data.clip_end = max(20.0, distance * 4)
     bpy.context.scene.camera = bpy.data.objects["CAM_Iso"]
@@ -414,6 +524,36 @@ def _write_screenshot(output_path: Path) -> None:
         bpy.ops.render.render(write_still=True)
 
 
+def _write_views(output_dir: Path) -> None:
+    """Workbench frames from the front, side and top cameras, each with the dimension
+    lines it faces and the figures turned to it; no tier (piece-inspector)."""
+    scene = bpy.context.scene
+    # A Workbench render's background is the world colour: light, like a drawing
+    # sheet, so the dark lines and figures read. The iso screenshot keeps its own.
+    world = scene.world
+    saved_colour = tuple(world.color)
+    world.color = PAPER
+    for camera_name, file_name, shown in VIEWS:
+        camera = bpy.data.objects.get(camera_name)
+        if camera is None:
+            raise GeneratorError(f"views: {camera_name} is missing")
+        scene.camera = camera
+        face_camera(camera)
+        scene.render.filepath = str(output_dir / file_name)
+
+        def unseen(obj: bpy.types.Object, shown: frozenset[str] = shown) -> bool:
+            if obj.name == "StudioFloor":
+                return True
+            return is_dimension(obj) and obj.get("dimension") is not None and obj["dimension"] not in shown
+
+        with hidden(unseen):
+            bpy.ops.render.render(write_still=True)
+    world.color = saved_colour
+    # The saved file opens on the iso camera, the figures facing it.
+    scene.camera = bpy.data.objects["CAM_Iso"]
+    face_camera(scene.camera)
+
+
 def _build_package(spec: Mapping[str, Any], output_dir: Path) -> None:
     state = BuildState(spec=spec)
     parts, hardware, _assembly = rules.derive(spec)
@@ -426,6 +566,7 @@ def _build_package(spec: Mapping[str, Any], output_dir: Path) -> None:
     try:
         _write_shop_data(state, output_dir, parts, hardware)
         _write_screenshot(output_dir / "screenshot.png")
+        _write_views(output_dir)
     except GeneratorError:
         raise
     except Exception as error:

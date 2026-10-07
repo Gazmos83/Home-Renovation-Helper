@@ -20,6 +20,12 @@ print(
                     "type": obj.type,
                     "parent": obj.parent.name if obj.parent else None,
                     "part_id": obj.get("part_id"),
+                    "dimension": obj.get("dimension"),
+                    "text": obj.data.body if obj.type == "FONT" else None,
+                    "faces": next(
+                        (c.target.name for c in obj.constraints if c.type == "COPY_ROTATION" and c.target),
+                        None,
+                    ),
                 }
                 for obj in bpy.data.objects
             ],

@@ -37,16 +37,17 @@ router = APIRouter(
     prefix="/packages", tags=["packages"], dependencies=[Depends(require_owner)]
 )
 
-# `frames/<index>` and `room/...` are matched exactly; no other path is served.
-_FRAME: Final = re.compile(r"^frames/(\d{1,4})$")
+# `frames/<index>` and `room/...` are matched exactly; no other path is served. A frame is
+# also served by its file name (`frames/frame_000.png`), the name `viewer.html` loads.
+_FRAME: Final = re.compile(r"^frames/(?:(\d{1,4})|frame_(\d{3,4})\.png)$")
 _ROOM_FILES: Final[dict[str, str]] = {
     "still.png": "image/png",
     "viewer.html": "text/html",
     "scene.json": "application/json",
 }
-_ROOM_FRAME: Final = re.compile(r"^room/frames/(\d{1,4})$")
+_ROOM_FRAME: Final = re.compile(r"^room/frames/(?:(\d{1,4})|frame_(\d{3,4})\.png)$")
 # The detail pass's outputs; never `detail.blend` or the log (photoreal-detail).
-_DETAIL_FRAME: Final = re.compile(r"^detail/frames/(\d{1,4})$")
+_DETAIL_FRAME: Final = re.compile(r"^detail/frames/(?:(\d{1,4})|frame_(\d{3,4})\.png)$")
 _DETAIL_SCREEN: Final = re.compile(r"^detail/screens/(\d{1,4})$")
 
 
@@ -278,13 +279,18 @@ def edit_spec(package_id: str, body: SpecIn, request: Request, background: Backg
     return _create_version(request, background, package_id, spec)
 
 
+def frame_index(match: re.Match[str]) -> int:
+    """The frame number of a `frames/<n>` or `frames/frame_<nnn>.png` match."""
+    return int(match.group(1) or match.group(2))
+
+
 def _file_for(folder: Path, name: str) -> tuple[Path, str] | None:
     """The path and media type for an exactly-named file, or `None`."""
     if name in storage.SERVED_FILES:
         return folder / name, storage.SERVED_FILES[name]
     frame = _FRAME.match(name)
     if frame:
-        return folder / "frames" / f"frame_{int(frame.group(1)):03d}.png", "image/png"
+        return folder / "frames" / f"frame_{frame_index(frame):03d}.png", "image/png"
     if name.startswith("room/"):
         room_name = name[len("room/") :]
         if room_name in _ROOM_FILES:
@@ -292,7 +298,7 @@ def _file_for(folder: Path, name: str) -> tuple[Path, str] | None:
         room_frame = _ROOM_FRAME.match(name)
         if room_frame:
             return (
-                folder / "room" / "frames" / f"frame_{int(room_frame.group(1)):03d}.png",
+                folder / "room" / "frames" / f"frame_{frame_index(room_frame):03d}.png",
                 "image/png",
             )
     if name.startswith("detail/"):
@@ -302,7 +308,7 @@ def _file_for(folder: Path, name: str) -> tuple[Path, str] | None:
         detail_frame = _DETAIL_FRAME.match(name)
         if detail_frame:
             return (
-                storage.detail_dir(folder) / "frames" / f"frame_{int(detail_frame.group(1)):03d}.png",
+                storage.detail_dir(folder) / "frames" / f"frame_{frame_index(detail_frame):03d}.png",
                 "image/png",
             )
         detail_screen = _DETAIL_SCREEN.match(name)

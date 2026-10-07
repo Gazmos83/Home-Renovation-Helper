@@ -69,6 +69,7 @@ class RemoteInputs:
     blend: Path | None = None  # still and turntable
     scene_document: dict | None = None  # room render
     package_dir: Path | None = None  # room render: holds model.glb and spec.json
+    dimensions: bool = False  # a piece's own turntable shows its dimension lines
 
 
 def _build_archive(path: Path, inputs: RemoteInputs, backend: Path) -> None:
@@ -100,6 +101,7 @@ def render_command(config: OffloadConfig, tier: Tier, inputs: RemoteInputs, limi
         "timeout", "-k", 10, int(limit_seconds),
         config.blender, "--background", "--python", script, "--",
         *source, "--out", "out",
+        *(["--dimensions"] if inputs.dimensions else []),
         "--tier-frames", tier.frames, "--tier-resolution", tier.resolution,
         "--tier-engine", tier.blender_engine, "--cycles-device", config.device,
     )

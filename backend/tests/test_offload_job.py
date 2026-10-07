@@ -71,6 +71,7 @@ def test_a_final_turntable_on_the_server_publishes_36_frames_and_cleans_up(
     for expected in ("--tier-frames 36", "--tier-resolution 1500", "--tier-engine CYCLES",
                      "--cycles-device OPTIX", "--blend input.blend", "--out out", "timeout -k 10"):
         assert expected in command
+    assert "--dimensions" in command  # a piece's own turntable, the same as on the laptop
     # The viewer was written here, not copied from the server.
     viewer = (folder / "viewer.html").read_text(encoding="utf-8")
     assert "SERVER VIEWER" not in viewer and "36" in viewer

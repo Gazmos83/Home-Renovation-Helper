@@ -3,7 +3,7 @@ No task in this change renders; the guard and the allow-list are untouched. Arch
 ## 1. Schema and storage
 
 - [ ] 1.1 Add the Alembic revision of design.md "Migration Plan" (next free number): `threads.summary`, `threads.summary_through`, `model_usage.thread_id` (FK `ON DELETE SET NULL`, indexed), `uploads.kind` admitting `text`; update `app/db/models.py`. Verify a migration test upgrades and downgrades cleanly and that deleting a thread nulls its usage rows' `thread_id`
-- [ ] 1.2 `house_file`: `set_title(session, id, title)`, `set_title_if_empty(...)` (conditional update), `delete_thread(...)` (row + upload directory), `read_summary` / `write_summary`; make `touch_thread` a no-op for a missing row. Verify `tests/test_house_file.py` covers the conditional title, delete leaving pieces, versions and rooms intact, and touch after delete
+- [ ] 1.2 `house_file`: `set_title(session, id, title)`, `set_title_if_empty(...)` (conditional update), `read_summary` / `write_summary` (`delete_thread` and the `touch_thread` no-op come from `piece-versions-and-chat-delete`). Verify `tests/test_house_file.py` covers the conditional title and that deleting a thread also removes its summary
 
 ## 2. Uploads: text notes
 
@@ -15,10 +15,10 @@ No task in this change renders; the guard and the allow-list are untouched. Arch
 - [ ] 3.1 Extract `chat.run_events(...)` (design decision 1) used by `answer` and `resume`; emit `tool` events through `get_stream_writer()` in `tools_node`; keep `TurnResult` for the JSON path. Verify `tests/test_chat.py` and `tests/test_foreman.py` pass unchanged and a new test asserts the event order for a Foreman → Designer → `revise_package` turn
 - [ ] 3.2 Add `POST /chat/threads/{id}/turns/stream` and `/resume/stream` (`text/event-stream`, no-cache, no buffering), tracing inside the generator, `_forget_unanswered` on a gateway error. Verify `tests/test_chat_api.py` covers: the followed-turn scenario; 409 while pending opens no stream; 401/404/422/503 before streaming; a gateway timeout ends with an `error` event and the thread holds no unanswered message; no event body contains a model slug, token figure, tool argument or host path
 
-## 4. Titles, rename, delete
+## 4. Titles and rename
 
 - [ ] 4.1 `app/agent/titles.py` (design decision 3) wired after a successful first turn on both routes, `title` event on the stream. Verify tests cover the generated title (fake model), the daily-ceiling fallback to ≤ 60 characters at a word boundary, an owner rename landing first being kept, and a usage row with operation `chat.title`
-- [ ] 4.2 `PATCH /chat/threads/{id}` and `DELETE /chat/threads/{id}` (checkpointer first; 503 without memory, 404 unknown). Verify `tests/test_chat_api.py` covers the rename and both delete scenarios from the homeowner-chat delta, including uploads answering 404 afterwards and the piece still listed
+- [ ] 4.2 `PATCH /chat/threads/{id}` (404 unknown); `DELETE` comes from `piece-versions-and-chat-delete`. Verify `tests/test_chat_api.py` covers the rename scenarios from the homeowner-chat delta
 
 ## 5. Questions through `ask_owner`
 
@@ -37,13 +37,13 @@ No task in this change renders; the guard and the allow-list are untouched. Arch
 ## 8. Studio
 
 - [ ] 8.1 Add `react-markdown`, `remark-gfm`, `@fontsource/commissioner`, `@fontsource/oswald` with `pnpm add`; font tokens, the global `h1, h2, h3` Oswald rule and chat spacing in `index.css`. Verify `pnpm build` passes, the built CSS references only bundled font files (no Google URL), and contains the heading rule; the browser check (9.1) confirms Oswald headings on one homeowner page outside the chat (Pieces) and one `/admin` page
-- [ ] 8.2 `lib/api.ts`: `streamTurn`/`streamResume` with an SSE parser, `renameThread`, `deleteThread`, `threadCalls`, new `Pending`/`Message` types. Verify a Vitest feeds chunked SSE text split mid-line and gets each event once, in order
+- [ ] 8.2 `lib/api.ts`: `streamTurn`/`streamResume` with an SSE parser, `renameThread`, `threadCalls` (`deleteThread` comes from `piece-versions-and-chat-delete`), new `Pending`/`Message` types. Verify a Vitest feeds chunked SSE text split mid-line and gets each event once, in order
 - [ ] 8.3 Split `routes/Conversation.tsx` into `components/chat/` (`Reply` with Markdown, `calc` box and image allow-list; `Bubble`; `WaitingBubble`; `Composer` with remove-before-send and note attachments; `QuestionForm`; `Rail` with flyouts). Verify `Conversation.test.tsx` covers: send-and-read with the waiting bubble naming Foreman then Intake and the specialists listed under the reply; refused turn; table in a reply; calc box; HTML shown literally; removed-before-send carrying only the note; two questions one at a time and the Question | Answer table; choice buttons; reopened with questions pending; rail open/close/switch and Escape; rename in place; title event updating the heading; the moved tool-toggle and project tests still passing
-- [ ] 8.4 `routes/Conversations.tsx`: one-click start without a title, delete with a confirmation naming the conversation. Verify `Conversations.test.tsx` covers start-without-title and delete-with-confirmation (confirm and cancel)
+- [ ] 8.4 `routes/Conversations.tsx`: one-click start without a title, keeping the delete action from `piece-versions-and-chat-delete`. Verify `Conversations.test.tsx` covers start-without-title and its delete tests still pass
 - [ ] 8.5 `routes/Help.tsx` at `/help` in the nav, and `routes/admin/ConversationCalls.tsx` at `/admin/conversations` in the admin nav only. Verify Vitest checks the help page lists every measurement in the studio-ui requirement and the calls page renders rows with slot and slug
 
 ## 9. Verification
 
-- [ ] 9.1 Browser check against the running backend through the Vite dev proxy: start a conversation without a title, send a message and watch the waiting bubble change specialist, see the generated title, answer an `ask_owner` form, attach and remove an image, attach a `.md` note, open and close both flyouts, rename, delete a populated conversation and confirm its piece is still on the Pieces page, open the developer calls page, and confirm headings on the Pieces page and one `/admin` page are set in Oswald. No render is started. Record the check in the commit message
+- [ ] 9.1 Browser check against the running backend through the Vite dev proxy: start a conversation without a title, send a message and watch the waiting bubble change specialist, see the generated title, answer an `ask_owner` form, attach and remove an image, attach a `.md` note, open and close both flyouts, rename, open the developer calls page, and confirm headings on the Pieces page and one `/admin` page are set in Oswald. No render is started. Record the check in the commit message
 - [ ] 9.2 README: streamed routes, rename/delete, text notes and the help page in the chat section. Verify the file reads correctly
 - [ ] 9.3 Run `uv run ruff check .`, `uv run pytest -m "not slow"`, and `pnpm lint && pnpm test && pnpm build`. Verify all pass and record the counts in the commit message

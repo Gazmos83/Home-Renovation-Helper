@@ -67,6 +67,7 @@ def test_a_built_version_names_its_screenshot_by_route(db_session: Session, rend
     assert _done(result) == ["brief", "piece", "built"]
     assert result["screenshot"] == "/packages/hall-bench/versions/1/files/screenshot.png"
     assert result["still"] is None
+    assert result["viewer"] is None
     assert result["next_step"] == "Ask for a draft render"
     assert str(render_root) not in repr(result)
 
@@ -78,6 +79,17 @@ def test_a_draft_turntable_reads_its_tier_from_the_status(db_session: Session, r
     assert "rendered" in _done(result)
     assert next(s for s in result["steps"] if s["step"] == "rendered")["detail"] == "draft"
     assert result["next_step"] == "Ask for a review of the piece"
+
+
+def test_the_viewer_is_named_only_once_the_turntable_is_published(db_session: Session, render_root: Path) -> None:
+    folder = _piece(db_session, render_root)
+    storage.write_render_status(folder, "turntable", status="running", tier="draft")
+    (folder / "viewer.html").write_text("<html></html>")
+    assert _read(db_session, render_root)["viewer"] is None  # no frame yet
+
+    (folder / "frames").mkdir()
+    (folder / "frames" / "frame_000.png").write_bytes(b"png")
+    assert _read(db_session, render_root)["viewer"] == "/packages/hall-bench/versions/1/files/viewer.html"
 
 
 def test_a_running_render_is_not_yet_rendered(db_session: Session, render_root: Path) -> None:

@@ -1,7 +1,7 @@
 name: revise_package
-description: Create the next version of a piece from stated changes.
+description: Create the next version of a piece from stated changes, or rebuild it unchanged.
 kind: builtin
 role: designer
-tools: [revise_package]
+tools: [revise_package, rebuild_piece]
 enabled_by_default: true
 toggleable: true

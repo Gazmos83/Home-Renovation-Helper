@@ -82,6 +82,28 @@ def test_a_12_frame_draft_turntable_gives_frames_0_3_6_9(tmp_path: Path) -> None
     assert evidence.renders[1] == "frames/frame_000.png"
 
 
+def test_the_straight_on_views_follow_the_screenshot(tmp_path: Path) -> None:
+    folder = _version(tmp_path)
+    for name in ("screenshot.png", "front.png", "side.png", "top.png"):
+        _png(folder / name)
+    for index in range(12):
+        _png(folder / "frames" / f"frame_{index:03d}.png")
+
+    evidence = collect(tmp_path, "hall-bench", 1)
+
+    assert [image.label for image in evidence.images] == [
+        "screenshot",
+        "front view (width and height)",
+        "side view (depth and height)",
+        "top view (width and depth)",
+        "turntable frame 0 of 12",
+        "turntable frame 3 of 12",
+        "turntable frame 6 of 12",
+        "turntable frame 9 of 12",
+    ]
+    assert evidence.renders[1:4] == ["front.png", "side.png", "top.png"]
+
+
 def test_a_still_only_version_sends_the_still(tmp_path: Path) -> None:
     folder = _version(tmp_path)
     _png(folder / "screenshot.png")

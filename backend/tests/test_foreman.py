@@ -347,11 +347,67 @@ def test_a_compose_request_in_a_new_thread_reaches_the_designer_once_a_piece_is_
         designer={"replies": ["Composing Wohnen."]},
     )
     harness = make_harness(tool_state, models)
-    assert harness.turn("compose Wohnen with my bench")["specialist"] == "intake"  # nothing approved yet
+    # Nothing approved yet. (The message names no piece: a named piece lets the Designer answer.)
+    assert harness.turn("compose Wohnen with my furniture")["specialist"] == "intake"
     with ToolDeps(tool_state).session() as session:
         house_file.approve_version(session, "bench", 1)
         session.commit()
     assert harness.turn("compose Wohnen with my bench")["specialist"] == "designer"
+
+
+def test_revise_it_after_a_reply_naming_a_piece_reaches_the_designer_in_a_new_thread(tool_state) -> None:
+    with ToolDeps(tool_state).session() as session:
+        house_file.record_piece(session, "murphy-bed", "Oak queen Murphy bed")
+        house_file.record_version(session, "murphy-bed", 1)
+        session.commit()
+    models = fake_models(
+        foreman={"decisions": [decision("designer"), decision("designer")]},
+        designer={"replies": ["The id murphy-bed is in use; shall I revise murphy-bed instead?", "Which change?"]},
+    )
+    harness = make_harness(tool_state, models)
+    assert harness.turn("import my new murphy-bed design")["specialist"] == "designer"
+    assert harness.turn("Revise it")["specialist"] == "designer"
+    assert models["intake"].calls == 0
+
+
+def test_revise_it_with_no_piece_named_goes_to_intake(tool_state) -> None:
+    with ToolDeps(tool_state).session() as session:
+        house_file.record_piece(session, "murphy-bed", "Oak queen Murphy bed")
+        house_file.record_version(session, "murphy-bed", 1)
+        session.commit()
+    models = fake_models(foreman={"decisions": [decision("designer")]}, intake={"replies": ["What shall I revise?"]})
+    state = make_harness(tool_state, models).turn("revise it")
+    assert state["specialist"] == "intake"
+    assert models["designer"].calls == 0
+
+
+def test_a_photo_naming_a_piece_still_goes_to_intake(tool_state, tmp_path) -> None:
+    import io
+
+    from app.agent import uploads
+    from tests.blender_fakes import png_bytes
+
+    tool_state.settings.upload_root = tmp_path / "uploads"
+    with ToolDeps(tool_state).session() as session:
+        house_file.record_piece(session, "murphy-bed", "Oak queen Murphy bed")
+        house_file.record_version(session, "murphy-bed", 1)
+        session.commit()
+    models = fake_models(foreman={"decisions": [decision("designer")]}, intake={"replies": ["I read the photo."]})
+    harness = make_harness(tool_state, models)
+    harness.start()
+    with ToolDeps(tool_state).session() as session:
+        upload_id = str(
+            uploads.add_upload(
+                session, tool_state.settings.upload_root, harness.thread, io.BytesIO(png_bytes(8, 8)),
+                original_name="wall.png", max_bytes=1_000_000, max_per_thread=10,
+            ).id
+        )
+    state = harness.graph.invoke(
+        {"messages": [HumanMessage("the wall for murphy-bed", additional_kwargs={"upload_ids": [upload_id]})]},
+        config=harness.config,
+    )
+    assert state["specialist"] == "intake"
+    assert models["designer"].calls == 0
 
 
 def test_a_bound_piece_with_a_version_lets_the_builder_answer(tool_state, make_ctx) -> None:
@@ -426,7 +482,7 @@ def test_the_prompt_carries_the_guard_once_and_binds_only_the_headers_tools(tool
     assert system.count(UNTRUSTED_CONTENT_PREAMBLE) == 1
     assert system.endswith(UNTRUSTED_CONTENT_PREAMBLE)
     assert set(models["designer"].bound_tools) == {
-        "create_piece", "import_design", "revise_package", "cut_list", "room_fit", "compose_room", "search_guidelines",
+        "create_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit", "compose_room", "search_guidelines",
     }
     assert models["intake"].bound_tools == ["record_brief", "record_plan"]
     # The Foreman's own prompt is guarded and binds nothing.
@@ -675,3 +731,33 @@ def test_a_piece_with_no_ratings_gets_no_feedback_section(tool_state, make_ctx) 
     harness.start(package_id="bench")
     harness.turn("tweak it")
     assert "Recent render feedback" not in models["designer"].last_prompt_text()
+
+
+def test_an_empty_answer_is_asked_for_again_and_only_the_answer_is_kept(tool_state) -> None:
+    models = fake_models(foreman={"decisions": [decision("intake")]}, intake={"steps": ["", "What should I revise?"]})
+    harness = make_harness(tool_state, models)
+    state = harness.turn("Revise it")
+    assert models["intake"].calls == 2
+    assert "Your last answer to the owner was empty." in models["intake"].last_prompt_text()
+    assert last_reply(state) == "What should I revise?"
+    assert [m.content for m in state["messages"] if m.type == "ai"] == ["What should I revise?"]
+
+
+def test_two_empty_answers_end_the_turn_with_the_fixed_reply(tool_state, caplog) -> None:
+    models = fake_models(foreman={"decisions": [decision("intake")]}, intake={"steps": ["", "  "]})
+    with caplog.at_level("WARNING", logger="app"):
+        state = make_harness(tool_state, models).turn("Revise it")
+    assert models["intake"].calls == 2
+    # Every model call reaches the usage recorder (here unrecorded: the harness has no owner
+    # row): the Foreman's decision and both of Intake's answers.
+    assert [r.getMessage() for r in caplog.records].count("usage.unrecorded") == 3
+    assert last_reply(state) == "Intake gave no answer. Please rephrase your message or ask again."
+
+
+def test_the_fixed_reply_names_the_designer_by_role(tool_state, make_ctx) -> None:
+    create_run({"package_id": "bench", "spec": desk()}, replace(make_ctx(), approved=True))
+    models = fake_models(foreman={"decisions": [decision("designer")]}, designer={"steps": ["", ""]})
+    harness = make_harness(tool_state, models)
+    harness.start(package_id="bench")
+    state = harness.turn("Revise it")
+    assert last_reply(state) == "The Designer gave no answer. Please rephrase your message or ask again."

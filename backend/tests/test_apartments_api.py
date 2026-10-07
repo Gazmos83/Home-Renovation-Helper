@@ -71,6 +71,11 @@ def test_a_build_publishes_the_shell_files_and_serves_them_by_exact_name(client:
     assert client.get(f"{BASE}/versions/1/files/shell.json").status_code == 200
     for name in ("input.json", "../v1/status.json/x", "nope.txt", "frames/0"):
         assert client.get(f"{BASE}/versions/1/files/{name}").status_code == 404, name
+    frames = render_root / "shells/flat/v1/frames"
+    frames.mkdir()
+    (frames / "frame_000.png").write_bytes(b"png")
+    assert client.get(f"{BASE}/versions/1/files/frames/0").status_code == 200
+    assert client.get(f"{BASE}/versions/1/files/frames/frame_000.png").status_code == 200
 
 
 def test_each_build_is_a_new_version_and_the_first_is_untouched(client: TestClient, render_root: Path) -> None:

@@ -178,6 +178,19 @@ def test_every_build_file_is_served(client: TestClient, name: str) -> None:
     assert client.get(f"/packages/hall-bench/versions/1/files/{name}").status_code == 200
 
 
+def test_a_version_built_before_the_views_answers_not_found_for_them(
+    client: TestClient, render_root: Path
+) -> None:
+    create(client)
+    folder = render_root / "hall-bench" / "v1"
+    for name in ("front.png", "side.png", "top.png"):
+        (folder / name).unlink()
+    base = "/packages/hall-bench/versions/1/files"
+    assert client.get(f"{base}/screenshot.png").status_code == 200
+    for name in ("front.png", "side.png", "top.png"):
+        assert client.get(f"{base}/{name}").status_code == 404
+
+
 def test_frames_and_room_files_are_served_by_exact_name(client: TestClient, render_root: Path) -> None:
     create(client)
     folder = render_root / "hall-bench" / "v1"
@@ -191,6 +204,23 @@ def test_frames_and_room_files_are_served_by_exact_name(client: TestClient, rend
     assert client.get(f"{base}/frames/4").status_code == 404
     assert client.get(f"{base}/room/frames/0").status_code == 200
     assert client.get(f"{base}/room/still.png").status_code == 200
+
+
+def test_frames_are_also_served_by_the_file_names_the_viewer_loads(client: TestClient, render_root: Path) -> None:
+    create(client)
+    folder = render_root / "hall-bench" / "v1"
+    (folder / "frames").mkdir()
+    (folder / "frames" / "frame_003.png").write_bytes(b"png")
+    (folder / "room" / "frames").mkdir(parents=True)
+    (folder / "room" / "frames" / "frame_000.png").write_bytes(b"png")
+    (folder / "detail" / "frames").mkdir(parents=True)
+    (folder / "detail" / "frames" / "frame_001.png").write_bytes(b"png")
+    base = "/packages/hall-bench/versions/1/files"
+    assert client.get(f"{base}/frames/frame_003.png").status_code == 200
+    assert client.get(f"{base}/room/frames/frame_000.png").status_code == 200
+    assert client.get(f"{base}/detail/frames/frame_001.png").status_code == 200
+    for name in ("frames/frame_004.png", "frames/frame_3.png", "frames/frame_003.jpg", "frames/frame_../x.png"):
+        assert client.get(f"{base}/{name}").status_code == 404
 
 
 def test_the_detail_outputs_are_served_but_not_the_detail_file_or_log(

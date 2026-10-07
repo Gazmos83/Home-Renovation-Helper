@@ -1,7 +1,8 @@
 """Evidence for a render review, assembled by code (render-reviewer).
 
-`collect` chooses the screenshot, an even spread of turntable frames or the
-still, and a room still or two room frames. Spec facts are numbers from the
+`collect` chooses the screenshot, the front, side and top views when the build
+made them, an even spread of turntable frames or the still, and a room still or
+two room frames. Spec facts are numbers from the
 stored document. A version with nothing to look at is refused.
 """
 
@@ -24,7 +25,13 @@ ASPECTS = Literal["brief", "proportion", "material", "placement", "construction"
 SOURCES = Literal["brief", "spec", "rule"]
 SEVERITIES = Literal["minor", "major"]
 
-MAX_IMAGES = 6
+MAX_IMAGES = 10
+# The build's straight-on views and the dimension lines each shows (piece-inspector).
+VIEWS = (
+    ("front.png", "front view (width and height)"),
+    ("side.png", "side view (depth and height)"),
+    ("top.png", "top view (width and depth)"),
+)
 MAX_ITEMS = 20
 
 
@@ -171,6 +178,10 @@ def collect(root: Path, package_id: str, version: int) -> Evidence:
         evidence.images.append(
             EvidenceImage("screenshot", screenshot, "screenshot.png")
         )
+    for name, label in VIEWS:
+        view = _png(folder, name)
+        if view is not None:
+            evidence.images.append(EvidenceImage(label, view, name))
 
     frames_dir = folder / "frames"
     n = _frame_count(frames_dir)

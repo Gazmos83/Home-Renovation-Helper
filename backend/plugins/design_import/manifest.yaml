@@ -1,7 +1,7 @@
 name: design_import
-description: Import a design file the owner attached as a new piece.
+description: Import a design file the owner attached as a new piece, or as a piece's next version.
 kind: builtin
 role: designer
-tools: [import_design]
+tools: [import_design, import_design_version]
 enabled_by_default: true
 toggleable: false

@@ -75,6 +75,7 @@ def test_every_route_needs_the_session(client: TestClient) -> None:
         ("get", f"/chat/threads/{thread}", None),
         ("post", f"/chat/threads/{thread}/turns", {"message": "hi"}),
         ("post", f"/chat/threads/{thread}/resume", {"confirmation_id": "x", "answer": "yes"}),
+        ("delete", f"/chat/threads/{thread}", None),
     ):
         response = getattr(anonymous, method)(path, **({"json": body} if body is not None else {}))
         assert response.status_code == 401, path
@@ -399,6 +400,7 @@ def test_a_built_and_reviewed_piece_shows_in_the_progress(client: TestClient, re
     assert done["reviewed"]["detail"] == "2 open"
     assert body["open_review_items"] == 2
     assert body["screenshot"] == "/packages/hall-bench/versions/1/files/screenshot.png"
+    assert body["viewer"] is None  # the status says succeeded, but no frames or viewer were written
     text = json.dumps(body).lower()
     for word in ("deepseek", "gpt-", "token", "cost", "/home/", str(render_root).lower()):
         assert word not in text
@@ -408,6 +410,12 @@ def test_a_built_and_reviewed_piece_shows_in_the_progress(client: TestClient, re
         session.commit()
     body = client.get(f"/chat/threads/{thread}/progress").json()
     assert body["approved_version"] == 1
+
+    (folder / "frames").mkdir(exist_ok=True)
+    (folder / "frames" / "frame_000.png").write_bytes(b"png")
+    (folder / "viewer.html").write_text("<html></html>")
+    body = client.get(f"/chat/threads/{thread}/progress").json()
+    assert body["viewer"] == "/packages/hall-bench/versions/1/files/viewer.html"
 
 
 # --- history (foreman-routing-fixes) ----------------------------------------------
@@ -442,6 +450,21 @@ def test_a_reply_sent_with_a_tool_call_is_shown_without_the_call() -> None:
         {"role": "assistant", "text": "It is building."},
     ]
     assert "secret" not in json.dumps(shown) and "Created" not in json.dumps(shown)
+
+
+def test_an_owner_message_names_the_files_sent_with_it() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    shown = _history_of([
+        HumanMessage("this is my flat", additional_kwargs={"upload_ids": ["u1", "u2"]}),
+        AIMessage("I can see the plan."),
+        HumanMessage("thanks"),
+    ])
+    assert shown == [
+        {"role": "owner", "text": "this is my flat", "upload_ids": ["u1", "u2"]},
+        {"role": "assistant", "text": "I can see the plan."},
+        {"role": "owner", "text": "thanks"},
+    ]
 
 
 def test_an_answered_confirmation_is_one_line_before_the_reply_that_followed(client: TestClient) -> None:
@@ -486,3 +509,109 @@ def test_the_words_sent_with_a_gated_call_show_above_the_pending_card(client: Te
     after = client.get(f"/chat/threads/{thread}").json()["messages"]
     assert [m["role"] for m in after] == ["owner", "assistant", "confirmation", "assistant"]
     assert after[1]["text"] == "Your hall is 1200 by 3000, so here is the brief."
+
+
+# --- deleting a conversation (piece-versions-and-chat-delete) --------------------------------------
+
+
+def _conversation_with_a_piece_and_uploads(client: TestClient, tmp_path: Path) -> tuple[str, list[str]]:
+    from app.blender import storage
+    from tests.blender_fakes import png_bytes
+
+    client.app.state.settings.upload_root = tmp_path / "uploads"
+    install(client, fake_models(
+        foreman={"decisions": [{"specialist": "intake", "reason": "t"}]},
+        intake={"replies": ["Noted."]},
+    ))
+    thread = start(client, title="Murphy bed")
+    assert client.post(f"/chat/threads/{thread}/turns", json={"message": "hello"}).status_code == 200
+    uploaded = [
+        client.post(f"/chat/threads/{thread}/uploads", files={"file": (f"p{n}.png", png_bytes(8, 8), "image/png")})
+        .json()["upload_id"]
+        for n in (1, 2)
+    ]
+    root = client.app.state.settings.render_root
+    with Session(client.app.state.engine) as session:
+        house_file.record_piece(session, "murphy-bed", "Murphy bed")
+        for version in (1, 2):
+            folder = storage.version_dir(root, "murphy-bed", version)
+            folder.mkdir(parents=True)
+            (folder / storage.INPUT_FILE).write_text("{}", encoding="utf-8")
+            house_file.record_version(session, "murphy-bed", version)
+        house_file.touch_thread(session, thread, package_id="murphy-bed")
+        session.commit()
+    return thread, uploaded
+
+
+def test_deleting_a_conversation_removes_its_memory_index_and_uploads_and_keeps_the_piece(
+    client: TestClient, tmp_path: Path
+) -> None:
+    thread, uploaded = _conversation_with_a_piece_and_uploads(client, tmp_path)
+    upload_dir = tmp_path / "uploads" / thread
+    assert len(list(upload_dir.iterdir())) == 2
+
+    response = client.delete(f"/chat/threads/{thread}")
+    assert response.status_code == 204
+
+    assert client.get(f"/chat/threads/{thread}").status_code == 404
+    assert thread not in [t["thread_id"] for t in client.get("/chat/threads").json()]
+    for upload_id in uploaded:
+        assert client.get(f"/uploads/{upload_id}").status_code == 404
+    assert not upload_dir.exists()
+    memory = client.app.state.checkpointer.get_tuple({"configurable": {"thread_id": f"chat:{thread}", "checkpoint_ns": ""}})
+    assert memory is None
+    assert {"package_id": "murphy-bed", "versions": [2, 1]} in client.get("/packages").json()
+    with Session(client.app.state.engine) as session:
+        piece = {p["package_id"]: p for p in house_file.pieces(session, client.app.state.settings.render_root)}
+    assert [v["version"] for v in piece["murphy-bed"]["versions"]] == [1, 2]
+
+
+def test_a_conversation_with_a_running_turn_is_not_deleted(client: TestClient, tmp_path: Path) -> None:
+    from uuid import UUID
+
+    from app.api import chat as chat_api
+
+    thread, _ = _conversation_with_a_piece_and_uploads(client, tmp_path)
+    chat_api._running.add(UUID(thread))
+    try:
+        response = client.delete(f"/chat/threads/{thread}")
+    finally:
+        chat_api._running.discard(UUID(thread))
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"failure_class": "turn_running", "reason": chat_api.TURN_RUNNING}
+    assert client.get(f"/chat/threads/{thread}").status_code == 200
+
+
+def test_a_memory_failure_deletes_nothing(client: TestClient, tmp_path: Path, monkeypatch) -> None:
+    from app.agent import chat as chat_module
+
+    thread, uploaded = _conversation_with_a_piece_and_uploads(client, tmp_path)
+
+    def broken(graph, thread_id) -> None:
+        raise RuntimeError("database down")
+
+    monkeypatch.setattr(chat_module, "forget", broken)
+    response = client.delete(f"/chat/threads/{thread}")
+    assert response.status_code == 503
+    assert response.json()["detail"]["failure_class"] == "unavailable"
+    assert client.get(f"/chat/threads/{thread}").status_code == 200
+    assert client.get(f"/uploads/{uploaded[0]}").status_code == 200
+
+
+def test_deleting_an_unknown_conversation_is_not_found(client: TestClient) -> None:
+    install(client, fake_models())
+    assert client.delete(f"/chat/threads/{uuid4()}").status_code == 404
+
+
+def test_the_running_mark_is_cleared_after_a_turn_that_fails(client: TestClient) -> None:
+    from app.api import chat as chat_api
+
+    install(client, fake_models(
+        foreman={"decisions": [{"specialist": "intake", "reason": "t"}]},
+        intake={"error": RuntimeError("boom")},
+    ))
+    thread = start(client)
+    with pytest.raises(RuntimeError):
+        client.post(f"/chat/threads/{thread}/turns", json={"message": "hello"})
+    assert chat_api._running == set()
+

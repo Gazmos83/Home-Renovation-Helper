@@ -26,6 +26,9 @@ BUILD_FILES = (
     "cutlist.csv",
     "hardware.csv",
     "screenshot.png",
+    "front.png",
+    "side.png",
+    "top.png",
 )
 
 
@@ -80,7 +83,8 @@ def write_build_files(out: Path, *, spec: dict | None = None) -> None:
     for name, fields in (("cutlist.csv", ["id", "qty"]), ("hardware.csv", ["id", "item"])):
         with (out / name).open("w", newline="", encoding="utf-8") as handle:
             csv.writer(handle).writerow(fields)
-    (out / "screenshot.png").write_bytes(png_bytes(800, 500))
+    for name in ("screenshot.png", "front.png", "side.png", "top.png"):
+        (out / name).write_bytes(png_bytes(800, 500))
 
 
 def write_shell_files(out: Path) -> None:

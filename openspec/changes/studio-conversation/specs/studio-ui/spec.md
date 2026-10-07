@@ -14,7 +14,7 @@ The Studio SHALL list the owner's conversations with their title, the piece each
 ## ADDED Requirements
 
 ### Requirement: The conversation view is the homeowner's chat
-The conversation view SHALL show the owner's messages and the replies in order, a composer that sends one message as one turn and shows the reply when it arrives, and the turn's refusal in words next to the composer when the service refuses it. While a turn is running the composer SHALL be disabled and say so. A reply's specialist SHALL be shown by role name only.
+The conversation view SHALL show the owner's messages and the replies in order, a composer that sends one message as one turn and shows the reply when it arrives, and the turn's refusal in words next to the composer when the service refuses it. While a turn is running the composer SHALL be disabled and say so. A reply's specialist SHALL be shown by role name only. A file route of a piece, a composition or an apartment shell in a reply SHALL be shown as a link that opens in a new tab; no other address in a reply SHALL be linked.
 
 #### Scenario: Send and read
 - **WHEN** the owner types "I want a bench for the hall" and sends it
@@ -23,6 +23,10 @@ The conversation view SHALL show the owner's messages and the replies in order, 
 #### Scenario: Refused turn
 - **WHEN** the service answers the turn with 503 and the memory reason
 - **THEN** the reason is shown next to the composer and the owner's message is not kept in the list
+
+#### Scenario: Render route in a reply
+- **WHEN** a reply says the turntable "will be at /packages/hall-bench/versions/1/files/viewer.html."
+- **THEN** that route is a link opening in a new tab, without the full stop, and an `https://` address in a reply stays plain text
 
 ### Requirement: A pending confirmation is answered in the view
 When a reply carries a pending confirmation the view SHALL show it as a card with its subject, summary and proposal, a **Yes** and a **No** button and an optional reason, and SHALL hide the composer until it is answered. Answering SHALL send the owner's answer on the thread and show the reply that follows. Reopening a conversation with a confirmation still pending SHALL show the card again.
@@ -51,7 +55,7 @@ The conversation view SHALL let the owner add PNG or JPEG images to the conversa
 - **THEN** the refusal's reason is shown and nothing is attached
 
 ### Requirement: The conversation view shows the project's progress
-The conversation view SHALL show a project panel with the bound piece, its latest version and build state, the progress steps (brief confirmed, piece created, built, draft or preview rendered, reviewed with open items, detail pass, final) each marked done or not, the next step the owner can ask for, the latest screenshot or still when one exists, and the piece's open generator-extension requests. The panel SHALL refresh while a build is queued or running and after every turn. It SHALL show nothing when the service's progress read is refused other than the refusal's reason.
+The conversation view SHALL show a project panel with the bound piece, its latest version and build state, the progress steps (brief confirmed, piece created, built, draft or preview rendered, reviewed with open items, detail pass, final) each marked done or not, the next step the owner can ask for, the latest still when one exists and otherwise the screenshot, a link opening the latest turntable viewer in a new tab once that turntable is published, and the piece's open generator-extension requests. The panel SHALL refresh while a build is queued or running and after every turn. It SHALL show nothing when the service's progress read is refused other than the refusal's reason.
 
 #### Scenario: After the first build
 - **WHEN** the Builder's build of version 1 finishes while the view is open
@@ -60,3 +64,7 @@ The conversation view SHALL show a project panel with the bound piece, its lates
 #### Scenario: Open review items
 - **WHEN** the latest review of the piece has two open items
 - **THEN** the panel shows "reviewed, 2 open" and links to the piece's page
+
+#### Scenario: Turntable finished
+- **WHEN** the draft turntable of version 1 has finished
+- **THEN** the panel shows the still and an "Open the turntable viewer" link to version 1's viewer

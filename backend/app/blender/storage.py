@@ -37,6 +37,10 @@ BUILD_FILES: Final[dict[str, str]] = {
     "cutlist.csv": "text/csv",
     "hardware.csv": "text/csv",
     "screenshot.png": "image/png",
+    # The straight-on Workbench views, with the dimension lines (piece-inspector).
+    "front.png": "image/png",
+    "side.png": "image/png",
+    "top.png": "image/png",
 }
 
 # What a successful shell build publishes (an apartment, not a piece).

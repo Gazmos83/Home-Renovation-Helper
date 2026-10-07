@@ -41,13 +41,23 @@ class TurnResult:
     failure_reason: str | None = None
 
 
+def checkpoint_thread(thread_id: UUID) -> str:
+    """The checkpointer's id for a conversation."""
+    return f"chat:{thread_id}"
+
+
+def forget(graph: Any, thread_id: UUID) -> None:
+    """Delete a conversation's memory from the checkpointer (piece-versions-and-chat-delete)."""
+    graph.checkpointer.delete_thread(checkpoint_thread(thread_id))
+
+
 def _config(
     thread_id: UUID, owner_id: UUID, run_config: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     config = dict(run_config or {})
     config["configurable"] = {
         **config.get("configurable", {}),
-        "thread_id": f"chat:{thread_id}",
+        "thread_id": checkpoint_thread(thread_id),
         "owner_id": str(owner_id),
         "chat_thread": str(thread_id),
     }
@@ -186,8 +196,9 @@ def _confirmation_line(answered: dict[str, Any]) -> str:
     return line
 
 
-def history(graph: Any, *, thread_id: UUID, owner_id: UUID) -> list[dict[str, str]]:
-    """The owner's messages, every reply with text, and each answered confirmation, in order.
+def history(graph: Any, *, thread_id: UUID, owner_id: UUID) -> list[dict[str, Any]]:
+    """The owner's messages (with the ids of the files sent with each), every reply with
+    text, and each answered confirmation, in order.
 
     A reply sent together with tool calls is shown; tool calls, arguments and
     results are not. An answered confirmation is one line from the tool message
@@ -206,7 +217,10 @@ def history(graph: Any, *, thread_id: UUID, owner_id: UUID) -> list[dict[str, st
     shown = []
     for message in messages:
         if isinstance(message, HumanMessage):
-            shown.append({"role": "owner", "text": _text(message.content)})
+            entry = {"role": "owner", "text": _text(message.content)}
+            if message.additional_kwargs.get("upload_ids"):
+                entry["upload_ids"] = list(message.additional_kwargs["upload_ids"])
+            shown.append(entry)
         elif isinstance(message, AIMessage) and _text(message.content).strip():
             shown.append({"role": "assistant", "text": _text(message.content)})
         elif isinstance(message, ToolMessage) and isinstance(message.additional_kwargs.get("confirmation"), dict):

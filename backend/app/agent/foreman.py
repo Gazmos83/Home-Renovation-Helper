@@ -45,6 +45,7 @@ from app.agent.models.budgets import Budgets
 from app.agent.models.openrouter_client import gateway_errors
 from app.agent.models.routing import IMAGE_SLOTS
 from app.agent.prompts import (
+    EMPTY_ANSWER_NOTE,
     TOOL_ROUND_CAP_NOTE,
     compose_agent_prompt,
     composition_note,
@@ -88,6 +89,8 @@ SPECIALIST_LABELS: Final[dict[str, str]] = {
     "reviewer": "the Reviewer",
     "researcher": "the Researcher",
 }
+# The turn's reply when a specialist answers empty twice (piece-versions-and-chat-delete).
+EMPTY_REPLY: Final = "{role} gave no answer. Please rephrase your message or ask again."
 _TOOL_NAME: Final = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
@@ -138,6 +141,7 @@ class ChatState(TypedDict, total=False):
     detail_ready: bool
     image_attached: bool
     design_attached: bool
+    piece_named: bool
     brief: dict[str, Any]
     bound_tools: dict[str, list[str]]
 
@@ -235,6 +239,21 @@ def _text_of(content: Any) -> str:
     return content if isinstance(content, str) else str(content)
 
 
+def is_empty_answer(reply: Any) -> bool:
+    """A final answer with no tool call and no text (string or text blocks) for the owner."""
+    if getattr(reply, "tool_calls", None):
+        return False
+    content = getattr(reply, "content", "")
+    if isinstance(content, str):
+        return not content.strip()
+    texts = [
+        part if isinstance(part, str) else str(part.get("text", ""))
+        for part in content
+        if isinstance(part, str) or (isinstance(part, dict) and part.get("type") == "text")
+    ]
+    return not "".join(texts).strip()
+
+
 def with_callbacks(config: RunnableConfig, *handlers: Any) -> RunnableConfig:
     """`config` with extra callback handlers, whatever form its callbacks take."""
     existing = config.get("callbacks")
@@ -254,6 +273,25 @@ def _last_ai_tool_calls(state: ChatState) -> list[dict[str, Any]]:
         if getattr(message, "type", None) == "ai":
             return list(getattr(message, "tool_calls", None) or [])
     return []
+
+
+def piece_named(messages: list[AnyMessage], pieces: list[dict[str, Any]]) -> bool:
+    """Whether the owner's latest message, or the last reply with text before it, names a
+    house-file piece by its package id (as a whole word) or its name (any case)."""
+    texts: list[str] = []
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage) and not texts:
+            texts.append(_text_of(message.content))
+        elif texts and isinstance(message, AIMessage) and _text_of(message.content).strip():
+            texts.append(_text_of(message.content))
+            break
+    lowered = " ".join(texts).casefold()
+    for piece in pieces:
+        package_id = str(piece["package_id"]).casefold()
+        name = str(piece.get("name") or "").casefold().strip()
+        if re.search(rf"(?<![\w-]){re.escape(package_id)}(?![\w-])", lowered) or (name and name in lowered):
+            return True
+    return False
 
 
 def _last_human_text(state: ChatState) -> str:
@@ -417,6 +455,7 @@ def build_graph(
             "detail_ready": detail_ready,
             "image_attached": image_attached,
             "design_attached": design_attached,
+            "piece_named": piece_named(state.get("messages", []), pieces),
             "round_count": 0,
             "specialist": "",
             "bound_tools": tools_this_turn,
@@ -500,7 +539,16 @@ def build_graph(
         if chosen == "lighting" and not state.get("detail_ready"):
             chosen = "builder" if buildable else ("designer" if state.get("brief") else "intake")
         composing = chosen == "designer" and state.get("compose_ready")
-        if not buildable and not state.get("brief") and chosen not in ("reviewer", "researcher") and not composing:
+        # A piece the owner or the last reply names can be revised, rebuilt or given an imported
+        # version by the Designer, even here (piece-versions-and-chat-delete).
+        naming = chosen == "designer" and state.get("piece_named")
+        if (
+            not buildable
+            and not state.get("brief")
+            and chosen not in ("reviewer", "researcher")
+            and not composing
+            and not naming
+        ):
             chosen = "intake"
         # Only Intake reads plans and photos, so an image turn the model gave the Designer goes to Intake.
         if chosen == "designer" and state.get("image_attached"):
@@ -535,26 +583,37 @@ def build_graph(
             capped = round_count >= MAX_TOOL_ROUNDS
             if capped:
                 notes.append(TOOL_ROUND_CAP_NOTE)
-            system = compose_agent_prompt(instruction.text, *notes)
             bound_tools = bound_for(state)
             selected = [] if capped else [tool.structured() for tool in bound_tools.values()]
-            try:
+
+            def answer(extra: list[str]) -> Any:
+                system = compose_agent_prompt(instruction.text, *notes, *extra)
                 prompt, counted = prompt_for(instruction.slot, system, state, selected)
+                with gateway_errors(operation=f"chat.{name}"):
+                    return (
+                        model_provider(instruction.slot)
+                        .bind_tools(selected)
+                        .invoke(
+                            prompt,
+                            config=with_callbacks(
+                                config, recorder(instruction.slot, config, estimated_tokens=counted)
+                            ),
+                        )
+                    )
+
+            try:
+                reply = answer([])
+                # An empty answer is asked for once more, then replaced: the owner always
+                # sees an answer (piece-versions-and-chat-delete).
+                if is_empty_answer(reply):
+                    reply = answer([EMPTY_ANSWER_NOTE])
+                    if is_empty_answer(reply):
+                        role = SPECIALIST_LABELS.get(name, name)
+                        reply = AIMessage(EMPTY_REPLY.format(role=role[:1].upper() + role[1:]))
             except BudgetRefused as error:
                 return Command(
                     update={"messages": [AIMessage(refusal_message(name, error))]},
                     goto=END,
-                )
-            with gateway_errors(operation=f"chat.{name}"):
-                reply = (
-                    model_provider(instruction.slot)
-                    .bind_tools(selected)
-                    .invoke(
-                        prompt,
-                        config=with_callbacks(
-                            config, recorder(instruction.slot, config, estimated_tokens=counted)
-                        ),
-                    )
                 )
             goto: Literal["tools", "__end__"] = "tools" if getattr(reply, "tool_calls", None) else END
             return Command(

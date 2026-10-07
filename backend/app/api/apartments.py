@@ -28,7 +28,13 @@ from sqlalchemy.orm import Session
 
 from app.agent import house_file
 from app.api.gate import require_owner
-from app.api.packages import launcher, not_found, refused, require_generation
+from app.api.packages import (
+    frame_index,
+    launcher,
+    not_found,
+    refused,
+    require_generation,
+)
 from app.blender import runner, storage
 from app.packages import service
 from app.render import benchmark_store
@@ -49,7 +55,7 @@ router = APIRouter(
 )
 
 ALLOWED_FIELDS: Final = frozenset({"kind", "tier"})
-_FRAME: Final = re.compile(r"^frames/(\d{1,4})$")
+_FRAME: Final = re.compile(r"^frames/(?:(\d{1,4})|frame_(\d{3,4})\.png)$")  # as packages
 _EXTRA_FILES: Final[dict[str, str]] = {
     "still.png": "image/png",
     "viewer.html": "text/html",
@@ -183,7 +189,7 @@ def read_shell_file(slug: str, version: int, name: str, request: Request):
     if name in served:
         path, media_type = folder / name, served[name]
     elif (frame := _FRAME.match(name)) is not None:
-        path, media_type = folder / "frames" / f"frame_{int(frame.group(1)):03d}.png", "image/png"
+        path, media_type = folder / "frames" / f"frame_{frame_index(frame):03d}.png", "image/png"
     else:
         raise not_found()
     root = _root(request).resolve()

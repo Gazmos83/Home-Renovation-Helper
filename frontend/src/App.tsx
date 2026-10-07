@@ -8,6 +8,7 @@ import Conversations from "./routes/Conversations";
 import GuidelineNotes from "./routes/GuidelineNotes";
 import Login from "./routes/Login";
 import Pieces from "./routes/Pieces";
+import PieceInspector from "./routes/PieceInspector";
 import PriceList from "./routes/PriceList";
 import Remnants from "./routes/Remnants";
 import Rooms from "./routes/Rooms";
@@ -110,6 +111,10 @@ export default function App() {
           element={signedIn ? <Conversation /> : <Navigate to="/login" replace />}
         />
         <Route path="/pieces" element={signedIn ? <Pieces /> : <Navigate to="/login" replace />} />
+        <Route
+          path="/pieces/:packageId/versions/:version"
+          element={signedIn ? <PieceInspector /> : <Navigate to="/login" replace />}
+        />
         <Route path="/rooms" element={signedIn ? <Rooms /> : <Navigate to="/login" replace />} />
         <Route path="/price-list" element={signedIn ? <PriceList /> : <Navigate to="/login" replace />} />
         <Route path="/snapshots" element={signedIn ? <Snapshots /> : <Navigate to="/login" replace />} />

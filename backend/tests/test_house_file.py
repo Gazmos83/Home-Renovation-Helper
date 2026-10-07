@@ -297,3 +297,29 @@ def test_a_placed_piece_unapproved_later_is_kept_and_marked(db_session, render_r
     item = house_file.compositions(db_session, render_root)[0]["items"][0]
     assert item["name"] == "listening-wall v4"
     assert item["approved"] is False and item["no_longer_approved"] is True
+
+
+def test_deleting_a_thread_takes_its_settings_and_upload_records_and_keeps_the_piece(db_session) -> None:
+    from app.db.models import ThreadToolSetting, Upload
+
+    house_file.record_piece(db_session, "hall-bench", "Hall bench")
+    house_file.record_version(db_session, "hall-bench", 1)
+    house_file.record_review(db_session, "hall-bench", 1, ["screenshot.png"], [])
+    thread = house_file.create_thread(db_session, "Hall bench", package_id=None)
+    house_file.touch_thread(db_session, thread.id, package_id="hall-bench")
+    db_session.add(ThreadToolSetting(thread_id=thread.id, plugin="room_fit", enabled=False))
+    db_session.add(Upload(thread_id=thread.id, kind="png", size_bytes=3, original_name="a.png"))
+    db_session.flush()
+    thread_id = thread.id
+    db_session.expunge_all()
+
+    assert house_file.delete_thread(db_session, thread_id) is True
+    assert house_file.get_thread(db_session, thread_id) is None
+    assert db_session.query(ThreadToolSetting).filter_by(thread_id=thread_id).count() == 0
+    assert db_session.query(Upload).filter_by(thread_id=thread_id).count() == 0
+    assert house_file.version_row(db_session, "hall-bench", 1) is not None
+    assert len(house_file.reviews_for(db_session, "hall-bench", 1)) == 1
+    assert house_file.delete_thread(db_session, thread_id) is False
+    # A turn that touches a deleted thread changes nothing.
+    house_file.touch_thread(db_session, thread_id, package_id="hall-bench")
+    assert house_file.get_thread(db_session, thread_id) is None

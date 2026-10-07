@@ -39,6 +39,8 @@ class TierArguments:
     resolution: int
     engine: str
     device: str = "CPU"
+    # Show the piece's dimension lines (a piece's own turntable only, piece-inspector).
+    dimensions: bool = False
 
 
 def _after_separator(argv: list[str], flags: str) -> list[str]:
@@ -68,7 +70,11 @@ def _tier_from(parsed: argparse.Namespace) -> TierArguments:
             f"arguments: --cycles-device must be one of {', '.join(CYCLES_DEVICES)}"
         )
     return TierArguments(
-        parsed.tier_frames, parsed.tier_resolution, parsed.tier_engine, parsed.cycles_device
+        parsed.tier_frames,
+        parsed.tier_resolution,
+        parsed.tier_engine,
+        parsed.cycles_device,
+        getattr(parsed, "dimensions", False),
     )
 
 
@@ -103,6 +109,7 @@ def parse_render_arguments(argv: list[str]) -> tuple[Path, Path, TierArguments]:
     parser = _ArgumentParser(add_help=False)
     parser.add_argument("--blend", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--dimensions", action="store_true")
     _add_tier_arguments(parser)
     parsed = parser.parse_args(_after_separator(argv, "--blend, --out and the --tier-* values"))
     return _readable_file(parsed.blend, "blend"), _new_output(parsed.out), _tier_from(parsed)

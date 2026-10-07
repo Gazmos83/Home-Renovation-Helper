@@ -1,6 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ThumbsDown, ThumbsUp } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { api, ApiError, downloads, type RenderItem } from "../lib/api";
 import { FieldError } from "../lib/form";
 import { Badge } from "@/components/ui/badge";
@@ -147,6 +148,11 @@ function Downloads({ packageId, version }: { packageId: string; version: number 
         <a href={downloads.bundle(packageId, version)} download={`${packageId}-v${version}.zip`} className="underline">
           Download bundle (version {version})
         </a>
+      )}
+      {info.data?.status === "succeeded" && (
+        <Link to={`/pieces/${encodeURIComponent(packageId)}/versions/${version}`} className="underline">
+          Inspect version {version}
+        </Link>
       )}
     </p>
   );

@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import Conversation from "./Conversation";
 
-type Msg = { role: "owner" | "assistant" | "confirmation"; text: string };
+type Msg = { role: "owner" | "assistant" | "confirmation"; text: string; upload_ids?: string[] };
 type Reply = { status?: number; body?: unknown };
 
 const STEPS = ["brief", "piece", "built", "rendered", "reviewed", "detail", "final"];
@@ -14,7 +14,7 @@ function progress(done: string[], extra: Record<string, unknown> = {}) {
     package_id: "hall-bench", name: "Hall bench", latest_version: 1, approved_version: null, build_status: "succeeded",
     steps: STEPS.map((step) => ({ step, done: done.includes(step), detail: null })),
     next_step: "Ask for a draft render", open_review_items: 0, open_requests: [],
-    screenshot: null, still: null, ...extra,
+    screenshot: null, still: null, viewer: null, ...extra,
   };
 }
 
@@ -54,6 +54,8 @@ beforeEach(() => {
         return json({ body: { thread_id: "t1", title: "Hall bench", package_id: null, created_at: "", last_turn_at: "", messages, pending } });
       if (call === "GET /chat/threads/t1/progress") return json({ body: progressNow });
       if (call === "GET /chat/threads/t1/tools") return json({ body: tools });
+      if (call === "GET /chat/threads/t1/uploads")
+        return json({ body: [{ upload_id: "u1", kind: "jpeg", size_bytes: 3, original_name: "blueprint.jpeg" }] });
       const approval = /^(PUT|DELETE) \/packages\/hall-bench\/versions\/(\d)\/approval$/.exec(call);
       if (approval) {
         const version = Number(approval[2]);
@@ -195,6 +197,20 @@ test("an attached plan is shown as a thumbnail and sent with the turn", async ()
   );
 });
 
+test("a sent plan keeps its thumbnail in the history after the reply", async () => {
+  messages = [{ role: "owner", text: "This is my flat", upload_ids: ["u1"] }, reply("I can see the plan.")];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  expect(await list.findByRole("img", { name: "blueprint.jpeg" })).toHaveAttribute("src", "/uploads/u1");
+});
+
+test("the uploads are not read when no message carried a file", async () => {
+  messages = [owner("a hall bench"), reply("How wide?")];
+  show();
+  await screen.findByText("How wide?");
+  expect(calls.some(([, url]) => url === "/chat/threads/t1/uploads")).toBe(false);
+});
+
 test("a refused upload shows the service's reason and attaches nothing", async () => {
   const user = userEvent.setup();
   upload = () => ({ status: 413, body: { detail: { failure_class: "too_large", reason: "the image is too large" } } });
@@ -229,6 +245,76 @@ test("open review items are counted and link to the piece's page", async () => {
   const panel = within(await screen.findByRole("region", { name: "Project" }));
   expect(await panel.findByText(/2 open review items/)).toBeInTheDocument();
   expect(panel.getByRole("link", { name: "Open the piece's page" })).toHaveAttribute("href", "/pieces");
+});
+
+test("a finished turntable shows its still and a link to its viewer", async () => {
+  progressNow = progress(["brief", "piece", "built", "rendered"], {
+    screenshot: "/packages/hall-bench/versions/1/files/screenshot.png",
+    still: "/packages/hall-bench/versions/1/files/still.png",
+    viewer: "/packages/hall-bench/versions/1/files/viewer.html",
+  });
+  show();
+  const panel = within(await screen.findByRole("region", { name: "Project" }));
+  const link = await panel.findByRole("link", { name: "Open the turntable viewer" });
+  expect(link).toHaveAttribute("href", "/packages/hall-bench/versions/1/files/viewer.html");
+  expect(link).toHaveAttribute("target", "_blank");
+  expect(panel.getByRole("img", { name: /hall-bench/ })).toHaveAttribute("src", "/packages/hall-bench/versions/1/files/still.png");
+});
+
+test("no viewer link is offered before the turntable is published", async () => {
+  progressNow = progress(["brief", "piece", "built"]);
+  show();
+  const panel = within(await screen.findByRole("region", { name: "Project" }));
+  await panel.findByText("Built");
+  expect(panel.queryByRole("link", { name: "Open the turntable viewer" })).not.toBeInTheDocument();
+});
+
+test("a built piece links to its inspector, a building one does not", async () => {
+  progressNow = progress(["brief", "piece", "built"]);
+  show();
+  const panel = within(await screen.findByRole("region", { name: "Project" }));
+  expect(await panel.findByRole("link", { name: "Inspect version 1" })).toHaveAttribute(
+    "href", "/pieces/hall-bench/versions/1",
+  );
+});
+
+test("no inspector link while the build is running", async () => {
+  progressNow = progress(["brief", "piece"], { build_status: "running" });
+  show();
+  const panel = within(await screen.findByRole("region", { name: "Project" }));
+  await panel.findByText("Built");
+  expect(panel.queryByRole("link", { name: /Inspect/ })).not.toBeInTheDocument();
+});
+
+test("a render route in a reply is a link without its full stop; other addresses stay text", async () => {
+  messages = [
+    owner("render it"),
+    reply("Started a draft turntable of hall-bench version 1. When it finishes it will be at /packages/hall-bench/versions/1/files/viewer.html."),
+    reply("See https://example.com/packages/x/versions/1/files/viewer.html or /admin/models."),
+  ];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  const link = await list.findByRole("link", { name: "/packages/hall-bench/versions/1/files/viewer.html" });
+  expect(link).toHaveAttribute("href", "/packages/hall-bench/versions/1/files/viewer.html");
+  expect(link).toHaveAttribute("target", "_blank");
+  expect(list.getAllByRole("link")).toHaveLength(1);
+  expect(list.getByText(/https:\/\/example\.com/)).toBeInTheDocument();
+});
+
+test("a route the reply puts in backticks is linked without them", async () => {
+  messages = [reply("The viewer will be here: `/packages/hall-bench/versions/1/files/viewer.html` once done.")];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  const link = await list.findByRole("link");
+  expect(link).toHaveAttribute("href", "/packages/hall-bench/versions/1/files/viewer.html");
+});
+
+test("a route the owner typed stays text", async () => {
+  messages = [owner("what is at /packages/hall-bench/versions/1/files/viewer.html")];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  await list.findByText(/what is at/);
+  expect(list.queryByRole("link")).not.toBeInTheDocument();
 });
 
 test("the owner can switch a toggleable tool off", async () => {

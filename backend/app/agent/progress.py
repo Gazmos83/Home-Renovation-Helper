@@ -149,4 +149,11 @@ def piece_progress(
         "still": _route(package_id, latest, "still.png")
         if folder and package_id and (folder / "still.png").is_file()
         else None,
+        # Published means the viewer and its first frame are both there (as `describe_renders`).
+        "viewer": _route(package_id, latest, "viewer.html")
+        if folder
+        and package_id
+        and (folder / "viewer.html").is_file()
+        and (folder / "frames" / "frame_000.png").is_file()
+        else None,
     }

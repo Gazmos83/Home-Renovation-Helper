@@ -1,6 +1,6 @@
 """The homeowner's conversation with the Foreman (homeowner-chat). Owner-gated.
 
-A thread is started, listed and read; a turn is one message in and one reply out;
+A thread is started, listed, read and deleted; a turn is one message in and one reply out;
 a gated action pauses the turn until the owner answers `yes` or `no` on the
 thread. The response models are the only exit: they have no field for a model, a
 prompt, a token count, a cost or a file-system path (CLAUDE.md §1).
@@ -9,11 +9,14 @@ prompt, a token count, a cost or a file-system path (CLAUDE.md §1).
 from __future__ import annotations
 
 import logging
+import shutil
+import threading
+from contextlib import contextmanager
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -27,6 +30,13 @@ logger = logging.getLogger("app")
 router = APIRouter(prefix="/chat", tags=["chat"], dependencies=[Depends(require_owner)])
 
 MEMORY_DOWN = "the conversation memory is not available right now"
+TURN_RUNNING = "a reply is still being written in this conversation; delete it once the turn has ended"
+
+# The threads with a turn or a resume running in this process, so a delete cannot remove a
+# conversation whose turn would write its memory again (piece-versions-and-chat-delete).
+# The app runs one process, so this set is complete.
+_running: set[UUID] = set()
+_running_lock = threading.Lock()
 
 
 class ThreadIn(BaseModel):
@@ -69,6 +79,8 @@ class ThreadOut(BaseModel):
 class MessageOut(BaseModel):
     role: Literal["owner", "assistant", "confirmation"]
     text: str
+    # The files sent with an owner's message; left out when none were.
+    upload_ids: list[UUID] | None = Field(default=None, exclude_if=lambda ids: ids is None)
 
 
 class ThreadDetailOut(ThreadOut):
@@ -99,6 +111,7 @@ class ProgressOut(BaseModel):
     open_requests: list[RequestOut]
     screenshot: str | None
     still: str | None
+    viewer: str | None
 
 
 def _refusal(code: int, failure_class: str, reason: str) -> HTTPException:
@@ -166,8 +179,28 @@ def _current_pending(request: Request, graph: Any, thread_id: UUID, owner: UUID)
         raise _refusal(status.HTTP_503_SERVICE_UNAVAILABLE, "unavailable", MEMORY_DOWN) from None
 
 
+@contextmanager
+def _turn_running(request: Request, thread_id: UUID):
+    """Mark the thread as running a turn; refuse one deleted meanwhile."""
+    with _running_lock:
+        with Session(request.app.state.engine) as session:
+            if house_file.get_thread(session, thread_id) is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not Found")
+        _running.add(thread_id)
+    try:
+        yield
+    finally:
+        with _running_lock:
+            _running.discard(thread_id)
+
+
 def _run(request: Request, thread: Any, owner: UUID, message: str, work) -> TurnOut:
     """Run `work(run_config)` inside the turn's trace and answer from its result."""
+    with _turn_running(request, thread.id):
+        return _traced(request, thread, owner, message, work)
+
+
+def _traced(request: Request, thread: Any, owner: UUID, message: str, work) -> TurnOut:
     tracing = request.app.state.tracing
     with tracing.turn(
         owner_id=str(owner),
@@ -237,6 +270,29 @@ def read_thread(
         messages=[MessageOut(**m) for m in messages],
         pending=_pending_out(waiting),
     )
+
+
+@router.delete("/threads/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_thread(thread_id: UUID, request: Request) -> Response:
+    """Delete a conversation: its memory first, then its index entry (with its upload
+    records and tool settings), then its upload files. Pieces and versions stay."""
+    graph = _graph(request)
+    with _running_lock:
+        with Session(request.app.state.engine) as session:
+            if house_file.get_thread(session, thread_id) is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not Found")
+        if thread_id in _running:
+            raise _refusal(status.HTTP_409_CONFLICT, "turn_running", TURN_RUNNING)
+        try:
+            chat.forget(graph, thread_id)
+        except Exception as error:  # noqa: BLE001 - any memory failure leaves everything in place
+            logger.error("chat memory unavailable", extra={"context": {"error_type": type(error).__name__}})
+            raise _refusal(status.HTTP_503_SERVICE_UNAVAILABLE, "unavailable", MEMORY_DOWN) from None
+        with Session(request.app.state.engine) as session:
+            house_file.delete_thread(session, thread_id)
+            session.commit()
+    shutil.rmtree(request.app.state.settings.upload_root / str(thread_id), ignore_errors=True)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/threads/{thread_id}/progress")

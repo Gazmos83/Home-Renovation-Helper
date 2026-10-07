@@ -40,7 +40,7 @@ def verify_glb(path: Path) -> None:
 
 
 def verify_build(directory: Path) -> None:
-    """The six build files exist (exactly), are non-empty and parse."""
+    """The nine build files exist (exactly), are non-empty and parse."""
     names = {entry.name for entry in directory.iterdir()}
     if names != set(BUILD_FILES):
         raise VerificationError(
@@ -55,7 +55,8 @@ def verify_build(directory: Path) -> None:
         with (directory / name).open(newline="", encoding="utf-8") as handle:
             list(csv.DictReader(handle))
     verify_glb(directory / "model.glb")
-    png_size(directory / "screenshot.png")
+    for name in ("screenshot.png", "front.png", "side.png", "top.png"):
+        png_size(directory / name)
 
 
 def verify_frames(directory: Path, count: int, size: int) -> None:

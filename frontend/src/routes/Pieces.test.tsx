@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { expect, test } from "vitest";
 import { stubFetch } from "../test/fetchStub";
 import Pieces from "./Pieces";
@@ -14,7 +15,7 @@ const legacy = { ...turntable, render: "still", label: "Still", can_rate: false,
 
 function show() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><Pieces /></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><MemoryRouter><Pieces /></MemoryRouter></QueryClientProvider>);
 }
 
 function info(version: number, approvedVersion: number | null, status = "succeeded") {
@@ -202,6 +203,7 @@ test("a built version offers the design and the bundle downloads", async () => {
   const bundle = await screen.findByRole("link", { name: "Download bundle (version 2)" });
   expect(bundle).toHaveAttribute("href", "/packages/bench/versions/2/bundle");
   expect(bundle).toHaveAttribute("download", "bench-v2.zip");
+  expect(screen.getByRole("link", { name: "Inspect version 2" })).toHaveAttribute("href", "/pieces/bench/versions/2");
 });
 
 test("a version still building offers the design but not the bundle", async () => {
@@ -210,4 +212,5 @@ test("a version still building offers the design but not the bundle", async () =
   expect(await screen.findByRole("link", { name: "Download design (version 2)" })).toBeInTheDocument();
   await screen.findByRole("img");
   expect(screen.queryByRole("link", { name: /Download bundle/ })).toBeNull();
+  expect(screen.queryByRole("link", { name: /Inspect/ })).toBeNull();
 });

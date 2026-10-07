@@ -10,6 +10,10 @@ runner, from a guard ticket.
 
 The camera orbits the build's bounding-box centre at the iso camera's own
 elevation and distance, starting from where `CAM_Iso` already sits.
+
+With `--dimensions` (passed only for a piece's own turntable) the piece's
+dimension lines stay visible and their figures turn to face the camera in every
+frame; without it they are hidden like the studio floor (piece-inspector).
 """
 
 from __future__ import annotations
@@ -31,18 +35,22 @@ from app.blender.generators import _render
 from app.blender.generators._scene import (
     GeneratorError,
     aim_at,
+    face_camera,
+    hidden,
     hidden_for_presentation,
+    is_dimension,
 )
 from app.blender.verify import verify_frames
 from app.render.viewer import render_viewer
 
 
 def _build_centre() -> Vector:
-    """The centre of every mesh's bounding box, the studio floor excluded."""
+    """The centre of every mesh's bounding box, the studio floor and the dimension
+    lines excluded."""
     points = [
         obj.matrix_world @ Vector(corner)
         for obj in bpy.data.objects
-        if obj.type == "MESH" and obj.name != "StudioFloor"
+        if obj.type == "MESH" and obj.name != "StudioFloor" and not is_dimension(obj)
         for corner in obj.bound_box
     ]
     if not points:
@@ -71,7 +79,12 @@ def fill(stage: Path, tier: TierArguments) -> None:
     frames_dir = stage / "frames"
     frames_dir.mkdir()
     infos = []
-    with hidden_for_presentation():
+    if tier.dimensions:
+        face_camera(camera)
+        concealed = hidden(lambda obj: obj.name == "StudioFloor")
+    else:
+        concealed = hidden_for_presentation()
+    with concealed:
         for index in range(tier.frames):
             angle = start + 2 * math.pi * index / tier.frames
             camera.location = centre + Vector((radius * math.cos(angle), radius * math.sin(angle), height))
@@ -89,6 +102,7 @@ def fill(stage: Path, tier: TierArguments) -> None:
                 "frames": tier.frames,
                 "resolution": tier.resolution,
                 "engine": tier.engine,
+                "dimensions": tier.dimensions,
                 "blender_version": bpy.app.version_string,
                 "target_mm": [round(v * 1000, 1) for v in centre],
                 "cameras": infos,

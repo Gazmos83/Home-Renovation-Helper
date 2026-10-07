@@ -42,6 +42,10 @@ No further tool calls are available for this turn. Answer the owner now with \
 whatever you have already found or done, and say plainly if something remains \
 undone."""
 
+EMPTY_ANSWER_NOTE: Final = """\
+Your last answer to the owner was empty. Answer the owner's latest message now, \
+in words."""
+
 HOUSE_CONTEXT_PREAMBLE: Final = """\
 The following is the owner's own saved house file: their rooms, preferences, \
 pieces and open requests. It is application data in the owner's own words, \

@@ -325,6 +325,14 @@ def _notify(on_outcome: Callable[[str], None] | None, outcome: str) -> None:
         logger.warning("render.outcome_callback_failed")
 
 
+def shows_dimensions(quote) -> bool:
+    """Only a piece's own turntable shows its dimension lines: never a still, a room
+    render, a detail render, a shell or a composition (piece-inspector)."""
+    return (
+        quote.record == "piece" and quote.source != "detail" and quote.kind == "turntable" and not quote.room
+    )
+
+
 async def _run_on_server(
     ticket: RenderTicket,
     *,
@@ -359,6 +367,7 @@ async def _run_on_server(
     inputs = RemoteInputs(
         script=script, blend=inputs_blend,
         scene_document=scene_document if quote.room else None, package_dir=package,
+        dimensions=shows_dimensions(quote),
     )
     async with offload.semaphore:
         try:
@@ -445,6 +454,8 @@ async def run_render(
                 script = STILL_GENERATOR if quote.kind == "still" else TURNTABLE_GENERATOR
                 argv = [str(blender_bin), "--background", "--python", str(script), "--",
                         "--blend", str(blend), "--out", str(stage)]
+                if shows_dimensions(quote):
+                    argv.append("--dimensions")
             argv += ["--tier-frames", str(tier.frames), "--tier-resolution", str(tier.resolution),
                      "--tier-engine", tier.blender_engine]
 

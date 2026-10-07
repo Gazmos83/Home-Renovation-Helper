@@ -20,7 +20,7 @@ export type Pending = {
   proposal: Record<string, unknown>;
 };
 
-export type ChatMessage = { role: "owner" | "assistant" | "confirmation"; text: string };
+export type ChatMessage = { role: "owner" | "assistant" | "confirmation"; text: string; upload_ids?: string[] };
 
 export type ThreadDetail = Thread & { messages: ChatMessage[]; pending: Pending | null };
 
@@ -42,6 +42,7 @@ export type Progress = {
   open_requests: { field: string; request: string }[];
   screenshot: string | null;
   still: string | null;
+  viewer: string | null;
 };
 
 export type ModelsPayload = {
@@ -181,6 +182,40 @@ export type VersionInfo = {
   version: number;
   status: string | null;
   approved_at: string | null;
+  /** The version's files present by name (front.png and friends only on newer builds). */
+  files?: string[];
+};
+
+/** One cut-list row of a built version's `spec.json`. */
+export type SpecPart = {
+  id: string;
+  name: string;
+  qty: number;
+  l: number;
+  w: number;
+  t: number;
+  material: string;
+  grain: string;
+  banding: string;
+  notes: string;
+  module: string;
+};
+
+export type SpecHardware = { id: string; item: string; qty: number; notes: string };
+
+/** The parts of a built version's emitted `spec.json` the inspector reads (piece-inspector). */
+export type PieceSpec = {
+  name?: string;
+  units?: string;
+  overall: { w: number; h: number; d: number };
+  /** Each module's size and position in mm, by module id. */
+  modules?: Record<string, Record<string, number>>;
+  /** Each module's display name, by module id. */
+  module_names?: Record<string, string>;
+  /** Mesh names under each layer. */
+  layers: Record<string, string[]>;
+  parts?: SpecPart[];
+  hardware?: SpecHardware[];
 };
 
 export type RenderItem = {
@@ -309,6 +344,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 const versionPath = (packageId: string, version: number) =>
   `/packages/${encodeURIComponent(packageId)}/versions/${version}`;
 
+/** A built version's file, served by exact name. */
+export const versionFile = (packageId: string, version: number, name: string) =>
+  `${versionPath(packageId, version)}/files/${name}`;
+
 /** Download links: plain URLs, so the browser sends the session cookie and saves the file. */
 export const downloads = {
   importTemplate: "/design-import/template",
@@ -321,6 +360,8 @@ export const api = {
     request("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
   me: () => request<{ email: string }>("/auth/me"),
   threads: () => request<Thread[]>("/chat/threads"),
+  deleteThread: (threadId: string) =>
+    request<void>(`/chat/threads/${threadId}`, { method: "DELETE" }),
   createThread: (title: string) =>
     request<Thread>("/chat/threads", { method: "POST", body: JSON.stringify({ title }) }),
   thread: (threadId: string) => request<ThreadDetail>(`/chat/threads/${threadId}`),
@@ -340,6 +381,7 @@ export const api = {
     // No JSON header: the browser sets the multipart boundary itself.
     return request<Upload>(`/chat/threads/${threadId}/uploads`, { method: "POST", body: form, headers: {} });
   },
+  uploads: (threadId: string) => request<Upload[]>(`/chat/threads/${threadId}/uploads`),
   progress: (threadId: string) => request<Progress>(`/chat/threads/${threadId}/progress`),
   tools: (threadId: string) => request<ToolToggle[]>(`/chat/threads/${threadId}/tools`),
   setTool: (threadId: string, plugin: string, enabled: boolean) =>
@@ -375,6 +417,8 @@ export const api = {
   deleteModel: (modelId: string) => request<void>(`/models/${modelId}`, { method: "DELETE" }),
   version: (packageId: string, version: number) =>
     request<VersionInfo>(`/packages/${encodeURIComponent(packageId)}/versions/${version}`),
+  pieceSpec: (packageId: string, version: number) =>
+    request<PieceSpec>(versionFile(packageId, version, "spec.json")),
   approveVersion: (packageId: string, version: number) =>
     request<VersionInfo>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/approval`, {
       method: "PUT",

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: A thread reports its piece's progress
-The owner SHALL be able to read, on a thread, where the piece it is about stands: whether a brief is confirmed, whether a piece exists and its latest version with that version's build state, whether that version has a screenshot, a draft or preview render, a review (with the count of open items), a detail pass, and a final render, and which of these is the next step the owner can ask for. The read SHALL also list the piece's open generator-extension requests by field and the owner's words. A thread with no bound piece SHALL report only the brief state and the next step. The read SHALL be derived from the house file, the version folder and the thread's own conversation state, and SHALL contain no model name, prompt, token count, cost or file-system path; an image is named by its package route.
+The owner SHALL be able to read, on a thread, where the piece it is about stands: whether a brief is confirmed, whether a piece exists and its latest version with that version's build state, whether that version has a screenshot, a draft or preview render, a review (with the count of open items), a detail pass, and a final render, and which of these is the next step the owner can ask for. The read SHALL also list the piece's open generator-extension requests by field and the owner's words. A thread with no bound piece SHALL report only the brief state and the next step. The read SHALL be derived from the house file, the version folder and the thread's own conversation state, and SHALL contain no model name, prompt, token count, cost or file-system path; an image is named by its package route, and so is the latest version's turntable viewer when its turntable is published.
 
 #### Scenario: Fresh thread
 - **WHEN** the owner reads the progress of a thread that has had no turn
@@ -37,3 +37,7 @@ When a confirmed action creates a piece or revises one, the thread SHALL be boun
 #### Scenario: Declined
 - **WHEN** the owner answers `no` to a new piece
 - **THEN** the thread's piece is unchanged
+
+#### Scenario: Turntable published
+- **WHEN** the latest version's draft turntable has finished
+- **THEN** the progress names its viewer by its package route; before it finishes the viewer is null

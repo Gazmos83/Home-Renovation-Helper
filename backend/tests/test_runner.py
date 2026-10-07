@@ -16,6 +16,7 @@ from app.blender.runner import (
     mark_render_queued,
     run_build,
     run_render,
+    shows_dimensions,
 )
 from app.render.benchmark_store import Benchmark
 from app.render.guard import RenderNotAuthorised, authorise
@@ -272,6 +273,34 @@ def test_the_runner_runs_exactly_the_request_the_ticket_names(render_root: Path)
     assert not (storage.version_dir(render_root, "desk", 1) / "still.png").exists()
 
 
+def test_only_a_piece_turntable_is_asked_for_its_dimension_lines(render_root: Path) -> None:
+    new_version(render_root, built=True)
+    calls: list[list[str]] = []
+    run(render(render_root, ticket("turntable"), fake_success_launch(render_writer, calls=calls)))
+    run(render(render_root, ticket("still"), fake_success_launch(render_writer, calls=calls)))
+    turntable, still = calls
+    assert "--dimensions" in turntable
+    assert "--dimensions" not in still
+
+
+def test_dimension_lines_are_never_asked_of_a_room_shell_composition_or_detail_render() -> None:
+    def quote(**kwargs):
+        return authorise(
+            package_id="desk", version=1, kind=kwargs.pop("kind", "turntable"), tier="draft",
+            tiers=TIERS, benchmark=BENCH, approval="yes", **kwargs,
+        ).quote
+
+    assert shows_dimensions(quote())
+    assert not shows_dimensions(quote(kind="still"))
+    assert not shows_dimensions(quote(room=True))
+    assert not shows_dimensions(quote(record="shell"))
+    assert not shows_dimensions(quote(record="room"))
+    assert not shows_dimensions(
+        authorise(package_id="desk", version=1, kind="turntable", tier="final", tiers=TIERS,
+                  benchmark=BENCH, approval="yes", source="detail").quote
+    )
+
+
 def test_the_timeout_scales_with_the_tier(render_root: Path) -> None:
     new_version(render_root, built=True)
     seen: list[float] = []
@@ -366,6 +395,7 @@ def test_a_final_detail_turntable_renders_the_copy_and_publishes_under_detail(re
     run(render(render_root, detail_ticket(), fake_success_launch(render_writer, calls=calls)))
     argv = calls[0]
     assert arg_value(argv, "--blend") == str(copy)
+    assert "--dimensions" not in argv
     assert (arg_value(argv, "--tier-frames"), arg_value(argv, "--tier-resolution"),
             arg_value(argv, "--tier-engine")) == ("36", "1500", "CYCLES")
     detail = storage.detail_dir(folder)

@@ -75,3 +75,25 @@ def test_a_missing_blend_exits_non_zero_and_leaves_nothing(blender_bin: Path, tm
     )
     assert result.returncode != 0
     assert not out.exists() and not list(tmp_path.glob(".*tmp*"))
+
+
+def test_a_piece_turntable_shows_its_dimension_lines_only_with_the_flag(
+    blender_bin: Path, built: Path, tmp_path: Path
+) -> None:
+    runs = {}
+    for label, extra in (("plain", []), ("dimensions", ["--dimensions"])):
+        out = tmp_path / label
+        result = run_generator(
+            blender_bin, "render_turntable.py", "--blend", str(built / "model.blend"),
+            "--out", str(out), *tier_args(), *extra,
+        )
+        assert result.returncode == 0, result.stderr[-800:]
+        runs[label] = out
+    plain = json.loads((runs["plain"] / "scene.json").read_text(encoding="utf-8"))
+    shown = json.loads((runs["dimensions"] / "scene.json").read_text(encoding="utf-8"))
+    assert (plain["dimensions"], shown["dimensions"]) == (False, True)
+    # The orbit is the piece's own: the lines do not move the cameras.
+    assert plain["cameras"] == shown["cameras"] and plain["target_mm"] == shown["target_mm"]
+    for index in (0, 6):
+        name = f"frames/frame_{index:03d}.png"
+        assert (runs["plain"] / name).read_bytes() != (runs["dimensions"] / name).read_bytes()
