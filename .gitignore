@@ -17,3 +17,6 @@ docs/guidelines/pdf/*
 
 # Unapproved explore notes; adopt via OpenSpec before committing.
 docs/blueprint-input-notes.md
+
+# Hidden until the build has a workable version; the file stays on disk.
+/README.md
