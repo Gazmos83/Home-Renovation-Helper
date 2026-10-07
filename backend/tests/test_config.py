@@ -273,3 +273,102 @@ def test_an_unknown_retail_source_fails_startup_naming_it() -> None:
 def test_the_crawler_identity_falls_back_to_the_owners_email() -> None:
     assert _retail_settings().crawler_identity == "owner@example.com"
     assert _retail_settings(crawler_contact="https://example.org/contact").crawler_identity == "https://example.org/contact"
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])
+def test_loopback_hosts_are_accepted(host):
+    assert _settings(blender_live_host=host).blender_live_host == host
+
+
+@pytest.mark.parametrize("host", ["192.168.1.20", "example.com", "0.0.0.0"])
+def test_a_non_loopback_host_is_refused_naming_the_setting(host):
+    with pytest.raises(ValueError, match="blender_live_host"):
+        _settings(blender_live_host=host)
+
+
+# --- render offload (render-offload) --------------------------------------------------------------
+
+
+@pytest.fixture
+def offload_files(tmp_path: Path) -> dict[str, object]:
+    key = tmp_path / "id_ed25519"
+    known = tmp_path / "known_hosts"
+    key.write_text("PRIVATE KEY BYTES", encoding="utf-8")
+    known.write_text("gpu.example.org ssh-ed25519 AAAA", encoding="utf-8")
+    return {
+        "render_offload_host": "gpu.example.org",
+        "render_offload_user": "render",
+        "render_offload_key_path": key,
+        "render_offload_known_hosts_path": known,
+        "render_offload_blender": "/opt/blender-5.2.1/blender",
+    }
+
+
+def test_offload_is_off_by_default() -> None:
+    settings = _settings()
+    assert settings.render_offload_configured is False
+    assert settings.safe_summary()["render_offload"] == "off"
+
+
+def test_offload_is_off_when_any_connection_value_is_missing(offload_files: dict) -> None:
+    for missing in offload_files:
+        values = {k: v for k, v in offload_files.items() if k != missing}
+        assert _settings(**values).render_offload_configured is False, missing
+
+
+def test_blank_values_count_as_unset(offload_files: dict) -> None:
+    assert _settings(**{**offload_files, "render_offload_host": "  "}).render_offload_configured is False
+
+
+def test_a_configured_offload_is_summarised_without_the_key(offload_files: dict) -> None:
+    settings = _settings(**offload_files)
+    assert settings.render_offload_configured is True
+    summary = settings.safe_summary()
+    assert summary["render_offload"] == "render@gpu.example.org:22"
+    assert "id_ed25519" not in repr(summary) and "PRIVATE" not in repr(summary)
+    assert settings.render_offload_cycles_device == "OPTIX"
+
+
+def test_a_missing_key_file_fails_naming_the_setting(offload_files: dict, tmp_path: Path) -> None:
+    offload_files["render_offload_key_path"] = tmp_path / "nope"
+    with pytest.raises(ValidationError, match="RENDER_OFFLOAD_KEY_PATH"):
+        _settings(**offload_files)
+
+
+def test_a_missing_known_hosts_file_fails_naming_the_setting(offload_files: dict, tmp_path: Path) -> None:
+    offload_files["render_offload_known_hosts_path"] = tmp_path / "nope"
+    with pytest.raises(ValidationError, match="RENDER_OFFLOAD_KNOWN_HOSTS_PATH"):
+        _settings(**offload_files)
+
+
+def test_load_settings_names_the_variable(offload_files: dict, tmp_path: Path, clean_env: None) -> None:
+    offload_files["render_offload_key_path"] = tmp_path / "nope"
+    with pytest.raises(ConfigurationError, match="RENDER_OFFLOAD_KEY_PATH"):
+        load_settings(
+            database_url="postgresql://u:p@localhost:5432/d", openrouter_api_key="sk-or-test",
+            cors_origins="http://localhost:5173", owner_email="owner@example.com",
+            owner_password="a-good-password", _env_file=None, **offload_files,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("render_offload_cycles_device", "METAL"),
+        ("render_offload_blender", "blender"),
+        ("render_offload_blender", "/opt/blender; rm -rf /"),
+        ("render_offload_blender", "/opt/blen der/blender"),
+        ("render_offload_host", "gpu.example.org; id"),
+        ("render_offload_user", "root; id"),
+        ("render_offload_port", 0),
+        ("render_offload_port", 70000),
+    ],
+)
+def test_an_unsafe_or_unknown_offload_value_is_refused_naming_it(field: str, value: object) -> None:
+    with pytest.raises(ValidationError, match=field):
+        _settings(**{field: value})
+
+
+@pytest.mark.parametrize("device", ["OPTIX", "CUDA", "HIP"])
+def test_the_known_gpu_devices_are_accepted(device: str) -> None:
+    assert _settings(render_offload_cycles_device=device).render_offload_cycles_device == device

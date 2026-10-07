@@ -38,9 +38,10 @@ def test_the_provider_returns_the_slots_model_and_refuses_an_unknown_slot(settin
     models = build_slot_models(settings, load_routing(), StubProfiles())
     provide = model_provider(models)
     assert provide("builder") is models["builder"]
+    assert provide("lighting") is models["lighting"]
     try:
-        provide("lighting")
+        provide("plumber")
     except KeyError as error:
-        assert "lighting" in str(error)
+        assert "plumber" in str(error)
     else:  # pragma: no cover
         raise AssertionError("an unbuilt slot must be refused")

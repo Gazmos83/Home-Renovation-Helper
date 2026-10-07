@@ -132,6 +132,13 @@ render against the brief and spec), and you never name one. Every model
 call needs `OPENROUTER_API_KEY`; the routes below work against a live service
 once a key is set. Conversations survive restarts (the Postgres checkpointer).
 
+**In the Studio.** Open **Conversations**, start one, and talk to the Foreman in the
+conversation page: the messages, a composer, a **Yes / No** card whenever something
+needs your confirmation, and **Add a plan or photo** for blueprints. The **Project**
+panel beside it shows the piece, its latest version and build state, how far it has
+come (brief, piece, built, rendered, reviewed, detail pass, final) and what to ask
+for next. The `curl` calls below are the same API for scripts.
+
 Anything that changes the house — confirmed numbers, a new piece, a revision, a
 `final` render — **pauses** until you answer `yes` or `no`:
 
@@ -259,6 +266,95 @@ curl -b cookies.txt -X POST http://localhost:8000/guideline-notes -H 'Content-Ty
 
 Hard design rules live in `backend/config/design_rules.yaml` (each with its quoted source; it ships empty, see the file). The Researcher answers price and product questions in chat; the Designer can search the guideline corpus.
 
+## Photoreal detail (ladder step 3)
+
+For one-off carpentry detail, materials and lighting, the Lighting & materials
+specialist works in **your own Blender**: open Blender 5.2.1 with the "MCP for
+Blender" addon and start its server (it listens on `localhost:9876`; change
+`BLENDER_LIVE_HOST` / `BLENDER_LIVE_PORT`, loopback only). Then, in a conversation
+bound to a built piece, ask for realistic oak or soft lighting.
+
+- The first step pauses for your **yes**: the backend copies `model.blend` to
+  `<version>/detail/detail.blend` and opens that copy in your Blender, replacing
+  the file you had open. `model.blend`, the spec and the cut list are never changed.
+- Every script, the agent's and the backend's own, is checked against the `bpy`
+  allow-list first. Allowed: `bpy.data`, modifiers, materials and node trees,
+  render settings, the mesh/object/material/node/uv/transform operators,
+  `save_mainfile()` and `open_mainfile` of this pass's `detail.blend`. Refused,
+  naming the construct and line: imports other than `bpy`, `bmesh`, `mathutils`,
+  `math`, `random`; `open`, `exec`, `eval`, `getattr` and friends; dunder access;
+  text blocks, libraries, handlers, preferences; every render operator.
+- Scripts are refused while a headless build or render is running, and a headless
+  job waits while a script runs. Every script and its verdict is logged to
+  `detail/log.jsonl`.
+- The specialist is text-only: after each script it reads the scene as text.
+  `detail_screenshot` saves a viewport PNG for **you** at
+  `…/files/detail/screens/<n>`; tell it what to change.
+- Asking for the final image shows the Cycles estimate and waits for your **yes**;
+  it renders `detail.blend` headless through the render guard at tier `final` and
+  publishes `detail/still.png` or `detail/frames/` + `detail/viewer.html`. Draft and
+  preview are refused for a detail render.
+
+## Render offload (optional)
+
+A `final` Cycles turntable takes about two hours on this laptop. If you rent a GPU box
+you can send finals there instead. Nothing is rented or started by the app: you start
+and stop the box, and the app only uses it when you have configured it and chosen it.
+
+Set up the box once:
+
+1. Rent a Linux machine with an NVIDIA (OptiX or CUDA) or AMD (HIP) GPU, with `ssh`.
+2. Install **Blender 5.2.1** on it (the same version as here; any other is refused).
+3. Add your public key to its `~/.ssh/authorized_keys`, and put its host key in a
+   known-hosts file here: `ssh-keyscan -t ed25519 <host> > ~/.ssh/hra_known_hosts`
+   (check the fingerprint against the provider's).
+4. Set in `.env`: `RENDER_OFFLOAD_HOST`, `RENDER_OFFLOAD_USER`, `RENDER_OFFLOAD_KEY_PATH`,
+   `RENDER_OFFLOAD_KNOWN_HOSTS_PATH`, `RENDER_OFFLOAD_BLENDER` (absolute path on the
+   box) and, if needed, `RENDER_OFFLOAD_PORT` / `RENDER_OFFLOAD_CYCLES_DEVICE`
+   (`OPTIX`, `CUDA` or `HIP`). With any of the five main values missing, offload is off.
+
+Then in the developer panel (**Offload**): *Test the connection*, *Run the remote
+benchmark* (one Cycles frame, so the estimate is real), and switch **Final renders** to
+*On the render server*. Draft and preview always stay on the laptop.
+
+- The estimate for a remote final is the server's own, "on the render server, about N
+  minutes", and the typed **yes** is still required.
+- If the server is off, unreachable or runs another Blender, the final is **refused
+  with the reason before you are asked**; it is never run on the laptop instead. Start
+  the box, or switch the target back.
+- A job uploads the model and the generator files in one archive, runs the same
+  generator with the tier's values, copies the frames back, checks them like any local
+  render and removes its folder on the server. One job runs at a time on the server,
+  and a laptop draft can run beside it.
+- The page lists the last twenty remote jobs with their time and, if you give an hourly
+  rate, a euro estimate. That figure, the host and the target are never shown to the
+  homeowner. The first remote final recalibrates the server's rate.
+
+## Rating renders
+
+Every published render (still, turntable, in a room, detailed) can be rated with a
+thumbs up or down and a comment, so the next design learns from it.
+
+- **Pieces page** (`/pieces` in the Studio): your pieces, their versions, and each
+  version's renders with a preview, a viewer link and the thumbs. A rating belongs to
+  one render run: render again and the new one starts unrated. Renders made before
+  this existed cannot be rated until they are rendered again.
+- **In chat**, when you react in words ("the draft is too dark 👎"), the Builder or
+  the Lighting specialist proposes the rating and comment and records them only after
+  your **yes**.
+- Your latest five ratings of a piece are given to the Designer and Lighting, labelled
+  as your own words. Each rating is also a Langfuse score on the turn that started the
+  render, plus a feedback trace tagged with the rating, tier, agent and model.
+- The developer panel's **Feedback** page (`/admin/feedback`) counts ratings per agent,
+  model and tier and lists a group's comments. It never changes routing; change a slot
+  by hand on the Models page.
+
+```bash
+curl -b cookies.txt http://localhost:8000/packages/hall-bench/versions/1/renders
+curl -b cookies.txt -X PUT http://localhost:8000/packages/hall-bench/versions/1/renders/turntable/feedback \
+  -H 'Content-Type: application/json' -d '{"rating":"down","comment":"too dark"}'
+```
+
 ## Model routing
 
 Per-agent model routing lives in [`backend/config/models.yaml`](backend/config/models.yaml):
@@ -275,7 +371,8 @@ unchanged.
 Each tool group is a folder under [`backend/plugins/`](backend/plugins/) with
 `manifest.yaml` and `tool.py`. The backend loads every manifest at startup and
 stops naming the file on a missing field, an unknown field, a duplicate tool, a
-built-in tool with no implementation, or an unknown role. `intake` and
+built-in tool with no implementation, or an unknown role. A built-in manifest may name other agents in `also_for` that share its tools (the
+rating tool serves the Builder and Lighting). `intake` and
 `create_piece` are not toggleable; the rest of the shipped tools are.
 
 **HTTPS plugins** are a second kind: a manifest with an input schema, an output
@@ -372,6 +469,7 @@ Every variable is documented in [`.env.example`](.env.example). Required:
 `OWNER_PASSWORD`. Optional with defaults: `TEST_DATABASE_URL`,
 `DEV_PANEL_ENABLED` (false), `GATEWAY_PROBE_ENABLED` (true),
 `SESSION_COOKIE_SECURE` (false), `AUTH_SESSION_DAYS` (14), `AUTH_RATE_LIMIT` (10)
-and its window, `PLUGIN_ALLOWED_HOSTS` (empty), plugin timeout / response cap /
+and its window, `BLENDER_LIVE_HOST` (`127.0.0.1`, loopback only), `BLENDER_LIVE_PORT` (9876),
+`BLENDER_LIVE_TIMEOUT_SECONDS` (120), `PLUGIN_ALLOWED_HOSTS` (empty), plugin timeout / response cap /
 pacing, `BUDGET_TIMEZONE` (`Europe/Berlin`), and the three Langfuse values
 (tracing is off unless all three are set).

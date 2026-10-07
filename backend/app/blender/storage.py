@@ -254,11 +254,29 @@ def write_status(version_folder: Path, **fields: Any) -> dict[str, Any]:
     return current
 
 
-RENDER_KEYS: Final = ("still", "turntable", "room-still", "room-turntable")
+RENDER_KEYS: Final = (
+    "still", "turntable", "room-still", "room-turntable", "detail-still", "detail-turntable",
+)
+
+# The detail pass (photoreal-detail): a copy of the model the live Blender edits, and what it makes.
+DETAIL_DIRNAME: Final = "detail"
+DETAIL_BLEND: Final = "detail.blend"
+DETAIL_SCREENS_DIRNAME: Final = "screens"
+DETAIL_LOG: Final = "log.jsonl"
 
 
-def render_key(kind: str, room: bool) -> str:
+def render_key(kind: str, room: bool, source: str = "model") -> str:
+    if source == "detail":
+        return f"detail-{kind}"
     return f"room-{kind}" if room else kind
+
+
+def detail_dir(version_folder: Path) -> Path:
+    return version_folder / DETAIL_DIRNAME
+
+
+def detail_blend_path(version_folder: Path) -> Path:
+    return detail_dir(version_folder) / DETAIL_BLEND
 
 
 def write_render_status(version_folder: Path, key: str, **fields: Any) -> dict[str, Any]:

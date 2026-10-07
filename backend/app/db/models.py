@@ -460,6 +460,94 @@ class ReviewItem(Base):
     )
 
 
+class RenderRun(Base):
+    """One guarded render's origin (feedback-capture).
+
+    Kept in the database, never in the version folder: the homeowner's file
+    routes must not be able to reach the model or the prompt behind a render.
+    """
+
+    __tablename__ = "render_runs"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    package_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    render_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    tier: Mapped[str] = mapped_column(String(16), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    thread_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    slot: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("btrim(package_id) <> ''", name="ck_render_runs_package_id_not_blank"),
+        CheckConstraint("version >= 1", name="ck_render_runs_version_positive"),
+        CheckConstraint(
+            "outcome IN ('queued', 'running', 'succeeded', 'failed')",
+            name="ck_render_runs_outcome_known",
+        ),
+        CheckConstraint(
+            "prompt IS NULL OR char_length(prompt) <= 2000", name="ck_render_runs_prompt_short"
+        ),
+        Index("ix_render_runs_render", "package_id", "version", "render_key"),
+    )
+
+
+class RenderFeedback(Base):
+    """The owner's current rating of one render run: one row per run."""
+
+    __tablename__ = "render_feedback"
+
+    run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("render_runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    rating: Mapped[str] = mapped_column(String(8), nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("rating IN ('up', 'down')", name="ck_render_feedback_rating_known"),
+        CheckConstraint(
+            "comment IS NULL OR char_length(comment) <= 1000", name="ck_render_feedback_comment_short"
+        ),
+    )
+
+
+class RemoteRenderJob(Base):
+    """One render that ran on the render server (render-offload): its numbers, for the developer."""
+
+    __tablename__ = "remote_render_jobs"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    package_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    render_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    estimate_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    actual_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    transfer_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("outcome IN ('succeeded', 'failed')", name="ck_remote_render_jobs_outcome_known"),
+        Index("ix_remote_render_jobs_started_at", "started_at"),
+    )
+
+
 # --- pricing, stores and the corpus (pricing-researcher) -----------------------------------
 
 

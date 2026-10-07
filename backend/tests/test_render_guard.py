@@ -140,3 +140,44 @@ def test_a_ticket_cannot_be_constructed_outside_the_guard() -> None:
         RenderTicket(q)
     with pytest.raises(RenderNotAuthorised):
         RenderTicket(q, _mint=object())
+
+
+# --- detail renders (photoreal-detail) ------------------------------------------------------------
+
+
+@pytest.mark.parametrize("tier", ["draft", "preview"])
+def test_a_detail_render_below_final_is_refused(tier: str) -> None:
+    with pytest.raises(RenderRefused, match="final only") as caught:
+        _call(tier=tier, source="detail", approval="yes")
+    assert caught.value.field == "tier"
+
+
+def test_a_detail_render_in_a_room_is_refused() -> None:
+    with pytest.raises(RenderRefused, match="piece alone") as caught:
+        _call(tier="final", source="detail", room=True, approval="yes")
+    assert caught.value.field == "room"
+
+
+def test_a_detail_final_asks_with_the_cycles_estimate_then_runs_on_yes() -> None:
+    with pytest.raises(ApprovalRequired) as asked:
+        _call(tier="final", source="detail")
+    quoted = asked.value.quote
+    assert (quoted.frames, quoted.tier.resolution, quoted.tier.engine) == (36, 1500, "cycles")
+    assert quoted.source == "detail" and "detailed copy" in quoted.summary
+    assert _call(tier="final", source="detail", approval="yes").quote.source == "detail"
+
+
+def test_an_unknown_source_is_refused_by_name() -> None:
+    with pytest.raises(RenderRefused) as caught:
+        _call(source="other")
+    assert caught.value.field == "source"
+
+
+def test_a_ticket_for_the_model_does_not_match_the_detail_copy_nor_the_reverse() -> None:
+    model = _call(tier="final", approval="yes")
+    detail = _call(tier="final", source="detail", approval="yes")
+    assert model.matches("desk", 1, "turntable", False, "piece", "model")
+    assert not model.matches("desk", 1, "turntable", False, "piece", "detail")
+    assert detail.matches("desk", 1, "turntable", False, "piece", "detail")
+    assert not detail.matches("desk", 1, "turntable", False, "piece", "model")
+    assert not detail.matches("desk", 1, "turntable", False)

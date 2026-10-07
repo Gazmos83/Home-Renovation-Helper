@@ -37,13 +37,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from app.agent import house_file, uploads
+from app.agent import house_file, progress, uploads
 from app.agent.budget import BudgetRefused, RequestBudget, prepare, refusal_message
 from app.agent.instructions import AgentInstruction, load_instructions
 from app.agent.models.budgets import Budgets
 from app.agent.models.openrouter_client import gateway_errors
 from app.agent.models.routing import IMAGE_SLOTS
-from app.agent.prompts import TOOL_ROUND_CAP_NOTE, compose_agent_prompt, house_note
+from app.agent.prompts import (
+    TOOL_ROUND_CAP_NOTE,
+    compose_agent_prompt,
+    house_note,
+    render_feedback_note,
+)
 from app.agent.tools import loaded_plugins
 from app.agent.tools.base import (
     AgentTool,
@@ -54,6 +59,7 @@ from app.agent.tools.base import (
 )
 from app.blender import storage
 from app.config import Settings
+from app.feedback import ratings
 from app.observability.usage import UsageRecorder, tokens_today
 from app.plugins.binding import bound_tool_names
 from app.plugins.loader import Plugins
@@ -61,7 +67,7 @@ from app.plugins.loader import Plugins
 logger = logging.getLogger("app")
 
 MAX_TOOL_ROUNDS: Final = 6
-SPECIALISTS: Final = ("intake", "designer", "builder", "reviewer", "researcher")
+SPECIALISTS: Final = ("intake", "designer", "builder", "lighting", "reviewer", "researcher")
 
 TEMPLATES_DIR: Final = Path(__file__).resolve().parents[2] / "fixtures" / "packages" / "templates"
 
@@ -76,6 +82,9 @@ DECLINED: Final[dict[str, str]] = {
     "create_piece": "The piece was not created.",
     "revise": "No revision was created.",
     "final_render": "The final render was not started.",
+    "detail_pass": "The detail pass was not started.",
+    "detail_render": "The detail render was not started.",
+    "render_feedback": "The rating was not recorded.",
     "remnant": "The remnant rack was not changed.",
 }
 
@@ -88,12 +97,14 @@ class ChatState(TypedDict, total=False):
     specialist: str
     reason: str
     house_note: str
+    feedback_note: str
     facts: str
     round_count: int
     package_id: str | None
     piece_ready: bool
     shell_ready: bool
     review_ready: bool
+    detail_ready: bool
     brief: dict[str, Any]
     bound_tools: dict[str, list[str]]
 
@@ -101,21 +112,8 @@ class ChatState(TypedDict, total=False):
 class Decision(BaseModel):
     """The Foreman's choice for this turn."""
 
-    specialist: Literal["intake", "designer", "builder", "reviewer", "researcher"]
+    specialist: Literal["intake", "designer", "builder", "lighting", "reviewer", "researcher"]
     reason: str = Field(description="one sentence")
-
-
-def _review_ready(root: Path, package_id: str | None, version: int | None) -> bool:
-    if not package_id or version is None:
-        return False
-    try:
-        folder = storage.version_dir(root, package_id, version)
-    except (storage.InvalidPackageId, ValueError):
-        return False
-    return any(
-        (folder / name).is_file()
-        for name in ("screenshot.png", "still.png", "room/still.png")
-    ) or (folder / "frames" / "frame_000.png").is_file()
 
 
 def _image_blocks(
@@ -285,13 +283,18 @@ def build_graph(
         package_id = thread.package_id if thread and thread.package_id else state.get("package_id")
         bound = next((p for p in pieces if p["package_id"] == package_id), None)
         piece_ready = bool(bound and bound["latest_version"])
-        review_ready = _review_ready(
+        review_ready = progress.review_ready(
+            settings.render_root, package_id, bound["latest_version"] if bound else None
+        )
+        detail_ready = progress.detail_ready(
             settings.render_root, package_id, bound["latest_version"] if bound else None
         )
         open_review = []
+        recent_feedback: list[dict[str, Any]] = []
         if package_id:
             with Session(engine) as session:
                 open_review = house_file.latest_open_items(session, package_id)
+                recent_feedback = ratings.recent_for_piece(session, package_id)
 
         if bound:
             latest = f"version {bound['latest_version']}" if bound["latest_version"] else "no version"
@@ -315,11 +318,13 @@ def build_graph(
                 rooms, preferences, pieces, requests, apartments, open_review
             )
             or "",
+            "feedback_note": render_feedback_note(recent_feedback),
             "facts": facts,
             "package_id": package_id,
             "piece_ready": piece_ready,
             "shell_ready": shell_ready,
             "review_ready": review_ready,
+            "detail_ready": detail_ready,
             "round_count": 0,
             "specialist": "",
             "bound_tools": tools_this_turn,
@@ -365,7 +370,9 @@ def build_graph(
 
     def foreman(
         state: ChatState, config: RunnableConfig
-    ) -> Command[Literal["intake", "designer", "builder", "reviewer", "researcher", "__end__"]]:
+    ) -> Command[
+        Literal["intake", "designer", "builder", "lighting", "reviewer", "researcher", "__end__"]
+    ]:
         instruction = loaded["foreman"]
         system = compose_agent_prompt(instruction.text, state.get("facts", ""), state.get("house_note", ""))
         try:
@@ -398,6 +405,8 @@ def build_graph(
             chosen = "designer" if state.get("brief") else "intake"
         if chosen == "reviewer" and not state.get("review_ready"):
             chosen = "builder" if buildable else ("designer" if state.get("brief") else "intake")
+        if chosen == "lighting" and not state.get("detail_ready"):
+            chosen = "builder" if buildable else ("designer" if state.get("brief") else "intake")
         if not buildable and not state.get("brief") and chosen not in ("reviewer", "researcher"):
             chosen = "intake"
         return Command(update={"specialist": chosen, "reason": reason}, goto=chosen)
@@ -418,6 +427,8 @@ def build_graph(
             notes = [state.get("facts", "")]
             if name in ("intake", "designer"):
                 notes.append(state.get("house_note", ""))
+            if name in ("designer", "lighting"):
+                notes.append(state.get("feedback_note", ""))
             if name == "designer":
                 notes.append(designer_note)
             capped = round_count >= MAX_TOOL_ROUNDS
@@ -458,6 +469,9 @@ def build_graph(
                 package_id=state.get("package_id"),
                 brief=dict(state.get("brief") or {}),
                 last_message=_last_human_text(state),
+                trace_id=configurable.get("trace_id"),
+                slot=instruction.slot,
+                model=model_ids(instruction.slot),
             )
             calls = _last_ai_tool_calls(state)
             bound_tools = bound_for(state)

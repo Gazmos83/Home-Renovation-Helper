@@ -19,6 +19,14 @@ export default defineConfig({
       "/auth": API,
       "/admin": API,
       "/health": API,
+      // API-only: the Studio route is /pieces; without this proxy GET /packages
+      // is the SPA HTML and the Pieces page never leaves Loading.
+      "/packages": API,
+      "/uploads": API,
+      "/apartments": API,
+      "/reviews": API,
+      "/pricings": API,
+      "/stores": API,
       "/price-list": page,
       "/snapshots": page,
       "/remnants": page,

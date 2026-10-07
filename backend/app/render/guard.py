@@ -17,8 +17,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final
 
-from app.render.benchmark_store import Benchmark
-from app.render.estimate import DEFAULT_CYCLES_MULTIPLIER, describe, estimate_seconds
+from app.render.benchmark_store import Benchmark, RemoteBenchmark
+from app.render.estimate import (
+    DEFAULT_CYCLES_MULTIPLIER,
+    describe,
+    estimate_seconds,
+    remote_estimate_seconds,
+)
 from app.render.tiers import Tier, TierError, Tiers
 
 # Request fields that would set a render parameter directly: always refused.
@@ -31,6 +36,9 @@ FORBIDDEN_FIELDS: Final[tuple[str, ...]] = (
     "engine",
 )
 KINDS: Final[tuple[str, ...]] = ("still", "turntable")
+# What a render reads: the built model, or the detail pass's copy of it
+# (photoreal-detail). A detail render is `final` only and never placed in a room.
+SOURCES: Final[tuple[str, ...]] = ("model", "detail")
 
 _MINT: Final = object()
 
@@ -74,6 +82,9 @@ class RenderQuote:
     # What `package_id` names: a furniture `piece` or an apartment `shell`. A
     # ticket for one never matches the other, whatever the id.
     record: str = "piece"
+    source: str = "model"
+    # Where it runs: the laptop, or the render server (finals only; render-offload).
+    target: str = "local"
 
     @property
     def estimate_text(self) -> str:
@@ -82,9 +93,11 @@ class RenderQuote:
     @property
     def summary(self) -> str:
         what = "a still" if self.kind == "still" else f"{self.frames} frames"
+        what += " of the detailed copy" if self.source == "detail" else ""
+        where = " on the render server" if self.target == "remote" else ""
         return (
             f"tier {self.tier.name} — {what} at {self.tier.resolution}×{self.tier.resolution} "
-            f"on {self.tier.engine}, {self.estimate_text}"
+            f"on {self.tier.engine}{where}, {self.estimate_text}"
         )
 
 
@@ -108,11 +121,17 @@ class RenderTicket:
         return self._consumed
 
     def matches(
-        self, package_id: str, version: int, kind: str, room: bool, record: str = "piece"
+        self,
+        package_id: str,
+        version: int,
+        kind: str,
+        room: bool,
+        record: str = "piece",
+        source: str = "model",
     ) -> bool:
         q = self.quote
-        return (q.package_id, q.version, q.kind, q.room, q.record) == (
-            package_id, version, kind, room, record,
+        return (q.package_id, q.version, q.kind, q.room, q.record, q.source) == (
+            package_id, version, kind, room, record, source,
         )
 
     def consume(self) -> None:
@@ -146,6 +165,9 @@ def quote(
     room: bool = False,
     raw_fields: Iterable[str] = (),
     record: str = "piece",
+    source: str = "model",
+    target: str = "local",
+    remote_benchmark: RemoteBenchmark | None = None,
 ) -> RenderQuote:
     """Validate a request and price it. Never approves and never starts anything."""
     for name in raw_fields:
@@ -164,16 +186,46 @@ def quote(
         raise RenderRefused(str(error), field="tier") from None
     if kind not in KINDS:
         raise RenderRefused(f"unknown render kind {kind!r}; use still or turntable", field="kind")
+    if source not in SOURCES:
+        raise RenderRefused(f"unknown render source {source!r}; use model or detail", field="source")
+    if source == "detail":
+        if room:
+            raise RenderRefused(
+                "a detail render is of the piece alone, not placed in a room", field="room"
+            )
+        if chosen.name != "final":
+            raise RenderRefused(
+                "a detail render is final only; check progress with a screenshot instead",
+                field="tier",
+            )
+    if target not in ("local", "remote"):
+        raise RenderRefused(f"unknown render target {target!r}; use local or remote", field="target")
+    frames = 1 if kind == "still" else chosen.frames
+    if target == "remote":
+        if chosen.name != "final":
+            raise RenderRefused("only a final render can run on the render server", field="tier")
+        if remote_benchmark is None:
+            raise RenderRefused(
+                "no remote benchmark has been run yet; the remote benchmark must be run first so "
+                "the estimate for the render server is real",
+                failure_class="benchmark_missing",
+            )
+        seconds = remote_estimate_seconds(
+            chosen, remote_benchmark.seconds_per_megapixel, remote_benchmark.overhead_seconds,
+            frames=frames,
+        )
+        return RenderQuote(
+            package_id, version, kind, room, chosen, frames, seconds, record, source, "remote"
+        )
     if benchmark is None:
         raise RenderRefused(
             "no benchmark has been run yet; run the benchmark first so the estimate is real",
             failure_class="benchmark_missing",
         )
-    frames = 1 if kind == "still" else chosen.frames
     seconds = estimate_seconds(
         chosen, benchmark.seconds_per_megapixel, cycles_multiplier, frames=frames
     )
-    return RenderQuote(package_id, version, kind, room, chosen, frames, seconds, record)
+    return RenderQuote(package_id, version, kind, room, chosen, frames, seconds, record, source)
 
 
 def authorise(
@@ -189,6 +241,9 @@ def authorise(
     raw_fields: Iterable[str] = (),
     approval: object = None,
     record: str = "piece",
+    source: str = "model",
+    target: str = "local",
+    remote_benchmark: RemoteBenchmark | None = None,
 ) -> RenderTicket:
     """Validate, price and — for `final` — require approval; then mint a ticket."""
     priced = quote(
@@ -202,12 +257,37 @@ def authorise(
         room=room,
         raw_fields=raw_fields,
         record=record,
+        source=source,
+        target=target,
+        remote_benchmark=remote_benchmark,
     )
     if priced.tier.name == "final" and not _is_yes(approval):
         if approval is None:
             raise ApprovalRequired(priced)
         raise RenderRefused("the final render was not approved", failure_class="declined")
     return RenderTicket(priced, _mint=_MINT)
+
+
+# The render server's benchmark: one Cycles frame at 1000 × 1000, run only on the
+# developer's explicit request (render-offload). Minted here and nowhere else.
+REMOTE_BENCHMARK_TIER: Final = Tier(
+    name="benchmark", frames=1, resolution=1000, engine="cycles", timeout_multiplier=2
+)
+
+
+def authorise_remote_benchmark() -> RenderTicket:
+    """A ticket for the render server's one-frame Cycles benchmark."""
+    benchmark_quote = RenderQuote(
+        package_id=BENCHMARK_PACKAGE_ID,
+        version=1,
+        kind="still",
+        room=False,
+        tier=REMOTE_BENCHMARK_TIER,
+        frames=1,
+        estimate_seconds=0.0,
+        target="remote",
+    )
+    return RenderTicket(benchmark_quote, _mint=_MINT)
 
 
 def authorise_benchmark() -> RenderTicket:

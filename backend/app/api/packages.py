@@ -38,6 +38,9 @@ _ROOM_FILES: Final[dict[str, str]] = {
     "scene.json": "application/json",
 }
 _ROOM_FRAME: Final = re.compile(r"^room/frames/(\d{1,4})$")
+# The detail pass's outputs; never `detail.blend` or the log (photoreal-detail).
+_DETAIL_FRAME: Final = re.compile(r"^detail/frames/(\d{1,4})$")
+_DETAIL_SCREEN: Final = re.compile(r"^detail/screens/(\d{1,4})$")
 
 
 class PackageIn(BaseModel):
@@ -130,6 +133,8 @@ def describe_version(root: Path, package_id: str, version: int) -> dict[str, Any
             "turntable_frames": _frame_count(folder),
             "room_still": (room / "still.png").is_file(),
             "room_turntable_frames": _frame_count(room),
+            "detail_still": (storage.detail_dir(folder) / "still.png").is_file(),
+            "detail_turntable_frames": _frame_count(storage.detail_dir(folder)),
         },
         "jobs": state.get("renders") or {},
     }
@@ -235,6 +240,24 @@ def _file_for(folder: Path, name: str) -> tuple[Path, str] | None:
         if room_frame:
             return (
                 folder / "room" / "frames" / f"frame_{int(room_frame.group(1)):03d}.png",
+                "image/png",
+            )
+    if name.startswith("detail/"):
+        detail_name = name[len("detail/") :]
+        if detail_name in _ROOM_FILES:
+            return storage.detail_dir(folder) / detail_name, _ROOM_FILES[detail_name]
+        detail_frame = _DETAIL_FRAME.match(name)
+        if detail_frame:
+            return (
+                storage.detail_dir(folder) / "frames" / f"frame_{int(detail_frame.group(1)):03d}.png",
+                "image/png",
+            )
+        detail_screen = _DETAIL_SCREEN.match(name)
+        if detail_screen:
+            return (
+                storage.detail_dir(folder)
+                / storage.DETAIL_SCREENS_DIRNAME
+                / f"screen_{int(detail_screen.group(1)):03d}.png",
                 "image/png",
             )
     return None

@@ -41,7 +41,22 @@ def configure_render(tier: TierArguments) -> None:
     scene.render.image_settings.file_format = "PNG"
     scene.render.film_transparent = False
     if tier.engine == "CYCLES":
+        use_cycles_device(tier.device)
+
+
+def use_cycles_device(device: str) -> None:
+    """Cycles on the CPU, or on a GPU back end (OPTIX, CUDA or HIP) when the
+    render server asks for one. The default leaves the laptop's behaviour as it was."""
+    scene = bpy.context.scene
+    if device == "CPU":
         scene.cycles.device = "CPU"
+        return
+    preferences = bpy.context.preferences.addons["cycles"].preferences
+    preferences.compute_device_type = device
+    preferences.get_devices()
+    for entry in preferences.devices:
+        entry.use = entry.type == device
+    scene.cycles.device = "GPU"
 
 
 def run(argv: list[str], fill: Fill) -> int:

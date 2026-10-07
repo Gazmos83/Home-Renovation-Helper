@@ -9,7 +9,9 @@ startup rather than letting the service run in a half-configured state
 from __future__ import annotations
 
 import functools
+import ipaddress
 import os
+import re
 from pathlib import Path
 from typing import Annotated, Any, Final
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -22,10 +24,14 @@ from pydantic import (
     SecretStr,
     ValidationError,
     field_validator,
+    model_validator,
 )
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 _REDACTED: Final = "***"
+
+# The Cycles GPU back ends a render server may use (render-offload).
+OFFLOAD_DEVICES: Final = ("OPTIX", "CUDA", "HIP")
 
 # The shortest initial owner password accepted. The same rule lives in
 # `auth/passwords.hash_password`, but enforcing it here means a weak
@@ -136,6 +142,24 @@ class Settings(BaseSettings):
     blender_timeout_seconds: int = 600
     render_root: Path = DEFAULT_RENDER_ROOT
 
+    # --- The live Blender (photoreal-detail) ----------------------------------
+    # The Blender MCP addon's socket. Loopback only: the live Blender is the
+    # owner's own, on this machine.
+    blender_live_host: str = "127.0.0.1"
+    blender_live_port: int = 9876
+    blender_live_timeout_seconds: float = 120.0
+
+    # --- Render offload (render-offload) ---------------------------------------
+    # The owner's rented GPU box, reached with the system's `ssh`. Off unless host,
+    # user, key, known-hosts file and remote Blender path are all set.
+    render_offload_host: str | None = None
+    render_offload_port: int = 22
+    render_offload_user: str | None = None
+    render_offload_key_path: Path | None = None
+    render_offload_known_hosts_path: Path | None = None
+    render_offload_blender: str | None = None
+    render_offload_cycles_device: str = "OPTIX"
+
     # --- Uploads (blueprints and photos attached to a conversation) -----------
     upload_root: Path = DEFAULT_UPLOAD_ROOT
     upload_max_bytes: int = 10 * 1024 * 1024
@@ -205,6 +229,99 @@ class Settings(BaseSettings):
     def generation_enabled(self) -> bool:
         """Whether starting a Blender process is possible on this host now."""
         return self.blender_bin.is_file() and os.access(self.blender_bin, os.X_OK)
+
+    @field_validator("blender_live_host", mode="after")
+    @classmethod
+    def _require_loopback_live_host(cls, value: str) -> str:
+        if value == "localhost":
+            return value
+        try:
+            if ipaddress.ip_address(value).is_loopback:
+                return value
+        except ValueError:
+            pass
+        raise ValueError("blender_live_host must be a loopback address (127.0.0.1, ::1 or localhost)")
+
+    @field_validator("blender_live_port", mode="after")
+    @classmethod
+    def _require_live_port(cls, value: int) -> int:
+        if not 1 <= value <= 65535:
+            raise ValueError("blender_live_port must be between 1 and 65535")
+        return value
+
+    @field_validator("blender_live_timeout_seconds", mode="after")
+    @classmethod
+    def _require_live_timeout(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("blender_live_timeout_seconds must be positive")
+        return value
+
+    @field_validator("render_offload_host", "render_offload_user", "render_offload_blender", mode="after")
+    @classmethod
+    def _blank_offload_value_is_unset(cls, value: str | None) -> str | None:
+        return (value or "").strip() or None
+
+    @field_validator("render_offload_host", mode="after")
+    @classmethod
+    def _offload_host_is_a_plain_name(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.:-]{0,252}", value):
+            raise ValueError("render_offload_host must be a host name or address")
+        return value
+
+    @field_validator("render_offload_user", mode="after")
+    @classmethod
+    def _offload_user_is_a_plain_name(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9._-]{0,31}", value):
+            raise ValueError("render_offload_user must be a plain user name")
+        return value
+
+    @field_validator("render_offload_blender", mode="after")
+    @classmethod
+    def _offload_blender_is_a_plain_path(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"/[A-Za-z0-9._/-]{1,250}", value):
+            raise ValueError(
+                "render_offload_blender must be an absolute path of letters, digits and . _ - /"
+            )
+        return value
+
+    @field_validator("render_offload_port", mode="after")
+    @classmethod
+    def _offload_port_in_range(cls, value: int) -> int:
+        if not 1 <= value <= 65535:
+            raise ValueError("render_offload_port must be between 1 and 65535")
+        return value
+
+    @field_validator("render_offload_cycles_device", mode="after")
+    @classmethod
+    def _offload_device_known(cls, value: str) -> str:
+        if value not in OFFLOAD_DEVICES:
+            raise ValueError(f"render_offload_cycles_device must be one of {', '.join(OFFLOAD_DEVICES)}")
+        return value
+
+    @property
+    def render_offload_configured(self) -> bool:
+        """True only when every connection value is set; otherwise every render runs locally."""
+        return all(
+            (
+                self.render_offload_host,
+                self.render_offload_user,
+                self.render_offload_key_path,
+                self.render_offload_known_hosts_path,
+                self.render_offload_blender,
+            )
+        )
+
+    @model_validator(mode="after")
+    def _offload_files_exist_when_configured(self) -> Settings:
+        if not self.render_offload_configured:
+            return self
+        for variable, path in (
+            ("RENDER_OFFLOAD_KEY_PATH", self.render_offload_key_path),
+            ("RENDER_OFFLOAD_KNOWN_HOSTS_PATH", self.render_offload_known_hosts_path),
+        ):
+            if path is None or not path.is_file() or not os.access(path, os.R_OK):
+                raise ValueError(f"{variable} must be a readable file")
+        return self
 
     @field_validator("upload_max_bytes", "upload_max_per_thread", "turn_max_images", mode="after")
     @classmethod
@@ -314,6 +431,12 @@ class Settings(BaseSettings):
             "blender_bin": str(self.blender_bin),
             "blender_timeout_seconds": self.blender_timeout_seconds,
             "render_root": str(self.render_root),
+            "blender_live": f"{self.blender_live_host}:{self.blender_live_port}",
+            "render_offload": (
+                f"{self.render_offload_user}@{self.render_offload_host}:{self.render_offload_port}"
+                if self.render_offload_configured
+                else "off"
+            ),
             "upload_root": str(self.upload_root),
             "guideline_root": str(self.guideline_root),
             "generation": "on" if self.generation_enabled else "off",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -21,7 +22,7 @@ from app.render.tiers import load_tiers
 from tests.blender_fakes import fake_pipeline_launch
 
 HOUSE_TABLES = (
-    "review_items, reviews, piece_versions, pieces, rooms, apartments, preferences, "
+    "remote_render_jobs, render_feedback, render_runs, review_items, reviews, piece_versions, pieces, rooms, apartments, preferences, "
     "generator_extension_requests, thread_tool_settings, plugin_invocations, threads, uploads"
 )
 
@@ -168,3 +169,17 @@ def fake_embedder() -> Iterator[FakeEmbedder]:
     embedding.set_embedder(embedder)
     yield embedder
     embedding.set_embedder(None)
+
+
+@pytest.fixture
+def detach_tracing():
+    """A `Tracing` puts an export filter on the root handlers, and pytest keeps
+    those handlers from one test to the next; a test that builds one calls this
+    on it straight away so the filter does not outlive the test."""
+
+    def detach(tracing):
+        for handler in logging.getLogger().handlers:
+            handler.removeFilter(tracing._export_filter)
+        return tracing
+
+    return detach

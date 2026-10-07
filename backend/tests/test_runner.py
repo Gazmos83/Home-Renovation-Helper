@@ -337,3 +337,99 @@ def test_a_render_launch_without_a_ticket_is_refused(render_root: Path) -> None:
         with pytest.raises(RenderNotAuthorised, match="needs a ticket"):
             run(go(not_a_ticket))
     assert calls == []
+
+
+# --- detail renders (photoreal-detail) -----------------------------------------------------------
+
+
+def detail_ticket(kind="turntable", *, version=1, package_id="desk"):
+    return authorise(
+        package_id=package_id, version=version, kind=kind, tier="final", tiers=TIERS,
+        benchmark=BENCH, approval="yes", source="detail",
+    )
+
+
+def with_detail_copy(folder: Path) -> Path:
+    copy = storage.detail_blend_path(folder)
+    copy.parent.mkdir(exist_ok=True)
+    copy.write_bytes(b"BLENDER-detail")
+    return copy
+
+
+def test_a_final_detail_turntable_renders_the_copy_and_publishes_under_detail(render_root: Path) -> None:
+    folder = new_version(render_root, built=True)
+    copy = with_detail_copy(folder)
+    own_frames = folder / "frames"
+    own_frames.mkdir()
+    (own_frames / "frame_000.png").write_bytes(b"own")
+    calls: list[list[str]] = []
+    run(render(render_root, detail_ticket(), fake_success_launch(render_writer, calls=calls)))
+    argv = calls[0]
+    assert arg_value(argv, "--blend") == str(copy)
+    assert (arg_value(argv, "--tier-frames"), arg_value(argv, "--tier-resolution"),
+            arg_value(argv, "--tier-engine")) == ("36", "1500", "CYCLES")
+    detail = storage.detail_dir(folder)
+    assert sorted(p.name for p in (detail / "frames").iterdir()) == [f"frame_{i:03d}.png" for i in range(36)]
+    assert (detail / "viewer.html").is_file()
+    assert [p.name for p in own_frames.iterdir()] == ["frame_000.png"]
+    assert not (folder / "viewer.html").exists()
+    record = json.loads((detail / "scene.json").read_text(encoding="utf-8"))["turntable"]
+    assert record["source"] == "detail" and record["tier"] == "final"
+    entry = storage.read_status(folder)["renders"]["detail-turntable"]
+    assert entry["status"] == "succeeded" and entry["tier"] == "final"
+    assert "turntable" not in storage.read_status(folder)["renders"]
+    assert [p for p in folder.iterdir() if p.name.startswith(".")] == []
+
+
+def test_a_final_detail_still_publishes_under_detail(render_root: Path) -> None:
+    folder = new_version(render_root, built=True)
+    with_detail_copy(folder)
+    run(render(render_root, detail_ticket("still"), fake_success_launch(render_writer)))
+    assert (storage.detail_dir(folder) / "still.png").is_file()
+    assert not (folder / "still.png").exists()
+
+
+def test_a_detail_render_without_the_copy_fails_and_launches_nothing(render_root: Path) -> None:
+    folder = new_version(render_root, built=True)
+    calls: list[list[str]] = []
+    run(render(render_root, detail_ticket(), fake_success_launch(render_writer, calls=calls)))
+    entry = storage.read_status(folder)["renders"]["detail-turntable"]
+    assert entry["status"] == "failed" and "detail.blend" in entry["error"]
+    assert calls == []
+
+
+def test_the_live_file_is_saved_before_a_detail_render_and_a_failure_does_not_stop_it(
+    render_root: Path,
+) -> None:
+    folder = new_version(render_root, built=True)
+    with_detail_copy(folder)
+    order: list[str] = []
+
+    async def before() -> None:
+        order.append("saved")
+        raise RuntimeError("Blender is closed")
+
+    def writer(out: Path, argv: list[str]) -> None:
+        order.append("rendered")
+        render_writer(out, argv)
+
+    run(render(render_root, detail_ticket("still"), fake_success_launch(writer), before=before))
+    assert order == ["saved", "rendered"]
+    assert storage.read_status(folder)["renders"]["detail-still"]["status"] == "succeeded"
+
+
+def test_a_model_ticket_cannot_launch_a_detail_render(render_root: Path) -> None:
+    """The runner passes the ticket's own source; a ticket for another source is refused."""
+    import asyncio as aio
+
+    from app.blender.runner import launch_guarded
+
+    t = ticket("turntable", "draft")
+    calls: list[list[str]] = []
+    launch = fake_success_launch(render_writer, calls=calls)
+    with pytest.raises(RenderNotAuthorised):
+        run(launch_guarded(
+            t, expected=("desk", 1, "turntable", False, "piece", "detail"), argv=["x"],
+            cwd=render_root, timeout=5, semaphore=aio.Semaphore(1), launch=launch,
+        ))
+    assert calls == []

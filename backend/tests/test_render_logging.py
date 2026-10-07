@@ -109,3 +109,46 @@ def test_a_failing_tracing_client_is_logged_once_and_never_raises(
     warnings = [r for r in caplog.records if "could not record a render event" in r.message]
     assert len(warnings) == 1
     assert "sk-lf-test" not in repr(warnings[0].context)
+
+
+# --- where it ran (render-offload) -------------------------------------------------------------------------------
+
+
+def _final_quote(target: str):
+    from app.render.benchmark_store import RemoteBenchmark
+
+    return authorise(
+        package_id="desk", version=2, kind="turntable", tier="final", tiers=load_tiers(),
+        benchmark=Benchmark(2.5, "t"), approval="yes", target=target,
+        remote_benchmark=RemoteBenchmark(0.2, 40.0, "t"),
+    ).quote
+
+
+def test_a_local_draft_names_its_target(caplog: pytest.LogCaptureFixture) -> None:
+    quote = _quote()
+    with caplog.at_level(logging.INFO, logger="app"):
+        log_render_started(quote)
+        log_render_finished(quote, actual_seconds=9.5, outcome="succeeded")
+    started, finished = (r.context for r in caplog.records if r.message.startswith("render."))
+    assert started["target"] == "local" and finished["target"] == "local"
+    assert "transfer_seconds" not in finished
+
+
+def test_a_remote_final_names_its_target_and_the_transfer_seconds(caplog: pytest.LogCaptureFixture) -> None:
+    quote = _final_quote("remote")
+    with caplog.at_level(logging.INFO, logger="app"):
+        log_render_started(quote)
+        log_render_finished(quote, actual_seconds=70.0, outcome="succeeded", transfer_seconds=12.3456)
+    started, finished = (r.context for r in caplog.records if r.message.startswith("render."))
+    assert started["target"] == "remote" and started["tier"] == "final"
+    assert started["estimate_seconds"] == pytest.approx(36 * 2.25 * 0.2 + 40)
+    assert finished["target"] == "remote" and finished["actual_seconds"] == 70.0
+    assert finished["transfer_seconds"] == 12.346
+
+
+def test_tracing_receives_the_target_and_transfer() -> None:
+    client = FakeClient()
+    quote = _final_quote("remote")
+    log_render_finished(quote, actual_seconds=70.0, outcome="succeeded", transfer_seconds=5.0, tracing=_tracing(client))
+    [event] = client.events
+    assert event["metadata"]["target"] == "remote" and event["metadata"]["transfer_seconds"] == 5.0

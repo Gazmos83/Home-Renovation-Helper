@@ -253,3 +253,150 @@ def test_a_piece_created_through_chat_is_built_on_the_apps_loop(client: TestClie
     assert done.status_code == 200, done.text
     wait_for_status(storage.version_dir(render_root, "hall-bench", 1))
     assert client.get(f"/chat/threads/{thread}").json()["package_id"] == "hall-bench"
+
+
+def _shelves() -> int:
+    from tests.api_helpers import desk
+
+    cabinet = next(m for m in desk()["modules"] if m["id"] == "cabinet")
+    return cabinet["shelves"]
+
+
+def _revise_models(package_id: str):
+    return fake_models(
+        foreman={"decisions": [{"specialist": "intake", "reason": "t"}, {"specialist": "designer", "reason": "t"}]},
+        intake={"steps": [[tool_call("record_brief", HALL)], "Saved."]},
+        designer={"steps": [
+            [tool_call("revise_package", {
+                "package_id": package_id,
+                "changes": {"modules": {"cabinet": {"shelves": _shelves() + 1}}},
+            })],
+            "Revised.",
+        ]},
+    )
+
+
+def _piece_of(client: TestClient, thread: str) -> str | None:
+    listed = {t["thread_id"]: t for t in client.get("/chat/threads").json()}
+    assert listed[thread]["package_id"] == client.get(f"/chat/threads/{thread}").json()["package_id"]
+    return listed[thread]["package_id"]
+
+
+def test_a_confirmed_revision_binds_an_unbound_thread(client: TestClient, render_root: Path) -> None:
+    from app.blender import storage
+    from tests.api_helpers import create
+    from tests.conftest import wait_for_status
+
+    assert create(client).status_code == 202
+    wait_for_status(storage.version_dir(render_root, "hall-bench", 1))
+    install(client, _revise_models("hall-bench"))
+    thread = start(client)
+    paused = client.post(f"/chat/threads/{thread}/turns", json={"message": "a hall bench"}).json()
+    client.post(f"/chat/threads/{thread}/resume",
+                json={"confirmation_id": paused["pending"]["confirmation_id"], "answer": "yes"})
+    assert _piece_of(client, thread) is None
+    paused = client.post(f"/chat/threads/{thread}/turns", json={"message": "one more shelf"}).json()
+    assert paused["pending"], paused
+    assert paused["pending"]["subject"] == "revise"
+    assert _piece_of(client, thread) is None
+    client.post(
+        f"/chat/threads/{thread}/resume",
+        json={"confirmation_id": paused["pending"]["confirmation_id"], "answer": "yes"},
+    )
+    assert _piece_of(client, thread) == "hall-bench"
+
+
+def test_a_second_created_piece_rebinds_the_thread(client: TestClient, render_root: Path) -> None:
+    from tests.api_helpers import desk
+
+    install(client, fake_models(
+        foreman={"decisions": [{"specialist": "intake", "reason": "t"}] + [{"specialist": "designer", "reason": "t"}] * 2},
+        intake={"steps": [[tool_call("record_brief", HALL)], "Saved."]},
+        designer={"steps": [
+            [tool_call("create_piece", {"package_id": "hall-bench", "spec": desk()})], "Created.",
+            [tool_call("create_piece", {"package_id": "hall-shelf", "spec": desk()})], "Created.",
+        ]},
+    ))
+    thread = start(client)
+    paused = client.post(f"/chat/threads/{thread}/turns", json={"message": "a hall bench"}).json()
+    client.post(f"/chat/threads/{thread}/resume",
+                json={"confirmation_id": paused["pending"]["confirmation_id"], "answer": "yes"})
+    for name in ("hall-bench", "hall-shelf"):
+        paused = client.post(f"/chat/threads/{thread}/turns", json={"message": f"design {name}"}).json()
+        client.post(f"/chat/threads/{thread}/resume",
+                    json={"confirmation_id": paused["pending"]["confirmation_id"], "answer": "yes"})
+        assert _piece_of(client, thread) == name
+
+
+def test_a_declined_piece_leaves_the_thread_unbound(client: TestClient, render_root: Path) -> None:
+    from tests.api_helpers import desk
+
+    install(client, fake_models(
+        foreman={"decisions": [{"specialist": "intake", "reason": "t"}, {"specialist": "designer", "reason": "t"}]},
+        intake={"steps": [[tool_call("record_brief", HALL)], "Saved."]},
+        designer={"steps": [[tool_call("create_piece", {"package_id": "hall-bench", "spec": desk()})], "Declined."]},
+    ))
+    thread = start(client)
+    paused = client.post(f"/chat/threads/{thread}/turns", json={"message": "a hall bench"}).json()
+    client.post(f"/chat/threads/{thread}/resume",
+                json={"confirmation_id": paused["pending"]["confirmation_id"], "answer": "yes"})
+    paused = client.post(f"/chat/threads/{thread}/turns", json={"message": "design it"}).json()
+    client.post(f"/chat/threads/{thread}/resume",
+                json={"confirmation_id": paused["pending"]["confirmation_id"], "answer": "no", "reason": "no"})
+    assert _piece_of(client, thread) is None
+
+
+def test_progress_needs_the_session_and_a_known_thread(client: TestClient) -> None:
+    install(client, fake_models())
+    assert TestClient(client.app).get(f"/chat/threads/{uuid4()}/progress").status_code == 401
+    assert client.get(f"/chat/threads/{uuid4()}/progress").status_code == 404
+
+
+def test_progress_without_the_checkpointer_is_refused_with_the_memory_reason(client: TestClient) -> None:
+    thread = start(client)
+    client.app.state.graph = None
+    response = client.get(f"/chat/threads/{thread}/progress")
+    assert response.status_code == 503
+    assert "conversation memory is not available" in response.json()["detail"]["reason"]
+
+
+def test_a_fresh_thread_reports_no_piece_and_asks_for_a_description(client: TestClient) -> None:
+    install(client, fake_models())
+    thread = start(client)
+    body = client.get(f"/chat/threads/{thread}/progress").json()
+    assert body["package_id"] is None
+    assert not any(step["done"] for step in body["steps"])
+    assert body["next_step"] == "Describe the piece you want"
+
+
+def test_a_built_and_reviewed_piece_shows_in_the_progress(client: TestClient, render_root: Path) -> None:
+    from app.blender import storage
+    from tests.api_helpers import create
+    from tests.conftest import wait_for_status
+
+    assert create(client).status_code == 202
+    folder = storage.version_dir(render_root, "hall-bench", 1)
+    wait_for_status(folder)
+    (folder / "screenshot.png").write_bytes(b"png")
+    storage.write_render_status(folder, "turntable", status="succeeded", tier="draft")
+    with Session(client.app.state.engine) as session:
+        house_file.record_piece(session, "hall-bench", "Hall bench")
+        house_file.record_version(session, "hall-bench", 1)
+        house_file.record_review(session, "hall-bench", 1, ["screenshot.png"], [
+            {"aspect": "brief", "expected": "a", "expected_source": "brief", "observed": "b", "image": 1, "severity": "minor"},
+            {"aspect": "render", "expected": "a", "expected_source": "brief", "observed": "b", "image": 1, "severity": "minor"},
+        ])
+        session.commit()
+    install(client, fake_models())
+    thread = start(client, package_id="hall-bench")
+    body = client.get(f"/chat/threads/{thread}/progress").json()
+    done = {s["step"]: s for s in body["steps"]}
+    assert body["latest_version"] == 1
+    assert done["built"]["done"] and done["rendered"]["done"] and done["reviewed"]["done"]
+    assert not done["detail"]["done"] and not done["final"]["done"]
+    assert done["reviewed"]["detail"] == "2 open"
+    assert body["open_review_items"] == 2
+    assert body["screenshot"] == "/packages/hall-bench/versions/1/files/screenshot.png"
+    text = json.dumps(body).lower()
+    for word in ("deepseek", "gpt-", "token", "cost", "/home/", str(render_root).lower()):
+        assert word not in text

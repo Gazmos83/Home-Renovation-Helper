@@ -172,6 +172,12 @@ def pending(graph: Any, *, thread_id: UUID, owner_id: UUID) -> Pending | None:
     return _pending_of(interrupts[0]) if interrupts else None
 
 
+def brief_confirmed(graph: Any, *, thread_id: UUID, owner_id: UUID) -> bool:
+    """Whether a brief was confirmed in this thread. Raises on an unreachable store."""
+    snapshot = graph.get_state(_config(thread_id, owner_id))
+    return bool(snapshot.values.get("brief"))
+
+
 def history(graph: Any, *, thread_id: UUID, owner_id: UUID) -> list[dict[str, str]]:
     """The owner's messages and the replies, in order; tool traffic is left out."""
     snapshot = graph.get_state(_config(thread_id, owner_id))

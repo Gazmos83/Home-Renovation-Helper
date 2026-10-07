@@ -28,12 +28,15 @@ from app.agent.models.routing import load_routing, read_routing_overrides
 from app.agent.models.slots import build_slot_models
 from app.agent.tools.base import ToolDeps
 from app.api.admin_models import router as admin_models_router
+from app.api.admin_offload import router as admin_offload_router
 from app.api.admin_plugins import router as admin_plugins_router
 from app.api.admin_render import router as admin_render_router
 from app.api.admin_usage import router as admin_usage_router
 from app.api.apartments import router as apartments_router
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
+from app.api.feedback import admin_router as admin_feedback_router
+from app.api.feedback import router as feedback_router
 from app.api.guideline_notes import router as guideline_notes_router
 from app.api.health import router as health_router
 from app.api.limits import RateLimiter
@@ -57,6 +60,7 @@ from app.plugins.executor import PluginExecutor
 from app.plugins.loader import load_plugins
 from app.render.approvals import ApprovalStore
 from app.render.benchmark_store import read_benchmark
+from app.render.offload.runtime import OffloadRuntime
 from app.render.tiers import load_tiers
 
 
@@ -144,7 +148,7 @@ async def _lifespan(app: FastAPI):
         slots=[slot for slot, _ in app.state.routing.items()],
         known_tools=app.state.plugins.tool_names(),
         tool_roles={
-            tool: app.state.plugins.by_name[plugin].role
+            tool: app.state.plugins.by_name[plugin].agents
             for tool, plugin in app.state.plugins.tool_to_plugin.items()
         },
     )
@@ -225,6 +229,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # design decision 11). Built here, not in the lifespan, because `TestClient`
     # does not always run the lifespan and every route must find it.
     app.state.blender_semaphore = asyncio.Semaphore(1)
+    # The render server (render-offload): `None` unless it is configured. It has its own
+    # one-job-at-a-time lock, so a laptop render can run beside a remote final.
+    app.state.offload = OffloadRuntime.from_settings(settings)
     # A test-only seam: `None` in production, always falling through to the real
     # `subprocess_launch`. Never read outside the render routes.
     app.state.blender_launch = None
@@ -263,6 +270,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(tool_toggles_router)
     app.include_router(uploads_router)
     app.include_router(renders_router)
+    app.include_router(feedback_router)
     app.include_router(apartments_router)
     app.include_router(price_list_router)
     app.include_router(pricing_router)
@@ -271,6 +279,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_models_router)
     app.include_router(admin_plugins_router)
     app.include_router(admin_usage_router)
+    app.include_router(admin_feedback_router)
+    app.include_router(admin_offload_router)
 
     app_logging.install(app)
     # Added last so it sits outermost: preflight and error responses both need

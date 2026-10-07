@@ -141,3 +141,113 @@ def test_the_real_benchmark_reports_a_positive_number(blender_bin, engine, rende
     assert result.seconds_per_megapixel > 0
     assert (render_root / "benchmark" / "frame" / "still.png").stat().st_size > 0
     print(f"benchmark: {result.seconds_per_megapixel:.2f} s/MP")
+
+
+# --- the render server's benchmark, target and rate (render-offload) -----------------------------------
+
+
+@pytest.fixture
+def offload_engine(migrated_database: str) -> Iterator:
+    engine = make_engine(migrated_database)
+
+    def clear() -> None:
+        with Session(engine) as session:
+            session.execute(text("DELETE FROM operator_settings WHERE key LIKE 'offload:%'"))
+            session.commit()
+
+    clear()
+    yield engine
+    clear()
+    engine.dispose()
+
+
+def test_the_remote_benchmark_round_trips_and_a_rerun_replaces_it(offload_engine) -> None:
+    assert store.read_remote_benchmark(offload_engine) is None
+    first = store.write_remote_benchmark(offload_engine, 0.2, 35.0)
+    assert store.read_remote_benchmark(offload_engine) == first
+    assert first.calibrated is False
+    second = store.write_remote_benchmark(offload_engine, 0.3, 30.0)
+    assert store.read_remote_benchmark(offload_engine) == second
+
+
+def test_a_remote_benchmark_must_be_positive(offload_engine) -> None:
+    with pytest.raises(ValueError):
+        store.write_remote_benchmark(offload_engine, 0, 10)
+    with pytest.raises(ValueError):
+        store.write_remote_benchmark(offload_engine, 0.2, -1)
+
+
+def test_the_final_target_defaults_to_local_and_accepts_only_known_values(offload_engine) -> None:
+    assert store.read_final_target(offload_engine) == "local"
+    store.write_final_target(offload_engine, "remote")
+    assert store.read_final_target(offload_engine) == "remote"
+    with pytest.raises(ValueError):
+        store.write_final_target(offload_engine, "cloud")
+
+
+def test_the_hourly_rate_is_optional_and_not_negative(offload_engine) -> None:
+    assert store.read_hourly_rate(offload_engine) is None
+    store.write_hourly_rate(offload_engine, 1.8)
+    assert store.read_hourly_rate(offload_engine) == 1.8
+    with pytest.raises(ValueError):
+        store.write_hourly_rate(offload_engine, -1)
+
+
+def _final_quote(target: str):
+    from app.render.benchmark_store import Benchmark, RemoteBenchmark
+    from app.render.guard import authorise
+    from app.render.tiers import load_tiers
+
+    return authorise(
+        package_id="desk", version=1, kind="turntable", tier="final", tiers=load_tiers(),
+        benchmark=Benchmark(2.5, "t"), approval="yes", target=target,
+        remote_benchmark=RemoteBenchmark(0.2, 40.0, "t"),
+    ).quote
+
+
+def test_the_first_remote_final_recalibrates_the_servers_rate_without_the_transfer(offload_engine) -> None:
+    from app.render.calibration import calibrate_after_render
+
+    store.write_benchmark(offload_engine, 2.5)
+    store.write_remote_benchmark(offload_engine, 0.2, 40.0)
+    # The job passes the render time alone: 36 frames × 2.25 MP × 0.1 s/MP = 8.1 s.
+    assert calibrate_after_render(offload_engine, _final_quote("remote"), 8.1) == pytest.approx(0.1)
+    after = store.read_remote_benchmark(offload_engine)
+    assert after.seconds_per_megapixel == pytest.approx(0.1) and after.overhead_seconds == 40.0
+    assert after.calibrated is True
+    assert store.stored_cycles_multiplier(offload_engine) is None  # the laptop's multiplier is untouched
+    assert calibrate_after_render(offload_engine, _final_quote("remote"), 99.0) is None
+    assert store.read_remote_benchmark(offload_engine).seconds_per_megapixel == pytest.approx(0.1)
+
+
+def test_a_local_final_still_calibrates_only_the_laptops_multiplier(offload_engine) -> None:
+    from app.render.calibration import calibrate_after_render
+
+    store.write_benchmark(offload_engine, 2.5)
+    store.write_remote_benchmark(offload_engine, 0.2, 40.0)
+    assert calibrate_after_render(offload_engine, _final_quote("local"), 36 * 2.25 * 2.5 * 20) == pytest.approx(20)
+    assert store.read_remote_benchmark(offload_engine).calibrated is False
+
+
+def test_a_remote_benchmark_rerun_makes_the_next_remote_final_calibrate_again(offload_engine) -> None:
+    from app.render.calibration import calibrate_after_render
+
+    store.write_remote_benchmark(offload_engine, 0.2, 40.0)
+    calibrate_after_render(offload_engine, _final_quote("remote"), 8.1)
+    store.write_remote_benchmark(offload_engine, 0.5, 20.0)
+    assert store.read_remote_benchmark(offload_engine).calibrated is False
+    assert calibrate_after_render(offload_engine, _final_quote("remote"), 16.2) == pytest.approx(0.2)
+
+
+def test_the_remote_benchmark_ticket_is_the_guards_alone() -> None:
+    from app.render.guard import (
+        RenderNotAuthorised,
+        RenderTicket,
+        authorise_remote_benchmark,
+    )
+
+    ticket = authorise_remote_benchmark()
+    assert ticket.quote.target == "remote" and ticket.quote.tier.engine == "cycles"
+    assert (ticket.quote.frames, ticket.quote.tier.resolution) == (1, 1000)
+    with pytest.raises(RenderNotAuthorised):
+        RenderTicket(ticket.quote)

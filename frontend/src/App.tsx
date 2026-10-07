@@ -3,18 +3,23 @@ import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils";
 import { api, onUnauthorized } from "./lib/api";
 import { Page } from "@/components/Page";
+import Conversation from "./routes/Conversation";
 import Conversations from "./routes/Conversations";
 import GuidelineNotes from "./routes/GuidelineNotes";
 import Login from "./routes/Login";
+import Pieces from "./routes/Pieces";
 import PriceList from "./routes/PriceList";
 import Remnants from "./routes/Remnants";
 import Snapshots from "./routes/Snapshots";
+import Feedback from "./routes/admin/Feedback";
 import Models from "./routes/admin/Models";
+import Offload from "./routes/admin/Offload";
 import Plugins from "./routes/admin/Plugins";
 import Usage from "./routes/admin/Usage";
 
 const links = [
   ["/conversations", "Conversations"],
+  ["/pieces", "Pieces"],
   ["/price-list", "Price list"],
   ["/snapshots", "Snapshots"],
   ["/remnants", "Remnants"],
@@ -24,6 +29,8 @@ const adminLinks = [
   ["/admin/models", "Models"],
   ["/admin/plugins", "Plugins"],
   ["/admin/usage", "Usage"],
+  ["/admin/feedback", "Feedback"],
+  ["/admin/offload", "Offload"],
 ] as const;
 
 function NavItem({ to, label }: { to: string; label: string }) {
@@ -96,6 +103,11 @@ export default function App() {
           path="/conversations"
           element={signedIn ? <Conversations /> : <Navigate to="/login" replace />}
         />
+        <Route
+          path="/conversations/:threadId"
+          element={signedIn ? <Conversation /> : <Navigate to="/login" replace />}
+        />
+        <Route path="/pieces" element={signedIn ? <Pieces /> : <Navigate to="/login" replace />} />
         <Route path="/price-list" element={signedIn ? <PriceList /> : <Navigate to="/login" replace />} />
         <Route path="/snapshots" element={signedIn ? <Snapshots /> : <Navigate to="/login" replace />} />
         <Route path="/remnants" element={signedIn ? <Remnants /> : <Navigate to="/login" replace />} />
@@ -111,6 +123,14 @@ export default function App() {
         <Route
           path="/admin/usage"
           element={signedIn && dev ? <Usage /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
+        />
+        <Route
+          path="/admin/feedback"
+          element={signedIn && dev ? <Feedback /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
+        />
+        <Route
+          path="/admin/offload"
+          element={signedIn && dev ? <Offload /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
         />
         <Route path="*" element={<Navigate to={signedIn ? "/conversations" : "/login"} replace />} />
       </Routes>

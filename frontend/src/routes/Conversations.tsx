@@ -1,55 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { api, type Thread, type ToolToggle } from "../lib/api";
+import { Link, useNavigate } from "react-router-dom";
+import { api } from "../lib/api";
+import { FieldError } from "../lib/form";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { cardClass } from "@/components/ui/card";
 import { Page } from "@/components/Page";
 
-function Tools({ thread }: { thread: Thread }) {
-  const queryClient = useQueryClient();
-  const tools = useQuery({ queryKey: ["tools", thread.thread_id], queryFn: () => api.tools(thread.thread_id) });
-  const toggle = useMutation({
-    mutationFn: ({ plugin, enabled }: { plugin: string; enabled: boolean }) =>
-      api.setTool(thread.thread_id, plugin, enabled),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tools", thread.thread_id] }),
-  });
-
-  if (tools.isLoading) return <p>Loading tools…</p>;
-  if (!tools.data) return null;
-
-  return (
-    <ul>
-      {tools.data.map((tool: ToolToggle) => (
-        <li key={tool.plugin} className="flex items-center justify-between gap-4">
-          <div>
-            <strong>{tool.plugin.replaceAll("_", " ")}</strong>
-            <div>{tool.description}</div>
-            {!tool.toggleable && <small className="text-muted-foreground">Always on</small>}
-          </div>
-          <Label>
-            <Input
-              type="checkbox"
-              checked={tool.enabled}
-              disabled={!tool.toggleable}
-              aria-label={tool.plugin}
-              onChange={(event) => toggle.mutate({ plugin: tool.plugin, enabled: event.target.checked })}
-            />
-          </Label>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 export default function Conversations() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [title, setTitle] = useState("New conversation");
   const threads = useQuery({ queryKey: ["threads"], queryFn: api.threads });
   const create = useMutation({
     mutationFn: () => api.createThread(title),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["threads"] }),
+    onSuccess: (thread) => {
+      queryClient.invalidateQueries({ queryKey: ["threads"] });
+      navigate(`/conversations/${thread.thread_id}`);
+    },
   });
 
   return (
@@ -65,11 +35,18 @@ export default function Conversations() {
         <Input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Conversation title" />
         <Button type="submit">Start</Button>
       </form>
+      <FieldError message={create.error instanceof Error ? create.error.message : null} />
+      {threads.data?.length === 0 && <p>No conversations yet. Start one above and describe what you want.</p>}
       {threads.data?.map((thread) => (
-        <section key={thread.thread_id} className={cardClass}>
-          <h2>{thread.title || "Untitled"}</h2>
-          <Tools thread={thread} />
-        </section>
+        <Link key={thread.thread_id} to={`/conversations/${thread.thread_id}`} className={`${cardClass} block hover:bg-accent`}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2>{thread.title || "Untitled"}</h2>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              {thread.package_id && <Badge variant="secondary">{thread.package_id}</Badge>}
+              <time dateTime={thread.last_turn_at}>{new Date(thread.last_turn_at).toLocaleString()}</time>
+            </div>
+          </div>
+        </Link>
       ))}
     </Page>
   );

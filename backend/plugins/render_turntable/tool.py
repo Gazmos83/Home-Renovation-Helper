@@ -18,10 +18,17 @@ from app.agent import house_file
 from app.agent.tools.base import AgentTool, Confirmation, ToolContext, parse_args
 from app.agent.tools.shared import builds_unavailable, version_folder
 from app.blender import runner, storage
+from app.feedback import runs as feedback_runs
 from app.packages import service
 from app.render import benchmark_store
 from app.render.calibration import calibrate_after_render
 from app.render.guard import RenderRefused, RenderTicket, authorise, quote
+from app.render.offload import jobs as offload_jobs
+from app.render.offload.runtime import (
+    confirm_server_sync,
+    remote_benchmark_for,
+    target_for,
+)
 
 
 class RenderArgs(BaseModel):
@@ -107,7 +114,14 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext):
         return target
     record, target_id, folder, number = target
     price_args = _price_args(args, ctx, target_id, number, record)
+    # A final goes to the render server when the developer chose it; if the server cannot
+    # be used the render is refused here, before any approval, and never moved to the laptop.
+    where = target_for(ctx.deps.engine, args.tier)
     try:
+        if where == "remote":
+            confirm_server_sync(ctx.deps.loop, ctx.deps.offload, ctx.deps.launch)
+        price_args["target"] = where
+        price_args["remote_benchmark"] = remote_benchmark_for(ctx.deps.engine, where)
         priced = quote(**price_args)
     except RenderRefused as error:
         return error.reason
@@ -166,6 +180,7 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
     deps = ctx.deps
     settings = deps.settings
     runner.mark_render_queued(folder, ticket)
+    run_id = feedback_runs.record_run(deps.engine, ticket.quote, feedback_runs.origin_from(ctx))
     asyncio.run_coroutine_threadsafe(
         runner.run_render(
             ticket,
@@ -177,6 +192,9 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
             scene_document=scene_document,
             tracing=deps.tracing,
             on_finished=lambda finished, actual: calibrate_after_render(deps.engine, finished, actual),
+            on_outcome=lambda outcome: feedback_runs.finish_run(deps.engine, run_id, outcome),
+            offload=deps.offload,
+            on_remote_job=lambda record: offload_jobs.record_job(deps.engine, record),
         ),
         deps.loop,
     )

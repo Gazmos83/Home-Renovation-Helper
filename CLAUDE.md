@@ -3,7 +3,7 @@
 Single-user personal project: design custom furniture and room layouts for the owner's own home, model them in Blender, render cheap turntables, review them against the brief, and price the build from lawful supplier data. Portfolio-quality code; no multi-tenant concerns.
 This file is the "what". [docs/DESIGN_NOTES.md](docs/DESIGN_NOTES.md) is the "why". Acceptance scenarios live in `openspec/specs/`; active changes in `openspec/changes/`.
 The code base is a pruned port of `/home/pingu/Applications/Interior_Design_App` (§7). Course requirements are in `docs/Task requirements.md`.
-Status: the Reviewer lands with `render-reviewer` (2026-10-06). Photoreal detail and pricing remain later steps.
+Status: the Reviewer lands with `render-reviewer` (2026-10-06); the detail pass with `photoreal-detail`; render feedback with `feedback-capture`. Pricing remains a later step.
 
 ## 0. OpenSpec workflow (mandatory)
 
@@ -40,6 +40,7 @@ Read-only investigation, questions and work on a change already named in the con
 | Observability | Langfuse callback with user/session/project IDs; outages log and continue |
 | Store | PostgreSQL + pgvector; app tables, checkpointer and vectors in one database; local `BAAI/bge-m3` embeddings (1024) |
 | Memory | LangGraph Postgres checkpointer per thread; long-term **house file** (§9a) |
+| Render server | Optional: a rented GPU box reached with the system `ssh` (key only, pinned host key); runs `final` Cycles renders only, chosen from `/admin/offload`, never a fallback; off unless `RENDER_OFFLOAD_*` are set (§6) |
 | Render output | `docs/renders/<package-id>/<version>/` holding `frames/`, `still.png`, `viewer.html`; contents gitignored, folder kept |
 
 Blender 5.x: read the Eevee engine identifier from `bpy.types.RenderSettings.bl_rna.properties['engine'].enum_items` (5.2 uses `BLENDER_EEVEE`); auto smooth is the Smooth by Angle modifier; look shader nodes up by type.
@@ -73,7 +74,7 @@ Routing lives in `config/models.yaml`: one registry entry per agent, no backup. 
 | Intake | `deepseek/deepseek-v4.1-flash` | reads blueprints and room photos, so it needs image input (decided 2026-10-06); same model as the Reviewer |
 | Designer | `deepseek/deepseek-v4-pro-0813` | schema-validated output, so the cheaper top coder leads |
 | Builder | `deepseek/deepseek-v4-pro-0813` | bpy is well-trodden; allow-list and schema catch mistakes |
-| Lighting & materials | `openai/gpt-5.6-sol` | physics-heavy node graphs; leads the aggregate index |
+| Lighting & materials | `openai/gpt-5.6-sol` | physics-heavy node graphs; leads the aggregate index; text-only, it reads the scene as a code-authored report (decided 2026-10-06) |
 | Reviewer | `deepseek/deepseek-v4.1-flash` | image input confirmed; different family from the Builder. `deepseek-v4-flash-0731` is text-only and must not be used here |
 | Researcher | `openai/gpt-5.6-luna` | long context, tool use, cheap |
 
@@ -101,7 +102,7 @@ Each tool is a folder under `backend/plugins/<name>/` with `manifest.yaml` (name
 | 6 | `material_cost` | Researcher | port + extend | `price_cut_list`, `manage_remnants`; §5a |
 | — | `catalog_research` | Researcher | port | `search_catalog_knowledge`, `check_live_listing`, `compare_products` |
 | 7 | `revision_review` | Reviewer | port | render vs spec vs brief; discrepancy list; no write tool |
-| 8 | `photoreal_detail` | Lighting | later | carpentry pass over the socket, allow-listed, `final` tier only |
+| 8 | `photoreal_detail` | Lighting | built | detail pass on a copy of `model.blend` over the socket, allow-listed; its render is `final` tier only |
 
 ### 5a. Pricing (kept, reworked)
 
@@ -112,7 +113,7 @@ Each tool is a folder under `backend/plugins/<name>/` with `manifest.yaml` (name
 
 ## 6. Render guard (build first)
 
-Per-render approval, no daily cap. Tiers in `config/render.yaml`:
+Per-render approval, no daily cap. A `final` may run on the render server instead of the laptop (one job per machine); it is quoted from the server's own benchmark and still needs the typed "yes". Tiers in `config/render.yaml`:
 
 | Tier | Frames | Resolution | Engine | Behaviour |
 |---|---|---|---|---|
@@ -146,7 +147,7 @@ Dropped: public studio site, client area and Styler Bot, quotes, contracts, proj
 ## 8. Security guard
 
 - Prompt-injection delimiters on every retrieved chunk, live page, snapshot, plugin result and upload, with the guard composed by code after any editable prompt.
-- `bpy` allow-list for step 3: permit `bpy.ops.mesh.*`, `bpy.ops.object.*`, `bpy.data.*`, modifiers, materials, render settings; block `os`, `subprocess`, `shutil`, `open()` outside `docs/renders/` and the package folder, and `bpy.ops.wm.*` except `save_mainfile` to the project `.blend`.
+- `bpy` allow-list for step 3: permit `bpy.ops.mesh.*`, `bpy.ops.object.*`, `bpy.data.*`, modifiers, materials, render settings; block `os`, `subprocess`, `shutil`, `open()` outside `docs/renders/` and the package folder, and `bpy.ops.wm.*` except `save_mainfile` to the project `.blend` and `open_mainfile` of the detail pass's own `detail.blend` (a literal path, nothing else). The backend's own scripts go through the same allow-list.
 - Single-user password login; the developer route is additionally gated. Session, project and scope come from the cookie and path, never from a model argument; every model-generated argument is Pydantic-validated; no model-run SQL.
 - Secrets never enter graph state, prompts, tool output or logs.
 
@@ -172,6 +173,6 @@ None open as of 2026-10-05.
 5. [ ] Pricing port and rework (§5a) + Researcher
 6. [x] Reviewer (`revision_review`) with a vision model — `openspec/changes/render-reviewer`
 7. [x] Plugin manifests, homeowner toggles, dev panel with per-agent model routing and token restrictions — `openspec/changes/plugins-and-budgets`
-8. [ ] `photoreal_detail` over the socket, allow-list, `final` tier
-9. [ ] Feedback capture → house file + Langfuse tags
-10. [ ] Cloud render offload — only if asked
+8. [x] `photoreal_detail` over the socket, allow-list, `final` tier — `openspec/changes/photoreal-detail`
+9. [x] Feedback capture → house file + Langfuse tags — `openspec/changes/feedback-capture`
+10. [x] Cloud render offload — asked for 2026-10-06 — `openspec/changes/render-offload`

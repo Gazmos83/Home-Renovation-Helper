@@ -28,6 +28,7 @@ def _fields(quote: RenderQuote) -> dict[str, Any]:
         "resolution": quote.tier.resolution,
         "engine": quote.tier.engine,
         "estimate_seconds": round(quote.estimate_seconds, 3),
+        "target": quote.target,
     }
 
 
@@ -45,11 +46,13 @@ def log_render_finished(
     outcome: str,
     error: str | None = None,
     tracing: Tracing | None = None,
+    transfer_seconds: float | None = None,
 ) -> None:
     fields = {
         **_fields(quote),
         "actual_seconds": round(actual_seconds, 3),
         "outcome": outcome,
+        **({"transfer_seconds": round(transfer_seconds, 3)} if transfer_seconds is not None else {}),
         **({"error": error} if error else {}),
     }
     logger.info("render.finished", extra={"context": fields})

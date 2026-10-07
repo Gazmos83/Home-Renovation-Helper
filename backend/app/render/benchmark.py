@@ -54,20 +54,18 @@ def _blender_version(blender_bin: Path, result_dir: Path) -> str | None:
         return None
 
 
-async def run_benchmark(
-    engine: Engine,
+async def ensure_reference_build(
     *,
     root: Path,
     blender_bin: Path,
     timeout: float,
     semaphore: asyncio.Semaphore,
     launch: Launch = subprocess_launch,
-) -> Benchmark:
+) -> tuple[Path, Path]:
+    """Build the reference package once (a build, not a render); `(benchmark folder, build folder)`."""
     folder = storage.resolve(root, storage.BENCHMARK_DIRNAME)
     folder.mkdir(parents=True, exist_ok=True)
     build = folder / "build"
-    frame = folder / "frame"
-
     if not (build / "model.blend").is_file():
         shutil.rmtree(build, ignore_errors=True)
         storage.sweep_stale_siblings(build)
@@ -83,6 +81,22 @@ async def run_benchmark(
             spec.unlink(missing_ok=True)
         if built.exit_code != 0 or built.timed_out:
             raise BenchmarkFailed(f"the reference build failed: {safe_error(built.stderr_tail, root)}")
+    return folder, build
+
+
+async def run_benchmark(
+    engine: Engine,
+    *,
+    root: Path,
+    blender_bin: Path,
+    timeout: float,
+    semaphore: asyncio.Semaphore,
+    launch: Launch = subprocess_launch,
+) -> Benchmark:
+    folder, build = await ensure_reference_build(
+        root=root, blender_bin=blender_bin, timeout=timeout, semaphore=semaphore, launch=launch
+    )
+    frame = folder / "frame"
 
     shutil.rmtree(frame, ignore_errors=True)
     storage.sweep_stale_siblings(frame)

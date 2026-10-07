@@ -1,0 +1,8 @@
+name: render_feedback
+description: Record the owner's thumbs up or down, with a comment, on a render.
+kind: builtin
+role: builder
+also_for: [lighting]
+tools: [record_render_feedback]
+enabled_by_default: true
+toggleable: true

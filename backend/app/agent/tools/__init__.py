@@ -26,9 +26,9 @@ def all_tools() -> dict:
     return tools
 
 
-def tool_roles() -> dict[str, str]:
-    """Tool name → plugin role, for the instruction loader."""
-    roles: dict[str, str] = {}
+def tool_roles() -> dict[str, tuple[str, ...]]:
+    """Tool name → the agents whose headers may name it, for the instruction loader."""
+    roles: dict[str, tuple[str, ...]] = {}
     for name, plugin in _PLUGINS.tool_to_plugin.items():
-        roles[name] = _PLUGINS.by_name[plugin].role
+        roles[name] = _PLUGINS.by_name[plugin].agents
     return roles

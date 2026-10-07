@@ -11,7 +11,7 @@ export function stubFetch(handler: Handler) {
     vi.fn(async (input: RequestInfo, init: RequestInit = {}) => {
       const url = String(input);
       const method = init.method ?? "GET";
-      calls.push([method, url, init.body ? JSON.parse(String(init.body)) : undefined]);
+      calls.push([method, url, typeof init.body === "string" ? JSON.parse(init.body) : init.body]);
       const reply = handler(`${method} ${url}`, init) ?? { status: 404, body: { detail: "not found" } };
       const status = reply.status ?? 200;
       return new Response(status === 204 ? null : JSON.stringify(reply.body ?? {}), {

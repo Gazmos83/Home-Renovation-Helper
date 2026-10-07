@@ -310,3 +310,35 @@ def test_upgrade_and_downgrade_leave_no_drift(
         if "checkpoints" not in repr(item) and "checkpoint_" not in repr(item)
     ]
     assert app_diff == [], f"schema drift after upgrade/downgrade: {app_diff!r}"
+
+
+# --- a tool shared with another agent (`also_for`) ---------------------------------------------
+
+
+def test_also_for_names_other_agents_and_is_accepted() -> None:
+    manifest = parse_manifest(_builtin(role="builder", also_for=["lighting"]))
+    assert manifest.also_for == ["lighting"]
+    assert parse_manifest(_builtin()).also_for == []
+
+
+@pytest.mark.parametrize(
+    ("also_for", "field"),
+    [(["builder"], "also_for"), (["lighting", "lighting"], "also_for"), (["plumber"], "also_for")],
+)
+def test_also_for_naming_the_role_repeating_or_unknown_is_refused(also_for, field) -> None:
+    with pytest.raises(ManifestRefused) as caught:
+        parse_manifest(_builtin(role="builder", also_for=also_for))
+    assert field in str(caught.value)
+
+
+def test_an_https_manifest_has_no_also_for() -> None:
+    with pytest.raises(ManifestRefused) as caught:
+        parse_manifest(_https(also_for=["builder"]))
+    assert "also_for" in str(caught.value)
+
+
+def test_the_shipped_shared_tool_is_available_to_both_agents() -> None:
+    plugins = load_plugins()
+    shared = plugins.by_name["render_feedback"]
+    assert shared.role == "builder" and shared.agents == ("builder", "lighting")
+    assert plugins.by_name["revision_review"].agents == ("reviewer",)

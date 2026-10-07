@@ -48,6 +48,11 @@ class LoadedPlugin:
         return self.manifest.role
 
     @property
+    def agents(self) -> tuple[str, ...]:
+        """The agents whose instruction headers may name this plugin's tools."""
+        return (self.manifest.role, *getattr(self.manifest, "also_for", ()))
+
+    @property
     def toggleable(self) -> bool:
         return self.manifest.toggleable
 

@@ -266,6 +266,77 @@ class Tracing:
         except Exception as error:  # noqa: BLE001 - a render must not depend on tracing
             self._warn_once("tracing could not record a render event", error)
 
+    def record_detail_script(self, **fields: Any) -> None:
+        """Record one live script's verdict and outcome as an event (never its code).
+
+        A no-op when tracing is off; a failure is reported once per process and
+        never reaches the detail pass (photoreal-detail).
+        """
+        if not self.enabled:
+            return
+        try:
+            self._client.create_event(name="detail_script", metadata=fields)
+        except Exception as error:  # noqa: BLE001 - a detail pass must not depend on tracing
+            self._warn_once("tracing could not record a detail script event", error)
+
+    def record_feedback(
+        self,
+        *,
+        rating: str,
+        comment: str | None,
+        tier: str,
+        trace_id: str | None,
+        slot: str | None,
+        model: str | None,
+        package_id: str,
+        version: int,
+        render_key: str,
+    ) -> None:
+        """Record the owner's rating of a render (feedback-capture).
+
+        A score on the trace of the turn that started the render, when there is
+        one, and a short feedback trace tagged with the rating, tier, slot and
+        model so the owner can compare models. A no-op when tracing is off; a
+        failure is reported once per process and never reaches the rating.
+        """
+        if not self.enabled:
+            return
+        try:
+            if trace_id:
+                self._client.create_score(
+                    name="render_feedback",
+                    value=1 if rating == "up" else 0,
+                    data_type="BOOLEAN",
+                    trace_id=trace_id,
+                    comment=comment,
+                )
+            tags = ["render-feedback", f"rating:{rating}", f"tier:{tier}"]
+            if slot:
+                tags.append(f"slot:{slot}")
+            if model:
+                tags.append(f"model:{model}")
+            metadata = {
+                "package_id": package_id, "version": version, "render": render_key,
+                "rating": rating, "tier": tier,
+            }
+            from langfuse import propagate_attributes
+
+            with ExitStack() as stack:
+                stack.enter_context(
+                    self._client.start_as_current_observation(
+                        name="render-feedback",
+                        as_type="span",
+                        trace_context={"trace_id": self._client.create_trace_id()},
+                        input=metadata,
+                    )
+                )
+                stack.enter_context(
+                    propagate_attributes(tags=tags, trace_name="render-feedback")
+                )
+                self._client.update_current_span(output={"rating": rating})
+        except Exception as error:  # noqa: BLE001 - a rating must not depend on tracing
+            self._warn_once("tracing could not record render feedback", error)
+
     def trace_url(self, trace_id: str | None) -> str | None:
         """The Langfuse page for a trace, or `None` when there is none to show."""
         if not trace_id or not self.enabled or self._links_unavailable:

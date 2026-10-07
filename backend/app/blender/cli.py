@@ -20,6 +20,8 @@ from app.blender.custom_build.derive import DeriveError, derive
 
 # Blender 5.2.1 RNA identifiers a tier may use (see app.render.tiers.ENGINES).
 RENDER_ENGINES: Final = frozenset({"BLENDER_EEVEE", "CYCLES"})
+# Where Cycles computes: the laptop's CPU by default, a GPU back end on the render server.
+CYCLES_DEVICES: Final = ("CPU", "OPTIX", "CUDA", "HIP")
 
 
 class InputError(RuntimeError):
@@ -36,6 +38,7 @@ class TierArguments:
     frames: int
     resolution: int
     engine: str
+    device: str = "CPU"
 
 
 def _after_separator(argv: list[str], flags: str) -> list[str]:
@@ -48,6 +51,7 @@ def _add_tier_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--tier-frames", required=True, type=int)
     parser.add_argument("--tier-resolution", required=True, type=int)
     parser.add_argument("--tier-engine", required=True)
+    parser.add_argument("--cycles-device", default="CPU")
 
 
 def _tier_from(parsed: argparse.Namespace) -> TierArguments:
@@ -59,7 +63,13 @@ def _tier_from(parsed: argparse.Namespace) -> TierArguments:
         raise InputError(
             f"arguments: --tier-engine must be one of {', '.join(sorted(RENDER_ENGINES))}"
         )
-    return TierArguments(parsed.tier_frames, parsed.tier_resolution, parsed.tier_engine)
+    if parsed.cycles_device not in CYCLES_DEVICES:
+        raise InputError(
+            f"arguments: --cycles-device must be one of {', '.join(CYCLES_DEVICES)}"
+        )
+    return TierArguments(
+        parsed.tier_frames, parsed.tier_resolution, parsed.tier_engine, parsed.cycles_device
+    )
 
 
 def _readable_file(value: str, label: str) -> Path:

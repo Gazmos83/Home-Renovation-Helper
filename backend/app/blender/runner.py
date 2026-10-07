@@ -18,7 +18,7 @@ import logging
 import os
 import shutil
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
@@ -35,6 +35,8 @@ from app.blender.verify import (
 )
 from app.observability.langfuse import Tracing
 from app.render.guard import RenderNotAuthorised, RenderQuote, RenderTicket
+from app.render.offload.job import RemoteFailed, RemoteInputs, RemoteTimes, run_remote
+from app.render.offload.runtime import OffloadRuntime
 from app.render.records import log_render_finished, log_render_started
 
 __all__ = [
@@ -88,7 +90,7 @@ async def launch_unguarded(
 async def launch_guarded(
     ticket: object,
     *,
-    expected: tuple[str, int, str, bool] | tuple[str, int, str, bool, str],
+    expected: tuple[str, int, str, bool] | tuple[str, int, str, bool, str] | tuple[str, int, str, bool, str, str],
     argv: list[str],
     cwd: Path,
     timeout: float,
@@ -140,7 +142,7 @@ def mark_render_queued(version_folder: Path, ticket: RenderTicket) -> None:
     quote = ticket.quote
     storage.write_render_status(
         version_folder,
-        storage.render_key(quote.kind, quote.room),
+        storage.render_key(quote.kind, quote.room, quote.source),
         status="queued",
         tier=quote.tier.name,
         estimate_seconds=round(quote.estimate_seconds, 3),
@@ -270,6 +272,61 @@ def _publish_render(stage: Path, target: Path, kind: str, record: dict) -> None:
     storage.merge_scene_record(target, kind, {**produced, **record})
 
 
+def _notify(on_outcome: Callable[[str], None] | None, outcome: str) -> None:
+    if on_outcome is None:
+        return
+    try:
+        on_outcome(outcome)
+    except Exception:  # noqa: BLE001 - a finished render must stay finished
+        logger.warning("render.outcome_callback_failed")
+
+
+async def _run_on_server(
+    ticket: RenderTicket,
+    *,
+    expected: tuple,
+    offload: OffloadRuntime | None,
+    launch: Launch,
+    blend: Path,
+    folder: Path,
+    scene_document: dict | None,
+    stage: Path,
+    limit: float,
+    begin: Callable[[], None],
+) -> tuple[LaunchResult, RemoteTimes | None]:
+    """Run a ticketed render on the render server, one job at a time, never on the laptop.
+
+    The ticket is checked and spent exactly as for a local render. A failure comes back
+    as a failed `LaunchResult` carrying the reason.
+    """
+    if not isinstance(ticket, RenderTicket):
+        raise RenderNotAuthorised("a render needs a ticket issued by the render guard")
+    if not ticket.matches(*expected):
+        raise RenderNotAuthorised("this render authorisation was issued for a different render")
+    ticket.consume()
+    if offload is None:
+        return LaunchResult(1, "the render server is not configured", False), None
+    quote = ticket.quote
+    if quote.room:
+        script, inputs_blend, package = ROOM_GENERATOR.name, None, folder
+    else:
+        script = (STILL_GENERATOR if quote.kind == "still" else TURNTABLE_GENERATOR).name
+        inputs_blend, package = blend, None
+    inputs = RemoteInputs(
+        script=script, blend=inputs_blend,
+        scene_document=scene_document if quote.room else None, package_dir=package,
+    )
+    async with offload.semaphore:
+        try:
+            times = await run_remote(
+                config=offload.config, launch=launch, tier=quote.tier, kind=quote.kind,
+                inputs=inputs, stage=stage, limit_seconds=limit, on_start=begin,
+            )
+        except RemoteFailed as failure:
+            return LaunchResult(-1 if failure.timed_out else 1, failure.reason, failure.timed_out), None
+    return LaunchResult(0, "", False), times
+
+
 async def run_render(
     ticket: RenderTicket,
     *,
@@ -281,18 +338,33 @@ async def run_render(
     scene_document: dict | None = None,
     tracing: Tracing | None = None,
     on_finished: Callable[[RenderQuote, float], None] | None = None,
+    before: Callable[[], Awaitable[object]] | None = None,
+    on_outcome: Callable[[str], None] | None = None,
+    offload: OffloadRuntime | None = None,
+    on_remote_job: Callable[[dict], None] | None = None,
 ) -> None:
     """Run one guarded render; never raises (a failure is recorded).
 
     The ticket decides everything: the tier's frames, resolution and engine are
     the only values that reach argv. `scene_document` is the room document for a
     room render. `on_finished(quote, actual_seconds)` runs after a success (the
-    route uses it to calibrate the Cycles multiplier).
+    route uses it to calibrate the Cycles multiplier). `before()` runs once ahead
+    of the launch — a detail render saves the live Blender's file with it — and
+    a failure in it never stops the render. `on_outcome("succeeded" | "failed")`
+    runs once when the render is over, whichever way it went. A ticket whose quote
+    targets the render server runs there, through `offload`, and is never run on the
+    laptop instead; `on_remote_job(record)` then gets the job's numbers.
     """
     quote = ticket.quote
     folder = storage.record_version_dir(root, quote.record, quote.package_id, quote.version)
-    key = storage.render_key(quote.kind, quote.room)
-    target = folder / "room" if quote.room else folder
+    detail = quote.source == "detail"
+    key = storage.render_key(quote.kind, quote.room, quote.source)
+    if detail:
+        target = storage.detail_dir(folder)
+        blend = storage.detail_blend_path(folder)
+    else:
+        target = folder / "room" if quote.room else folder
+        blend = folder / "model.blend"
     stage_name = folder / f"render-{key}"
     storage.sweep_stale_siblings(stage_name)
     stage = storage.staging_dir(stage_name)
@@ -300,39 +372,61 @@ async def run_render(
     limit = timeout * tier.timeout_multiplier
 
     scene_path: Path | None = None
+    remote_times: RemoteTimes | None = None
     try:
-        if quote.room:
-            if scene_document is None:
-                raise RenderNotAuthorised("a room render needs its scene document")
-            scene_path = folder / f".{key}.{uuid4().hex}.scene.json"
-            scene_path.write_text(json.dumps(scene_document), encoding="utf-8")
-            argv = [str(blender_bin), "--background", "--python", str(ROOM_GENERATOR), "--",
-                    "--scene", str(scene_path), "--package", str(folder), "--out", str(stage)]
-        else:
-            script = STILL_GENERATOR if quote.kind == "still" else TURNTABLE_GENERATOR
-            argv = [str(blender_bin), "--background", "--python", str(script), "--",
-                    "--blend", str(folder / "model.blend"), "--out", str(stage)]
-        argv += ["--tier-frames", str(tier.frames), "--tier-resolution", str(tier.resolution),
-                 "--tier-engine", tier.blender_engine]
+        if before is not None:
+            try:
+                await before()
+            except Exception:  # noqa: BLE001 - the render goes on with the file as saved on disk
+                logger.warning("render.before_failed")
+        if detail and not blend.is_file():
+            raise FileNotFoundError("the detail copy detail.blend is missing; start a detail pass first")
+        remote = quote.target == "remote"
+        if quote.room and scene_document is None:
+            raise RenderNotAuthorised("a room render needs its scene document")
+        argv: list[str] = []
+        if not remote:
+            if quote.room:
+                scene_path = folder / f".{key}.{uuid4().hex}.scene.json"
+                scene_path.write_text(json.dumps(scene_document), encoding="utf-8")
+                argv = [str(blender_bin), "--background", "--python", str(ROOM_GENERATOR), "--",
+                        "--scene", str(scene_path), "--package", str(folder), "--out", str(stage)]
+            else:
+                script = STILL_GENERATOR if quote.kind == "still" else TURNTABLE_GENERATOR
+                argv = [str(blender_bin), "--background", "--python", str(script), "--",
+                        "--blend", str(blend), "--out", str(stage)]
+            argv += ["--tier-frames", str(tier.frames), "--tier-resolution", str(tier.resolution),
+                     "--tier-engine", tier.blender_engine]
 
         started_at = {"t": 0.0}
 
-        async def starting(args: list[str], cwd: Path, seconds: float) -> LaunchResult:
-            # The semaphore is held by now: this is when the render truly starts.
+        def begin() -> None:
+            # The lock is held by now: this is when the render truly starts.
             started_at["t"] = time.perf_counter()
             storage.write_render_status(
                 folder, key, status="running", started_at=_now(), tier=tier.name,
                 estimate_seconds=round(quote.estimate_seconds, 3),
             )
             log_render_started(quote, tracing=tracing)
+
+        async def starting(args: list[str], cwd: Path, seconds: float) -> LaunchResult:
+            begin()
             return await launch(args, cwd, seconds)
 
         error: str | None = None
-        result = await launch_guarded(
-            ticket,
-            expected=(quote.package_id, quote.version, quote.kind, quote.room, quote.record),
-            argv=argv, cwd=folder, timeout=limit, semaphore=semaphore, launch=starting,
+        expected = (
+            quote.package_id, quote.version, quote.kind, quote.room, quote.record, quote.source,
         )
+        if remote:
+            result, remote_times = await _run_on_server(
+                ticket, expected=expected, offload=offload, launch=launch, blend=blend,
+                folder=folder, scene_document=scene_document, stage=stage, limit=limit, begin=begin,
+            )
+        else:
+            result = await launch_guarded(
+                ticket, expected=expected, argv=argv, cwd=folder, timeout=limit,
+                semaphore=semaphore, launch=starting,
+            )
         actual = time.perf_counter() - started_at["t"] if started_at["t"] else 0.0
         if result.exit_code != 0 or result.timed_out:
             error = safe_error(result.stderr_tail, root)
@@ -342,7 +436,7 @@ async def run_render(
                 _publish_render(
                     stage, target, quote.kind,
                     {"tier": tier.name, "estimate_seconds": round(quote.estimate_seconds, 3),
-                     "actual_seconds": round(actual, 3)},
+                     "actual_seconds": round(actual, 3), "source": quote.source},
                 )
             except (VerificationError, OSError, ValueError, KeyError) as problem:
                 error = safe_error(f"publish: {problem}", root)
@@ -350,6 +444,7 @@ async def run_render(
         storage.write_render_status(
             folder, key, status="failed", finished_at=_now(), error=safe_error(str(refusal), root)
         )
+        _notify(on_outcome, "failed")
         raise
     except Exception as problem:  # noqa: BLE001 - a background job must record, not raise
         actual = 0.0
@@ -370,9 +465,24 @@ async def run_render(
     log_render_finished(
         quote, actual_seconds=actual, outcome="failed" if error else "succeeded",
         error=error, tracing=tracing,
+        transfer_seconds=remote_times.transfer_seconds if remote_times else None,
     )
+    _notify(on_outcome, "failed" if error else "succeeded")
+    if quote.target == "remote" and on_remote_job is not None:
+        try:
+            on_remote_job(
+                {
+                    "package_id": quote.package_id, "version": quote.version, "render_key": key,
+                    "estimate_seconds": quote.estimate_seconds, "actual_seconds": actual,
+                    "transfer_seconds": remote_times.transfer_seconds if remote_times else None,
+                    "outcome": "failed" if error else "succeeded", "error": error,
+                }
+            )
+        except Exception:  # noqa: BLE001 - the job list must never fail a finished render
+            logger.warning("render.remote_job_not_recorded")
     if on_finished is not None and not error:
         try:
-            on_finished(quote, actual)
+            # A remote final calibrates the server's rate from its render time alone.
+            on_finished(quote, remote_times.render_seconds if remote_times else actual)
         except Exception:  # noqa: BLE001 - calibration must never fail a finished render
             logger.warning("render.calibration_failed")

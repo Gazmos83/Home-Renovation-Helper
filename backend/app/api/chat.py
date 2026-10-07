@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.agent import chat, house_file, uploads
+from app.agent import chat, house_file, progress, uploads
 from app.api.gate import require_owner
 from app.auth.sessions import AuthSessionRecord
 from app.blender import storage
@@ -74,6 +74,30 @@ class MessageOut(BaseModel):
 class ThreadDetailOut(ThreadOut):
     messages: list[MessageOut]
     pending: PendingOut | None
+
+
+class StepOut(BaseModel):
+    step: str
+    done: bool
+    detail: str | None
+
+
+class RequestOut(BaseModel):
+    field: str
+    request: str
+
+
+class ProgressOut(BaseModel):
+    package_id: str | None
+    name: str | None
+    latest_version: int | None
+    build_status: str | None
+    steps: list[StepOut]
+    next_step: str
+    open_review_items: int
+    open_requests: list[RequestOut]
+    screenshot: str | None
+    still: str | None
 
 
 def _refusal(code: int, failure_class: str, reason: str) -> HTTPException:
@@ -210,6 +234,27 @@ def read_thread(
         messages=[MessageOut(**m) for m in messages],
         pending=_pending_out(waiting),
     )
+
+
+@router.get("/threads/{thread_id}/progress")
+def read_progress(
+    thread_id: UUID, request: Request, login: Annotated[AuthSessionRecord, Depends(require_owner)]
+) -> ProgressOut:
+    thread = _load_thread(request, thread_id)
+    graph = _graph(request)
+    try:
+        confirmed = chat.brief_confirmed(graph, thread_id=thread_id, owner_id=login.user_id)
+    except psycopg.OperationalError as error:
+        logger.error("chat memory unavailable", extra={"context": {"error_type": type(error).__name__}})
+        raise _refusal(status.HTTP_503_SERVICE_UNAVAILABLE, "unavailable", MEMORY_DOWN) from None
+    with Session(request.app.state.engine) as session:
+        found = progress.piece_progress(
+            session,
+            request.app.state.settings.render_root,
+            thread.package_id,
+            brief_confirmed=confirmed,
+        )
+    return ProgressOut(**found)
 
 
 @router.post("/threads/{thread_id}/turns")

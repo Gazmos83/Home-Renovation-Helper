@@ -271,3 +271,125 @@ def test_the_researcher_binds_exactly_its_five_tools(tool_state) -> None:
     assert set(models["researcher"].bound_tools) == {
         "search_catalog_knowledge", "check_live_listing", "compare_products", "price_cut_list", "manage_remnants",
     }
+
+
+def _build_piece(tool_state, make_ctx) -> None:
+    create_run({"package_id": "bench", "spec": desk()}, replace(make_ctx(), approved=True))
+    from app.blender import storage
+
+    wait_for_status(storage.version_dir(tool_state.settings.render_root, "bench", 1))
+
+
+def test_lighting_is_chosen_for_a_built_piece(tool_state, make_ctx) -> None:
+    _build_piece(tool_state, make_ctx)
+    models = fake_models(
+        foreman={"decisions": [decision("lighting")]},
+        lighting={"replies": ["Shall I start a detail pass?"]},
+    )
+    harness = make_harness(tool_state, models)
+    harness.start(package_id="bench")
+    state = harness.turn("make the oak look realistic")
+    assert state["specialist"] == "lighting"
+    assert last_reply(state) == "Shall I start a detail pass?"
+
+
+def test_lighting_is_never_chosen_without_a_successful_build(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("lighting")]},
+        builder={"replies": ["Build it first."]},
+        lighting={"replies": ["should not run"]},
+    )
+    harness = make_harness(tool_state, models)
+    _bind_piece(tool_state, harness, screenshot=False)
+    state = harness.turn("make the oak look realistic")
+    assert state["specialist"] == "builder"
+    assert models["lighting"].calls == 0
+
+
+def test_lighting_with_no_piece_goes_to_intake(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("lighting")]},
+        intake={"replies": ["Tell me what to design."]},
+    )
+    state = make_harness(tool_state, models).turn("photoreal please")
+    assert state["specialist"] == "intake"
+    assert models["lighting"].calls == 0
+
+
+def test_lighting_binds_exactly_the_detail_tools_and_is_text_only(tool_state, make_ctx) -> None:
+    from app.agent.models.routing import IMAGE_SLOTS
+
+    _build_piece(tool_state, make_ctx)
+    models = fake_models(foreman={"decisions": [decision("lighting")]}, lighting={"replies": ["Ok."]})
+    harness = make_harness(tool_state, models)
+    harness.start(package_id="bench")
+    harness.turn("detail it")
+    assert models["lighting"].bound_tools == [
+        "start_detail_pass", "run_detail_script", "detail_screenshot", "render_detail",
+        "record_render_feedback",
+    ]
+    assert "lighting" not in IMAGE_SLOTS
+
+
+# --- render feedback reaches the Designer and Lighting, not Intake (feedback-capture) ----------------
+
+
+def _rate(tool_state, comment: str, *, version: int = 1, key: str = "turntable", minutes: int = 0) -> None:
+    from datetime import UTC, datetime, timedelta
+    from uuid import uuid4
+
+    from sqlalchemy.orm import Session
+
+    from app.db.models import RenderFeedback, RenderRun
+
+    when = datetime.now(UTC) - timedelta(minutes=minutes)
+    with Session(tool_state.engine) as session:
+        run = RenderRun(
+            id=uuid4(), package_id="bench", version=version, render_key=key, tier="draft",
+            outcome="succeeded", started_at=when,
+        )
+        session.add(run)
+        session.flush()
+        session.add(RenderFeedback(run_id=run.id, rating="down", comment=comment, created_at=when, updated_at=when))
+        session.commit()
+
+
+def test_recent_render_feedback_reaches_the_designer_and_lighting_but_not_intake(tool_state, make_ctx) -> None:
+    _build_piece(tool_state, make_ctx)
+    _rate(tool_state, "doors look too thick")
+    models = fake_models(
+        foreman={"decisions": [decision("designer"), decision("lighting"), decision("intake")]},
+        designer={"replies": ["Noted."]},
+        lighting={"replies": ["Noted."]},
+        intake={"replies": ["Noted."]},
+    )
+    harness = make_harness(tool_state, models)
+    harness.start(package_id="bench")
+    for _ in range(3):
+        harness.turn("anything")
+    line = '- v1 · turntable · draft · down — "doors look too thick"'
+    assert line in models["designer"].last_prompt_text()
+    assert line in models["lighting"].last_prompt_text()
+    assert "Recent render feedback" not in models["intake"].last_prompt_text()
+
+
+def test_only_the_five_newest_ratings_are_given(tool_state, make_ctx) -> None:
+    _build_piece(tool_state, make_ctx)
+    for index in range(7):
+        _rate(tool_state, f"comment {index}", minutes=70 - index)
+    models = fake_models(foreman={"decisions": [decision("designer")]}, designer={"replies": ["Ok."]})
+    harness = make_harness(tool_state, models)
+    harness.start(package_id="bench")
+    harness.turn("tweak it")
+    text = models["designer"].last_prompt_text()
+    assert [f"comment {i}" in text for i in range(7)] == [False, False, True, True, True, True, True]
+    assert text.index("comment 6") < text.index("comment 2")
+
+
+def test_a_piece_with_no_ratings_gets_no_feedback_section(tool_state, make_ctx) -> None:
+    _build_piece(tool_state, make_ctx)
+    models = fake_models(foreman={"decisions": [decision("designer")]}, designer={"replies": ["Ok."]})
+    harness = make_harness(tool_state, models)
+    harness.start(package_id="bench")
+    harness.turn("tweak it")
+    assert "Recent render feedback" not in models["designer"].last_prompt_text()

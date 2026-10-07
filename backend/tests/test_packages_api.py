@@ -151,6 +151,7 @@ def test_reading_a_version_reports_files_and_renders(client: TestClient, render_
     body = client.get("/packages/hall-bench/versions/1").json()
     assert body["renders"] == {
         "still": False, "turntable_frames": 12, "room_still": False, "room_turntable_frames": 0,
+        "detail_still": False, "detail_turntable_frames": 0,
     }
 
 
@@ -189,6 +190,32 @@ def test_frames_and_room_files_are_served_by_exact_name(client: TestClient, rend
     assert client.get(f"{base}/frames/4").status_code == 404
     assert client.get(f"{base}/room/frames/0").status_code == 200
     assert client.get(f"{base}/room/still.png").status_code == 200
+
+
+def test_the_detail_outputs_are_served_but_not_the_detail_file_or_log(
+    client: TestClient, render_root: Path
+) -> None:
+    create(client)
+    detail = render_root / "hall-bench" / "v1" / "detail"
+    (detail / "screens").mkdir(parents=True)
+    (detail / "frames").mkdir()
+    (detail / "screens" / "screen_000.png").write_bytes(b"png")
+    (detail / "frames" / "frame_035.png").write_bytes(b"png")
+    for name in ("still.png", "viewer.html", "scene.json"):
+        (detail / name).write_bytes(b"x")
+    (detail / "detail.blend").write_bytes(b"BLENDER")
+    (detail / "log.jsonl").write_text("{}", encoding="utf-8")
+    base = "/packages/hall-bench/versions/1/files"
+    screen = client.get(f"{base}/detail/screens/0")
+    assert screen.status_code == 200 and screen.headers["content-type"] == "image/png"
+    assert client.get(f"{base}/detail/screens/1").status_code == 404
+    assert client.get(f"{base}/detail/frames/35").status_code == 200
+    for name, media in (("still.png", "image/png"), ("viewer.html", "text/html"), ("scene.json", "application/json")):
+        response = client.get(f"{base}/detail/{name}")
+        assert response.status_code == 200 and response.headers["content-type"].startswith(media)
+    for name in ("detail.blend", "log.jsonl", "detail/detail.blend", "detail/log.jsonl", "detail/spec.json",
+                 "detail/screens/..%2Fdetail.blend", "detail/screens/x"):
+        assert client.get(f"{base}/{name}" if name.startswith("detail/") else f"{base}/detail/{name}").status_code == 404
 
 
 @pytest.mark.parametrize(

@@ -26,7 +26,9 @@ def _copy(tmp_path: Path) -> Path:
 
 def test_all_instruction_files_load() -> None:
     loaded = load_instructions()
-    assert list(loaded) == ["foreman", "intake", "designer", "builder", "reviewer", "researcher"]
+    assert list(loaded) == [
+        "foreman", "intake", "designer", "builder", "lighting", "reviewer", "researcher",
+    ]
     for name, instruction in loaded.items():
         assert instruction.name == name
         assert instruction.slot == name
@@ -36,11 +38,17 @@ def test_all_instruction_files_load() -> None:
 def test_each_agent_names_exactly_its_tools() -> None:
     loaded = load_instructions()
     assert loaded["foreman"].tools == ()
+    assert loaded["lighting"].tools == (
+        "start_detail_pass", "run_detail_script", "detail_screenshot", "render_detail",
+        "record_render_feedback",
+    )
     assert loaded["intake"].tools == ("record_brief", "record_plan")
     assert set(loaded["designer"].tools) == {
         "create_piece", "revise_package", "cut_list", "room_fit", "search_guidelines",
     }
-    assert set(loaded["builder"].tools) == {"blender_build", "build_shell", "render_turntable"}
+    assert set(loaded["builder"].tools) == {
+        "blender_build", "build_shell", "render_turntable", "record_render_feedback",
+    }
     assert loaded["reviewer"].tools == ("revision_review",)
     assert set(loaded["researcher"].tools) == {
         "search_catalog_knowledge", "check_live_listing", "compare_products", "price_cut_list", "manage_remnants",
@@ -106,3 +114,27 @@ def test_a_missing_researcher_file_fails_naming_it(tmp_path: Path) -> None:
 def test_a_header_name_that_differs_from_the_file_fails(tmp_path: Path) -> None:
     message = _break(tmp_path, "foreman", lambda text: text.replace("name: foreman", "name: intake", 1))
     assert message.startswith("foreman.md:")
+
+
+def test_a_tool_shared_with_another_agent_may_be_named_by_it_but_a_stranger_may_not(tmp_path: Path) -> None:
+    from app.agent.instructions import parse_instruction
+
+    header = "---\nname: {name}\nslot: {name}\ntools: [{tool}]\n---\nYou are the {name}."
+    roles = {"record_render_feedback": ("builder", "lighting"), "cut_list": "designer"}
+    tools = list(roles)
+    for name in ("builder", "lighting"):
+        parsed = parse_instruction(
+            header.format(name=name, tool="record_render_feedback"),
+            filename=f"{name}.md", known_tools=tools, tool_roles=roles,
+        )
+        assert parsed.tools == ("record_render_feedback",)
+    with pytest.raises(InstructionError, match="belongs to builder and lighting, not reviewer"):
+        parse_instruction(
+            header.format(name="reviewer", tool="record_render_feedback"),
+            filename="reviewer.md", known_tools=tools, tool_roles=roles,
+        )
+    with pytest.raises(InstructionError, match="belongs to designer, not builder"):
+        parse_instruction(
+            header.format(name="builder", tool="cut_list"),
+            filename="builder.md", known_tools=tools, tool_roles=roles,
+        )

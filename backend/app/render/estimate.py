@@ -35,6 +35,17 @@ def estimate_seconds(
     )
 
 
+def remote_estimate_seconds(
+    tier: Tier, seconds_per_megapixel: float, overhead_seconds: float, *, frames: int | None = None
+) -> float:
+    """A `final` on the render server:
+    frames × megapixels × the server's seconds per megapixel + its fixed overhead."""
+    return (
+        (tier.frames if frames is None else frames) * tier.megapixels * seconds_per_megapixel
+        + overhead_seconds
+    )
+
+
 def calibrated_multiplier(
     tier: Tier, actual_seconds: float, seconds_per_megapixel: float, *, frames: int | None = None
 ) -> float:

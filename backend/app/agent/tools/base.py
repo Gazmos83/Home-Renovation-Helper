@@ -72,6 +72,27 @@ class ToolDeps:
         return getattr(self._state, "loop", None)
 
     @property
+    def offload(self) -> Any:
+        """The render server's runtime, or `None` when it is not configured."""
+        return getattr(self._state, "offload", None)
+
+    @property
+    def live(self) -> Any:
+        """The live Blender's socket client, sharing the one-process lock."""
+        existing = getattr(self._state, "live_blender", None)
+        if existing is not None:
+            return existing
+        from app.live.socket_client import LiveBlender
+
+        settings = self.settings
+        return LiveBlender(
+            settings.blender_live_host,
+            settings.blender_live_port,
+            semaphore=self.semaphore,
+            timeout=settings.blender_live_timeout_seconds,
+        )
+
+    @property
     def live_fetcher(self) -> Any:
         return getattr(self._state, "live_fetcher", None)
 
@@ -136,6 +157,11 @@ class ToolContext:
     brief: dict[str, Any] = field(default_factory=dict)
     last_message: str = ""
     approved: bool = False
+    # Where this turn is traced and which agent and model are speaking; used to
+    # attribute a render the turn starts (feedback-capture).
+    trace_id: str | None = None
+    slot: str | None = None
+    model: str | None = None
 
 
 @dataclass(frozen=True)

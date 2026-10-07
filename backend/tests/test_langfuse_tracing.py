@@ -299,3 +299,95 @@ def test_a_langchain_message_is_masked_too() -> None:
     )
     assert "anna@example.de" not in repr(masked)
     assert masked["messages"][0]["content"] == f"Nothing sent to {EMAIL_MASK}."
+
+
+# --- render feedback (feedback-capture) ---------------------------------------------------------
+
+FEEDBACK = {
+    "rating": "down", "comment": "too dark", "tier": "draft", "trace_id": "a" * 32,
+    "slot": "builder", "model": "deepseek/deepseek-v4-pro-0813",
+    "package_id": "hall-bench", "version": 2, "render_key": "turntable",
+}
+
+
+class ScoringClient(FakeClient):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.scores: list[dict[str, Any]] = []
+
+    def create_score(self, **kwargs: Any) -> None:
+        if self._raises:
+            raise ConnectionError("langfuse unreachable")
+        self.scores.append(kwargs)
+
+
+@pytest.fixture
+def propagated(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """What `propagate_attributes` was asked to put on the feedback trace."""
+    import contextlib
+
+    import langfuse
+
+    seen: list[dict[str, Any]] = []
+
+    @contextlib.contextmanager
+    def record(**kwargs: Any):
+        seen.append(kwargs)
+        yield
+
+    monkeypatch.setattr(langfuse, "propagate_attributes", record)
+    return seen
+
+
+def test_a_rating_is_a_score_on_the_render_s_trace_and_a_tagged_feedback_trace(propagated: list[dict[str, Any]], detach_tracing) -> None:
+    client = ScoringClient()
+    tracing = detach_tracing(
+        Tracing(_configured(), handler_factory=lambda _s: (client, FakeHandler()))
+    )
+    tracing.record_feedback(**FEEDBACK)
+    assert client.scores == [
+        {"name": "render_feedback", "value": 0, "data_type": "BOOLEAN",
+         "trace_id": "a" * 32, "comment": "too dark"}
+    ]
+    [attributes] = propagated
+    assert attributes["tags"] == [
+        "render-feedback", "rating:down", "tier:draft", "slot:builder",
+        "model:deepseek/deepseek-v4-pro-0813",
+    ]
+    assert client.opened_with["name"] == "render-feedback"
+    assert client.opened_with["input"]["render"] == "turntable"
+
+
+def test_a_thumbs_up_scores_one(propagated: list[dict[str, Any]], detach_tracing) -> None:
+    client = ScoringClient()
+    tracing = detach_tracing(
+        Tracing(_configured(), handler_factory=lambda _s: (client, FakeHandler()))
+    )
+    tracing.record_feedback(**{**FEEDBACK, "rating": "up", "comment": None})
+    assert client.scores[0]["value"] == 1 and client.scores[0]["comment"] is None
+    assert "rating:up" in propagated[0]["tags"]
+
+
+def test_no_score_without_a_trace_id_and_no_slot_tags_without_an_agent(propagated: list[dict[str, Any]], detach_tracing) -> None:
+    client = ScoringClient()
+    tracing = detach_tracing(
+        Tracing(_configured(), handler_factory=lambda _s: (client, FakeHandler()))
+    )
+    tracing.record_feedback(**{**FEEDBACK, "trace_id": None, "slot": None, "model": None})
+    assert client.scores == []
+    assert propagated[0]["tags"] == ["render-feedback", "rating:down", "tier:draft"]
+
+
+def test_feedback_with_tracing_off_sends_nothing() -> None:
+    tracing = Tracing(_settings())
+    tracing.record_feedback(**FEEDBACK)  # no client exists to call
+
+
+def test_a_failing_collector_never_reaches_the_rating(caplog: pytest.LogCaptureFixture, propagated: list[dict[str, Any]], detach_tracing) -> None:
+    tracing = detach_tracing(
+        Tracing(_configured(), handler_factory=lambda _s: (ScoringClient(raises=True), FakeHandler()))
+    )
+    with caplog.at_level(logging.WARNING, logger="app"):
+        tracing.record_feedback(**FEEDBACK)
+        tracing.record_feedback(**FEEDBACK)
+    assert len([r for r in caplog.records if "render feedback" in r.message]) == 1

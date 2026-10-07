@@ -19,7 +19,7 @@ from pydantic import (
     model_validator,
 )
 
-ROLES: Final = frozenset({"intake", "designer", "builder", "researcher", "reviewer"})
+ROLES: Final = frozenset({"intake", "designer", "builder", "researcher", "reviewer", "lighting"})
 HTTPS_TOOL_PATTERN: Final = r"^plugin_[a-z0-9_]{1,40}$"
 PROPERTY_PATTERN: Final = r"^[A-Za-z][A-Za-z0-9_]{0,40}$"
 _PLACEHOLDER: Final = re.compile(r"\{([^{}]*)\}")
@@ -157,7 +157,7 @@ class RequestSpec(_Strict):
 class _Common(_Strict):
     name: str = Field(pattern=FOLDER_NAME_PATTERN)
     description: str = Field(min_length=1, max_length=500)
-    role: Literal["intake", "designer", "builder", "researcher", "reviewer"]
+    role: Literal["intake", "designer", "builder", "researcher", "reviewer", "lighting"]
     tools: list[str] = Field(min_length=1, max_length=20)
     enabled_by_default: bool
     toggleable: bool = True
@@ -165,6 +165,19 @@ class _Common(_Strict):
 
 class BuiltinManifest(_Common):
     kind: Literal["builtin"]
+    # Other agents whose instruction headers may name this plugin's tools too
+    # (a tool both the Builder and Lighting & materials use). Binding is still by header.
+    also_for: list[Literal["intake", "designer", "builder", "researcher", "reviewer", "lighting"]] = Field(
+        default_factory=list, max_length=5
+    )
+
+    @model_validator(mode="after")
+    def _also_for_names_other_agents(self) -> BuiltinManifest:
+        if len(self.also_for) != len(set(self.also_for)):
+            raise ValueError("also_for must not repeat an agent")
+        if self.role in self.also_for:
+            raise ValueError("also_for must name agents other than the role")
+        return self
 
     @field_validator("tools", mode="after")
     @classmethod

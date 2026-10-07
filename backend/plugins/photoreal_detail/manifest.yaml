@@ -1,0 +1,7 @@
+name: photoreal_detail
+description: Detail pass in the live Blender (materials, lighting, carpentry detail) and its final render.
+kind: builtin
+role: lighting
+tools: [start_detail_pass, run_detail_script, detail_screenshot, render_detail]
+enabled_by_default: true
+toggleable: true

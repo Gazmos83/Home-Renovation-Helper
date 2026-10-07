@@ -23,7 +23,9 @@ from app.agent.prompts import SENTINEL
 
 INSTRUCTIONS_DIR: Final = Path(__file__).parent
 
-AGENT_NAMES: Final[tuple[str, ...]] = ("foreman", "intake", "designer", "builder", "reviewer", "researcher")
+AGENT_NAMES: Final[tuple[str, ...]] = (
+    "foreman", "intake", "designer", "builder", "lighting", "reviewer", "researcher",
+)
 
 
 class InstructionError(ValueError):
@@ -79,7 +81,7 @@ def parse_instruction(
     filename: str,
     slots: Collection[str] = SLOTS,
     known_tools: Collection[str] | None = None,
-    tool_roles: dict[str, str] | None = None,
+    tool_roles: dict[str, str | tuple[str, ...]] | None = None,
 ) -> AgentInstruction:
     """Validate one file's content. `filename` is `<agent name>.md`."""
     header_text, text = _split(raw, filename)
@@ -112,15 +114,17 @@ def parse_instruction(
     unknown = sorted(set(header.tools) - declared)
     if unknown:
         raise InstructionError(f"{filename}: unknown tool {', '.join(unknown)}")
+    def agents_of(tool: str) -> tuple[str, ...]:
+        value = roles.get(tool)
+        return (value,) if isinstance(value, str) else tuple(value or ())
+
     mismatched = [
-        tool
-        for tool in header.tools
-        if roles.get(tool) and roles[tool] != header.name
+        tool for tool in header.tools if agents_of(tool) and header.name not in agents_of(tool)
     ]
     if mismatched:
         tool = mismatched[0]
         raise InstructionError(
-            f"{filename}: tool {tool!r} belongs to {roles[tool]}, not {header.name}"
+            f"{filename}: tool {tool!r} belongs to {' and '.join(agents_of(tool))}, not {header.name}"
         )
     if not text:
         raise InstructionError(f"{filename}: the instruction text is empty")
@@ -134,7 +138,7 @@ def load_instructions(
     *,
     slots: Collection[str] = SLOTS,
     known_tools: Collection[str] | None = None,
-    tool_roles: dict[str, str] | None = None,
+    tool_roles: dict[str, str | tuple[str, ...]] | None = None,
 ) -> dict[str, AgentInstruction]:
     """Read every instruction file. The first fault stops the load, naming the file."""
     base = directory or INSTRUCTIONS_DIR

@@ -34,6 +34,7 @@ from app.api.packages import (
 from app.blender import runner, storage
 from app.blender.room_contract import SpecValidationError as RoomSpecError
 from app.blender.schemas import RoomSceneSpec, describe_validation_error
+from app.feedback import runs as feedback_runs
 from app.render import benchmark_store
 from app.render.approvals import ApprovalError
 from app.render.calibration import calibrate_after_render
@@ -43,6 +44,12 @@ from app.render.guard import (
     RenderTicket,
     authorise,
     quote,
+)
+from app.render.offload import jobs as offload_jobs
+from app.render.offload.runtime import (
+    confirm_server_sync,
+    remote_benchmark_for,
+    target_for,
 )
 
 logger = logging.getLogger("app")
@@ -57,6 +64,9 @@ ALLOWED_FIELDS: Final = frozenset({"kind", "tier", "room"})
 _STATUS_FOR: Final = {
     "benchmark_missing": status.HTTP_409_CONFLICT,
     "declined": status.HTTP_409_CONFLICT,
+    "offload_unreachable": status.HTTP_503_SERVICE_UNAVAILABLE,
+    "offload_version": status.HTTP_503_SERVICE_UNAVAILABLE,
+    "offload_not_configured": status.HTTP_503_SERVICE_UNAVAILABLE,
 }
 
 
@@ -102,6 +112,7 @@ def _start(
     settings = request.app.state.settings
     engine = request.app.state.engine
     runner.mark_render_queued(folder, ticket)
+    run_id = feedback_runs.record_run(engine, ticket.quote)
     background.add_task(
         runner.run_render,
         ticket,
@@ -113,6 +124,9 @@ def _start(
         scene_document=scene_document,
         tracing=getattr(request.app.state, "tracing", None),
         on_finished=lambda quote, actual: calibrate_after_render(engine, quote, actual),
+        on_outcome=lambda outcome: feedback_runs.finish_run(engine, run_id, outcome),
+        offload=getattr(request.app.state, "offload", None),
+        on_remote_job=lambda record: offload_jobs.record_job(engine, record),
     )
     quote = ticket.quote
     return {
@@ -142,6 +156,20 @@ def _price_args(
     }
 
 
+def _with_target(request: Request, args: dict[str, Any]) -> dict[str, Any]:
+    """Add where the render runs. A final the developer sent to the render server needs a
+    usable server (refused, never moved to the laptop) and the server's own benchmark."""
+    engine = request.app.state.engine
+    where = target_for(engine, args["tier"])
+    if where == "remote":
+        confirm_server_sync(
+            getattr(request.app.state, "loop", None),
+            getattr(request.app.state, "offload", None),
+            launcher(request),
+        )
+    return {**args, "target": where, "remote_benchmark": remote_benchmark_for(engine, where)}
+
+
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 def start_render(
     package_id: str, version: int, request: Request, background: BackgroundTasks,
@@ -162,6 +190,7 @@ def start_render(
     )
     try:
         # Validates the tier, raw knobs, kind and benchmark; approves nothing.
+        args = _with_target(request, args)
         priced = quote(**args)
     except RenderRefused as error:
         raise _refusal(error) from None
@@ -213,6 +242,7 @@ def approve_render(
     )
     try:
         # The token is spent by `take`: a declined or failed approval is over.
+        args = _with_target(request, args)
         ticket = authorise(**args, approval=body.get("confirm"))
     except RenderRefused as error:
         raise _refusal(error) from None
