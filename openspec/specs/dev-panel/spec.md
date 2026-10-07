@@ -37,3 +37,44 @@ Every developer route SHALL answer 404 when the developer panel is disabled and 
 #### Scenario: Panel disabled
 - **WHEN** the panel is disabled and a developer route is called with a valid session
 - **THEN** the response is 404
+
+### Requirement: Feedback is readable per slot, model and tier
+The developer SHALL be able to read the render-feedback summary (up and down counts and latest comment time, grouped by slot, model and tier), and the comments of one group newest first, behind the developer gate. Renders started outside an agent turn SHALL be grouped under no slot and no model. Reading feedback SHALL NOT change routing.
+
+#### Scenario: Ungrouped HTTP renders
+- **WHEN** a still started through the renders route is rated up
+- **THEN** the summary counts it in a row with no slot and no model at its tier
+
+### Requirement: Render offload is managed from the developer panel
+Behind the developer gate, the developer SHALL be able to:
+- read whether offload is configured (host, port, user, remote Blender path and device shown; key file and known-hosts contents never shown);
+- test the connection, reporting reachability, the remote Blender version and the GPU devices it lists;
+- run the remote benchmark through the render guard;
+- set the final target to `local` or `remote`;
+- set an hourly rate in euros;
+- read the last twenty remote jobs with estimate, actual, transfer seconds, outcome and the euro estimate from the hourly rate.
+
+Setting the target to `remote` SHALL be refused while offload is not configured. A change SHALL apply to the next render without a restart.
+
+#### Scenario: Remote target without configuration
+- **WHEN** offload is not configured and the developer sets the final target to `remote`
+- **THEN** the change is refused saying offload is not configured, and the target stays `local`
+
+#### Scenario: Connection test
+- **WHEN** the developer tests a reachable server running Blender 5.2.1 with one GPU
+- **THEN** the response reports reachable, version 5.2.1 and the GPU's device name
+
+### Requirement: A conversation's model calls are readable by the developer
+The developer SHALL be able to read, for one conversation, every model call recorded for it — time, slot, model slug, input and output tokens (or the counted estimate, marked as such, when the gateway reported none) — newest first, including title and summary calls. Each usage row SHALL record the conversation it was made for. Usage rows SHALL survive the conversation's deletion, without the link to it. The route SHALL sit behind the developer gate.
+
+#### Scenario: One turn's calls
+- **WHEN** a turn routes Foreman → Intake and Intake's call is the thread's first turn, followed by the title call
+- **THEN** the conversation's calls list three rows — `foreman`, `intake`, `foreman` — each with its model slug and token figures
+
+#### Scenario: Unknown conversation
+- **WHEN** the developer reads the calls of a thread id that does not exist
+- **THEN** the response is 404
+
+#### Scenario: Panel disabled
+- **WHEN** the panel is disabled and the route is called with a valid session
+- **THEN** the response is 404

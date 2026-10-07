@@ -16,8 +16,8 @@ The owner SHALL be able to start a conversation (optionally naming the piece it 
 - **THEN** after the reply the thread has a title of three to six words from the Foreman's model, and the thread list shows it
 
 #### Scenario: Title call refused
-- **WHEN** the Foreman's model has reached its daily ceiling when the first turn of an untitled thread ends
-- **THEN** the thread's title is "I want a listening wall for my records in the living" or shorter, cut at a word boundary, and the turn's reply is unaffected
+- **WHEN** the Foreman's model has reached its daily ceiling when the first turn of an untitled thread ends, and the owner's first message was "I want a listening wall for my records in the living room next to the window"
+- **THEN** the thread's title is "I want a listening wall for my records in the living room", the message cut at a word boundary to at most 60 characters, and the turn's reply is unaffected
 
 #### Scenario: Rename
 - **WHEN** the owner renames a thread to "Listening wall"

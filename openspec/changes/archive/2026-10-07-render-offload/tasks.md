@@ -20,10 +20,11 @@
 ## 5. Developer panel
 
 - [x] 5.1 Add `app/api/admin_offload.py` (summary, connection test, run remote benchmark, target, hourly rate, recent jobs with euro estimate). Verify `tests/test_admin_offload_api.py` covers the target refused while unconfigured, the connection test result shape, 404 when the panel is disabled, and no host, target or euro figure in any homeowner route response
-- [ ] 5.2 Add `frontend/src/routes/admin/Offload.tsx` and its admin route with Vitest coverage (refusal beside the target switch, job list). Verify `pnpm test` passes, then do a recorded browser check against a backend with offload unconfigured (refusal path) and with a fake configured summary
+- [x] 5.2 Add `frontend/src/routes/admin/Offload.tsx` and its admin route with Vitest coverage (refusal beside the target switch, job list). Verify `pnpm test` passes, then do a recorded browser check against a backend with offload unconfigured (refusal path) and with a fake configured summary
 
 ## 6. Verification
 
-- [ ] 6.1 Manual check against a real rented GPU box when the owner has one running: connection test, remote benchmark, one approved tier-`final` still remotely. Record estimate vs actual in the commit message, or record that it was not run
+- [x] 6.1 Manual check against a real rented GPU box when the owner has one running: connection test, remote benchmark, one approved tier-`final` still remotely. Record estimate vs actual in the commit message, or record that it was not run
+  - 2026-10-07: not run. The owner chose not to rent a GPU box for now; offload stays unconfigured and finals render locally.
 - [x] 6.2 README (owner setup: rent a box, install Blender 5.2.1, keys, known_hosts, env values, switching the target) and CLAUDE.md §2 / §11 step 10 tick
 - [x] 6.3 Run `uv run ruff check .`, `uv run pytest -m "not slow"`, `uv run pytest --blender -m blender` (renders at tier `draft` only), and `pnpm lint && pnpm test && pnpm build`. Verify all pass and record the counts in the commit message

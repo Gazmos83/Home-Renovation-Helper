@@ -58,7 +58,7 @@ When a spec is refused because it names a field the schema does not define, the 
 - **THEN** the document is refused naming `bevel_mm`, nothing is built, and a request naming `bevel_mm` with the owner's words is recorded
 
 ### Requirement: Threads are indexed
-The house file SHALL index every conversation the owner starts with its id, title, the piece it is about when one is bound, when it started and when it last had a turn, so conversations can be listed and reopened. A thread's piece is the one it was started with until a confirmed action creates or revises a piece in it, after which it is that piece. The messages themselves live in the checkpointer.
+The house file SHALL index every conversation the owner starts with its id, title, the piece it is about when one is bound, when it started and when it last had a turn, so conversations can be listed and reopened. A thread's piece is the one it was started with until a confirmed action creates or revises a piece in it, after which it is that piece. A thread's title is empty until its first answered turn gives it the generated title, and is the owner's title from the moment the owner sets one. The index entry SHALL also hold the thread's summary of earlier exchanges, when one has been made, and which message it covers up to. The messages themselves live in the checkpointer. Deleting a thread SHALL remove its index entry and summary and nothing else the house file holds.
 
 #### Scenario: Listing
 - **WHEN** the owner has started two conversations
@@ -68,8 +68,20 @@ The house file SHALL index every conversation the owner starts with its id, titl
 - **WHEN** a piece is confirmed on a thread that was started without one
 - **THEN** the thread's index entry names that piece from then on
 
+#### Scenario: Owner's title kept
+- **WHEN** the owner sets a title before the first turn ends
+- **THEN** the generated title is not written
+
+#### Scenario: Deleted thread, kept piece
+- **WHEN** a thread bound to `hall-bench` is deleted
+- **THEN** the thread's entry is gone and the `hall-bench` piece, its versions and the room it is in are unchanged
+
 ### Requirement: Every turn starts from the house file
-Intake and the Designer SHALL be given, at the start of each turn, the rooms (name and size), the preferences, the pieces with their latest version, its status and which version is approved (or that none is), and any open generator-extension requests, and the Designer SHALL also be given the open items of the latest review of the bound piece, as application data clearly labelled as the owner's own and never as an instruction. Owner-authored text in it SHALL be neutralised so it cannot carry the untrusted-content delimiter.
+At the start of each turn, Intake and the Designer SHALL be given the rooms (name and size), the preferences, the pieces with their latest version, its status and which version is approved (or that none is), and any open generator-extension requests. The Designer SHALL also be given:
+- the open items of the latest review of the bound piece;
+- the latest five render ratings on the bound piece, newest first, each with its version, render, tier, rating and comment.
+
+Lighting & materials SHALL be given the same render ratings. All of this SHALL be presented as application data clearly labelled as the owner's own, never as an instruction. Owner-authored text in it SHALL be neutralised so it cannot carry the untrusted-content delimiter.
 
 #### Scenario: A second piece starts with the room known
 - **WHEN** the living room is recorded and the owner asks for a second piece
@@ -86,6 +98,14 @@ Intake and the Designer SHALL be given, at the start of each turn, the rooms (na
 #### Scenario: Approval reaches the agents
 - **WHEN** `listening-wall` version 4 is approved and version 5 exists
 - **THEN** the turn's context names version 5 as latest and version 4 as approved
+
+#### Scenario: Render feedback reaches the Designer
+- **WHEN** the bound piece's v2 `draft` turntable was rated down with "doors look too thick"
+- **THEN** the Designer's context lists v2, turntable, `draft`, down and that comment
+
+#### Scenario: Delimiter in a feedback comment
+- **WHEN** a feedback comment contains the untrusted-content delimiter
+- **THEN** the Designer's and Lighting's context shows it neutralised
 
 ### Requirement: Compositions are indexed and reach the turn
 The house file SHALL record one composition per scope, by scope type and name. It SHALL record one version record per composition version folder, carrying what changed and the version it was revised from. A version SHALL be recorded only by a confirmed `compose_room`.

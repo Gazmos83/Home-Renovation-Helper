@@ -17,7 +17,7 @@
 
 - [x] 4.1 Add `frontend/src/routes/Pieces.tsx` (+ navigation link) with Vitest coverage: rate up/down, comment saved, clear, refusal shown beside the render, legacy render without a run labelled, and no model text rendered. Verify `pnpm test` and `pnpm lint` pass
 - [x] 4.2 Add `frontend/src/routes/admin/Feedback.tsx` (+ admin route) with Vitest coverage of the grouped table and the comment list. Verify `pnpm test` passes
-- [ ] 4.3 Browser check of both pages against a running backend with one fixture piece rendered at tier `draft` (rate, reload, clear; read the summary). Record the check in the commit message
+- [x] 4.3 Browser check of both pages against a running backend with one fixture piece rendered at tier `draft` (rate, reload, clear; read the summary). Record the check in the commit message
 
 ## 5. Verification
 
