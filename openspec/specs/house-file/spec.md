@@ -58,11 +58,15 @@ When a spec is refused because it names a field the schema does not define, the 
 - **THEN** the document is refused naming `bevel_mm`, nothing is built, and a request naming `bevel_mm` with the owner's words is recorded
 
 ### Requirement: Threads are indexed
-The house file SHALL index every conversation the owner starts with its id, title, the piece it is about when one is bound, when it started and when it last had a turn, so conversations can be listed and reopened. The messages themselves live in the checkpointer.
+The house file SHALL index every conversation the owner starts with its id, title, the piece it is about when one is bound, when it started and when it last had a turn, so conversations can be listed and reopened. A thread's piece is the one it was started with until a confirmed action creates or revises a piece in it, after which it is that piece. The messages themselves live in the checkpointer.
 
 #### Scenario: Listing
 - **WHEN** the owner has started two conversations
 - **THEN** both are listed with their titles, newest activity first
+
+#### Scenario: Bound by the action
+- **WHEN** a piece is confirmed on a thread that was started without one
+- **THEN** the thread's index entry names that piece from then on
 
 ### Requirement: Every turn starts from the house file
 Intake and the Designer SHALL be given, at the start of each turn, the rooms (name and size), the preferences, the pieces with their latest version, its status and which version is approved (or that none is), and any open generator-extension requests, and the Designer SHALL also be given the open items of the latest review of the bound piece, as application data clearly labelled as the owner's own and never as an instruction. Owner-authored text in it SHALL be neutralised so it cannot carry the untrusted-content delimiter.

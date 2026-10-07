@@ -11,6 +11,7 @@ Each turn SHALL be handled by exactly one specialist (Intake, Designer, Builder,
 - The Reviewer is never chosen unless the bound piece's latest version has a screenshot or a render.
 - Lighting & materials is never chosen unless the bound piece's latest version has a successful build.
 - A thread with no piece and no confirmed brief goes to Intake, unless the owner asks a question the Researcher answers (a price, a product, a guideline), or asks to compose a room while the house file holds an approved piece version or a composition (the Designer).
+- A thread with no piece and no confirmed brief SHALL also go to the Designer when the Foreman chose the Designer and the owner's message, or the reply just before it, names a piece in the house file by its package id or its name. This is so that the piece can be revised, rebuilt or given an imported version.
 - The Researcher prices only a bound piece's version.
 - A turn that carries a design file goes to the Designer, whatever the thread holds.
 
@@ -47,6 +48,14 @@ A pending confirmation SHALL resume in the specialist that raised it. The owner 
 #### Scenario: Compose request in a new thread
 - **WHEN** a thread has no piece and no brief, the house file holds an approved version of `bench`, and the owner asks to compose `Wohnen` with it
 - **THEN** the Designer answers, not Intake
+
+#### Scenario: Revise a named piece from a new thread
+- **WHEN** a thread has no piece and no brief, the Designer's last reply named `murphy-bed`, and the owner answers "Revise it"
+- **THEN** the Designer answers, not Intake
+
+#### Scenario: No piece named
+- **WHEN** a thread has no piece and no brief and the owner writes "revise it" without any reply or message naming a piece in the house file
+- **THEN** Intake answers
 
 ### Requirement: Each specialist runs on its routed model with its instruction file
 Each specialist SHALL call the model routed for its slot (`intake`, `designer`, `builder`, `researcher`, `reviewer`, `lighting`; the Foreman on `foreman`) with that slot's generation profile. It SHALL be prompted from its checked-in instruction file: a header naming its tools (not editable) and text, followed by the fixed notes and the untrusted-content guard composed by code, exactly once and last. The tools a header may name SHALL be the tools the plugin manifests declare. A specialist SHALL bind only the named tools whose plugin is enabled for the thread, plus enabled HTTPS plugins for its role. A missing or malformed instruction file SHALL stop startup naming the file.
@@ -233,3 +242,30 @@ A turn SHALL end with its reply, and nothing SHALL message the owner afterwards.
 #### Scenario: Two targets
 - **WHEN** a call names both a piece and a composition
 - **THEN** it is refused saying to name exactly one target
+
+### Requirement: The Designer rebuilds a piece unchanged as a new version
+`rebuild_piece` SHALL take a piece's package id. It previews "version N+1, rebuilt unchanged from version N", where N is the latest version, and pauses for `yes`. On `yes`:
+- the next version is recorded with a copy of version N's stored design and the change line `rebuilt unchanged from version N`;
+- the conversation is bound to the piece;
+- the headless build starts.
+
+Version N's folder and record SHALL be untouched, and the new version is not approved until the owner approves it. An unknown package id, or a latest version without a readable design, SHALL be refused with nothing created. On `no` nothing is created and the reason returns to the Designer.
+
+#### Scenario: Rebuilt for new views
+- **WHEN** the owner asks for the Murphy bed as a new version without changes, and answers `yes`
+- **THEN** `murphy-bed` version 2 exists with the same design as version 1 and the change line `rebuilt unchanged from version 1`, its build is queued, and version 1 is unchanged
+
+#### Scenario: Declined
+- **WHEN** the owner answers `no` to the rebuild preview
+- **THEN** no version or folder is created
+
+### Requirement: A specialist's empty answer is never the turn's reply
+When a specialist's final answer has no text and no tool call, the specialist SHALL be called once more with a note that its answer was empty. If the second answer is also empty, the turn SHALL end with a fixed reply naming the specialist by role and asking the owner to rephrase or ask again. Both calls SHALL be counted against the slot's token budget like any other.
+
+#### Scenario: Empty then answered
+- **WHEN** Intake's first answer to "Revise it" is empty and its second is a sentence
+- **THEN** the owner sees the sentence and no empty entry
+
+#### Scenario: Empty twice
+- **WHEN** Intake answers empty twice
+- **THEN** the turn's reply says Intake gave no answer and asks the owner to rephrase or ask again
