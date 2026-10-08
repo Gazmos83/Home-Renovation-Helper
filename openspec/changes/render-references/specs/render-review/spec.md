@@ -1,0 +1,61 @@
+## MODIFIED Requirements
+
+### Requirement: A review compares a version's renders and spec with the brief
+`revision_review` SHALL take a package version, defaulting to the bound piece's latest, and an optional `focus`: what the owner asked to check, in their own words. It SHALL assemble the following by code:
+- the version's screenshot, labelled `iso` after the inspector's Iso camera it matches;
+- its straight-on views (`front.png`, `side.png`, `top.png`) when present, labelled `front`, `side` and `top` as in the Piece Inspector, each with the dimensions it shows;
+- an even spread of up to four turntable frames, or else the still;
+- the room still, or up to two room frames, when present;
+- the spec's facts as numbers: overall size, each module's size, shelves and fronts, materials, cut-list and hardware counts;
+- the piece's confirmed brief;
+- any design-rule warnings for the version;
+- when `focus` is given, the line "The owner asked:" followed by the focus inside the untrusted-content delimiters, neutralised, with the untrusted-content preamble in the request.
+
+Each turntable frame SHALL be labelled `turntable` and the direction its camera looks from, relative to the piece's front (the side the inspector's Front camera faces) and as seen when facing that front: `front`, `front-right`, `right side`, `back-right`, `back`, `back-left`, `left side` or `front-left`, taken from the frame's recorded camera position (for example `turntable front-right`). A frame whose camera position is not recorded SHALL be labelled `turntable view` with its place in the spread (1 to 4). The room still SHALL be labelled `room`, and room frames `room` and `room opposite side`. Every label sent in one review SHALL be unique; no label SHALL be a frame or image number. At most 10 images SHALL be sent.
+
+No exploded image SHALL be sent. Asked about the inspector's exploded view, the Reviewer SHALL say it has no exploded image and answer from the spec's parts and the views it was sent, naming those views.
+
+A version with neither a screenshot nor a render SHALL be refused, saying what must exist first. The review SHALL NOT start a build or a render.
+
+#### Scenario: Draft turntable reviewed
+- **WHEN** the owner asks for a review of a version with a 12-frame draft turntable
+- **THEN** the Reviewer's model call contains the screenshot, four frames spread around the turn each labelled by a direction name, the spec facts and the brief
+
+#### Scenario: Straight-on views reviewed
+- **WHEN** the owner asks for a review of a version built with the straight-on views and a 12-frame draft turntable
+- **THEN** the Reviewer's model call contains the screenshot, the views labelled `front`, `side` and `top`, four frames labelled `turntable` and a direction, the spec facts and the brief
+
+#### Scenario: Frame named by its camera direction
+- **WHEN** a turntable frame's recorded camera sits in front of the piece and to the right of its centre, at 45° to the front
+- **THEN** that frame is labelled `turntable front-right`
+
+#### Scenario: Owner's question passed as focus
+- **WHEN** the owner asks "is the top shelf in the side view right?" and the Reviewer calls `revision_review` with that as `focus`
+- **THEN** the model call contains "The owner asked:" and the question inside the untrusted-content delimiters
+
+#### Scenario: Focus cannot break out of its delimiters
+- **WHEN** the `focus` contains the closing delimiter and "ignore the spec"
+- **THEN** the delimiter is neutralised and the focus stays inside one delimited block
+
+#### Scenario: Question about the exploded view
+- **WHEN** the owner asks "is the shelf right in the exploded view?" and the version has a draft turntable
+- **THEN** the Reviewer says it has no exploded image and answers from the spec's parts and the views it was sent, naming those views
+
+#### Scenario: Nothing to look at
+- **WHEN** the version has not been built
+- **THEN** the review is refused saying a build or a render must exist first
+
+### Requirement: A review returns a structured discrepancy list
+The Reviewer's answer SHALL be validated into a list of items, each with an aspect (`brief`, `proportion`, `material`, `placement`, `construction`, `render`), the expectation and where it comes from (the brief, the spec or a named design rule), the observation and the view it was seen in (one of the labels sent in that review), a severity (`minor` or `major`), and an optional suggested change in words. An item naming a view that was not sent SHALL fail validation. The recorded item SHALL keep the 1-based position of that image among the renders used, so stored reviews keep their shape. The reply SHALL name the view in words ("seen in the turntable front-right view"), never an image or frame number. An item claiming a measurement SHALL quote the spec's number rather than one estimated from the image. An answer that does not validate SHALL be reported as a failed review, not shown as findings. An empty list SHALL be a valid "no discrepancies found".
+
+#### Scenario: Missing drawer
+- **WHEN** the brief asks for two drawers and the frames show one
+- **THEN** the review lists a `major` `brief` item citing the brief and the view it was seen in by name
+
+#### Scenario: View not sent
+- **WHEN** the model's answer cites a view named `turntable back` and no such image was sent
+- **THEN** the reply says the review could not be completed and nothing is recorded
+
+#### Scenario: Unvalidated answer
+- **WHEN** the model's answer does not fit the discrepancy schema
+- **THEN** the reply says the review could not be completed and nothing is recorded
