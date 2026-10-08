@@ -53,7 +53,14 @@ def test_each_agent_names_exactly_its_tools() -> None:
     assert loaded["reviewer"].tools == ("revision_review",)
     assert set(loaded["researcher"].tools) == {
         "search_catalog_knowledge", "check_live_listing", "compare_products", "price_cut_list", "manage_remnants",
+        "search_guidelines",
     }
+
+
+def test_guideline_search_is_shared_with_the_researcher() -> None:
+    from app.agent.tools import tool_roles
+
+    assert tool_roles()["search_guidelines"] == ("designer", "researcher")
 
 
 def test_the_designer_and_builder_never_offer_blender_code() -> None:

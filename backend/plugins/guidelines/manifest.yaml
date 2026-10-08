@@ -2,6 +2,7 @@ name: guidelines
 description: Search design guidelines and the owner's notes for a placement or piece rule.
 kind: builtin
 role: designer
+also_for: [researcher]
 tools: [search_guidelines]
 enabled_by_default: true
 toggleable: true

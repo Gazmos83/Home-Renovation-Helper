@@ -604,11 +604,12 @@ def test_a_price_question_goes_to_the_researcher_even_without_a_brief_or_piece(t
     assert last_reply(state) == "I can look that up."
 
 
-def test_the_researcher_binds_exactly_its_five_tools(tool_state) -> None:
+def test_the_researcher_binds_exactly_its_six_tools(tool_state) -> None:
     models = fake_models(foreman={"decisions": [decision("researcher")]}, researcher={"replies": ["Ok."]})
     make_harness(tool_state, models).turn("price it")
     assert set(models["researcher"].bound_tools) == {
         "search_catalog_knowledge", "check_live_listing", "compare_products", "price_cut_list", "manage_remnants",
+        "search_guidelines",
     }
 
 

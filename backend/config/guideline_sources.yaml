@@ -21,4 +21,12 @@
 #     format: pdf
 #     published_on: 2022-01-01
 #     licence: Published free by BAuA as an official technical rule.
-sources: []
+sources:
+  - id: topnotch-shelf-brackets
+    title: How Many Brackets Does a Wooden Shelf Need?
+    jurisdiction: United Kingdom (retailer guidance, Top Notch Home; not an official rule)
+    path: pdf/How Many Brackets Does a Wooden Shelf Need_.pdf
+    format: pdf
+    # TODO(user): the page shows "Jul 24" without a year; 2026 is assumed (printed 2026-10-08).
+    published_on: 2026-07-24
+    licence: Copyrighted retailer blog post (topnotchhome.co.uk), saved as a PDF for personal reference; kept in the gitignored pdf/ folder.
