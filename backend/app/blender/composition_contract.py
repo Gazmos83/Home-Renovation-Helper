@@ -159,8 +159,11 @@ def parse_composition(document: Any, *, max_items: int) -> dict[str, Any]:
     scope_type = next(iter(scope))
     scope_name = _text(scope[scope_type], f"scope.{scope_type}", 200)
     items = document["items"]
-    if not isinstance(items, Sequence) or isinstance(items, (str, bytes)) or not items:
-        _fail("items must be a non-empty list")
+    if not isinstance(items, Sequence) or isinstance(items, (str, bytes)):
+        _fail("items must be a list")
+    # A room may be composed with no furniture (rooms-page); an apartment may not.
+    if not items and scope_type == "apartment":
+        _fail("an apartment composition needs at least one item")
     if len(items) > max_items:
         _fail(f"a composition holds at most {max_items} items, not {len(items)}")
     parsed = [_parse_item(raw, index, scope_type == "apartment") for index, raw in enumerate(items)]

@@ -79,7 +79,7 @@ def test_no_with_a_reason_writes_nothing_and_the_reason_reaches_the_specialist(t
             "replies": ["Understood, what budget instead?"],
         },
     )
-    harness = make_harness(tool_state, models)
+    harness = make_harness(tool_state, models, room="Studio")
     run_turn(harness, "a hall bench")
     declined = run_resume(harness, "no", reason="the budget is 250")
     assert declined.reply == "Understood, what budget instead?"

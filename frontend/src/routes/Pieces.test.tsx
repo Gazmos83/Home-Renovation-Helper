@@ -13,6 +13,13 @@ const turntable = {
 const legacy = { ...turntable, render: "still", label: "Still", can_rate: false, viewer: null,
   preview: "/packages/bench/versions/2/files/still.png" };
 
+function summary(name: string) {
+  return {
+    name, width_mm: 3000, depth_mm: 2000, corners: 4, height_mm: 2500, openings: 1,
+    apartment: null, pieces: [], conversations: 0, composition: null,
+  };
+}
+
 function show() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><MemoryRouter><Pieces /></MemoryRouter></QueryClientProvider>);
@@ -213,4 +220,58 @@ test("a version still building offers the design but not the bundle", async () =
   await screen.findByRole("img");
   expect(screen.queryByRole("link", { name: /Download bundle/ })).toBeNull();
   expect(screen.queryByRole("link", { name: /Inspect/ })).toBeNull();
+});
+
+test("an unassigned piece shows No room and is attached to a room, which a reload keeps", async () => {
+  const user = userEvent.setup();
+  let room: string | null = null;
+  const calls = serve([turntable], (call) => {
+    if (call === "GET /packages") return { body: [{ package_id: "bench", versions: [2, 1], room }] };
+    if (call === "GET /rooms") return { body: [summary("Hall"), summary("Schlafzimmer")] };
+    if (call === "PUT /packages/bench/room") {
+      room = "Schlafzimmer";
+      return { body: { package_id: "bench", room } };
+    }
+  });
+  show();
+  expect(await screen.findByText("No room", { selector: "span" })).toBeInTheDocument();
+  await screen.findByRole("option", { name: "Schlafzimmer" });
+  await user.selectOptions(screen.getByLabelText("Room of bench"), "Schlafzimmer");
+  expect(await screen.findByText("Room: Schlafzimmer")).toBeInTheDocument();
+  expect(calls.find(([m, u]) => m === "PUT" && u === "/packages/bench/room")![2]).toEqual({ room: "Schlafzimmer" });
+  expect(screen.getByLabelText("Room of bench")).toHaveValue("Schlafzimmer");
+});
+
+test("choosing No room clears the piece's room", async () => {
+  const user = userEvent.setup();
+  let room: string | null = "Hall";
+  const calls = serve([turntable], (call) => {
+    if (call === "GET /packages") return { body: [{ package_id: "bench", versions: [2, 1], room }] };
+    if (call === "GET /rooms") return { body: [summary("Hall")] };
+    if (call === "PUT /packages/bench/room") {
+      room = null;
+      return { body: { package_id: "bench", room } };
+    }
+  });
+  show();
+  await user.selectOptions(await screen.findByLabelText("Room of bench"), "No room");
+  expect(await screen.findByText("No room", { selector: "span" })).toBeInTheDocument();
+  expect(calls.find(([m]) => m === "PUT")![2]).toEqual({ room: null });
+});
+
+test("a refusal from the room route is shown next to the piece and its room is unchanged", async () => {
+  const user = userEvent.setup();
+  serve([turntable], (call) => {
+    if (call === "GET /packages") return { body: [{ package_id: "bench", versions: [2, 1], room: "Hall" }] };
+    if (call === "GET /rooms") return { body: [summary("Hall"), summary("Attic")] };
+    if (call === "PUT /packages/bench/room") {
+      return { status: 422, body: { detail: { failure_class: "unknown_room", reason: "there is no room 'Attic' in the house file" } } };
+    }
+  });
+  show();
+  await screen.findByRole("option", { name: "Attic" });
+  await user.selectOptions(screen.getByLabelText("Room of bench"), "Attic");
+  const refusal = await screen.findByText("there is no room 'Attic' in the house file");
+  expect(refusal.closest("section")).toHaveAccessibleName("bench");
+  expect(screen.getByText("Room: Hall")).toBeInTheDocument();
 });

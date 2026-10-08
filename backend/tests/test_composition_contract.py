@@ -204,3 +204,23 @@ def test_without_rules_nothing_is_reported(tmp_path) -> None:
 
     _stored, subjects = place(document(sofa()))
     assert rule_outcome((), subjects) == (None, "")
+
+
+# --- an empty room (rooms-page) ------------------------------------------------------------
+
+
+def test_an_empty_room_is_accepted_and_resolves_the_room_with_no_items() -> None:
+    stored, subjects = place(document())
+    assert stored["items"] == [] and subjects == []
+    assert [room["name"] for room in stored["resolved"]["rooms"]] == ["Wohnen"]
+    assert stored["resolved"]["items"] == []
+
+
+def test_an_empty_apartment_is_refused() -> None:
+    with pytest.raises(SpecValidationError, match="an apartment composition needs at least one item"):
+        parse_composition(document(scope={"apartment": "Wohnung"}), max_items=30)
+
+
+def test_items_that_are_not_a_list_are_refused() -> None:
+    with pytest.raises(SpecValidationError, match="items must be a list"):
+        parse_composition({**document(), "items": "sofa"}, max_items=30)

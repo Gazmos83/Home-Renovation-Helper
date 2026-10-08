@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.api_helpers import sign_in
+from tests.api_helpers import confirm_thread_room, sign_in
 from tests.conftest import clean_house_file
 from tests.graph_helpers import fake_models
 from tests.test_admin_models_api import _client
@@ -33,6 +33,7 @@ def _first_turn(client: TestClient) -> str:
         intake={"replies": ["How wide is the hall?"]},
     ))
     thread = client.post("/chat/threads", json={}).json()["thread_id"]
+    confirm_thread_room(client, thread)
     turn = client.post(f"/chat/threads/{thread}/turns", json={"message": "a bench for the hall"})
     assert turn.status_code == 200, turn.text
     return thread

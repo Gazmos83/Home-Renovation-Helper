@@ -93,6 +93,10 @@ SPECIALIST_LABELS: Final[dict[str, str]] = {
     "reviewer": "the Reviewer",
     "researcher": "the Researcher",
 }
+# The Foreman's two fixed replies, composed by the application (conversation-projects).
+ROOM_QUESTION: Final = "Which room is this for?"
+WHICH_PIECE: Final = "Which piece do you mean: {names}?"
+WHICH_PIECE_PREFIX: Final = "Which piece do you mean"
 # The turn's reply when a specialist answers empty twice (piece-versions-and-chat-delete).
 EMPTY_REPLY: Final = "{role} gave no answer. Please rephrase your message or ask again."
 _TOOL_NAME: Final = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -146,6 +150,11 @@ class ChatState(TypedDict, total=False):
     image_attached: bool
     design_attached: bool
     piece_named: bool
+    room_confirmed: bool
+    room_named: bool
+    room_asked: bool
+    build_room_ok: bool
+    ambiguous_pieces: list[str]
     brief: dict[str, Any]
     bound_tools: dict[str, list[str]]
 
@@ -296,23 +305,57 @@ def _last_ai_tool_calls(state: ChatState) -> list[dict[str, Any]]:
     return []
 
 
-def piece_named(messages: list[AnyMessage], pieces: list[dict[str, Any]]) -> bool:
-    """Whether the owner's latest message, or the last reply with text before it, names a
-    house-file piece by its package id (as a whole word) or its name (any case)."""
-    texts: list[str] = []
+def _latest_texts(messages: list[AnyMessage]) -> tuple[str, str]:
+    """The owner's latest message and the last reply with text before it."""
+    owner = ""
     for message in reversed(messages):
-        if isinstance(message, HumanMessage) and not texts:
-            texts.append(_text_of(message.content))
-        elif texts and isinstance(message, AIMessage) and _text_of(message.content).strip():
-            texts.append(_text_of(message.content))
-            break
-    lowered = " ".join(texts).casefold()
-    for piece in pieces:
-        package_id = str(piece["package_id"]).casefold()
-        name = str(piece.get("name") or "").casefold().strip()
-        if re.search(rf"(?<![\w-]){re.escape(package_id)}(?![\w-])", lowered) or (name and name in lowered):
-            return True
-    return False
+        if isinstance(message, HumanMessage) and not owner:
+            owner = _text_of(message.content)
+        elif owner and isinstance(message, AIMessage) and _text_of(message.content).strip():
+            return owner, _text_of(message.content)
+    return owner, ""
+
+
+def _whole_word(word: str, lowered: str) -> bool:
+    return bool(word) and bool(re.search(rf"(?<![\w-]){re.escape(word.casefold())}(?![\w-])", lowered))
+
+
+def _pieces_in(text: str, pieces: list[dict[str, Any]]) -> list[str]:
+    """The package ids `text` names: by package id (a whole word) first, else by name."""
+    lowered = text.casefold()
+    by_id = [str(p["package_id"]) for p in pieces if _whole_word(str(p["package_id"]), lowered)]
+    if by_id:
+        return by_id
+    return [
+        str(p["package_id"])
+        for p in pieces
+        if (name := str(p.get("name") or "").casefold().strip()) and name in lowered
+    ]
+
+
+def piece_named(messages: list[AnyMessage], pieces: list[dict[str, Any]]) -> list[str]:
+    """The house-file pieces the owner's latest message names; when it names none, the ones
+    the last reply before it names (not the reply that asked which piece, or the owner's
+    answer to it would be asked again). By package id as a whole word, else by name."""
+    owner, reply = _latest_texts(messages)
+    found = _pieces_in(owner, pieces)
+    if found or not reply or reply.startswith(WHICH_PIECE_PREFIX):
+        return found
+    return _pieces_in(reply, pieces)
+
+
+def room_named(
+    messages: list[AnyMessage], rooms: list[dict[str, Any]], apartments: list[dict[str, Any]]
+) -> bool:
+    """Whether the owner's latest message names a room or apartment of the house file as a
+    whole word, in any case."""
+    lowered = _latest_texts(messages)[0].casefold()
+    return any(_whole_word(str(item["name"]), lowered) for item in [*rooms, *apartments])
+
+
+def room_question_asked(messages: list[AnyMessage]) -> bool:
+    """Whether the last reply with text before the owner's message was the room question."""
+    return _latest_texts(messages)[1].strip() == ROOM_QUESTION
 
 
 def _last_human_text(state: ChatState) -> str:
@@ -400,32 +443,66 @@ def build_graph(
 
     def load_house(state: ChatState, config: RunnableConfig) -> dict[str, Any]:
         configurable = config.get("configurable", {})
+        messages = state.get("messages", [])
         with Session(engine) as session:
-            rooms = [house_file.describe_room(room) for room in house_file.rooms(session)]
+            stored_rooms = house_file.rooms(session)
             preferences = house_file.preferences(session)
-            pieces = house_file.pieces(session, settings.render_root)
-            requests = [
-                {"field": r.field, "request": r.request}
-                for r in house_file.open_extension_requests(session)
-            ]
-            apartments = []
-            for apartment in house_file.apartments(session):
-                try:
-                    built = storage.shell_versions(settings.render_root, storage.apartment_slug(apartment.name))
-                except storage.InvalidPackageId:
-                    built = []
-                apartments.append(
-                    {
-                        "name": apartment.name,
-                        "rooms": len(house_file.rooms_of(session, apartment)),
-                        "shell_version": built[-1] if built else None,
-                    }
-                )
+            all_pieces = house_file.pieces(session, settings.render_root)
+            piece_rooms = house_file.piece_room_names(session)
             thread = None
             raw_thread = configurable.get("chat_thread")
             if raw_thread:
                 thread = house_file.get_thread(session, UUID(str(raw_thread)))
             thread_id = thread.id if thread else None
+            scope_room, scope_apartment = (
+                house_file.thread_scope(session, thread_id) if thread_id else (None, None)
+            )
+            scope_rooms = (
+                [scope_room]
+                if scope_room is not None
+                else (house_file.rooms_of(session, scope_apartment) if scope_apartment is not None else [])
+            )
+            scope_room_names = {room.name for room in scope_rooms}
+            # Plain names: a commit below expires the rows, and they are read after the session.
+            scope_room_name = scope_room.name if scope_room is not None else None
+            scope_apartment_name = scope_apartment.name if scope_apartment is not None else None
+            apartments = []
+            if scope_apartment is not None:
+                try:
+                    built = storage.shell_versions(
+                        settings.render_root, storage.apartment_slug(scope_apartment.name)
+                    )
+                except storage.InvalidPackageId:
+                    built = []
+                apartments.append(
+                    {
+                        "name": scope_apartment.name,
+                        "rooms": len(scope_rooms),
+                        "shell_version": built[-1] if built else None,
+                    }
+                )
+            # Which of its builds the owner means: two named are asked about, exactly one
+            # named becomes the active build, joining the conversation if it is not yet in it.
+            build_ids = [b.package_id for b in house_file.builds_of(session, thread_id)] if thread_id else []
+            active = thread.package_id if thread and thread.package_id else None
+            if active and active not in build_ids:
+                build_ids.append(active)
+            matches = piece_named(messages, all_pieces)
+            named_here = [m for m in matches if m in build_ids]
+            names = {p["package_id"]: p["name"] for p in all_pieces}
+            ambiguous = [f"{m} ({names[m]})" if names.get(m) not in (None, m) else m for m in named_here] if len(named_here) >= 2 else []
+            if not ambiguous and len(matches) == 1 and thread_id is not None and matches[0] != active:
+                house_file.set_active_build(session, thread_id, matches[0])
+                session.commit()
+                active = matches[0]
+                if active not in build_ids:
+                    build_ids.append(active)
+            requests = [
+                {"field": r.field, "request": r.request}
+                for r in house_file.open_extension_requests(
+                    session, package_ids=build_ids, thread_id=thread_id
+                )
+            ]
             tools_this_turn = {
                 name: bound_tool_names(
                     session,
@@ -436,8 +513,17 @@ def build_graph(
                 )
                 for name in SPECIALISTS
             }
-        package_id = thread.package_id if thread and thread.package_id else state.get("package_id")
-        bound = next((p for p in pieces if p["package_id"] == package_id), None)
+            approved = {
+                p["package_id"]: p["approved_version"] for p in all_pieces if p["approved_version"]
+            }
+            room_confirmed = scope_room is not None or scope_apartment is not None
+            room_is_named = room_named(
+                messages,
+                [house_file.describe_room(r) for r in stored_rooms],
+                [{"name": a.name} for a in house_file.apartments(session)],
+            )
+        package_id = active or state.get("package_id")
+        bound = next((p for p in all_pieces if p["package_id"] == package_id), None)
         piece_ready = bool(bound and bound["latest_version"])
         review_ready = progress.review_ready(
             settings.render_root, package_id, bound["latest_version"] if bound else None
@@ -452,29 +538,46 @@ def build_graph(
                 open_review = house_file.latest_open_items(session, package_id)
                 recent_feedback = ratings.recent_for_piece(session, package_id)
 
+        def with_room(piece: dict[str, Any]) -> dict[str, Any]:
+            return {**piece, "room": piece_rooms.get(piece["package_id"])}
+
         if bound:
             latest = f"version {bound['latest_version']}" if bound["latest_version"] else "no version"
             status = f", {bound['status']}" if bound["status"] else ""
-            approved = f"v{bound['approved_version']}" if bound["approved_version"] else "none"
-            piece_line = f"{package_id} ({latest}{status}, approved: {approved})"
+            approved_text = f"v{bound['approved_version']}" if bound["approved_version"] else "none"
+            piece_line = f"{package_id} ({latest}{status}, approved: {approved_text})"
         else:
             piece_line = "none"
         confirmed = "yes" if state.get("brief") else "no"
+        if scope_room_name is not None:
+            room_fact = f"room {scope_room_name}"
+        elif scope_apartment_name is not None:
+            room_fact = f"apartment {scope_apartment_name}"
+        else:
+            room_fact = "no room confirmed yet"
         shell_ready = any(a["shell_version"] for a in apartments)
         with Session(engine) as session:
-            composed = house_file.compositions(session, settings.render_root)
+            composed = [
+                c
+                for c in house_file.compositions(session, settings.render_root)
+                if (c["scope"] == "room" and c["name"] in scope_room_names)
+                or (c["scope"] == "apartment" and c["name"] == scope_apartment_name)
+            ]
             ready_models = [
                 {"id": str(m.id), "name": m.name, "width_mm": m.width_mm, "depth_mm": m.depth_mm, "height_mm": m.height_mm}
                 for m in model_library.list_models(session)
                 if m.state == "ready"
             ]
         composition_ready = any(c["status"] == "succeeded" for c in composed)
-        # Something to compose a room from: an approved piece version, or a composition already made.
-        with Session(engine) as session:
-            compose_ready = bool(composed) or any(
-                house_file.approved_version_of(session, p["package_id"]) for p in pieces
-            )
-        facts = f"This conversation: piece {piece_line}; confirmed brief: {confirmed}."
+        # Something to compose a room from: the confirmed room when the owner's message names
+        # it (it may be composed empty, rooms-page), an approved piece version in the confirmed
+        # scope, or a composition there.
+        compose_ready = (
+            bool(composed)
+            or (scope_room_name is not None and room_named(messages, [{"name": scope_room_name}], []))
+            or any(piece_rooms.get(piece_id) in scope_room_names for piece_id in approved)
+        )
+        facts = f"This conversation: piece {piece_line}; confirmed brief: {confirmed}; {room_fact}."
         if apartments:
             listed = ", ".join(
                 f"{a['name']} ({a['rooms']} room(s), "
@@ -483,10 +586,21 @@ def build_graph(
                 for a in apartments
             )
             facts += f" Apartments: {listed}."
-        image_attached, design_attached = _attached(engine, state.get("messages", []))
+        image_attached, design_attached = _attached(engine, messages)
+        bound_room = piece_rooms.get(package_id) if package_id else None
+        other_builds = [
+            with_room(p) for p in all_pieces if p["package_id"] in build_ids and p["package_id"] != package_id
+        ]
         return {
             "house_note": house_note(
-                rooms, preferences, pieces, requests, apartments, open_review
+                [house_file.describe_room(r) for r in scope_rooms],
+                preferences,
+                [with_room(bound)] if bound else [],
+                requests,
+                apartments,
+                open_review,
+                other_builds=other_builds,
+                no_room=not room_confirmed,
             )
             or "",
             "feedback_note": render_feedback_note(recent_feedback),
@@ -501,7 +615,12 @@ def build_graph(
             "detail_ready": detail_ready,
             "image_attached": image_attached,
             "design_attached": design_attached,
-            "piece_named": piece_named(state.get("messages", []), pieces),
+            "piece_named": bool(matches),
+            "room_confirmed": room_confirmed,
+            "room_named": room_is_named,
+            "room_asked": room_question_asked(messages),
+            "build_room_ok": package_id is None or (bound_room is not None and bound_room in scope_room_names),
+            "ambiguous_pieces": ambiguous,
             "round_count": 0,
             "specialist": "",
             "bound_tools": tools_this_turn,
@@ -549,7 +668,9 @@ def build_graph(
             def call(summary_system: str, messages: list, max_output: int) -> str:
                 return side_call("chat.summary", summary_system, messages, max_output, config or {})
 
-            summarize = summaries.summarizer(engine, UUID(str(raw_thread)), call)
+            summarize = summaries.summarizer(
+                engine, UUID(str(raw_thread)), call, state.get("package_id")
+            )
         return prepare(
             budget,
             system,
@@ -616,7 +737,18 @@ def build_graph(
             chosen = "intake"
         reason = getattr(decision, "reason", "") or ""
 
-        # Application rules bound the model's choice (design-agents spec).
+        # Application rules bound the model's choice (design-agents spec). A price or product
+        # question is the Researcher's whatever else holds; then the two fixed questions.
+        if chosen != "researcher":
+            fixed = None
+            if state.get("ambiguous_pieces"):
+                fixed = WHICH_PIECE.format(names=", ".join(state["ambiguous_pieces"]))
+            elif not state.get("room_confirmed") and not (
+                state.get("image_attached") or state.get("room_named") or state.get("room_asked")
+            ):
+                fixed = ROOM_QUESTION
+            if fixed is not None:
+                return Command(update={"messages": [AIMessage(fixed)], "specialist": ""}, goto=END)
         # A piece with a version, or an apartment with a shell, gives the Builder something to work on.
         buildable = state.get("piece_ready") or state.get("shell_ready") or state.get("composition_ready")
         if not buildable and chosen == "builder":
@@ -640,9 +772,13 @@ def build_graph(
         # Only Intake reads plans and photos, so an image turn the model gave the Designer goes to Intake.
         if chosen == "designer" and state.get("image_attached"):
             chosen = "intake"
-        # An attached design file is the Designer's to import, whatever the thread holds (design-import).
-        if state.get("design_attached"):
+        # With a room confirmed, an attached design file is the Designer's to import,
+        # whatever else the thread holds (design-import).
+        if state.get("design_attached") and state.get("room_confirmed"):
             chosen = "designer"
+        # A build with no room, or in a room outside the conversation's, is placed first.
+        if chosen in ("designer", "builder", "reviewer", "lighting") and not state.get("build_room_ok", True):
+            chosen = "intake"
         return Command(update={"specialist": chosen, "reason": reason}, goto=chosen)
 
     # --- a specialist ------------------------------------------------------------

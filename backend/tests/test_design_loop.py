@@ -86,7 +86,7 @@ def test_the_full_loop(tool_state, owner) -> None:
             ]
         },
     )
-    harness = make_harness(tool_state, models)
+    harness = make_harness(tool_state, models, room="Studio")
     harness.owner_id = owner
     thread, who = harness.thread, owner
 

@@ -238,7 +238,8 @@ def propose(
     changes = _changes(previous, stored)
 
     sizes_by_id = {p["id"]: p["size_mm"] for p in stored["resolved"]["items"]}
-    lines = [f"{'Room' if scope == 'room' else 'Apartment'} {canonical or name}: {len(stored['items'])} item(s)"]
+    count = f"{len(stored['items'])} item(s)" if stored["items"] else "the room only, no items"
+    lines = [f"{'Room' if scope == 'room' else 'Apartment'} {canonical or name}: {count}"]
     for item in stored["items"]:
         size = sizes_by_id[item["id"]]
         label = f"{item['package_id']} v{item['version']}" if item["type"] == "piece" else item["name"]

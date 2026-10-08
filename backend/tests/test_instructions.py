@@ -42,7 +42,7 @@ def test_each_agent_names_exactly_its_tools() -> None:
         "start_detail_pass", "run_detail_script", "detail_screenshot", "render_detail",
         "record_render_feedback",
     )
-    assert loaded["intake"].tools == ("record_brief", "record_plan", "ask_owner")
+    assert loaded["intake"].tools == ("record_brief", "record_plan", "confirm_room", "ask_owner")
     assert set(loaded["designer"].tools) == {
         "create_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit", "compose_room", "search_guidelines",
         "ask_owner",
@@ -194,3 +194,8 @@ def test_intake_lists_note_conflicts_in_a_table_before_proposing() -> None:
     assert "attaches a text note" in text
     assert "table with the columns What, Note, Other value and Source" in text
     assert "Never settle a disagreement silently" in text
+
+
+def test_the_designer_composes_an_empty_room_on_request() -> None:
+    text = load_instructions()["designer"].text
+    assert "When the owner wants the room with no furniture, call `compose_room` with the room and an empty item list." in text

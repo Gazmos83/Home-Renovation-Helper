@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type FormEvent } from "react";
-import { api, type Composition } from "../lib/api";
+import { api, type Composition, type RoomSummary } from "../lib/api";
 import { FieldError, fieldError, formError } from "../lib/form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ function CompositionCard({ composition }: { composition: Composition }) {
         {composition.latest_version !== null && <span>version {composition.latest_version}</span>}
         {composition.status && <Badge variant="outline">{composition.status}</Badge>}
       </div>
+      {composition.items.length === 0 && <p>The room only, no furniture.</p>}
       <ul className="space-y-1">
         {composition.items.map((item) => (
           <li key={item.id}>
@@ -41,6 +42,96 @@ function CompositionCard({ composition }: { composition: Composition }) {
           </a>
         </p>
       )}
+    </section>
+  );
+}
+
+function plural(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+/** One measured room, with its delete action and the warning of what it touches (rooms-page). */
+function MeasuredRoom({ room }: { room: RoomSummary }) {
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const remove = useMutation({
+    mutationFn: () => api.deleteRoom(room.name),
+    onSuccess: () => {
+      for (const key of ["rooms", "compositions", "pieces"]) queryClient.invalidateQueries({ queryKey: [key] });
+    },
+  });
+  const shape = room.corners === 4 ? "" : `, ${room.corners} corners`;
+  const effects = [
+    room.pieces.length > 0 &&
+      `${room.pieces.map((p) => p.name).join(", ")} will have no room`,
+    room.conversations > 0 &&
+      `${plural(room.conversations, "conversation", "conversations")} will need to confirm a room again`,
+    room.composition &&
+      `its composition and ${plural(room.composition.versions.length, "version", "versions")} will be removed`,
+  ].filter(Boolean);
+  return (
+    <section className={`${cardClass} grid gap-2`} aria-label={`Measured room ${room.name}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <h3>{room.name}</h3>
+        {room.apartment && <Badge variant="secondary">{room.apartment}</Badge>}
+        {room.composition && <Badge variant="outline">composed</Badge>}
+      </div>
+      <p className="text-sm">
+        {room.width_mm} × {room.depth_mm} mm{shape}, ceiling {room.height_mm} mm,{" "}
+        {plural(room.openings, "opening", "openings")}
+      </p>
+      <p className="text-sm text-muted-foreground">
+        {room.pieces.length > 0 ? `Pieces: ${room.pieces.map((p) => p.name).join(", ")}` : "No pieces in this room."}
+      </p>
+      {room.apartment ? (
+        <p className="text-sm text-muted-foreground">
+          {room.name} belongs to the apartment {room.apartment}; it cannot be deleted on its own yet.
+        </p>
+      ) : confirming ? (
+        <div className="grid gap-2" role="group" aria-label={`Delete ${room.name}?`}>
+          <p className="text-sm">
+            Delete “{room.name}”?{" "}
+            {effects.length > 0 ? `${effects.join("; ")}.` : "Nothing else uses it."} A deleted room cannot be
+            restored.
+          </p>
+          <div className="flex gap-2">
+            <Button type="button" variant="destructive" disabled={remove.isPending} onClick={() => remove.mutate()}>
+              Delete
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setConfirming(false);
+                remove.reset();
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setConfirming(true)}>
+            Delete {room.name}
+          </Button>
+        </div>
+      )}
+      <FieldError message={message(remove.error)} />
+    </section>
+  );
+}
+
+function MeasuredRooms() {
+  const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
+  return (
+    <section className="grid gap-3" aria-label="Measured rooms">
+      <h2>Measured rooms</h2>
+      {rooms.error && <FieldError message={message(rooms.error)} />}
+      {rooms.data && rooms.data.length === 0 && <p>No rooms measured yet. Describe one in a conversation.</p>}
+      {(rooms.data ?? []).map((room) => (
+        <MeasuredRoom key={room.name} room={room} />
+      ))}
     </section>
   );
 }
@@ -129,6 +220,7 @@ export default function Rooms() {
     <Page>
       <h1>Rooms</h1>
       <p>Your approved pieces placed in a room with the rest of the furniture. Ask the Designer in a conversation to compose a room.</p>
+      <MeasuredRooms />
       {compositions.error && <FieldError message={message(compositions.error)} />}
       {compositions.data && compositions.data.length === 0 && <p>No rooms composed yet.</p>}
       {(compositions.data ?? []).map((composition) => (

@@ -135,3 +135,49 @@ def test_a_draft_still_renders_from_the_stored_document(scene, blender_bin: Path
     assert png_size(tmp_path / "still" / "still.png") == (draft.resolution, draft.resolution)
     scene_record = json.loads((tmp_path / "still" / "scene.json").read_text(encoding="utf-8"))
     assert scene_record["output"]["kind"] == "still" and scene_record["input"]["scope"] == {"room": "Wohnen"}
+
+
+# --- an empty room (rooms-page) ------------------------------------------------------------
+
+
+def test_an_empty_room_builds_the_room_alone_and_renders_a_draft_still(
+    blender_bin: Path, tmp_path: Path
+) -> None:
+    root, models = tmp_path / "renders", tmp_path / "models"
+    models.mkdir()
+    parsed = parse_composition({
+        "kind": "room_composition", "schema_version": 1, "units": "mm", "scope": {"room": "Hall"}, "items": [],
+    }, max_items=30)
+    document, subjects = place_items(
+        parsed, rooms={"Hall": room_geometry("Hall", ROOM)}, piece_sizes={}, scope_room="Hall",
+    )
+    assert subjects == []
+    folder = storage.composition_version_dir(root, "hall", 1)
+    folder.mkdir(parents=True)
+    (folder / storage.INPUT_FILE).write_text(json.dumps(document), encoding="utf-8")
+
+    out = folder / ".build-out"
+    result = subprocess.run(
+        [str(blender_bin), "--background", "--python", str(GENERATORS / "build_composition.py"), "--",
+         "--spec", str(folder / storage.INPUT_FILE), "--pieces", str(root), "--models", str(models),
+         "--out", str(out)],
+        capture_output=True, text=True, timeout=300, check=False,
+    )
+    assert result.returncode == 0, result.stderr[-1500:]
+    assert json.loads((out / "report.json").read_text(encoding="utf-8"))["items"] == []
+    assert (out / "screenshot.png").is_file()
+    names = {o["name"] for o in _inspect(blender_bin, out / "model.blend")["objects"]}
+    assert {"Floor", "Ceiling"} <= names and any(name.startswith("Wall_") for name in names)
+    assert not any(name.startswith(("ITEM_", "STAND_")) for name in names)
+
+    draft = load_tiers().get("draft")
+    result = subprocess.run(
+        [str(blender_bin), "--background", "--python", str(GENERATORS / "render_composition.py"), "--",
+         "--spec", str(folder / storage.INPUT_FILE), "--pieces", str(root), "--models", str(models),
+         "--out", str(tmp_path / "still"), "--kind", "still",
+         "--tier-frames", str(draft.frames), "--tier-resolution", str(draft.resolution),
+         "--tier-engine", draft.blender_engine],
+        capture_output=True, text=True, timeout=600, check=False,
+    )
+    assert result.returncode == 0, result.stderr[-1500:]
+    assert png_size(tmp_path / "still" / "still.png") == (draft.resolution, draft.resolution)

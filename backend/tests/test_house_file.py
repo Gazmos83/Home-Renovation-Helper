@@ -354,3 +354,249 @@ def test_a_summary_is_stored_and_goes_with_its_thread(db_session) -> None:
     thread_id = thread.id
     assert house_file.delete_thread(db_session, thread_id) is True
     assert house_file.read_summary(db_session, thread_id) == (None, None)
+
+
+# --- a conversation's room and builds (conversation-projects) ----------------------------
+
+
+def _hall(db_session):
+    return house_file.upsert_room(db_session, "Hall", LIVING, 2600)
+
+
+def test_a_new_thread_has_no_confirmed_room(db_session) -> None:
+    hall = _hall(db_session)
+    first = house_file.create_thread(db_session, "First")
+    house_file.set_thread_room(db_session, first.id, hall)
+    second = house_file.create_thread(db_session, "Second")
+    db_session.expire_all()
+
+    assert house_file.thread_scope(db_session, first.id)[0].name == "Hall"
+    assert house_file.thread_scope(db_session, second.id) == (None, None)
+
+
+def test_a_thread_scope_is_a_room_or_an_apartment_never_both(db_session) -> None:
+    from app.db.models import Apartment
+
+    hall = _hall(db_session)
+    thread = house_file.create_thread(db_session, "Scope")
+    flat = Apartment(name="Scope flat", ceiling_height_mm=2600, wall_thickness_mm=100)
+    db_session.add(flat)
+    db_session.flush()
+
+    house_file.set_thread_room(db_session, thread.id, hall)
+    house_file.set_thread_apartment(db_session, thread.id, flat)
+    db_session.expire_all()
+    room, chosen = house_file.thread_scope(db_session, thread.id)
+    assert room is None and chosen.name == "Scope flat"
+
+    house_file.set_thread_room(db_session, thread.id, hall)
+    db_session.expire_all()
+    room, chosen = house_file.thread_scope(db_session, thread.id)
+    assert room.name == "Hall" and chosen is None
+
+
+def test_a_build_is_listed_once_and_the_active_one_is_the_thread_piece(db_session) -> None:
+    thread = house_file.create_thread(db_session, "Builds")
+    house_file.touch_thread(db_session, thread.id, package_id="hall-bench")
+    house_file.touch_thread(db_session, thread.id, package_id="hall-bench")
+    house_file.set_active_build(db_session, thread.id, "shoe-rack")
+    house_file.add_build(db_session, thread.id, "hall-bench")
+    db_session.expire_all()
+
+    assert sorted(b.package_id for b in house_file.builds_of(db_session, thread.id)) == ["hall-bench", "shoe-rack"]
+    assert house_file.get_thread(db_session, thread.id).package_id == "shoe-rack"
+
+
+def test_a_summary_is_kept_per_build(db_session) -> None:
+    thread = house_file.create_thread(db_session, "Summaries")
+    house_file.add_build(db_session, thread.id, "hall-bench")
+    house_file.add_build(db_session, thread.id, "shoe-rack")
+    house_file.write_summary(db_session, thread.id, "bench: oak", "m3", package_id="hall-bench")
+    house_file.write_summary(db_session, thread.id, "rack: pine", "m5", package_id="shoe-rack")
+    house_file.write_summary(db_session, thread.id, "no build yet", "m1")
+    db_session.expire_all()
+
+    assert house_file.read_summary(db_session, thread.id, "hall-bench") == ("bench: oak", "m3")
+    assert house_file.read_summary(db_session, thread.id, "shoe-rack") == ("rack: pine", "m5")
+    assert house_file.read_summary(db_session, thread.id) == ("no build yet", "m1")
+    assert house_file.read_summary(db_session, thread.id, "other") == (None, None)
+
+
+def test_deleting_a_thread_removes_its_builds_and_summaries_and_keeps_the_piece_room(db_session) -> None:
+    from app.db.models import ThreadPiece
+
+    hall = _hall(db_session)
+    house_file.record_piece(db_session, "hall-bench", "Hall bench", room_id=hall.id)
+    thread = house_file.create_thread(db_session, "Gone")
+    house_file.touch_thread(db_session, thread.id, package_id="hall-bench")
+    house_file.write_summary(db_session, thread.id, "bench: oak", "m3", package_id="hall-bench")
+    thread_id = thread.id
+    db_session.expunge_all()
+
+    assert house_file.delete_thread(db_session, thread_id) is True
+    assert db_session.query(ThreadPiece).filter_by(thread_id=thread_id).count() == 0
+    from app.db.models import Piece
+
+    assert db_session.get(Piece, "hall-bench").room_id == hall.id
+
+
+def test_a_piece_is_moved_between_rooms_and_nothing_else_changes(db_session) -> None:
+    hall = _hall(db_session)
+    wohnen = house_file.upsert_room(db_session, "Wohnen", LIVING, 2600)
+    house_file.record_piece(db_session, "hall-bench", "Hall bench", {"style": "oak"}, room_id=hall.id)
+    house_file.record_version(db_session, "hall-bench", 1)
+    thread = house_file.create_thread(db_session, "Moves")
+    house_file.set_thread_room(db_session, thread.id, hall)
+
+    assert house_file.set_piece_room(db_session, "hall-bench", wohnen) is True
+    db_session.expire_all()
+    from app.db.models import Piece
+
+    piece = db_session.get(Piece, "hall-bench")
+    assert piece.room_id == wohnen.id and piece.brief == {"style": "oak"}
+    assert house_file.version_row(db_session, "hall-bench", 1) is not None
+    assert house_file.thread_scope(db_session, thread.id)[0].name == "Hall"
+    assert house_file.set_piece_room(db_session, "hall-bench", None) is True
+    assert house_file.set_piece_room(db_session, "unknown", wohnen) is False
+
+
+def test_a_request_without_a_piece_carries_its_conversation_and_outlives_it(db_session) -> None:
+    mine = house_file.create_thread(db_session, "Mine")
+    other = house_file.create_thread(db_session, "Other")
+    house_file.record_extension_request(db_session, "bevel_mm", "a bevel", thread_id=mine.id)
+    house_file.record_extension_request(db_session, "inlay", "an inlay", package_id="hall-bench")
+    house_file.record_extension_request(db_session, "old_field", "an old one")
+
+    def fields(**scope):
+        return sorted(r.field for r in house_file.open_extension_requests(db_session, **scope))
+
+    assert "bevel_mm" in fields(package_ids=[], thread_id=mine.id)
+    assert "bevel_mm" not in fields(package_ids=[], thread_id=other.id)
+    assert fields(package_ids=["hall-bench"], thread_id=other.id) == ["inlay"]
+    assert fields(package_ids=[], thread_id=None) == []
+    assert "old_field" not in fields(package_ids=["hall-bench"], thread_id=mine.id)
+    assert "old_field" in [r.field for r in house_file.open_extension_requests(db_session)]
+
+    mine_id = mine.id
+    db_session.expunge_all()
+    house_file.delete_thread(db_session, mine_id)
+    db_session.expire_all()
+    kept = [r for r in house_file.open_extension_requests(db_session) if r.field == "bevel_mm"]
+    assert len(kept) == 1 and kept[0].thread_id is None
+
+
+# --- the Rooms page (rooms-page) -----------------------------------------------------------
+
+
+def _composed(db_session, render_root: Path, room: str, *, status: str = "succeeded", renders=None) -> None:
+    from app.blender import storage
+
+    composition = house_file.record_composition(db_session, "room", room)
+    house_file.record_composition_version(db_session, composition, 1, None, [])
+    folder = storage.composition_version_dir(render_root, composition.slug, 1)
+    folder.mkdir(parents=True)
+    (folder / "input.json").write_text("{}", encoding="utf-8")
+    storage.write_status(folder, status=status, **({"renders": renders} if renders else {}))
+
+
+def test_rooms_are_listed_with_their_details(db_session, render_root: Path) -> None:
+    hall = house_file.upsert_room(db_session, "Hall", [[0, 0], [3000, 0], [3000, 2000], [0, 2000]], 2500)
+    house_file.upsert_room(db_session, "L-room", [[0, 0], [4000, 0], [4000, 2000], [2000, 2000], [2000, 4000], [0, 4000]], 2600)
+    house_file.record_piece(db_session, "hall-bench", "Hall bench", room_id=hall.id)
+    thread = house_file.create_thread(db_session, "Hall")
+    house_file.set_thread_room(db_session, thread.id, hall)
+    _composed(db_session, render_root, "Hall")
+
+    listed = {r["name"]: r for r in house_file.room_summaries(db_session, render_root)}
+    assert listed["Hall"] == {
+        "name": "Hall", "width_mm": 3000, "depth_mm": 2000, "corners": 4, "height_mm": 2500, "openings": 0,
+        "apartment": None, "pieces": [{"package_id": "hall-bench", "name": "Hall bench"}],
+        "conversations": 1, "composition": {"slug": "hall", "versions": [1]},
+    }
+    assert listed["L-room"]["corners"] == 6 and listed["L-room"]["composition"] is None
+
+
+def test_deleting_a_room_unassigns_its_pieces_clears_conversations_and_removes_its_composition(
+    db_session, render_root: Path
+) -> None:
+    from app.blender import storage
+    from app.db.models import Piece
+
+    hall = house_file.upsert_room(db_session, "Hall", LIVING, 2600)
+    house_file.upsert_room(db_session, "Wohnen", LIVING, 2600)
+    house_file.record_piece(db_session, "hall-bench", "Hall bench", room_id=hall.id)
+    house_file.record_version(db_session, "hall-bench", 1)
+    thread = house_file.create_thread(db_session, "Hall")
+    house_file.set_thread_room(db_session, thread.id, hall)
+    _composed(db_session, render_root, "Hall")
+    _composed(db_session, render_root, "Wohnen")
+    db_session.commit()
+    try:
+        assert house_file.delete_room(db_session, render_root, "Hall") is True
+        db_session.expire_all()
+        assert house_file.room_by_name(db_session, "Hall") is None
+        assert db_session.get(Piece, "hall-bench").room_id is None
+        assert house_file.version_row(db_session, "hall-bench", 1) is not None
+        assert house_file.thread_scope(db_session, thread.id) == (None, None)
+        assert house_file.composition_by_scope(db_session, "room", "Hall") is None
+        assert not storage.composition_dir(render_root, "hall").exists()
+        assert not list((render_root / storage.ROOMS_DIRNAME).glob(".deleted-*"))
+        # Other compositions are kept.
+        assert house_file.composition_by_scope(db_session, "room", "Wohnen") is not None
+        assert storage.list_compositions(render_root) == [("wohnen", [1])]
+        assert house_file.delete_room(db_session, render_root, "Hall") is False
+    finally:
+        from tests.conftest import clean_house_file
+
+        db_session.rollback()
+        clean_house_file(db_session.get_bind())
+
+
+def test_a_room_in_an_apartment_is_refused(db_session, render_root: Path) -> None:
+    from app.db.models import Apartment
+
+    flat = Apartment(name="Wohnung", ceiling_height_mm=2600, wall_thickness_mm=100)
+    db_session.add(flat)
+    db_session.flush()
+    house_file.upsert_room(db_session, "Küche", LIVING, 2600, apartment_id=flat.id)
+    with pytest.raises(HouseFileError, match="Küche belongs to the apartment Wohnung"):
+        house_file.delete_room(db_session, render_root, "Küche")
+
+
+@pytest.mark.parametrize(
+    ("status", "renders"),
+    [("running", None), ("succeeded", {"still": {"status": "queued", "tier": "draft"}})],
+)
+def test_a_room_whose_composition_is_busy_is_refused(db_session, render_root: Path, status, renders) -> None:
+    from app.blender import storage
+
+    house_file.upsert_room(db_session, "Hall", LIVING, 2600)
+    _composed(db_session, render_root, "Hall", status=status, renders=renders)
+    with pytest.raises(HouseFileError, match="building or rendering"):
+        house_file.delete_room(db_session, render_root, "Hall")
+    assert storage.composition_dir(render_root, "hall").is_dir()
+
+
+def test_a_failed_commit_leaves_the_folder_and_the_rows(db_session, render_root: Path, monkeypatch) -> None:
+    from app.blender import storage
+
+    house_file.upsert_room(db_session, "Hall", LIVING, 2600)
+    _composed(db_session, render_root, "Hall")
+    db_session.commit()
+    try:
+        def broken() -> None:
+            raise RuntimeError("database went away")
+
+        monkeypatch.setattr(db_session, "commit", broken)
+        with pytest.raises(RuntimeError):
+            house_file.delete_room(db_session, render_root, "Hall")
+        monkeypatch.undo()
+        db_session.expire_all()
+        assert house_file.room_by_name(db_session, "Hall") is not None
+        assert house_file.composition_by_scope(db_session, "room", "Hall") is not None
+        assert storage.list_compositions(render_root) == [("hall", [1])]
+    finally:
+        from tests.conftest import clean_house_file
+
+        db_session.rollback()
+        clean_house_file(db_session.get_bind())

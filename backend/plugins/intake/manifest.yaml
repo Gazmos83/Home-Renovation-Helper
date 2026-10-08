@@ -1,7 +1,7 @@
 name: intake
-description: Record a confirmed brief or a whole-apartment plan into the house file.
+description: Record a confirmed brief or a whole-apartment plan, and confirm the room a conversation works in.
 kind: builtin
 role: intake
-tools: [record_brief, record_plan]
+tools: [record_brief, record_plan, confirm_room]
 enabled_by_default: true
 toggleable: false

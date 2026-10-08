@@ -93,3 +93,65 @@ def test_no_build_is_possible_without_the_loop(make_ctx, tool_state) -> None:
     refused = preview(arguments(), make_ctx())
     assert isinstance(refused, str)
     assert "build queue" in refused
+
+
+SQUARE = [[0, 0], [3000, 0], [3000, 2000], [0, 2000]]
+
+
+def _thread_in(tool_deps, *, room: str | None = None, apartment: str | None = None):
+    with tool_deps.session() as session:
+        thread = house_file.create_thread(session, "Bench")
+        if room:
+            house_file.set_thread_room(session, thread.id, house_file.upsert_room(session, room, SQUARE, 2500))
+        if apartment:
+            flat = house_file.upsert_apartment(
+                session, apartment, 2550, 120,
+                [{"name": "Living", "corners_mm": SQUARE, "height_mm": None, "openings": []}],
+            )
+            house_file.set_thread_apartment(session, thread.id, flat)
+        session.commit()
+        return thread.id
+
+
+def _piece_room(tool_deps, package_id: str) -> str | None:
+    with tool_deps.session() as session:
+        return house_file.piece_room_name(session, package_id)
+
+
+def test_a_piece_is_recorded_in_the_conversations_confirmed_room(make_ctx, tool_deps) -> None:
+    thread = _thread_in(tool_deps, room="Hall")
+    run(arguments("shoe-bench"), replace(make_ctx(thread_id=thread), approved=True))
+    assert _piece_room(tool_deps, "shoe-bench") == "Hall"
+
+
+def test_the_briefs_room_wins_over_the_confirmed_one(make_ctx, tool_deps) -> None:
+    thread = _thread_in(tool_deps, room="Hall")
+    with tool_deps.session() as session:
+        house_file.upsert_room(session, "Wohnen", SQUARE, 2600)
+        session.commit()
+    ctx = replace(make_ctx(thread_id=thread), approved=True, brief={"room": "Wohnen"})
+    run(arguments("shoe-bench"), ctx)
+    assert _piece_room(tool_deps, "shoe-bench") == "Wohnen"
+
+
+def test_a_piece_without_any_room_stays_unassigned(make_ctx, tool_deps) -> None:
+    thread = _thread_in(tool_deps)
+    run(arguments("shoe-bench"), replace(make_ctx(thread_id=thread), approved=True))
+    assert _piece_room(tool_deps, "shoe-bench") is None
+
+
+def test_an_apartment_without_a_room_is_refused_with_the_question_and_no_pause(make_ctx, tool_deps, tool_state) -> None:
+    thread = _thread_in(tool_deps, apartment="Wohnung")
+    refused = preview(arguments("shoe-bench"), make_ctx(thread_id=thread))
+    assert isinstance(refused, str)
+    assert "Wohnung" in refused and "which room" in refused
+    assert storage.versions(tool_state.settings.render_root, "shoe-bench") == []
+    assert "which room" in run(arguments("shoe-bench"), replace(make_ctx(thread_id=thread), approved=True))
+    assert storage.versions(tool_state.settings.render_root, "shoe-bench") == []
+
+
+def test_an_apartment_with_one_of_its_rooms_in_the_brief_is_accepted(make_ctx, tool_deps) -> None:
+    thread = _thread_in(tool_deps, apartment="Wohnung")
+    ctx = replace(make_ctx(thread_id=thread), approved=True, brief={"room": "Living"})
+    run(arguments("shoe-bench"), ctx)
+    assert _piece_room(tool_deps, "shoe-bench") == "Living"

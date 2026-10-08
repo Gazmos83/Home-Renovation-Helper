@@ -131,8 +131,8 @@ def test_listing_names_each_package_with_versions_newest_first(client: TestClien
     client.put("/packages/a-bench/spec", json={"spec": desk()})
     create(client, "b-desk")
     assert client.get("/packages").json() == [
-        {"package_id": "a-bench", "versions": [2, 1]},
-        {"package_id": "b-desk", "versions": [1]},
+        {"package_id": "a-bench", "versions": [2, 1], "room": None},
+        {"package_id": "b-desk", "versions": [1], "room": None},
     ]
 
 
@@ -278,7 +278,8 @@ def test_a_symlink_leading_outside_the_root_is_not_served(
     [("GET", "/packages"), ("GET", "/packages/x"), ("POST", "/packages"),
      ("GET", "/packages/x/versions/1/files/spec.json"), ("PUT", "/packages/x/spec"),
      ("PUT", "/packages/x/versions/1/approval"), ("DELETE", "/packages/x/versions/1/approval"),
-     ("GET", "/packages/x/versions/1/design"), ("GET", "/packages/x/versions/1/bundle")],
+     ("GET", "/packages/x/versions/1/design"), ("GET", "/packages/x/versions/1/bundle"),
+     ("PUT", "/packages/x/room"), ("GET", "/rooms"), ("DELETE", "/rooms/x")],
 )
 def test_every_route_needs_the_owner_cookie(
     migrated_database: str, render_root: Path, fake_blender: Path, method: str, path: str
@@ -456,3 +457,69 @@ def test_exports_of_an_unknown_version_are_not_found(client: TestClient) -> None
     for kind in ("design", "bundle"):
         assert client.get(f"/packages/hall-bench/versions/9/{kind}").status_code == 404
         assert client.get(f"/packages/nothing/versions/1/{kind}").status_code == 404
+
+
+# --- a piece's room (conversation-projects) -------------------------------------------------
+
+
+@pytest.fixture
+def rooms(client: TestClient) -> Iterator[None]:
+    from sqlalchemy.orm import Session
+
+    from app.agent import house_file
+
+    clean_house_file(client.app.state.engine)
+    with Session(client.app.state.engine) as session:
+        square = [[0, 0], [3000, 0], [3000, 2000], [0, 2000]]
+        house_file.upsert_room(session, "Schlafzimmer", square, 2500)
+        house_file.upsert_room(session, "Hall", square, 2500)
+        session.commit()
+    yield
+    clean_house_file(client.app.state.engine)
+
+
+def test_the_room_names_are_listed(client: TestClient, rooms) -> None:
+    assert [room["name"] for room in client.get("/rooms").json()] == ["Hall", "Schlafzimmer"]
+
+
+def test_an_unassigned_piece_is_attached_to_a_room_and_the_list_names_it(client: TestClient, rooms) -> None:
+    create(client, "murphy-bed")
+    assert client.get("/packages").json()[0]["room"] is None
+
+    response = client.put("/packages/murphy-bed/room", json={"room": "Schlafzimmer"})
+    assert response.status_code == 200
+    assert response.json() == {"package_id": "murphy-bed", "room": "Schlafzimmer"}
+    assert client.get("/packages").json()[0]["room"] == "Schlafzimmer"
+
+    assert client.put("/packages/murphy-bed/room", json={"room": None}).json()["room"] is None
+    assert client.get("/packages").json()[0]["room"] is None
+
+
+def test_an_unknown_room_is_refused_naming_it_and_the_piece_is_unchanged(client: TestClient, rooms) -> None:
+    create(client, "murphy-bed")
+    client.put("/packages/murphy-bed/room", json={"room": "Hall"})
+    response = client.put("/packages/murphy-bed/room", json={"room": "Attic"})
+    assert response.status_code == 422
+    assert "Attic" in response.json()["detail"]["reason"]
+    assert client.get("/packages").json()[0]["room"] == "Hall"
+
+
+def test_an_unknown_piece_is_not_found(client: TestClient, rooms) -> None:
+    assert client.put("/packages/nope/room", json={"room": "Hall"}).status_code == 404
+
+
+def test_setting_a_piece_room_leaves_every_conversations_room_alone(client: TestClient, rooms) -> None:
+    from sqlalchemy.orm import Session
+
+    from app.agent import house_file
+
+    create(client, "murphy-bed")
+    with Session(client.app.state.engine) as session:
+        thread = house_file.create_thread(session, "Bedroom")
+        house_file.set_thread_room(session, thread.id, house_file.room_by_name(session, "Hall"))
+        session.commit()
+        thread_id = thread.id
+    client.put("/packages/murphy-bed/room", json={"room": "Schlafzimmer"})
+    with Session(client.app.state.engine) as session:
+        room, _ = house_file.thread_scope(session, thread_id)
+        assert room.name == "Hall"

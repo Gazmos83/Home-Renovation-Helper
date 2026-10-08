@@ -76,7 +76,7 @@ def test_an_existing_room_can_be_named_without_its_measurements(make_ctx, tool_d
         {"room_name": "Hall", "purpose": "a coat rack", "budget_eur": 90}, make_ctx()
     )
     assert isinstance(shown, Confirmation)
-    assert "as already in the house file" in shown.summary
+    assert "Room Hall: 1200 × 3000 mm, ceiling 2400 mm, 0 opening(s)" in shown.summary
 
 
 def test_an_unknown_room_without_measurements_asks_for_them(make_ctx) -> None:
@@ -146,3 +146,57 @@ def test_measurements_without_a_room_name_are_refused(make_ctx) -> None:
     )
     assert isinstance(refused, str)
     assert "a room needs a name" in refused
+
+
+def _thread_room(tool_deps, thread_id) -> str | None:
+    with tool_deps.session() as session:
+        room, _ = house_file.thread_scope(session, thread_id)
+        return room.name if room else None
+
+
+def _new_thread(tool_deps):
+    with tool_deps.session() as session:
+        thread = house_file.create_thread(session, "Bench")
+        session.commit()
+        return thread.id
+
+
+def test_yes_with_a_room_confirms_it_for_the_conversation(make_ctx, tool_deps) -> None:
+    thread_id = _new_thread(tool_deps)
+    assert _thread_room(tool_deps, thread_id) is None
+    run(HALL, replace(make_ctx(thread_id=thread_id), approved=True))
+    assert _thread_room(tool_deps, thread_id) == "Hall"
+
+
+def test_a_brief_without_a_room_writes_no_room(make_ctx, tool_deps) -> None:
+    thread_id = _new_thread(tool_deps)
+    ctx = make_ctx(thread_id=thread_id)
+    shown = preview({"purpose": "a listening wall", "budget_eur": 900}, ctx)
+    assert isinstance(shown, Confirmation)
+    assert "Room: not given yet" in shown.summary
+    output = run({"purpose": "a listening wall", "budget_eur": 900}, replace(ctx, approved=True))
+    assert "room" not in output.update["brief"]
+    assert _thread_room(tool_deps, thread_id) is None
+    with tool_deps.session() as session:
+        assert house_file.rooms(session) == []
+
+
+def test_a_brief_takes_the_conversations_confirmed_room(make_ctx, tool_deps) -> None:
+    thread_id = _new_thread(tool_deps)
+    run(HALL, replace(make_ctx(thread_id=thread_id), approved=True))
+    ctx = make_ctx(thread_id=thread_id)
+    shown = preview({"purpose": "a coat rack"}, ctx)
+    assert "Room Hall: 1200 × 3000 mm" in shown.summary
+    output = run({"purpose": "a coat rack"}, replace(ctx, approved=True))
+    assert output.update["brief"]["room"] == "Hall"
+
+
+def test_a_stored_room_named_in_a_brief_is_confirmed_by_yes(make_ctx, tool_deps) -> None:
+    run(HALL, replace(make_ctx(), approved=True))
+    thread_id = _new_thread(tool_deps)
+    ctx = make_ctx(thread_id=thread_id)
+    shown = preview({"room_name": "Hall", "purpose": "a coat rack"}, ctx)
+    assert "Room Hall: 1200 × 3000 mm, ceiling 2400 mm" in shown.summary
+    assert _thread_room(tool_deps, thread_id) is None
+    run({"room_name": "Hall", "purpose": "a coat rack"}, replace(ctx, approved=True))
+    assert _thread_room(tool_deps, thread_id) == "Hall"

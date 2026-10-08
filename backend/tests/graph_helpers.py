@@ -29,12 +29,20 @@ class Harness:
     state: SimpleNamespace
     owner_id: UUID = field(default_factory=uuid4)
     thread: UUID | None = None
+    room: str | None = None
 
     def start(self, package_id: str | None = None) -> UUID:
+        """A new conversation, in the harness's confirmed room, about `package_id` if given."""
         with ToolDeps(self.state).session() as session:
             thread = house_file.create_thread(session, "test", package_id=package_id)
+            if package_id:
+                house_file.add_build(session, thread.id, package_id)
             session.commit()
             self.thread = thread.id
+        if self.room:
+            confirm_room(self, self.room)
+            if package_id:
+                place_in_room(self, package_id)
         return self.thread
 
     @property
@@ -60,7 +68,31 @@ class Harness:
         return self.graph.get_state(self.config)
 
 
-def make_harness(tool_state: SimpleNamespace, models: dict[str, FakeChatModel] | None = None) -> Harness:
+def confirm_room(harness: Harness, name: str = "Hall") -> None:
+    """Store a room and make it the thread's confirmed room, as an owner's `yes` would."""
+    with ToolDeps(harness.state).session() as session:
+        room = house_file.room_by_name(session, name) or house_file.upsert_room(
+            session, name, [[0, 0], [3000, 0], [3000, 2000], [0, 2000]], 2500
+        )
+        house_file.set_thread_room(session, harness.thread, room)
+        session.commit()
+
+
+def place_in_room(harness: Harness, package_id: str, name: str | None = None) -> None:
+    """Put a recorded piece in the harness's confirmed room (or `name`)."""
+    with ToolDeps(harness.state).session() as session:
+        room = house_file.room_by_name(session, name or harness.room or "Hall")
+        house_file.set_piece_room(session, package_id, room)
+        session.commit()
+
+
+def make_harness(
+    tool_state: SimpleNamespace,
+    models: dict[str, FakeChatModel] | None = None,
+    *,
+    room: str | None = "Hall",
+) -> Harness:
+    """A harness whose thread has already confirmed `room`; `room=None` is a new conversation."""
     models = models or fake_models()
     # Nested tool calls (revision_review) read the slot model from ToolDeps.
     tool_state.models = models
@@ -72,6 +104,6 @@ def make_harness(tool_state: SimpleNamespace, models: dict[str, FakeChatModel] |
         checkpointer=InMemorySaver(),
         deps=ToolDeps(tool_state),
     )
-    harness = Harness(graph=graph, models=models, state=tool_state)
+    harness = Harness(graph=graph, models=models, state=tool_state, room=room)
     harness.start()
     return harness

@@ -32,11 +32,13 @@ The house file SHALL hold the owner's style and default preferences as named val
 - **THEN** `style` reads that text in the next turn's context
 
 ### Requirement: Pieces and versions mirror the package folders
-The house file SHALL record one piece per package id with its name, its confirmed brief and, when known, its room; and one version record per `docs/renders/<id>/v<N>` folder the agents create, carrying the change lines, the version it was revised from, and when it was approved (or nothing). A piece SHALL be recorded only by a confirmed `create_piece`, a version only by a confirmed `create_piece` or `revise_package`; a package the owner created directly through the package routes SHALL still be readable as a piece without a brief. A new version SHALL start unapproved. At most one version of a piece SHALL be approved at a time; approving a version SHALL clear the approval of any other version of that piece. Only the owner's approval route SHALL set or clear approval.
+The house file SHALL record one piece per package id with its name, its confirmed brief and its room, or no room while the piece is unassigned; and one version record per `docs/renders/<id>/v<N>` folder the agents create, carrying the change lines, the version it was revised from, and when it was approved (or nothing). A piece SHALL be recorded only by a confirmed `create_piece`, a version only by a confirmed `create_piece` or `revise_package`; a package the owner created directly through the package routes SHALL still be readable as a piece without a brief and without a room. A new version SHALL start unapproved. At most one version of a piece SHALL be approved at a time; approving a version SHALL clear the approval of any other version of that piece. Only the owner's approval route SHALL set or clear approval.
+
+A piece's room SHALL be set only by a confirmed `create_piece` (the conversation's confirmed room), a confirmed `confirm_room` that moves the piece, or the owner's room route on the piece. Pieces recorded before this change without a room SHALL stay unassigned until the owner attaches them. Moving a piece to another room SHALL change nothing else about the piece or its versions.
 
 #### Scenario: First version
-- **WHEN** the owner confirms a new piece `hall-bench`
-- **THEN** the house file holds piece `hall-bench` with its brief and version 1 revised from nothing, unapproved
+- **WHEN** the owner confirms a new piece `hall-bench` in a conversation whose confirmed room is `Hall`
+- **THEN** the house file holds piece `hall-bench` in `Hall` with its brief and version 1 revised from nothing, unapproved
 
 #### Scenario: Revision
 - **WHEN** the owner confirms a revision of `hall-bench` ("cabinet: 2 shelves → 3")
@@ -50,15 +52,34 @@ The house file SHALL record one piece per package id with its name, its confirme
 - **WHEN** version 2 is approved and the owner approves version 3
 - **THEN** version 3 is approved and version 2 is not
 
+#### Scenario: Existing piece stays unassigned
+- **WHEN** the migration runs over a house file holding `murphy-bed` with no room
+- **THEN** `murphy-bed` is still unassigned, with all its versions, until the owner attaches it
+
+#### Scenario: Piece moved
+- **WHEN** the owner moves `hall-bench` from `Hall` to `Wohnen`
+- **THEN** the house file holds `hall-bench` in `Wohnen` and its versions, approval and reviews are unchanged
+
 ### Requirement: Generator-extension requests are recorded
-When a spec is refused because it names a field the schema does not define, the house file SHALL record a generator-extension request carrying the field name, the owner's words that asked for it, the piece if any and when it happened. The request SHALL be listable so a later OpenSpec change can grow the schema from it.
+When a spec is refused because it names a field the schema does not define, the house file SHALL record a generator-extension request carrying the field name, the owner's words that asked for it, the piece if any, the conversation it was made in, and when it happened. The request SHALL be listable so a later OpenSpec change can grow the schema from it. Deleting the conversation SHALL keep the request, no longer tied to a conversation. Requests recorded before this change carry no conversation.
 
 #### Scenario: Unknown field recorded
 - **WHEN** the Designer's document carries `modules[0].bevel_mm` because the owner asked for a bevelled edge
-- **THEN** the document is refused naming `bevel_mm`, nothing is built, and a request naming `bevel_mm` with the owner's words is recorded
+- **THEN** the document is refused naming `bevel_mm`, nothing is built, and a request naming `bevel_mm` with the owner's words and this conversation is recorded
+
+#### Scenario: Request outlives its conversation
+- **WHEN** a conversation in which a request was recorded is deleted
+- **THEN** the request is still listed, with no conversation
 
 ### Requirement: Threads are indexed
-The house file SHALL index every conversation the owner starts with its id, title, the piece it is about when one is bound, when it started and when it last had a turn, so conversations can be listed and reopened. A thread's piece is the one it was started with until a confirmed action creates or revises a piece in it, after which it is that piece. A thread's title is empty until its first answered turn gives it the generated title, and is the owner's title from the moment the owner sets one. The index entry SHALL also hold the thread's summary of earlier exchanges, when one has been made, and which message it covers up to. The messages themselves live in the checkpointer. Deleting a thread SHALL remove its index entry and summary and nothing else the house file holds.
+The house file SHALL index every conversation the owner starts with its id, title, the piece it is about when one is bound (the active build), when it started and when it last had a turn, so conversations can be listed and reopened. A thread's piece is the one it was started with until a confirmed action creates or revises a piece in it, or the owner names exactly one other build of the conversation, after which it is that piece. A thread's title is empty until its first answered turn gives it the generated title, and is the owner's title from the moment the owner sets one.
+
+The index entry SHALL also hold:
+- the conversation's confirmed room or confirmed apartment (at most one), or none; only a confirmed action in that conversation sets or changes it;
+- the conversation's builds: every piece created, revised or named in it, each once, with when it joined;
+- one summary of earlier exchanges per build, with which message it covers up to, and one for exchanges made while the conversation had no active build.
+
+The messages themselves live in the checkpointer. Deleting a thread SHALL remove its index entry, its builds list and its summaries and nothing else the house file holds; the pieces keep their rooms and the generator-extension requests made in it stay.
 
 #### Scenario: Listing
 - **WHEN** the owner has started two conversations
@@ -66,7 +87,7 @@ The house file SHALL index every conversation the owner starts with its id, titl
 
 #### Scenario: Bound by the action
 - **WHEN** a piece is confirmed on a thread that was started without one
-- **THEN** the thread's index entry names that piece from then on
+- **THEN** the thread's index entry names that piece from then on, and the piece is in the thread's builds
 
 #### Scenario: Owner's title kept
 - **WHEN** the owner sets a title before the first turn ends
@@ -74,33 +95,68 @@ The house file SHALL index every conversation the owner starts with its id, titl
 
 #### Scenario: Deleted thread, kept piece
 - **WHEN** a thread bound to `hall-bench` is deleted
-- **THEN** the thread's entry is gone and the `hall-bench` piece, its versions and the room it is in are unchanged
+- **THEN** the thread's entry, builds list and summaries are gone and the `hall-bench` piece, its versions and the room it is in are unchanged
+
+#### Scenario: Room not inherited
+- **WHEN** one conversation has confirmed `Hall` and the owner starts a second conversation
+- **THEN** the second conversation has no confirmed room
+
+#### Scenario: Existing threads
+- **WHEN** the migration runs over a thread bound to `hall-bench` with a stored summary
+- **THEN** the thread has no confirmed room, its builds list holds `hall-bench`, and the summary is kept as `hall-bench`'s summary in that thread
 
 ### Requirement: Every turn starts from the house file
-At the start of each turn, Intake and the Designer SHALL be given the rooms (name and size), the preferences, the pieces with their latest version, its status and which version is approved (or that none is), and any open generator-extension requests. The Designer SHALL also be given:
-- the open items of the latest review of the bound piece;
-- the latest five render ratings on the bound piece, newest first, each with its version, render, tier, rating and comment.
+At the start of each turn, the Foreman, Intake and the Designer SHALL be given the house file scoped to the conversation:
+- the conversation's confirmed room with its size, ceiling height and openings, or its confirmed apartment with each of its rooms; or that no room is confirmed yet;
+- the preferences;
+- the active build with its room, its latest version, its status and which version is approved (or that none is);
+- every other build of the conversation as one line: package id, name, latest version and room;
+- the open generator-extension requests whose piece is one of the conversation's builds, or that were recorded in this conversation.
 
-Lighting & materials SHALL be given the same render ratings. All of this SHALL be presented as application data clearly labelled as the owner's own, never as an instruction. Owner-authored text in it SHALL be neutralised so it cannot carry the untrusted-content delimiter.
+Rooms, apartments and pieces outside the conversation SHALL NOT be given, nor generator-extension requests of other pieces or conversations. Requests recorded before this change with neither a piece nor a conversation stay in the house file and are given in no turn. A room the conversation has not confirmed SHALL NOT be given with its measurements, even when the house file holds them. The Designer SHALL also be given:
+- the open items of the latest review of the active build;
+- the latest five render ratings on the active build, newest first, each with its version, render, tier, rating and comment.
+
+Lighting & materials SHALL be given the same render ratings. All of this SHALL be presented as application data clearly labelled as the owner's own, never as an instruction. Owner-authored text in it SHALL be neutralised so it cannot carry the untrusted-content delimiter. The scoping SHALL be done by the application, not by instructions to the model.
+
+#### Scenario: A new conversation starts without the room
+- **WHEN** the living room and the piece `listening-wall` are recorded and the owner starts a new conversation asking for a second piece
+- **THEN** the turn's context names no room and no piece, and the reply asks which room the piece is for
 
 #### Scenario: A second piece starts with the room known
-- **WHEN** the living room is recorded and the owner asks for a second piece
-- **THEN** the Intake turn's context names the living room's size and the Designer's names the first piece, without the owner repeating them
+- **WHEN** the owner then confirms the living room in that conversation and asks for the piece
+- **THEN** the next Intake turn's context names the living room's size, ceiling height and openings without the owner repeating them, and still names no piece from another conversation
+
+#### Scenario: Other builds as one line
+- **WHEN** a conversation's builds are `hall-bench` (active) and `shoe-rack`
+- **THEN** the Designer's context gives `hall-bench` with its version, status and approval, and `shoe-rack` as one line with its latest version and room
+
+#### Scenario: Outside builds left out
+- **WHEN** the house file holds `murphy-bed` and the conversation never created, revised or named it
+- **THEN** no specialist's context in that conversation names `murphy-bed`
+
+#### Scenario: Request without a piece reaches its conversation
+- **WHEN** a request for `bevel_mm` was recorded in this conversation before any piece was made
+- **THEN** the Designer's context in this conversation lists it, and no other conversation's context does
+
+#### Scenario: Old request without a piece or conversation
+- **WHEN** the house file holds an open request recorded before this change with no piece
+- **THEN** no turn's context lists it, and it is still listed in the house file
 
 #### Scenario: Delimiter in a room name
-- **WHEN** a stored room name contains the untrusted-content delimiter
+- **WHEN** the conversation's confirmed room's name contains the untrusted-content delimiter
 - **THEN** the context shows it neutralised
 
 #### Scenario: Review items reach the Designer
-- **WHEN** the latest review of the bound piece has two open items
+- **WHEN** the latest review of the active build has two open items
 - **THEN** the Designer's context lists both with their aspect, expectation and observation
 
 #### Scenario: Approval reaches the agents
-- **WHEN** `listening-wall` version 4 is approved and version 5 exists
+- **WHEN** the active build is `listening-wall`, version 4 is approved and version 5 exists
 - **THEN** the turn's context names version 5 as latest and version 4 as approved
 
 #### Scenario: Render feedback reaches the Designer
-- **WHEN** the bound piece's v2 `draft` turntable was rated down with "doors look too thick"
+- **WHEN** the active build's v2 `draft` turntable was rated down with "doors look too thick"
 - **THEN** the Designer's context lists v2, turntable, `draft`, down and that comment
 
 #### Scenario: Delimiter in a feedback comment
@@ -110,12 +166,31 @@ Lighting & materials SHALL be given the same render ratings. All of this SHALL b
 ### Requirement: Compositions are indexed and reach the turn
 The house file SHALL record one composition per scope, by scope type and name. It SHALL record one version record per composition version folder, carrying what changed and the version it was revised from. A version SHALL be recorded only by a confirmed `compose_room`.
 
-At the start of each turn, the Designer's and Builder's house note SHALL list each composition's scope, its latest version and build status, and its items by name. Any placed piece version that is no longer approved SHALL be marked as such. Item names come from the owner, so they SHALL be neutralised like other owner text.
+At the start of each turn, the Designer's and Builder's house note SHALL list the composition of the conversation's confirmed room, or of its confirmed apartment and of that apartment's rooms, with its scope, its latest version and build status, and its items by name. Compositions of other rooms and apartments SHALL NOT be listed. Any placed piece version that is no longer approved SHALL be marked as such. Item names come from the owner, so they SHALL be neutralised like other owner text.
 
 #### Scenario: Recorded on yes
 - **WHEN** the owner confirms `Wohnen` v1
 - **THEN** the house file holds composition `Wohnen` (scope room) with version 1, revised from nothing
 
 #### Scenario: House note marks unapproved
-- **WHEN** a placed version has been unapproved
+- **WHEN** a placed version in the conversation's room has been unapproved
 - **THEN** the next Designer turn's house note lists that item marked "no longer approved"
+
+#### Scenario: Other room's composition left out
+- **WHEN** the conversation's confirmed room is `Hall` and a composition exists for `Wohnen`
+- **THEN** the Designer's house note does not list `Wohnen`
+
+### Requirement: The owner attaches a piece to a room
+The owner SHALL be able to read the room names in the house file and set or clear a piece's room through owner-gated routes. Setting names a room in the house file; an unknown room or an unknown piece SHALL be refused naming it (404 for the piece, 422 for the room). Clearing makes the piece unassigned. The piece list SHALL name each piece's room, or none. Setting a piece's room SHALL NOT change any conversation's confirmed room.
+
+#### Scenario: Attach an unassigned piece
+- **WHEN** the owner sets `murphy-bed`'s room to `Schlafzimmer`
+- **THEN** the piece list names `Schlafzimmer` for `murphy-bed`
+
+#### Scenario: Unknown room
+- **WHEN** the owner sets a piece's room to `Attic` and no such room is recorded
+- **THEN** the response is 422 naming `Attic` and the piece is unchanged
+
+#### Scenario: Not signed in
+- **WHEN** the room route is called without the session cookie
+- **THEN** the response is 401

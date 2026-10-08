@@ -194,15 +194,23 @@ def house_note(
     requests: Sequence[Mapping[str, Any]],
     apartments: Sequence[Mapping[str, Any]] = (),
     review_items: Sequence[Mapping[str, Any]] = (),
+    other_builds: Sequence[Mapping[str, Any]] = (),
+    no_room: bool = False,
 ) -> str | None:
     """The house file as a labelled note, or `None` when it holds nothing.
 
-    Every owner-authored string is neutralised, so a room named with the
-    untrusted-content delimiter cannot open or close a block.
+    `rooms` and `pieces` are what the conversation carries (its confirmed room, its
+    active build); `other_builds` are its other pieces, one line each. Every
+    owner-authored string is neutralised, so a room named with the untrusted-content
+    delimiter cannot open or close a block.
     """
-    if not (rooms or preferences or pieces or requests or apartments or review_items):
+    if not (
+        rooms or preferences or pieces or requests or apartments or review_items or other_builds or no_room
+    ):
         return None
     lines = [HOUSE_CONTEXT_PREAMBLE]
+    if no_room:
+        lines.append("No room is confirmed in this conversation yet.")
     if rooms:
         lines.append("Rooms:")
         for room in rooms:
@@ -227,9 +235,19 @@ def house_note(
             state = f", {piece['status']}" if piece.get("status") else ""
             approved = piece.get("approved_version")
             approval = f", approved: v{approved}" if approved else ", approved: none"
+            room = f", room: {neutralise(piece['room'])}" if piece.get("room") else ", no room"
             lines.append(
                 f"- {neutralise(piece['package_id'])} ({neutralise(piece['name'])}): "
-                f"{version}{state}{approval}"
+                f"{version}{state}{approval}{room}"
+            )
+    if other_builds:
+        lines.append("Other pieces in this conversation:")
+        for piece in other_builds:
+            latest = piece.get("latest_version")
+            version = f"v{latest}" if latest else "no version yet"
+            room = neutralise(piece["room"]) if piece.get("room") else "no room"
+            lines.append(
+                f"- {neutralise(piece['package_id'])} ({neutralise(piece['name'])}): {version}, {room}"
             )
     if requests:
         lines.append("Open generator-extension requests:")

@@ -62,7 +62,7 @@ def test_the_designers_daily_refusal_is_a_200_naming_the_designer(tool_state) ->
         deps=ToolDeps(tool_state),
         budgets=Budgets(tool_state.engine),
     )
-    harness = Harness(graph=graph, models=models, state=tool_state)
+    harness = Harness(graph=graph, models=models, state=tool_state, room="Studio")
     harness.start()
     harness.turn("a hall bench")
     harness.answer("yes")

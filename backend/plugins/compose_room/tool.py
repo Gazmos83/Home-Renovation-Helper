@@ -35,7 +35,8 @@ class ComposeRoomArgs(BaseModel):
             "'stand-in' {name, width_mm, depth_mm, height_mm, colour '#rrggbb'} for bought furniture; "
             "'model' {model_id, name, and optionally width_mm, depth_mm, height_mm, else the library's size}. "
             "Each has a placement: {wall, offset_mm} with its back on that wall, or "
-            "{x_mm, y_mm, rotation_deg} for its centre; in an apartment each also names its room"
+            "{x_mm, y_mm, rotation_deg} for its centre; in an apartment each also names its room. "
+            "A room may be composed with no items (the room only); an apartment needs at least one"
         )
     )
 

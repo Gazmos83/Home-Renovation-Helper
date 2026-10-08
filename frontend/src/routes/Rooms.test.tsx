@@ -86,3 +86,93 @@ test("no model name, prompt, token or cost text appears on the page", async () =
     expect(text).not.toMatch(word);
   }
 });
+
+const hall = {
+  name: "Hall", width_mm: 3000, depth_mm: 2000, corners: 4, height_mm: 2500, openings: 1, apartment: null,
+  pieces: [{ package_id: "hall-bench", name: "Hall bench" }], conversations: 1,
+  composition: { slug: "hall", versions: [1, 2] },
+};
+const kueche = { ...hall, name: "Küche", apartment: "Wohnung", pieces: [], conversations: 0, composition: null };
+
+function serveRooms(rooms: unknown[], extra: (call: string) => { status?: number; body?: unknown } | undefined = () => undefined) {
+  return stubFetch((call) => {
+    const mine = extra(call);
+    if (mine) return mine;
+    if (call === "GET /rooms") return { body: rooms };
+    if (call === "GET /compositions") return { body: [] };
+    if (call === "GET /models") return { body: [] };
+  });
+}
+
+test("a measured room is listed with its size, ceiling, openings and pieces", async () => {
+  serveRooms([hall]);
+  show();
+  const card = within(await screen.findByRole("region", { name: "Measured room Hall" }));
+  expect(card.getByText("3000 × 2000 mm, ceiling 2500 mm, 1 opening")).toBeInTheDocument();
+  expect(card.getByText("Pieces: Hall bench")).toBeInTheDocument();
+  expect(card.getByText("composed")).toBeInTheDocument();
+});
+
+test("delete warns first, and cancel sends nothing", async () => {
+  const user = userEvent.setup();
+  const calls = serveRooms([hall]);
+  show();
+  await user.click(await screen.findByRole("button", { name: "Delete Hall" }));
+  const warning = within(screen.getByRole("group", { name: "Delete Hall?" }));
+  expect(warning.getByText(/Hall bench will have no room/)).toBeInTheDocument();
+  expect(warning.getByText(/1 conversation will need to confirm a room again/)).toBeInTheDocument();
+  expect(warning.getByText(/its composition and 2 versions will be removed/)).toBeInTheDocument();
+  await user.click(warning.getByRole("button", { name: "Cancel" }));
+  expect(calls.some(([method]) => method === "DELETE")).toBe(false);
+  expect(screen.getByRole("region", { name: "Measured room Hall" })).toBeInTheDocument();
+});
+
+test("a confirmed delete removes the room and refreshes the lists", async () => {
+  const user = userEvent.setup();
+  let rooms: unknown[] = [hall];
+  const calls = serveRooms([], (call) => {
+    if (call === "GET /rooms") return { body: rooms };
+    if (call === "DELETE /rooms/Hall") {
+      rooms = [];
+      return { status: 204 };
+    }
+  });
+  show();
+  await user.click(await screen.findByRole("button", { name: "Delete Hall" }));
+  await user.click(screen.getByRole("button", { name: "Delete" }));
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Measured room Hall" })).toBeNull());
+  expect(calls.filter(([method]) => method === "DELETE").map(([, url]) => url)).toEqual(["/rooms/Hall"]);
+  expect(calls.filter(([, url]) => url === "/compositions").length).toBeGreaterThan(1);
+});
+
+test("a room in an apartment shows why it cannot be deleted instead of the action", async () => {
+  serveRooms([kueche]);
+  show();
+  const card = within(await screen.findByRole("region", { name: "Measured room Küche" }));
+  expect(card.getByText("Küche belongs to the apartment Wohnung; it cannot be deleted on its own yet.")).toBeInTheDocument();
+  expect(card.queryByRole("button", { name: /Delete/ })).toBeNull();
+});
+
+test("a refused delete is shown next to the room, which stays", async () => {
+  const user = userEvent.setup();
+  serveRooms([hall], (call) => {
+    if (call === "DELETE /rooms/Hall") {
+      return { status: 409, body: { detail: { failure_class: "room_in_use", reason: "the composition of Hall is building or rendering; delete it once that has finished" } } };
+    }
+  });
+  show();
+  await user.click(await screen.findByRole("button", { name: "Delete Hall" }));
+  await user.click(screen.getByRole("button", { name: "Delete" }));
+  const refusal = await screen.findByText("the composition of Hall is building or rendering; delete it once that has finished");
+  expect(refusal.closest("section")).toHaveAccessibleName("Measured room Hall");
+});
+
+test("an empty composition says it is the room only", async () => {
+  serveRooms([], (call) => {
+    if (call === "GET /compositions") return { body: [{ ...wohnen, items: [] }] };
+  });
+  show();
+  const card = within(await screen.findByRole("region", { name: "Wohnen" }));
+  expect(card.getByText("The room only, no furniture.")).toBeInTheDocument();
+  expect(card.getByRole("link", { name: "Open the turntable viewer of Wohnen" })).toBeInTheDocument();
+});

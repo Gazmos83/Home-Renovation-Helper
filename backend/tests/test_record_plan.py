@@ -103,3 +103,14 @@ def test_a_room_added_later_is_checked_against_the_ones_kept(make_ctx) -> None:
 
 def test_the_tool_is_gated(make_ctx) -> None:
     assert record_plan.gated and record_plan.name == "record_plan"
+
+
+def test_yes_makes_the_apartment_the_conversations_confirmed_scope(make_ctx, tool_deps) -> None:
+    with tool_deps.session() as session:
+        thread = house_file.create_thread(session, "Flat")
+        session.commit()
+        thread_id = thread.id
+    run(PLAN, replace(make_ctx(thread_id=thread_id), approved=True))
+    with tool_deps.session() as session:
+        room, apartment = house_file.thread_scope(session, thread_id)
+        assert room is None and apartment.name == "Flat"

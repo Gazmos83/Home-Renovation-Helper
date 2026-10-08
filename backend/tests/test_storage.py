@@ -184,3 +184,18 @@ def test_an_orphaned_composition_build_is_marked_failed(tmp_path: Path) -> None:
     storage.write_status(folder, status="running")
     assert storage.sweep_orphaned_statuses(tmp_path) == 1
     assert storage.read_status(folder)["status"] == "failed"
+
+
+def test_a_composition_folder_is_moved_aside_hidden_and_back(tmp_path: Path) -> None:
+    folder = storage.composition_version_dir(tmp_path, "hall", 1)
+    folder.mkdir(parents=True)
+    (folder / "input.json").write_text("{}", encoding="utf-8")
+
+    hidden = storage.move_composition_aside(tmp_path, "hall")
+    assert hidden is not None and hidden.name.startswith(".deleted-hall-")
+    assert not storage.composition_dir(tmp_path, "hall").exists()
+    assert storage.list_compositions(tmp_path) == []
+
+    storage.move_composition_back(tmp_path, "hall", hidden)
+    assert storage.list_compositions(tmp_path) == [("hall", [1])]
+    assert storage.move_composition_aside(tmp_path, "nothing-here") is None

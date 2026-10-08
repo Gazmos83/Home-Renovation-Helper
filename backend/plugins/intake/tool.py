@@ -1,8 +1,10 @@
-"""`record_brief` (Intake): the owner's confirmed numbers into the house file.
+"""`record_brief`, `record_plan` and `confirm_room` (Intake): the owner's confirmed
+numbers into the house file, and the room a conversation works in.
 
 Gated: the owner is shown the room, the piece's purpose, heights, style and
 budget, and answers yes or no. Only `yes` writes the room, the preferences and
 the thread's brief; nothing else writes rooms or style (agent-loop design).
+`confirm_room` sets only the conversation's room (conversation-projects).
 """
 
 from __future__ import annotations
@@ -97,9 +99,18 @@ def _resolve(args: RecordBriefArgs, ctx: ToolContext) -> tuple[dict[str, Any] | 
             return None, f"the room cannot be stored: {error}"
 
 
-def _brief(args: RecordBriefArgs) -> dict[str, Any]:
+def _confirmed_room_name(ctx: ToolContext) -> str | None:
+    """The room this conversation has confirmed, if it has confirmed a room."""
+    if ctx.thread_id is None:
+        return None
+    with ctx.deps.session() as session:
+        room, _apartment = house_file.thread_scope(session, ctx.thread_id)
+        return room.name if room is not None else None
+
+
+def _brief(args: RecordBriefArgs, ctx: ToolContext) -> dict[str, Any]:
     brief = {
-        "room": (args.room_name or "").strip() or None,
+        "room": (args.room_name or "").strip() or _confirmed_room_name(ctx),
         "purpose": args.purpose,
         "max_piece_height_mm": args.max_piece_height_mm,
         "style": args.style,
@@ -114,6 +125,13 @@ def _size(corners: list[list[float]]) -> str:
     return f"{max(xs) - min(xs):g} × {max(ys) - min(ys):g} mm"
 
 
+def _room_line(room: dict[str, Any]) -> str:
+    return (
+        f"{room['name']}: {_size(room['corners_mm'])}, ceiling {room['height_mm']:g} mm, "
+        f"{len(room['openings'])} opening(s)"
+    )
+
+
 def preview_brief(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
     args, problem = parse_args(RecordBriefArgs, arguments)
     if args is None:
@@ -122,13 +140,16 @@ def preview_brief(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation |
     if refusal:
         return refusal
     lines = []
+    brief = _brief(args, ctx)
     if room is not None:
+        lines.append(f"Room {_room_line(room)}")
+    elif brief.get("room"):
+        with ctx.deps.session() as session:
+            stored = house_file.room_by_name(session, brief["room"])
+            stored_room = house_file.describe_room(stored) if stored is not None else None
         lines.append(
-            f"Room {room['name']}: {_size(room['corners_mm'])}, ceiling {room['height_mm']:g} mm, "
-            f"{len(room['openings'])} opening(s)"
+            f"Room {_room_line(stored_room)}" if stored_room else f"Room {brief['room']}"
         )
-    elif (args.room_name or "").strip():
-        lines.append(f"Room {args.room_name.strip()}: as already in the house file")
     else:
         lines.append("Room: not given yet")
     lines.append(f"Piece: {args.purpose}")
@@ -141,7 +162,7 @@ def preview_brief(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation |
     return Confirmation(
         subject="brief",
         summary="\n".join(lines),
-        proposal={"room": room, "brief": _brief(args)},
+        proposal={"room": room, "brief": brief},
     )
 
 
@@ -168,8 +189,13 @@ def run_brief(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
             house_file.set_preference(session, "style", args.style)
         if args.budget_eur is not None:
             house_file.set_preference(session, "budget_eur", f"{args.budget_eur:g}")
+        named = (args.room_name or "").strip()
+        if named and ctx.thread_id is not None:
+            confirmed = house_file.room_by_name(session, named)
+            if confirmed is not None:
+                house_file.set_thread_room(session, ctx.thread_id, confirmed)
         session.commit()
-    brief = _brief(args)
+    brief = _brief(args, ctx)
     return ToolOutput(
         text="The brief is confirmed and saved. The next step is designing the piece.",
         update={"brief": brief},
@@ -295,7 +321,7 @@ def run_plan(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
     if refusal:
         return refusal
     with ctx.deps.session() as session:
-        house_file.upsert_apartment(
+        apartment = house_file.upsert_apartment(
             session,
             args.apartment_name,
             args.ceiling_height_mm,
@@ -303,6 +329,8 @@ def run_plan(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
             _room_dicts(args),
             notes="; ".join(args.assumptions),
         )
+        if ctx.thread_id is not None:
+            house_file.set_thread_apartment(session, ctx.thread_id, apartment)
         session.commit()
     return ToolOutput(
         text=f"The plan is saved: apartment {args.apartment_name.strip()} with {len(args.rooms)} room(s)."
@@ -320,4 +348,128 @@ record_plan = AgentTool(
     schema=RecordPlanArgs,
     run=run_plan,
     preview=preview_plan,
+)
+
+
+class ConfirmRoomArgs(BaseModel):
+    room: str | None = Field(default=None, description="the name of a room in the house file")
+    apartment: str | None = Field(default=None, description="the name of an apartment in the house file")
+    package_id: str | None = Field(
+        default=None,
+        description="one of this conversation's pieces to move into the room; leave out to only confirm the room",
+    )
+
+
+def _confirm_target(args: ConfirmRoomArgs, ctx: ToolContext):
+    """The room or apartment and the build to move, or a refusal naming what is wrong."""
+    room_name = (args.room or "").strip()
+    apartment_name = (args.apartment or "").strip()
+    if bool(room_name) == bool(apartment_name):
+        return None, "name exactly one room or one apartment"
+    if ctx.thread_id is None:
+        return None, "there is no conversation to confirm a room for"
+    with ctx.deps.session() as session:
+        package_id = (args.package_id or "").strip() or None
+        if package_id is not None:
+            if apartment_name:
+                return None, "a piece moves into a room, not into a whole apartment; name the room"
+            builds = {b.package_id for b in house_file.builds_of(session, ctx.thread_id)}
+            if package_id not in builds:
+                return None, f"{package_id!r} is not a piece of this conversation"
+        if room_name:
+            room = house_file.room_by_name(session, room_name)
+            if room is None:
+                return None, (
+                    f"the room {room_name!r} is not in the house file; ask for its corner points "
+                    "and ceiling height and use record_brief"
+                )
+            before = None
+            if package_id is not None:
+                piece = house_file.piece_room_name(session, package_id)
+                before = piece or "no room"
+            return {
+                "kind": "room",
+                "room": house_file.describe_room(room),
+                "package_id": package_id,
+                "from": before,
+            }, ""
+        apartment = house_file.find_apartment(session, apartment_name)
+        if apartment is None:
+            return None, (
+                f"the apartment {apartment_name!r} is not in the house file; read its plan "
+                "and use record_plan"
+            )
+        return {
+            "kind": "apartment",
+            "apartment": apartment.name,
+            "rooms": [house_file.describe_room(r) for r in house_file.rooms_of(session, apartment)],
+            "package_id": None,
+            "from": None,
+        }, ""
+
+
+def preview_confirm_room(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
+    args, problem = parse_args(ConfirmRoomArgs, arguments)
+    if args is None:
+        return problem
+    target, refusal = _confirm_target(args, ctx)
+    if refusal:
+        return refusal
+    if target["kind"] == "room":
+        lines = [f"Room {_room_line(target['room'])}"]
+        if target["package_id"]:
+            lines.append(
+                f"Move {target['package_id']} from {target['from']} into {target['room']['name']}"
+            )
+        return Confirmation(
+            subject="room",
+            summary="\n".join(lines),
+            proposal={"room": target["room"]["name"], "package_id": target["package_id"]},
+        )
+    lines = [f"Apartment {target['apartment']}: {len(target['rooms'])} room(s)"]
+    lines += [f"- {_room_line(room)}" for room in target["rooms"]]
+    return Confirmation(
+        subject="room",
+        summary="\n".join(lines),
+        proposal={"apartment": target["apartment"]},
+    )
+
+
+def run_confirm_room(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
+    if not ctx.approved:
+        return NOT_APPROVED
+    args, problem = parse_args(ConfirmRoomArgs, arguments)
+    if args is None:
+        return problem
+    target, refusal = _confirm_target(args, ctx)
+    if refusal:
+        return refusal
+    with ctx.deps.session() as session:
+        if target["kind"] == "apartment":
+            apartment = house_file.find_apartment(session, target["apartment"])
+            house_file.set_thread_apartment(session, ctx.thread_id, apartment)
+            session.commit()
+            return f"The conversation now works in the apartment {target['apartment']}."
+        room = house_file.room_by_name(session, target["room"]["name"])
+        room_name = room.name
+        house_file.set_thread_room(session, ctx.thread_id, room)
+        moved_id = target["package_id"]
+        if moved_id and not house_file.set_piece_room(session, moved_id, room):
+            house_file.record_piece(session, moved_id, moved_id, room_id=room.id)
+        session.commit()
+    moved = f" {moved_id} is now in it." if moved_id else ""
+    return f"The conversation now works in {room_name}.{moved}"
+
+
+confirm_room = AgentTool(
+    name="confirm_room",
+    description=(
+        "Confirm the room (or apartment) this conversation works in, one that is already in the "
+        "house file; the owner is shown its stored measurements and answers yes or no, and nothing "
+        "changes before yes. With `package_id` (one of this conversation's pieces) the piece is also "
+        "moved into that room. Use `record_brief` or `record_plan` for a room that is not stored yet."
+    ),
+    schema=ConfirmRoomArgs,
+    run=run_confirm_room,
+    preview=preview_confirm_room,
 )

@@ -50,6 +50,7 @@ from app.api.pricing import router as pricing_router
 from app.api.renders import router as renders_router
 from app.api.reviews import item_router as review_item_router
 from app.api.reviews import version_router as package_reviews_router
+from app.api.rooms import router as rooms_router
 from app.api.tool_toggles import router as tool_toggles_router
 from app.api.uploads import router as uploads_router
 from app.auth.accounts import ensure_owner
@@ -295,6 +296,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(renders_router)
     app.include_router(feedback_router)
     app.include_router(apartments_router)
+    app.include_router(rooms_router)
     app.include_router(price_list_router)
     app.include_router(pricing_router)
     app.include_router(guideline_notes_router)

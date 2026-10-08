@@ -14,7 +14,7 @@ from app.agent.tools.create_piece import run as create_run
 from tests.api_helpers import desk
 from tests.conftest import wait_for_status
 from tests.fakes import tool_call
-from tests.graph_helpers import fake_models, make_harness
+from tests.graph_helpers import fake_models, make_harness, place_in_room
 from tests.test_review_evidence import _png
 
 HALL = {
@@ -41,6 +41,7 @@ def _bind_piece(tool_state, harness, *, screenshot: bool) -> None:
         house_file.record_version(session, "hall-bench", 1)
         house_file.touch_thread(session, harness.thread, package_id="hall-bench")
         session.commit()
+    place_in_room(harness, "hall-bench")
 
 
 def test_a_new_wish_with_no_piece_goes_to_intake_whatever_the_model_says(tool_state) -> None:
@@ -79,16 +80,19 @@ def test_a_room_less_brief_routes_design_it_to_the_designer(tool_state) -> None:
         "budget_eur": 900,
     }
     models = fake_models(
-        foreman={"decisions": [decision("intake"), decision("designer")]},
+        foreman={"decisions": [decision("intake"), decision("designer"), decision("designer")]},
         intake={"tool_call_scripts": [[tool_call("record_brief", piece_only)]], "replies": ["Saved."]},
         designer={"replies": ["Here is a first design."]},
     )
-    harness = make_harness(tool_state, models)
-    harness.turn("a listening wall, light oak, 900 EUR")
+    harness = make_harness(tool_state, models, room=None)
+    assert last_reply(harness.turn("a listening wall, light oak, 900 EUR")) == "Which room is this for?"
+    harness.turn("no room yet: 2200 mm wide, 2200 mm tall, light oak, 900 EUR")
     harness.answer("yes")
     state = harness.turn("design it")
     assert state["brief"] == piece_only
-    assert state["specialist"] == "designer"
+    assert last_reply(state) == "Which room is this for?"
+    assert state["specialist"] == ""
+    assert models["designer"].calls == 0
     assert models["intake"].calls == 2
 
 
@@ -316,7 +320,7 @@ def test_a_built_composition_alone_lets_the_builder_answer(tool_state) -> None:
                                width_mm=300, depth_mm=300, height_mm=1600, state="checking"))
         session.commit()
     models = fake_models(foreman={"decisions": [decision("builder")]}, builder={"replies": ["Rendering Wohnen."]})
-    state = make_harness(tool_state, models).turn("render a draft of Wohnen")
+    state = make_harness(tool_state, models, room="Wohnen").turn("render a draft of Wohnen")
     assert state["specialist"] == "builder"
     prompt = models["builder"].last_prompt_text()
     assert "Compositions:" in prompt
@@ -329,7 +333,7 @@ def test_the_designers_note_marks_a_placed_piece_no_longer_approved(tool_state) 
     models = fake_models(
         foreman={"decisions": [decision("designer")]}, designer={"replies": ["It is no longer approved."]},
     )
-    harness = make_harness(tool_state, models)
+    harness = make_harness(tool_state, models, room="Wohnen")
     _bind_piece(tool_state, harness, screenshot=False)
     harness.turn("what is in Wohnen?")
     prompt = models["designer"].last_prompt_text()
@@ -346,9 +350,11 @@ def test_a_compose_request_in_a_new_thread_reaches_the_designer_once_a_piece_is_
         intake={"replies": ["Tell me about the piece."]},
         designer={"replies": ["Composing Wohnen."]},
     )
-    harness = make_harness(tool_state, models)
-    # Nothing approved yet. (The message names no piece: a named piece lets the Designer answer.)
-    assert harness.turn("compose Wohnen with my furniture")["specialist"] == "intake"
+    harness = make_harness(tool_state, models, room="Wohnen")
+    place_in_room(harness, "bench")
+    # Nothing approved yet: a confirmed room may still be composed, empty (rooms-page reverses
+    # the earlier Intake answer here).
+    assert harness.turn("compose Wohnen with my furniture")["specialist"] == "designer"
     with ToolDeps(tool_state).session() as session:
         house_file.approve_version(session, "bench", 1)
         session.commit()
@@ -364,7 +370,8 @@ def test_revise_it_after_a_reply_naming_a_piece_reaches_the_designer_in_a_new_th
         foreman={"decisions": [decision("designer"), decision("designer")]},
         designer={"replies": ["The id murphy-bed is in use; shall I revise murphy-bed instead?", "Which change?"]},
     )
-    harness = make_harness(tool_state, models)
+    harness = make_harness(tool_state, models, room="Schlafzimmer")
+    place_in_room(harness, "murphy-bed")
     assert harness.turn("import my new murphy-bed design")["specialist"] == "designer"
     assert harness.turn("Revise it")["specialist"] == "designer"
     assert models["intake"].calls == 0
@@ -485,7 +492,7 @@ def test_the_prompt_carries_the_guard_once_and_binds_only_the_headers_tools(tool
         "create_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit", "compose_room", "search_guidelines",
         "ask_owner",
     }
-    assert models["intake"].bound_tools == ["record_brief", "record_plan", "ask_owner"]
+    assert models["intake"].bound_tools == ["record_brief", "record_plan", "confirm_room", "ask_owner"]
     # The Foreman's own prompt is guarded and binds nothing.
     foreman_prompt = "\n".join(str(m.content) for m in models["foreman"].decision_prompts[-1])
     assert foreman_prompt.count(UNTRUSTED_CONTENT_PREAMBLE) == 1
@@ -538,10 +545,11 @@ def test_the_builder_can_answer_for_an_apartment_with_a_shell_but_not_before(too
     )
     harness = make_harness(tool_state, models)
     with ToolDeps(tool_state).session() as session:
-        house_file.upsert_apartment(
+        flat = house_file.upsert_apartment(
             session, "Flat", 2550, 120,
             [{"name": r["name"], "corners_mm": r["corners_mm"], "openings": r.get("openings", [])} for r in PLAN["rooms"]],
         )
+        house_file.set_thread_apartment(session, harness.thread, flat)
         session.commit()
 
     # An apartment with no shell version gives the Builder nothing to work on.
@@ -803,3 +811,26 @@ def test_a_followed_turn_reports_the_designer_then_its_tool_then_the_pause(tool_
     )
     assert [e.kind for e in resumed] == ["tool", "reply"]
     assert resumed[-1].data == {"reply": "Revised.", "specialists": ["designer"]}
+
+
+def test_an_empty_room_compose_request_in_a_new_thread_reaches_the_designer(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("designer")]}, designer={"replies": ["Composing Wohnen, empty."]},
+    )
+    state = make_harness(tool_state, models, room="Wohnen").turn("compose Wohnen with no furniture")
+    assert state["specialist"] == "designer"
+
+
+def test_a_compose_request_without_a_confirmed_room_still_asks_which_room(tool_state) -> None:
+    models = fake_models(foreman={"decisions": [decision("designer")]})
+    state = make_harness(tool_state, models, room=None).turn("compose an empty room")
+    assert last_reply(state) == "Which room is this for?" and models["designer"].calls == 0
+
+
+def test_a_conversation_whose_room_was_deleted_is_asked_for_the_room_again(tool_state) -> None:
+    models = fake_models(foreman={"decisions": [decision("designer")]})
+    harness = make_harness(tool_state, models, room="Wohnen")
+    with ToolDeps(tool_state).session() as session:
+        house_file.delete_room(session, tool_state.settings.render_root, "Wohnen")
+    state = harness.turn("make it wider")
+    assert last_reply(state) == "Which room is this for?" and models["designer"].calls == 0

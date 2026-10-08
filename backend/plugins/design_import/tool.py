@@ -36,7 +36,12 @@ from app.agent.tools.shared import (
 )
 from app.design_import import parse_import
 from app.guidelines.rules import piece_outcome
-from plugins.create_piece.tool import checked_new_id, create_and_record, summarise
+from plugins.create_piece.tool import (
+    checked_new_id,
+    create_and_record,
+    piece_room,
+    summarise,
+)
 from plugins.revise_package.tool import record_next
 
 
@@ -95,6 +100,9 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext) -> tuple[tuple[str, di
             f"this conversation is already about {bound}; the file can be imported as {bound}'s next "
             "version with import_design_version, or as a new piece in a new conversation"
         )
+    _room, problem = piece_room(ctx)
+    if problem:
+        return None, problem
     package_id, problem = checked_new_id(ctx, args.package_id)
     if package_id is None:
         taken, _ = checked_package_id(args.package_id)

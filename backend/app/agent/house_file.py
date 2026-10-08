@@ -13,12 +13,14 @@ is still listed, read through from its folders, without a brief.
 from __future__ import annotations
 
 import json
+import shutil
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.blender import storage
@@ -37,6 +39,7 @@ from app.db.models import (
     ReviewItem,
     Room,
     Thread,
+    ThreadPiece,
 )
 
 
@@ -515,26 +518,137 @@ def compositions(session: Session, root: Path) -> list[dict[str, Any]]:
     return listing
 
 
+# --- the Rooms page (rooms-page) -----------------------------------------------------
+
+_BUSY = ("queued", "running")
+
+
+def room_summaries(session: Session, render_root: Path) -> list[dict[str, Any]]:
+    """Every measured room with what the Rooms page shows and what deleting it would touch."""
+    apartment_names = {a.id: a.name for a in apartments(session)}
+    pieces_by_room: dict[UUID, list[dict[str, str]]] = {}
+    for piece in session.scalars(select(Piece).where(Piece.room_id.is_not(None)).order_by(Piece.package_id)):
+        pieces_by_room.setdefault(piece.room_id, []).append({"package_id": piece.package_id, "name": piece.name})
+    listing = []
+    for room in rooms(session):
+        xs = [point[0] for point in room.corners_mm]
+        ys = [point[1] for point in room.corners_mm]
+        composition = composition_by_scope(session, "room", room.name)
+        conversations = session.scalar(
+            select(func.count()).select_from(Thread).where(Thread.room_id == room.id)
+        )
+        listing.append(
+            {
+                "name": room.name,
+                "width_mm": _whole(max(xs) - min(xs)),
+                "depth_mm": _whole(max(ys) - min(ys)),
+                "corners": len(room.corners_mm),
+                "height_mm": room.height_mm,
+                "openings": len(room.openings or []),
+                "apartment": apartment_names.get(room.apartment_id),
+                "pieces": pieces_by_room.get(room.id, []),
+                "conversations": int(conversations or 0),
+                "composition": (
+                    {
+                        "slug": composition.slug,
+                        "versions": [v.version for v in composition_version_rows(session, composition)],
+                    }
+                    if composition is not None
+                    else None
+                ),
+            }
+        )
+    return listing
+
+
+def _composition_busy(render_root: Path, composition: Composition) -> bool:
+    for number in storage.composition_versions(render_root, composition.slug):
+        state = storage.read_status(storage.composition_version_dir(render_root, composition.slug, number)) or {}
+        if state.get("status") in _BUSY:
+            return True
+        if any((entry or {}).get("status") in _BUSY for entry in (state.get("renders") or {}).values()):
+            return True
+    return False
+
+
+def delete_room(session: Session, render_root: Path, name: str) -> bool:
+    """Delete a measured room and its room composition; whether the room existed.
+
+    Its pieces become unassigned and conversations that confirmed it lose it (their keys
+    are `ON DELETE SET NULL`). A room in an apartment, or one whose composition is still
+    building or rendering, is refused with `HouseFileError`. Unlike the writers above,
+    this commits: the composition's folder is moved aside first and moved back if the
+    commit fails, so the database and the folders agree either way.
+    """
+    room = room_by_name(session, name)
+    if room is None:
+        return False
+    if room.apartment_id is not None:
+        apartment = session.get(Apartment, room.apartment_id)
+        raise HouseFileError(
+            f"{room.name} belongs to the apartment {apartment.name if apartment else ''}; "
+            "it cannot be deleted on its own yet"
+        )
+    composition = composition_by_scope(session, "room", room.name)
+    hidden = None
+    if composition is not None:
+        if _composition_busy(render_root, composition):
+            raise HouseFileError(
+                f"the composition of {room.name} is building or rendering; delete it once that has finished"
+            )
+        hidden = storage.move_composition_aside(render_root, composition.slug)
+    try:
+        if composition is not None:
+            session.execute(delete(CompositionVersion).where(CompositionVersion.composition_id == composition.id))
+            session.execute(delete(Composition).where(Composition.id == composition.id))
+        session.execute(delete(Room).where(Room.id == room.id))
+        session.commit()
+    except Exception:
+        session.rollback()
+        if hidden is not None:
+            storage.move_composition_back(render_root, composition.slug, hidden)
+        raise
+    if hidden is not None:
+        shutil.rmtree(hidden, ignore_errors=True)
+    return True
+
+
 # --- generator-extension requests ----------------------------------------------
 
 
 def record_extension_request(
-    session: Session, field: str, request: str, package_id: str | None = None
+    session: Session,
+    field: str,
+    request: str,
+    package_id: str | None = None,
+    thread_id: UUID | None = None,
 ) -> GeneratorExtensionRequest:
-    row = GeneratorExtensionRequest(field=field[:200], request=request, package_id=package_id)
+    row = GeneratorExtensionRequest(
+        field=field[:200], request=request, package_id=package_id, thread_id=thread_id
+    )
     session.add(row)
     session.flush()
     return row
 
 
-def open_extension_requests(session: Session) -> list[GeneratorExtensionRequest]:
-    return list(
-        session.scalars(
-            select(GeneratorExtensionRequest)
-            .where(GeneratorExtensionRequest.status == "open")
-            .order_by(GeneratorExtensionRequest.created_at)
-        )
-    )
+def open_extension_requests(
+    session: Session,
+    package_ids: Sequence[str] | None = None,
+    thread_id: UUID | None = None,
+) -> list[GeneratorExtensionRequest]:
+    """Every open request, or with `package_ids` / `thread_id` only those whose piece is
+    one of the packages or that were recorded in the conversation (either matches)."""
+    query = select(GeneratorExtensionRequest).where(GeneratorExtensionRequest.status == "open")
+    if package_ids is not None or thread_id is not None:
+        matches = []
+        if package_ids:
+            matches.append(GeneratorExtensionRequest.package_id.in_(list(package_ids)))
+        if thread_id is not None:
+            matches.append(GeneratorExtensionRequest.thread_id == thread_id)
+        if not matches:
+            return []
+        query = query.where(or_(*matches))
+    return list(session.scalars(query.order_by(GeneratorExtensionRequest.created_at)))
 
 
 # --- threads ---------------------------------------------------------------------
@@ -584,20 +698,130 @@ def set_title_if_empty(session: Session, thread_id: UUID, title: str) -> bool:
     return bool(written.rowcount)
 
 
-def read_summary(session: Session, thread_id: UUID) -> tuple[str | None, str | None]:
-    """The thread's summary of earlier exchanges and the id of the last message it covers."""
+def read_summary(
+    session: Session, thread_id: UUID, package_id: str | None = None
+) -> tuple[str | None, str | None]:
+    """The summary of earlier exchanges and the id of the last message it covers: the
+    build's when `package_id` is given, else the one for exchanges with no active build."""
+    if package_id:
+        build = session.get(ThreadPiece, (thread_id, package_id))
+        return (build.summary, build.summary_through) if build is not None else (None, None)
     thread = session.get(Thread, thread_id)
     if thread is None:
         return None, None
     return thread.summary, thread.summary_through
 
 
-def write_summary(session: Session, thread_id: UUID, summary: str, through: str) -> None:
+def write_summary(
+    session: Session,
+    thread_id: UUID,
+    summary: str,
+    through: str,
+    package_id: str | None = None,
+) -> None:
     """Store a refreshed summary; a deleted thread is left alone."""
+    if package_id:
+        session.execute(
+            update(ThreadPiece)
+            .where(ThreadPiece.thread_id == thread_id, ThreadPiece.package_id == package_id)
+            .values(summary=summary, summary_through=through[:64])
+        )
+    else:
+        session.execute(
+            update(Thread)
+            .where(Thread.id == thread_id)
+            .values(summary=summary, summary_through=through[:64])
+        )
+    session.flush()
+
+
+# --- a conversation's room and builds (conversation-projects) -----------------------
+
+
+def set_thread_room(session: Session, thread_id: UUID, room: Room) -> None:
+    """The room the owner confirmed in this conversation; clears an apartment scope."""
     session.execute(
-        update(Thread).where(Thread.id == thread_id).values(summary=summary, summary_through=through[:64])
+        update(Thread).where(Thread.id == thread_id).values(room_id=room.id, apartment_id=None)
     )
     session.flush()
+
+
+def set_thread_apartment(session: Session, thread_id: UUID, apartment: Apartment) -> None:
+    """The apartment the owner confirmed in this conversation; clears a room scope."""
+    session.execute(
+        update(Thread)
+        .where(Thread.id == thread_id)
+        .values(apartment_id=apartment.id, room_id=None)
+    )
+    session.flush()
+
+
+def thread_scope(session: Session, thread_id: UUID) -> tuple[Room | None, Apartment | None]:
+    """The conversation's confirmed room or apartment (at most one is set)."""
+    thread = session.get(Thread, thread_id)
+    if thread is None:
+        return None, None
+    room = session.get(Room, thread.room_id) if thread.room_id else None
+    apartment = session.get(Apartment, thread.apartment_id) if thread.apartment_id else None
+    return room, apartment
+
+
+def add_build(session: Session, thread_id: UUID, package_id: str) -> None:
+    """List a piece among the conversation's builds, once."""
+    package_id = storage.validate_package_id(package_id)
+    if session.get(Thread, thread_id) is None:
+        return
+    if session.get(ThreadPiece, (thread_id, package_id)) is None:
+        session.add(ThreadPiece(thread_id=thread_id, package_id=package_id))
+        session.flush()
+
+
+def builds_of(session: Session, thread_id: UUID) -> list[ThreadPiece]:
+    """The conversation's builds, oldest first."""
+    return list(
+        session.scalars(
+            select(ThreadPiece)
+            .where(ThreadPiece.thread_id == thread_id)
+            .order_by(ThreadPiece.added_at, ThreadPiece.package_id)
+        )
+    )
+
+
+def set_active_build(session: Session, thread_id: UUID, package_id: str) -> None:
+    """Make a piece the conversation's active build, adding it to the builds."""
+    add_build(session, thread_id, package_id)
+    thread = session.get(Thread, thread_id)
+    if thread is not None:
+        thread.package_id = storage.validate_package_id(package_id)
+        session.flush()
+
+
+def piece_room_name(session: Session, package_id: str) -> str | None:
+    """The name of the room a piece is in, or `None` while it is unassigned."""
+    piece = session.get(Piece, package_id)
+    if piece is None or piece.room_id is None:
+        return None
+    room = session.get(Room, piece.room_id)
+    return room.name if room is not None else None
+
+
+def piece_room_names(session: Session) -> dict[str, str | None]:
+    """The room name of every recorded piece; `None` for an unassigned one."""
+    rows = session.execute(
+        select(Piece.package_id, Room.name).outerjoin(Room, Room.id == Piece.room_id)
+    )
+    return {package_id: name for package_id, name in rows}
+
+
+def set_piece_room(session: Session, package_id: str, room: Room | None) -> bool:
+    """Attach a piece to a room, or clear it. Nothing else about the piece changes.
+    Whether the piece is recorded."""
+    piece = session.get(Piece, package_id)
+    if piece is None:
+        return False
+    piece.room_id = room.id if room is not None else None
+    session.flush()
+    return True
 
 
 def record_review(
@@ -699,5 +923,5 @@ def touch_thread(session: Session, thread_id: UUID, package_id: str | None = Non
         return
     thread.last_turn_at = _now()
     if package_id:
-        thread.package_id = package_id
+        set_active_build(session, thread_id, package_id)
     session.flush()

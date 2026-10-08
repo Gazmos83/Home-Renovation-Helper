@@ -9,6 +9,7 @@ version 1 are recorded and the build starts.
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -60,9 +61,33 @@ def checked_new_id(ctx: ToolContext, raw: str) -> tuple[str | None, str]:
     return package_id, ""
 
 
+def piece_room(ctx: ToolContext) -> tuple[UUID | None, str]:
+    """The room a new piece goes in: the brief's room when the house file holds it, else the
+    conversation's confirmed room. With an apartment confirmed, only one of its rooms will do;
+    otherwise a refusal asks which. `None` and no refusal when there is no room at all."""
+    with ctx.deps.session() as session:
+        named = house_file.room_by_name(session, str(ctx.brief.get("room") or ""))
+        confirmed, apartment = (
+            house_file.thread_scope(session, ctx.thread_id) if ctx.thread_id is not None else (None, None)
+        )
+        if apartment is not None:
+            if named is not None and named.apartment_id == apartment.id:
+                return named.id, ""
+            return None, (
+                f"this conversation works in the apartment {apartment.name}; ask the owner which "
+                "room of it the piece is for, and confirm that room first"
+            )
+        if named is not None:
+            return named.id, ""
+        return (confirmed.id if confirmed is not None else None), ""
+
+
 def _checked(arguments: dict[str, Any], ctx: ToolContext) -> tuple[str | None, dict[str, Any] | None, str]:
     args, problem = parse_args(CreatePieceArgs, arguments)
     if args is None:
+        return None, None, problem
+    _room, problem = piece_room(ctx)
+    if problem:
         return None, None, problem
     package_id, problem = checked_new_id(ctx, args.package_id)
     if package_id is None:
@@ -106,10 +131,10 @@ def create_and_record(
         spec,
         lambda version: ctx.deps.start_build(package_id, version),
     )
+    room_id, _refusal = piece_room(ctx)
     with ctx.deps.session() as session:
-        room = house_file.room_by_name(session, str(ctx.brief.get("room") or ""))
         house_file.record_piece(
-            session, package_id, spec["name"], brief=dict(ctx.brief), room_id=room.id if room else None
+            session, package_id, spec["name"], brief=dict(ctx.brief), room_id=room_id
         )
         house_file.record_version(session, package_id, created["version"], changes=changes)
         if ctx.thread_id is not None:

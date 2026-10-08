@@ -1,7 +1,7 @@
 ---
 name: intake
 slot: intake
-tools: [record_brief, record_plan, ask_owner]
+tools: [record_brief, record_plan, confirm_room, ask_owner]
 ---
 
 ## Role

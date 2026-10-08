@@ -247,7 +247,11 @@ def record_unknown_fields(
     with ctx.deps.session() as session:
         for name in fields:
             house_file.record_extension_request(
-                session, name, ctx.last_message or "(no message)", package_id=package_id
+                session,
+                name,
+                ctx.last_message or "(no message)",
+                package_id=package_id,
+                thread_id=ctx.thread_id,
             )
         session.commit()
 

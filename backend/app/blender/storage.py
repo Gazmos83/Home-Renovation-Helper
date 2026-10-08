@@ -222,6 +222,23 @@ def next_composition_version(root: Path, slug: str) -> int:
     return (existing[-1] + 1) if existing else 1
 
 
+def move_composition_aside(root: Path, slug: str) -> Path | None:
+    """Move a composition's folder to a hidden `.deleted-<slug>-<hex>` sibling, so a deleted
+    room's versions never mix with a later room of the same name (rooms-page). `None` when
+    there is no folder. The hidden name cannot match `PACKAGE_ID_PATTERN`, so nothing lists it."""
+    folder = composition_dir(root, slug)
+    if not folder.exists():
+        return None
+    hidden = folder.parent / f".deleted-{slug}-{uuid4().hex[:12]}"
+    os.replace(folder, hidden)
+    return hidden
+
+
+def move_composition_back(root: Path, slug: str, hidden: Path) -> None:
+    """Undo `move_composition_aside`."""
+    os.replace(hidden, composition_dir(root, slug))
+
+
 def list_compositions(root: Path) -> list[tuple[str, list[int]]]:
     """Every composition slug with its versions (ascending), ordered by slug."""
     base = root / ROOMS_DIRNAME

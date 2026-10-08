@@ -66,3 +66,23 @@ def room_document(kind: str, **output: object) -> dict:
 
 def create(client: TestClient, package_id: str = "hall-bench", spec: dict | None = None):
     return client.post("/packages", json={"package_id": package_id, "spec": spec or desk()})
+
+
+def confirm_thread_room(client: TestClient, thread_id: str, name: str = "Hall") -> None:
+    """Store a room and make it the conversation's confirmed room, as an owner's `yes` would;
+    the thread's bound piece, when it has one, is put in the room."""
+    from uuid import UUID
+
+    from sqlalchemy.orm import Session
+
+    from app.agent import house_file
+
+    with Session(client.app.state.engine) as session:
+        room = house_file.room_by_name(session, name) or house_file.upsert_room(
+            session, name, [[0, 0], [3000, 0], [3000, 2000], [0, 2000]], 2500
+        )
+        house_file.set_thread_room(session, UUID(thread_id), room)
+        bound = house_file.get_thread(session, UUID(thread_id)).package_id
+        if bound and not house_file.set_piece_room(session, bound, room):
+            house_file.record_piece(session, bound, bound, room_id=room.id)
+        session.commit()

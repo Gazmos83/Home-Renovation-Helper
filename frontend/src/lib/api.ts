@@ -185,7 +185,21 @@ export type GuidelineNote = {
 
 export type NewGuidelineNote = Omit<GuidelineNote, "id">;
 
-export type PieceSummary = { package_id: string; versions: number[] };
+export type PieceSummary = { package_id: string; versions: number[]; room: string | null };
+
+/** A measured room of the house file, with what deleting it would touch (rooms-page). */
+export type RoomSummary = {
+  name: string;
+  width_mm: number;
+  depth_mm: number;
+  corners: number;
+  height_mm: number;
+  openings: number;
+  apartment: string | null;
+  pieces: { package_id: string; name: string }[];
+  conversations: number;
+  composition: { slug: string; versions: number[] } | null;
+};
 
 export type CompositionItem = {
   id: string;
@@ -515,6 +529,13 @@ export const api = {
   invocations: (name: string) =>
     request<{ outcome: string; duration_ms: number | null }[]>(`/admin/plugins/${name}/invocations`),
   pieces: () => request<PieceSummary[]>("/packages"),
+  rooms: () => request<RoomSummary[]>("/rooms"),
+  deleteRoom: (name: string) => request<void>(`/rooms/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  setPieceRoom: (packageId: string, room: string | null) =>
+    request<{ package_id: string; room: string | null }>(`/packages/${encodeURIComponent(packageId)}/room`, {
+      method: "PUT",
+      body: JSON.stringify({ room }),
+    }),
   compositions: () => request<Composition[]>("/compositions"),
   modelLibrary: () => request<ModelAsset[]>("/models"),
   uploadModel: (file: File, name: string, width: string, depth: string, height: string) => {

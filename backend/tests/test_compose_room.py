@@ -123,3 +123,38 @@ def test_an_unknown_item_field_is_refused_and_recorded(make_ctx, tool_deps, room
 def test_it_does_not_run_without_the_owners_yes(make_ctx, tool_state, room) -> None:
     assert "confirmation" in run({"room": "Wohnen", "items": [SOFA]}, make_ctx())
     assert storage.list_compositions(tool_state.settings.render_root) == []
+
+
+# --- an empty room (rooms-page) ------------------------------------------------------------
+
+
+def test_an_empty_room_is_confirmed_as_version_one_and_built(make_ctx, tool_deps, tool_state, room) -> None:
+    shown = preview({"room": "Wohnen", "items": []}, make_ctx())
+    assert isinstance(shown, Confirmation)
+    assert shown.summary.startswith("Room Wohnen: the room only, no items")
+    output = run({"room": "Wohnen", "items": []}, replace(make_ctx(), approved=True))
+    assert "Created Wohnen version 1; its build has started" in output.text
+    wait_for_status(storage.composition_version_dir(tool_state.settings.render_root, "wohnen", 1))
+
+
+def test_removing_the_last_item_lists_it_and_leaves_an_empty_version(make_ctx, tool_state, room) -> None:
+    run({"room": "Wohnen", "items": [SOFA]}, replace(make_ctx(), approved=True))
+    wait_for_status(storage.composition_version_dir(tool_state.settings.render_root, "wohnen", 1))
+    shown = preview({"room": "Wohnen", "items": []}, make_ctx())
+    assert "Compared with version 1: removed: sofa" in shown.summary
+    run({"room": "Wohnen", "items": []}, replace(make_ctx(), approved=True))
+    folder = storage.composition_version_dir(tool_state.settings.render_root, "wohnen", 2)
+    import json
+
+    assert json.loads((folder / storage.INPUT_FILE).read_text(encoding="utf-8"))["items"] == []
+
+
+def test_an_empty_apartment_is_refused_without_a_pause(make_ctx, tool_deps, room) -> None:
+    with tool_deps.session() as session:
+        house_file.upsert_apartment(
+            session, "Wohnung", 2600, 100,
+            [{"name": "Küche", "corners_mm": WOHNEN, "height_mm": None, "openings": []}],
+        )
+        session.commit()
+    refused = preview({"apartment": "Wohnung", "items": []}, make_ctx())
+    assert isinstance(refused, str) and "an apartment composition needs at least one item" in refused

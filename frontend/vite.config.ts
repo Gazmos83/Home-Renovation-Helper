@@ -30,6 +30,7 @@ export default defineConfig({
       "/reviews": API,
       "/pricings": API,
       "/stores": API,
+      "/rooms": page,
       "/price-list": page,
       "/snapshots": page,
       "/remnants": page,

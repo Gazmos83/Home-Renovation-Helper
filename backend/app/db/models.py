@@ -362,6 +362,16 @@ class GeneratorExtensionRequest(Base):
     field: Mapped[str] = mapped_column(String(200), nullable=False)
     request: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    # The conversation the request was made in. Cleared, not cascaded, when the
+    # conversation is deleted: the request stays in the house file.
+    thread_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "threads.id",
+            ondelete="SET NULL",
+            name="fk_generator_extension_requests_thread_id_threads",
+        ),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -385,6 +395,43 @@ class Thread(Base):
     # call, and the id of the last message it covers (studio-chat-polish).
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary_through: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The room or apartment the owner confirmed in this conversation
+    # (conversation-projects). At most one is set; neither until confirmed.
+    room_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("rooms.id", ondelete="SET NULL", name="fk_threads_room_id_rooms"),
+        nullable=True,
+    )
+    apartment_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "apartments.id", ondelete="SET NULL", name="fk_threads_apartment_id_apartments"
+        ),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "room_id IS NULL OR apartment_id IS NULL", name="ck_threads_one_scope"
+        ),
+    )
+
+
+class ThreadPiece(Base):
+    """A build (piece) worked on in a conversation, with its own "decisions so far"
+    summary. `threads.package_id` names the active one."""
+
+    __tablename__ = "thread_pieces"
+
+    thread_id: Mapped[UUID] = mapped_column(
+        ForeignKey("threads.id", ondelete="CASCADE"), primary_key=True
+    )
+    # No foreign key, like `threads.package_id`: a folder-only package can be
+    # named before it has a `pieces` row.
+    package_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_through: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class Apartment(Base):

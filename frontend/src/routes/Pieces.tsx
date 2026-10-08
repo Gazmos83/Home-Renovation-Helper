@@ -7,6 +7,7 @@ import { FieldError } from "../lib/form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { cardClass } from "@/components/ui/card";
 import { Page } from "@/components/Page";
 
@@ -185,7 +186,42 @@ function Version({ packageId, version }: { packageId: string; version: number })
   );
 }
 
-function Piece({ id, versions }: { id: string; versions: number[] }) {
+const NO_ROOM = "";
+
+/** The room a piece is in, with a selector to attach it, move it or clear it. */
+function RoomPicker({ id, room }: { id: string; room: string | null }) {
+  const queryClient = useQueryClient();
+  const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
+  const choose = useMutation({
+    mutationFn: (name: string) => api.setPieceRoom(id, name === NO_ROOM ? null : name),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["pieces"] }),
+  });
+  const label = `Room of ${id}`;
+  return (
+    <div className="grid gap-1">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span>{room ? `Room: ${room}` : "No room"}</span>
+        <Select
+          aria-label={label}
+          className="w-auto"
+          value={room ?? NO_ROOM}
+          disabled={choose.isPending}
+          onChange={(event) => choose.mutate(event.target.value)}
+        >
+          <option value={NO_ROOM}>No room</option>
+          {(rooms.data ?? []).map((room) => (
+            <option key={room.name} value={room.name}>
+              {room.name}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <FieldError message={message(choose.error)} />
+    </div>
+  );
+}
+
+function Piece({ id, versions, room }: { id: string; versions: number[]; room: string | null }) {
   const [version, setVersion] = useState(versions[0]);
   const infos = useQueries({
     queries: versions.map((n) => ({
@@ -200,6 +236,7 @@ function Piece({ id, versions }: { id: string; versions: number[] }) {
       <p className="text-sm text-muted-foreground">
         {approved ? `Approved: version ${approved}` : "No version approved yet."}
       </p>
+      <RoomPicker id={id} room={room} />
       <div className="flex flex-wrap gap-2" role="group" aria-label={`Versions of ${id}`}>
         {versions.map((n) => (
           <Button
@@ -242,7 +279,7 @@ export default function Pieces() {
       </p>
       {pieces.data.length === 0 && <p>No pieces yet. Describe one in a conversation.</p>}
       {pieces.data.map((piece) => (
-        <Piece key={piece.package_id} id={piece.package_id} versions={piece.versions} />
+        <Piece key={piece.package_id} id={piece.package_id} versions={piece.versions} room={piece.room} />
       ))}
     </Page>
   );

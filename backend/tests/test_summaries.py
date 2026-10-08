@@ -103,3 +103,38 @@ def test_a_long_thread_is_summarised_for_the_call_and_stored_unchanged(tool_stat
     assert summary_prompts
     for prompt in summary_prompts:
         assert not any(isinstance(m, SystemMessage) and SUMMARY_LABEL in str(m.content) for m in prompt[1:])
+
+
+def test_a_summary_is_kept_per_build_and_switching_brings_the_builds_own_back(tool_state) -> None:
+    thread_id = _thread(tool_state)
+    with ToolDeps(tool_state).session() as session:
+        house_file.add_build(session, thread_id, "hall-bench")
+        house_file.add_build(session, thread_id, "shoe-rack")
+        session.commit()
+    bench, rack = Recorder("bench: oak, 900 mm"), Recorder("rack: pine")
+
+    assert summaries.summary_for(tool_state.engine, thread_id, bench, _messages(2), "hall-bench") == "bench: oak, 900 mm"
+    assert summaries.summary_for(tool_state.engine, thread_id, rack, _messages(3), "shoe-rack") == "rack: pine"
+    assert "Piece: hall-bench" in bench.calls[0][1] and "Piece: shoe-rack" in rack.calls[0][1]
+
+    # Back to the bench: its own summary is reused with no model call.
+    again = Recorder("never asked")
+    assert summaries.summary_for(tool_state.engine, thread_id, again, _messages(2), "hall-bench") == "bench: oak, 900 mm"
+    assert again.calls == []
+    with ToolDeps(tool_state).session() as session:
+        assert house_file.read_summary(session, thread_id, "hall-bench") == ("bench: oak, 900 mm", "a1")
+        assert house_file.read_summary(session, thread_id, "shoe-rack") == ("rack: pine", "a2")
+        assert house_file.read_summary(session, thread_id) == (None, None)
+
+
+def test_without_an_active_build_the_threads_own_summary_is_used(tool_state) -> None:
+    thread_id = _thread(tool_state)
+    call = Recorder("no build yet: hall 1200 mm")
+    assert summaries.summary_for(tool_state.engine, thread_id, call, _messages(2)) == "no build yet: hall 1200 mm"
+    assert "Piece:" not in call.calls[0][1]
+    with ToolDeps(tool_state).session() as session:
+        assert house_file.read_summary(session, thread_id) == ("no build yet: hall 1200 mm", "a1")
+
+
+def test_the_instruction_asks_to_keep_only_the_named_piece() -> None:
+    assert "When a piece is named, keep only what concerns that piece." in summaries.SUMMARY_INSTRUCTION

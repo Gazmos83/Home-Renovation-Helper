@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.agent import house_file
 from app.agent.foreman import build_graph
 from app.agent.tools.base import ToolDeps
-from tests.api_helpers import make_client, sign_in
+from tests.api_helpers import confirm_thread_room, make_client, sign_in
 from tests.blender_fakes import fake_pipeline_launch
 from tests.conftest import clean_house_file
 from tests.fakes import tool_call
@@ -60,10 +60,14 @@ def client(migrated_database: str, render_root: Path, fake_blender: Path) -> Ite
     c.__exit__(None, None, None)
 
 
-def start(client: TestClient, **body) -> str:
+def start(client: TestClient, room: str | None = "Studio", **body) -> str:
+    """A new conversation that has already confirmed `room` (`None`: a brand-new one)."""
     response = client.post("/chat/threads", json=body)
     assert response.status_code == 201, response.text
-    return response.json()["thread_id"]
+    thread = response.json()["thread_id"]
+    if room:
+        confirm_thread_room(client, thread, room)
+    return thread
 
 
 def test_every_route_needs_the_session(client: TestClient) -> None:
@@ -560,7 +564,7 @@ def test_deleting_a_conversation_removes_its_memory_index_and_uploads_and_keeps_
     assert not upload_dir.exists()
     memory = client.app.state.checkpointer.get_tuple({"configurable": {"thread_id": f"chat:{thread}", "checkpoint_ns": ""}})
     assert memory is None
-    assert {"package_id": "murphy-bed", "versions": [2, 1]} in client.get("/packages").json()
+    assert {"package_id": "murphy-bed", "versions": [2, 1], "room": None} in client.get("/packages").json()
     with Session(client.app.state.engine) as session:
         piece = {p["package_id"]: p for p in house_file.pieces(session, client.app.state.settings.render_root)}
     assert [v["version"] for v in piece["murphy-bed"]["versions"]] == [1, 2]

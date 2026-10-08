@@ -28,6 +28,7 @@ from app.blender import runner, storage
 from app.blender.launch import subprocess_launch
 from app.blender.schemas import CustomBuildSpec, describe_validation_error
 from app.blender.spec_contract import SpecValidationError
+from app.db.models import Piece
 from app.design_import import export_document
 from app.packages import service
 
@@ -58,6 +59,10 @@ class PackageIn(BaseModel):
 
 class SpecIn(BaseModel):
     spec: dict[str, Any]
+
+
+class RoomIn(BaseModel):
+    room: str | None = None
 
 
 def not_found() -> HTTPException:
@@ -204,10 +209,41 @@ def create_package(body: PackageIn, request: Request, background: BackgroundTask
 
 @router.get("")
 def list_packages(request: Request):
+    with Session(request.app.state.engine) as session:
+        rooms = house_file.piece_room_names(session)
     return [
-        {"package_id": package_id, "versions": sorted(found, reverse=True)}
+        {
+            "package_id": package_id,
+            "versions": sorted(found, reverse=True),
+            "room": rooms.get(package_id),
+        }
         for package_id, found in storage.list_packages(render_root(request))
     ]
+
+
+@router.put("/{package_id}/room")
+def set_room(package_id: str, body: RoomIn, request: Request):
+    """Attach a piece to a room of the house file, or clear it (`null`). Nothing else about
+    the piece changes, and no conversation's confirmed room does."""
+    package_id = checked_id(package_id)
+    with Session(request.app.state.engine) as session:
+        recorded = session.get(Piece, package_id) is not None
+        if not recorded and not storage.versions(render_root(request), package_id):
+            raise not_found()
+        name = (body.room or "").strip()
+        room = None
+        if name:
+            room = house_file.room_by_name(session, name)
+            if room is None:
+                raise refused(
+                    422, "unknown_room", f"there is no room {name!r} in the house file", room=name
+                )
+        if not recorded:
+            house_file.record_piece(session, package_id, package_id)
+        house_file.set_piece_room(session, package_id, room)
+        room_name = room.name if room is not None else None
+        session.commit()
+    return {"package_id": package_id, "room": room_name}
 
 
 @router.get("/{package_id}")
