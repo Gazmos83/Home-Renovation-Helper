@@ -14,7 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.agent import house_file
+from app.agent import house_file, notices
 from app.agent.tools.base import AgentTool, Confirmation, ToolContext, parse_args
 from app.agent.tools.shared import builds_unavailable, version_folder
 from app.blender import runner, storage
@@ -48,17 +48,6 @@ class RenderArgs(BaseModel):
     room: dict[str, Any] | None = Field(
         default=None, description="the room document from room_fit, to render the piece in its room"
     )
-
-
-def viewer_route(package_id: str, version: int, kind: str, room: bool, record: str = "piece") -> str:
-    if record == "shell":
-        base = f"/apartments/{package_id}/shell/versions/{version}/files/"
-    elif record == "room":
-        base = f"/compositions/{package_id}/versions/{version}/files/"
-    else:
-        base = f"/packages/{package_id}/versions/{version}/files/"
-    prefix = "room/" if room else ""
-    return base + prefix + ("still.png" if kind == "still" else "viewer.html")
 
 
 def _price_args(
@@ -221,7 +210,7 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
             scene_document=scene_document,
             tracing=deps.tracing,
             on_finished=lambda finished, actual: calibrate_after_render(deps.engine, finished, actual),
-            on_outcome=lambda outcome: feedback_runs.finish_run(deps.engine, run_id, outcome),
+            on_outcome=lambda outcome: notices.finished(deps, ctx.thread_id, run_id, ticket.quote, outcome),
             offload=deps.offload,
             on_remote_job=lambda record: offload_jobs.record_job(deps.engine, record),
             models_root=settings.upload_root / "models",
@@ -232,9 +221,8 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
     label = (
         f"the {args.shell} shell" if args.shell else args.composition if args.composition else args.package_id
     )
-    route = viewer_route(
-        priced.package_id, number, priced.kind, scene_document is not None, priced.record
-    )
+    # A piece version gets a Review button when it ends; a shell or composition a notice only.
+    arrives = "a Review button appears" if priced.record == "piece" else "a notice appears"
     note = ""
     if priced.record == "room":
         from app import compositions
@@ -246,7 +234,7 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
             note = f" Note: {', '.join(stale)} {'is' if len(stale) == 1 else 'are'} no longer approved."
     return (
         f"Started a {priced.tier.name} {what} of {label} version {number}: "
-        f"{priced.estimate_text}. When it finishes it will be at {route}.{note}"
+        f"{priced.estimate_text}. When it finishes, {arrives} in this chat.{note}"
     )
 
 

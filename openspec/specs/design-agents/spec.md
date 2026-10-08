@@ -195,11 +195,11 @@ When the Designer's document names a field the schema does not define, `create_p
 - **THEN** `room_fit` for `Wohnen` is refused naming `Wohnen`, saying no rooms are recorded yet and that Intake records a room
 
 ### Requirement: The Builder builds and renders only through the guard
-`blender_build` SHALL build a version that has not succeeded yet, wait for it within the Blender timeout, and report the outcome with the screenshot route; a version already built SHALL be reported as such without rebuilding. `render_turntable` SHALL require a tier, SHALL refuse raw frame, resolution or engine values by name, SHALL render a still or a turntable of a version alone or placed with a `room_fit` placement, and SHALL start the run and report the estimate for `draft` and `preview`; for `final` it SHALL pause with the estimate and run only on `yes`. The Builder SHALL never write or run Blender Python.
+`blender_build` SHALL build a version that has not succeeded yet, wait for it within the Blender timeout, and report the outcome with the screenshot route; a version already built SHALL be reported as such without rebuilding. `render_turntable` SHALL require a tier, SHALL refuse raw frame, resolution or engine values by name, SHALL render a still or a turntable of a version alone or placed with a `room_fit` placement, and SHALL start the run and report the estimate for `draft` and `preview`; for `final` it SHALL pause with the estimate and run only on `yes`. When a render starts, the reply SHALL give the estimate and SHALL NOT give a viewer route: for a piece version it SHALL say that a Review button appears in this chat when the render finishes, and for a shell or composition that a notice appears in this chat. The Builder SHALL never write or run Blender Python.
 
 #### Scenario: Draft turntable
 - **WHEN** the owner asks for a draft turntable of a built piece
-- **THEN** the run is started at tier `draft` and the reply gives the estimate in plain terms and where the viewer will be
+- **THEN** the run is started at tier `draft` and the reply gives the estimate in plain terms and says a Review button appears in this chat when it finishes, with no viewer route
 
 #### Scenario: Final paused
 - **WHEN** the owner asks for a final render
@@ -247,11 +247,15 @@ When a specialist calls a tool it has not bound, nothing SHALL run and the call'
 - **THEN** nothing runs and the result says `cut_list` is switched off in this conversation's tools
 
 ### Requirement: No specialist promises to report back after the turn
-A turn SHALL end with its reply, and nothing SHALL message the owner afterwards. No specialist's instructions SHALL let it promise to tell the owner later when a build, a render or a review finishes. The Builder and the Designer SHALL say that a started build's status shows in the conversation's Project panel and can be asked for in a later message.
+A turn SHALL end with its reply, and no specialist SHALL message the owner afterwards. No specialist's instructions SHALL let it promise to tell the owner later when a build, a render or a review finishes. The only message after a turn SHALL be the render notice that code posts when a render started in the conversation finishes or fails; it is never written by a model. The Builder and the Designer SHALL say that a started build's status shows in the conversation's Project panel and can be asked for in a later message.
 
 #### Scenario: Owner asks to be told when the build is done
 - **WHEN** a build has started and the owner asks "Will you tell me when the build is complete?"
 - **THEN** the reply says the Project panel shows the build's status and that the owner can ask again, and it does not promise a later message
+
+#### Scenario: Render notice is posted by code
+- **WHEN** a draft turntable started in the conversation finishes after the turn has ended
+- **THEN** a render notice appears in the conversation, posted by code, and no specialist runs or writes a message
 
 ### Requirement: The Designer composes a room
 `compose_room` SHALL take a full composition: its scope (a room, or an apartment) and its list of items with their placements. For a room the list SHALL be allowed to be empty, which composes the room alone. It SHALL validate the composition, then pause for the owner's `yes` with a summary. The summary SHALL list each item with its size and placement, or say that the room is composed with no items, any design-rule warnings, and, when a composition already exists for that scope, the items added, moved and removed relative to its latest version. Only `yes` SHALL create the version and start its headless build. A refusal (unknown room, unapproved version, model not ready, invalid placement, an apartment with no items) SHALL be returned to the Designer without a pause, so the Designer can state it to the owner in plain words. The Designer SHALL never write or run Blender Python.
@@ -281,7 +285,7 @@ A turn SHALL end with its reply, and nothing SHALL message the owner afterwards.
 
 #### Scenario: Draft of a room
 - **WHEN** the owner asks for a draft turntable of `Wohnen`
-- **THEN** the run starts at tier `draft` on the latest built version, and the reply gives the estimate and where the viewer will be
+- **THEN** the run starts at tier `draft` on the latest built version, and the reply gives the estimate and says a notice appears in this chat when it finishes, with no viewer route
 
 #### Scenario: Two targets
 - **WHEN** a call names both a piece and a composition

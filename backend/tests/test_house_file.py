@@ -600,3 +600,21 @@ def test_a_failed_commit_leaves_the_folder_and_the_rows(db_session, render_root:
 
         db_session.rollback()
         clean_house_file(db_session.get_bind())
+
+
+def test_notices_are_listed_by_position_then_time_and_a_missing_thread_is_a_no_op(db_session) -> None:
+    thread = house_file.create_thread(db_session, "renders")
+    later = house_file.add_notice(db_session, thread.id, after_messages=4, outcome="succeeded", tier="draft", text="b")
+    first = house_file.add_notice(db_session, thread.id, after_messages=2, outcome="failed", tier="preview", text="a")
+    same = house_file.add_notice(
+        db_session, thread.id, after_messages=4, outcome="succeeded", tier="final", text="c", package_id="hall-bench", version=2
+    )
+    assert [n.id for n in house_file.notices_for(db_session, thread.id)] == [first.id, later.id, same.id]
+
+    gone = house_file.create_thread(db_session, "gone")
+    house_file.delete_thread(db_session, gone.id)
+    from uuid import uuid4
+
+    assert house_file.add_notice(db_session, gone.id, after_messages=0, outcome="failed", tier="draft", text="x") is None
+    assert house_file.add_notice(db_session, uuid4(), after_messages=0, outcome="failed", tier="draft", text="x") is None
+    assert house_file.notices_for(db_session, gone.id) == []

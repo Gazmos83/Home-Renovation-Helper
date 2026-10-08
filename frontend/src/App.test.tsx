@@ -29,3 +29,14 @@ test("a 401 from any call returns the owner to sign-in", async () => {
   show("/remnants");
   expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
 });
+
+test("the header stays at the top of the screen while the page scrolls", async () => {
+  stubFetch((call) => {
+    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+    if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+    if (call === "GET /remnants") return { body: [] };
+  });
+  show("/remnants");
+  const header = (await screen.findByRole("navigation", { name: "Main" })).closest("header");
+  expect(header).toHaveClass("sticky", "top-0");
+});

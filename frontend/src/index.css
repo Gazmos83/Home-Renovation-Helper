@@ -23,6 +23,8 @@
   --border: oklch(0.9 0.006 85);
   --input: oklch(0.9 0.006 85);
   --ring: oklch(0.55 0.08 155);
+  /* The Studio header's height; the rail and the inspector sit below it. */
+  --header-h: 3.25rem;
 }
 
 .dark {

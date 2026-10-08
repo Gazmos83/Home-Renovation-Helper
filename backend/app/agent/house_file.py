@@ -39,6 +39,7 @@ from app.db.models import (
     ReviewItem,
     Room,
     Thread,
+    ThreadNotice,
     ThreadPiece,
 )
 
@@ -671,6 +672,45 @@ def delete_thread(session: Session, thread_id: UUID) -> bool:
     deleted = session.execute(delete(Thread).where(Thread.id == thread_id))
     session.flush()
     return bool(deleted.rowcount)
+
+
+def add_notice(
+    session: Session,
+    thread_id: UUID,
+    *,
+    after_messages: int,
+    outcome: str,
+    tier: str,
+    text: str,
+    package_id: str | None = None,
+    version: int | None = None,
+) -> ThreadNotice | None:
+    """Record a render notice in a conversation; nothing when the thread is gone."""
+    if session.get(Thread, thread_id) is None:
+        return None
+    notice = ThreadNotice(
+        thread_id=thread_id,
+        after_messages=after_messages,
+        outcome=outcome,
+        tier=tier,
+        text=text,
+        package_id=package_id,
+        version=version,
+    )
+    session.add(notice)
+    session.flush()
+    return notice
+
+
+def notices_for(session: Session, thread_id: UUID) -> list[ThreadNotice]:
+    """A conversation's notices, in the order history shows them."""
+    return list(
+        session.scalars(
+            select(ThreadNotice)
+            .where(ThreadNotice.thread_id == thread_id)
+            .order_by(ThreadNotice.after_messages, ThreadNotice.created_at)
+        )
+    )
 
 
 def get_thread(session: Session, thread_id: UUID) -> Thread | None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx2
 import openai
@@ -934,3 +934,32 @@ def test_a_confirmation_refuses_answers_meant_for_questions(client: TestClient) 
     # The old body shape still answers a confirmation.
     right = client.post(f"/chat/threads/{thread}/resume", json={"confirmation_id": pending["confirmation_id"], "answer": "yes"})
     assert right.status_code == 200
+
+
+def test_a_render_notice_follows_the_reply_that_started_the_render(client: TestClient) -> None:
+    install(client, fake_models(
+        foreman={"decisions": [{"specialist": "intake", "reason": "t"}]},
+        intake={"replies": ["Started a draft turntable of hall-bench version 1."]},
+    ))
+    thread = start(client, title="Hall bench")
+    client.post(f"/chat/threads/{thread}/turns", json={"message": "render it"})
+    with Session(client.app.state.engine) as session:
+        house_file.add_notice(
+            session, UUID(thread), after_messages=2, outcome="succeeded", tier="draft",
+            text="The draft turntable of hall-bench version 1 is ready. You can also check it in the Project panel.",
+            package_id="hall-bench", version=1,
+        )
+        house_file.add_notice(
+            session, UUID(thread), after_messages=2, outcome="failed", tier="preview",
+            text="The preview still of the flat shell version 1 did not finish, so nothing new was published. You can ask for it again.",
+        )
+        session.commit()
+
+    messages = client.get(f"/chat/threads/{thread}").json()["messages"]
+    assert [m["role"] for m in messages] == ["owner", "assistant", "notice", "notice"]
+    done, failed = messages[2], messages[3]
+    assert (done["outcome"], done["tier"], done["package_id"], done["version"]) == ("succeeded", "draft", "hall-bench", 1)
+    assert (failed["outcome"], failed["tier"]) == ("failed", "preview")
+    assert "package_id" not in failed and "version" not in failed and "package_id" not in messages[0]
+    body = json.dumps(messages).lower()
+    assert "/home/" not in body and "openai/" not in body and "token" not in body

@@ -52,12 +52,12 @@ function serve(
   });
 }
 
-test("a render shows its preview, tier and viewer link", async () => {
+test("a render shows its preview and tier, and no viewer link", async () => {
   serve([turntable]);
   show();
   expect(await screen.findByRole("img", { name: "Turntable of bench version 2" })).toHaveAttribute("src", turntable.preview);
   expect(screen.getByText("draft")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Open the turntable viewer" })).toHaveAttribute("href", turntable.viewer);
+  expect(screen.queryByRole("link", { name: /viewer/ })).not.toBeInTheDocument();
 });
 
 test("rating down with a comment is sent, shown and survives a reload of the list", async () => {

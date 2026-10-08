@@ -131,3 +131,38 @@ def test_absent_memory_is_a_stated_failure() -> None:
     assert "memory is not available" in result.failure_reason
     result = chat.resume(None, thread_id=uuid4(), owner_id=uuid4(), answer_value="yes")
     assert result.failure_class == "unavailable"
+
+
+def test_a_render_notice_is_shown_in_history_but_never_sent_to_a_model(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision(), decision()]},
+        intake={"replies": ["How wide is the hall?", "Thanks."]},
+    )
+    harness = make_harness(tool_state, models)
+    run_turn(harness, "I want a bench for the hall")
+    words = "The draft turntable of hall-bench version 1 is ready. You can also check it in the Project panel."
+    with tool_state_session(tool_state) as session:
+        house_file.add_notice(
+            session, harness.thread, after_messages=2, outcome="succeeded", tier="draft", text=words,
+            package_id="hall-bench", version=1,
+        )
+        session.commit()
+    run_turn(harness, "Two metres wide")
+
+    for model in models.values():
+        for prompt in model.prompts + model.decision_prompts:
+            assert all(words not in str(message.content) for message in prompt)
+    with tool_state_session(tool_state) as session:
+        notices = house_file.notices_for(session, harness.thread)
+    shown = chat.history(harness.graph, thread_id=harness.thread, owner_id=harness.owner_id, notices=notices)
+    assert [m["role"] for m in shown] == ["owner", "assistant", "notice", "owner", "assistant"]
+    assert shown[2] == {
+        "role": "notice", "text": words, "outcome": "succeeded", "tier": "draft",
+        "package_id": "hall-bench", "version": 1,
+    }
+
+
+def tool_state_session(tool_state):
+    from app.agent.tools.base import ToolDeps
+
+    return ToolDeps(tool_state).session()

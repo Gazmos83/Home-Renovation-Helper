@@ -12,7 +12,7 @@ never a half-stored turn.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
@@ -338,14 +338,25 @@ def _confirmation_line(answered: dict[str, Any]) -> str:
     return line
 
 
-def history(graph: Any, *, thread_id: UUID, owner_id: UUID) -> list[dict[str, Any]]:
+def _notice_entry(notice: Any) -> dict[str, Any]:
+    entry = {"role": "notice", "text": notice.text, "outcome": notice.outcome, "tier": notice.tier}
+    if notice.package_id is not None and notice.version is not None:
+        entry |= {"package_id": notice.package_id, "version": notice.version}
+    return entry
+
+
+def history(
+    graph: Any, *, thread_id: UUID, owner_id: UUID, notices: Sequence[Any] = ()
+) -> list[dict[str, Any]]:
     """The owner's messages (with the ids of the files sent with each), every reply with
     text, and each answered confirmation, in order.
 
     A reply sent together with tool calls is shown; tool calls, arguments and
     results are not. An answered confirmation is one line from the tool message
     it was recorded on; an answered question set is its question and answer rows,
-    and a declined one the owner's own words (studio-chat-polish).
+    and a declined one the owner's own words (studio-chat-polish). Each of `notices`
+    (in `after_messages` order) comes after the messages the thread held when it was posted
+    (studio-layout).
     """
     config = _config(thread_id, owner_id)
     snapshot = graph.get_state(config)
@@ -357,8 +368,11 @@ def history(graph: Any, *, thread_id: UUID, owner_id: UUID) -> list[dict[str, An
         for task in graph.get_state(config, subgraphs=True).tasks:
             values = getattr(task.state, "values", None) or {}
             messages += [m for m in values.get("messages", []) if m.id not in known]
-    shown = []
-    for message in messages:
+    shown: list[dict[str, Any]] = []
+    waiting_notices = list(notices)
+    for position, message in enumerate(messages):
+        while waiting_notices and waiting_notices[0].after_messages <= position:
+            shown.append(_notice_entry(waiting_notices.pop(0)))
         if isinstance(message, HumanMessage):
             entry = {"role": "owner", "text": _text(message.content)}
             if message.additional_kwargs.get("upload_ids"):
@@ -374,4 +388,5 @@ def history(graph: Any, *, thread_id: UUID, owner_id: UUID) -> list[dict[str, An
                 shown.append({"role": "owner", "text": str(answered["declined"])})
             else:
                 shown.append({"role": "assistant", "kind": "answers", "text": "", "rows": list(answered.get("rows") or [])})
+    shown += [_notice_entry(notice) for notice in waiting_notices]
     return shown

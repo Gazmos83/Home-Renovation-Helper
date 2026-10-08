@@ -5,9 +5,25 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import Conversation from "./Conversation";
 
+// No WebGL in jsdom: the 3D stage is a stub that counts how often its module is loaded.
+const canvas = vi.hoisted(() => ({ loaded: 0 }));
+vi.mock("@/components/inspector/InspectorCanvas", () => {
+  canvas.loaded += 1;
+  return { default: () => <div data-testid="canvas" /> };
+});
+
+const SPEC = {
+  name: "Hall bench", units: "mm", overall: { w: 1200, h: 450, d: 400 }, modules: {},
+  layers: { carcass: ["side"] }, parts: [], hardware: [],
+};
+
 type Msg = {
-  role: "owner" | "assistant" | "confirmation";
+  role: "owner" | "assistant" | "confirmation" | "notice";
   text: string;
+  outcome?: "succeeded" | "failed";
+  tier?: string;
+  package_id?: string;
+  version?: number;
   upload_ids?: string[];
   kind?: "text" | "answers";
   rows?: { question: string; answer: string }[];
@@ -23,7 +39,7 @@ function progress(done: string[], extra: Record<string, unknown> = {}) {
     package_id: "hall-bench", name: "Hall bench", latest_version: 1, approved_version: null, build_status: "succeeded",
     steps: STEPS.map((step) => ({ step, done: done.includes(step), detail: null })),
     next_step: "Ask for a draft render", open_review_items: 0, open_requests: [],
-    screenshot: null, still: null, viewer: null, ...extra,
+    screenshot: null, still: null, viewer: null, rendering: false, ...extra,
   };
 }
 
@@ -92,6 +108,11 @@ beforeEach(() => {
         return json({ body: { thread_id: "t1", title, package_id: null, created_at: "", last_turn_at: "", messages, pending } });
       if (call === "GET /chat/threads/t1/progress") return json({ body: progressNow });
       if (call === "GET /chat/threads/t1/tools") return json({ body: tools });
+      if (call === "GET /packages/hall-bench/versions/1")
+        return json({ body: { package_id: "hall-bench", version: 1, status: "succeeded", approved_at: null, files: ["model.glb", "spec.json"] } });
+      if (call === "GET /packages/hall-bench/versions/1/files/spec.json") return json({ body: SPEC });
+      if (call === "GET /packages/hall-bench/versions/2")
+        return json({ body: { package_id: "hall-bench", version: 2, status: "queued", approved_at: null, files: [] } });
       if (call === "GET /chat/threads/t1/uploads")
         return json({ body: [{ upload_id: "u1", kind: "jpeg", size_bytes: 3, original_name: "blueprint.jpeg" }] });
       const approval = /^(PUT|DELETE) \/packages\/hall-bench\/versions\/(\d)\/approval$/.exec(call);
@@ -124,11 +145,11 @@ async function openTools(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole("button", { name: "Tools" }));
 }
 
-function show() {
+function show(path = "/conversations/t1") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/conversations/t1"]}>
+      <MemoryRouter initialEntries={[path]}>
         <Routes><Route path="/conversations/:threadId" element={<Conversation />} /></Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -145,6 +166,14 @@ test("the history is shown in order", async () => {
   const list = within(await screen.findByRole("region", { name: "Messages" }));
   expect(list.getByText("a hall bench")).toBeInTheDocument();
   expect(list.getByText("How wide?")).toBeInTheDocument();
+});
+
+test("the 3D stage is not loaded while no inspector is open", async () => {
+  messages = [owner("a hall bench"), reply("How wide?")];
+  show();
+  await screen.findByText("How wide?");
+  expect(canvas.loaded).toBe(0);
+  expect(screen.queryByRole("complementary", { name: "Inspector" })).not.toBeInTheDocument();
 });
 
 test("sending shows the message on the right, a waiting bubble naming the Foreman then Intake, then the reply", async () => {
@@ -307,7 +336,7 @@ test("open review items are counted and link to the piece's page", async () => {
   expect(panel.getByRole("link", { name: "Open the piece's page" })).toHaveAttribute("href", "/pieces");
 });
 
-test("a finished turntable shows its still and a link to its viewer", async () => {
+test("a finished turntable shows its still and offers no viewer link", async () => {
   progressNow = progress(["brief", "piece", "built", "rendered"], {
     screenshot: "/packages/hall-bench/versions/1/files/screenshot.png",
     still: "/packages/hall-bench/versions/1/files/still.png",
@@ -315,10 +344,8 @@ test("a finished turntable shows its still and a link to its viewer", async () =
   });
   show();
   const panel = within(await openProject());
-  const link = await panel.findByRole("link", { name: "Open the turntable viewer" });
-  expect(link).toHaveAttribute("href", "/packages/hall-bench/versions/1/files/viewer.html");
-  expect(link).toHaveAttribute("target", "_blank");
-  expect(panel.getByRole("img", { name: /hall-bench/ })).toHaveAttribute("src", "/packages/hall-bench/versions/1/files/still.png");
+  expect(await panel.findByRole("img", { name: /hall-bench/ })).toHaveAttribute("src", "/packages/hall-bench/versions/1/files/still.png");
+  expect(panel.queryByRole("link", { name: /viewer/ })).not.toBeInTheDocument();
 });
 
 test("no viewer link is offered before the turntable is published", async () => {
@@ -326,16 +353,18 @@ test("no viewer link is offered before the turntable is published", async () => 
   show();
   const panel = within(await openProject());
   await panel.findByText("Built");
-  expect(panel.queryByRole("link", { name: "Open the turntable viewer" })).not.toBeInTheDocument();
+  expect(panel.queryByRole("link", { name: /viewer/ })).not.toBeInTheDocument();
 });
 
-test("a built piece links to its inspector, a building one does not", async () => {
+test("a built piece has an Inspect button that opens the split view, a building one does not", async () => {
   progressNow = progress(["brief", "piece", "built"]);
   show();
   const panel = within(await openProject());
-  expect(await panel.findByRole("link", { name: "Inspect version 1" })).toHaveAttribute(
-    "href", "/pieces/hall-bench/versions/1",
-  );
+  expect(panel.queryByRole("link", { name: /Inspect/ })).not.toBeInTheDocument();
+  await userEvent.setup().click(await panel.findByRole("button", { name: "Inspect version 1" }));
+  const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
+  expect(await inspector.findByText("Overall: W 1200 mm × H 450 mm × D 400 mm")).toBeInTheDocument();
+  expect(inspector.getByRole("heading", { name: "hall-bench, version 1" })).toBeInTheDocument();
 });
 
 test("no inspector link while the build is running", async () => {
@@ -343,7 +372,7 @@ test("no inspector link while the build is running", async () => {
   show();
   const panel = within(await openProject());
   await panel.findByText("Built");
-  expect(panel.queryByRole("link", { name: /Inspect/ })).not.toBeInTheDocument();
+  expect(panel.queryByRole("button", { name: /Inspect/ })).not.toBeInTheDocument();
 });
 
 test("a render route in a reply is a link without its full stop; other addresses stay text", async () => {
@@ -709,4 +738,95 @@ test("a turn that fails while it runs gives the words back with the reason", asy
   expect(await screen.findByRole("alert")).toHaveTextContent("the model did not answer in time");
   expect(screen.getByLabelText("Message")).toHaveValue("make it wider");
   expect(within(screen.getByRole("region", { name: "Messages" })).queryByText("make it wider")).not.toBeInTheDocument();
+});
+
+
+const notice = (extra: Partial<Msg>): Msg => ({
+  role: "notice", text: "The draft turntable of hall-bench version 1 is ready. You can also check it in the Project panel.",
+  outcome: "succeeded", tier: "draft", package_id: "hall-bench", version: 1, ...extra,
+});
+
+test("the inspector opens from the address beside the chat, keeps the composer, and closes", async () => {
+  const user = userEvent.setup();
+  messages = [owner("a hall bench"), reply("How wide?")];
+  show("/conversations/t1?inspect=hall-bench/1");
+  const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
+  expect(await inspector.findByText("Overall: W 1200 mm × H 450 mm × D 400 mm")).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Messages" })).toBeInTheDocument();
+  await user.type(screen.getByRole("textbox"), "two metres");
+  expect(screen.getByRole("textbox")).toHaveValue("two metres");
+
+  await user.click(inspector.getByRole("button", { name: "Close inspector" }));
+  expect(screen.queryByRole("complementary", { name: "Inspector" })).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox")).toHaveValue("two metres");
+});
+
+test("a malformed inspect address opens nothing", async () => {
+  messages = [reply("Hello")];
+  show("/conversations/t1?inspect=../etc/passwd");
+  await screen.findByText("Hello");
+  expect(screen.queryByRole("complementary", { name: "Inspector" })).not.toBeInTheDocument();
+});
+
+test("a render notice names the tier on its Review button and opens the inspector", async () => {
+  const user = userEvent.setup();
+  messages = [
+    reply("Started a draft turntable of hall-bench version 1."),
+    notice({}),
+    notice({ text: "The preview still is ready.", tier: "preview", version: 2 }),
+    notice({ text: "The final still is ready.", tier: "final", version: 3 }),
+  ];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  expect(list.getByRole("button", { name: "Review draft v1" })).toBeInTheDocument();
+  expect(list.getByRole("button", { name: "Review preview revision 2" })).toBeInTheDocument();
+  expect(list.getByRole("button", { name: "Review final revision 3" })).toBeInTheDocument();
+
+  await user.click(list.getByRole("button", { name: "Review draft v1" }));
+  const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
+  expect(await inspector.findByText("Overall: W 1200 mm × H 450 mm × D 400 mm")).toBeInTheDocument();
+
+  // Another notice replaces the version shown; one not built yet is named in words.
+  await user.click(list.getByRole("button", { name: "Review preview revision 2" }));
+  expect(await inspector.findByRole("heading", { name: "hall-bench, version 2" })).toBeInTheDocument();
+  expect(await inspector.findByText(/Version 2 is building/)).toBeInTheDocument();
+});
+
+test("a failed, shell or composition notice has no button", async () => {
+  messages = [
+    notice({ outcome: "failed", text: "The preview turntable of hall-bench version 2 did not finish, so nothing new was published. You can ask for it again.", tier: "preview", version: 2 }),
+    notice({ text: "The draft turntable of the flat shell version 1 is ready.", package_id: undefined, version: undefined }),
+  ];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  expect(await list.findByText(/did not finish/)).toBeInTheDocument();
+  expect(list.getByText("The draft turntable of the flat shell version 1 is ready.")).toBeInTheDocument();
+  expect(list.queryByRole("button", { name: /Review/ })).not.toBeInTheDocument();
+});
+
+test("a notice appears without a reload once the running render ends", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  messages = [reply("Started a draft turntable of hall-bench version 1.")];
+  progressNow = progress(["brief", "piece", "built"], { rendering: true });
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  await list.findByText(/Started a draft turntable/);
+  expect(list.queryByText(/is ready/)).not.toBeInTheDocument();
+
+  messages = [...messages, notice({})];
+  progressNow = progress(["brief", "piece", "built", "rendered"], { rendering: false });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3100);
+  });
+  expect(await list.findByText(/The draft turntable of hall-bench version 1 is ready/)).toBeInTheDocument();
+});
+
+test("the rail sits at the screen's edge, outside the page's centred content", async () => {
+  messages = [reply("Hello")];
+  show();
+  await screen.findByText("Hello");
+  const rail = screen.getByRole("navigation", { name: "Panels" });
+  expect(rail.closest("main")).toBeNull();
+  expect(rail).toHaveClass("sticky");
+  expect(screen.getByRole("main")).not.toHaveClass("max-w-5xl");
 });

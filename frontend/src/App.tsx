@@ -46,7 +46,7 @@ function NavItem({ to, label }: { to: string; label: string }) {
       to={to}
       className={({ isActive }) =>
         cn(
-          "rounded-md px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent",
+          "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors hover:bg-accent",
           isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground",
         )
       }
@@ -87,9 +87,9 @@ export default function App() {
   return (
     <>
       {signedIn && (
-        <header className="border-b bg-card">
-          <nav aria-label="Main" className="mx-auto flex max-w-5xl flex-wrap items-center gap-1 px-4 py-2 sm:px-6">
-            <span className="mr-4 font-semibold">Home Renovation</span>
+        <header className="sticky top-0 z-40 h-[var(--header-h)] border-b bg-card">
+          <nav aria-label="Main" className="mx-auto flex h-full max-w-5xl items-center gap-1 overflow-x-auto px-4 sm:px-6">
+            <span className="mr-4 shrink-0 font-semibold whitespace-nowrap">Home Renovation</span>
             {links.map(([to, label]) => (
               <NavItem key={to} to={to} label={label} />
             ))}

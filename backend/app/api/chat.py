@@ -133,13 +133,19 @@ class AnswerRowOut(BaseModel):
 
 
 class MessageOut(BaseModel):
-    role: Literal["owner", "assistant", "confirmation"]
+    role: Literal["owner", "assistant", "confirmation", "notice"]
     text: str
     # `answers` is an answered question set, shown as its `rows` (studio-chat-polish).
     kind: Literal["text", "answers"] = Field(default="text", exclude_if=lambda kind: kind == "text")
     rows: list[AnswerRowOut] | None = Field(default=None, exclude_if=lambda rows: rows is None)
     # The files sent with an owner's message; left out when none were.
     upload_ids: list[UUID] | None = Field(default=None, exclude_if=lambda ids: ids is None)
+    # A render notice (studio-layout): its outcome and tier, and for a piece version the
+    # piece and version; all left out for the other roles.
+    outcome: Literal["succeeded", "failed"] | None = Field(default=None, exclude_if=lambda v: v is None)
+    tier: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    package_id: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    version: int | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class ThreadDetailOut(ThreadOut):
@@ -171,6 +177,8 @@ class ProgressOut(BaseModel):
     screenshot: str | None
     still: str | None
     viewer: str | None
+    # True while a render of the latest version is queued or running (studio-layout).
+    rendering: bool = False
 
 
 def _refusal(code: int, failure_class: str, reason: str) -> HTTPException:
@@ -400,8 +408,10 @@ def read_thread(
 ) -> ThreadDetailOut:
     thread = _load_thread(request, thread_id)
     graph = _graph(request)
+    with Session(request.app.state.engine) as session:
+        notices = house_file.notices_for(session, thread_id)
     try:
-        messages = chat.history(graph, thread_id=thread_id, owner_id=login.user_id)
+        messages = chat.history(graph, thread_id=thread_id, owner_id=login.user_id, notices=notices)
         waiting = chat.pending(graph, thread_id=thread_id, owner_id=login.user_id)
     except psycopg.OperationalError as error:
         logger.error("chat memory unavailable", extra={"context": {"error_type": type(error).__name__}})

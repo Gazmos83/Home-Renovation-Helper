@@ -415,6 +415,33 @@ class Thread(Base):
     )
 
 
+class ThreadNotice(Base):
+    """A notice code posted into a conversation when a render it started ended
+    (studio-layout). `after_messages` is how many checkpointed messages the thread
+    held then, so history can place it; the text never carries error text or paths."""
+
+    __tablename__ = "thread_notices"
+    __table_args__ = (
+        CheckConstraint("outcome IN ('succeeded', 'failed')", name="ck_thread_notices_outcome"),
+        Index("ix_thread_notices_thread_id_after_messages", "thread_id", "after_messages"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    thread_id: Mapped[UUID] = mapped_column(
+        ForeignKey("threads.id", ondelete="CASCADE", name="fk_thread_notices_thread_id_threads"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    after_messages: Mapped[int] = mapped_column(Integer, nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    tier: Mapped[str] = mapped_column(String(16), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    package_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class ThreadPiece(Base):
     """A build (piece) worked on in a conversation, with its own "decisions so far"
     summary. `threads.package_id` names the active one."""

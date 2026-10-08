@@ -73,6 +73,11 @@ class ToolDeps:
         return getattr(self._state, "loop", None)
 
     @property
+    def graph(self) -> Any:
+        """The compiled Foreman graph, or `None` when conversation memory is down."""
+        return getattr(self._state, "graph", None)
+
+    @property
     def offload(self) -> Any:
         """The render server's runtime, or `None` when it is not configured."""
         return getattr(self._state, "offload", None)

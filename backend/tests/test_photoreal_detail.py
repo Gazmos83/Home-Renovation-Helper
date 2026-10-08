@@ -156,7 +156,8 @@ def test_an_approved_final_saves_the_live_file_then_renders_the_detail_copy(boun
     folder = folder_of(tool_state)
     result = render_detail.run(final(), replace(bound(), approved=True))
     assert result.startswith("Started a final turntable of the detailed bench version 1")
-    assert "/packages/bench/versions/1/files/detail/viewer.html" in result
+    assert result.endswith("When it finishes, a Review button appears in this chat.")
+    assert "viewer.html" not in result
     job = wait_job(folder, "detail-turntable")
     assert job["tier"] == "final"
     frames = sorted((storage.detail_dir(folder) / "frames").iterdir())
@@ -208,3 +209,14 @@ def test_a_detail_pass_lights_a_composed_room_on_a_copy(make_ctx, tool_deps, too
     pause = render_detail.preview({**target, "tier": "final", "kind": "still"}, make_ctx())
     assert isinstance(pause, Confirmation) and pause.subject == "detail_render"
     assert (room / storage.INPUT_FILE).read_bytes() == document_before, "nothing is written to the composition"
+
+
+def test_an_approved_final_detail_render_posts_a_notice(bound, live, tool_deps, tool_state) -> None:
+    from tests.graph_helpers import make_harness
+    from tests.test_builder_tools import wait_notices
+
+    harness = make_harness(tool_state)
+    tool_state.graph = harness.graph
+    started(bound)
+    render_detail.run(final(), replace(bound(thread_id=harness.thread), approved=True))
+    assert wait_notices(tool_deps, harness.thread) == [("succeeded", "final", "bench", 1)]

@@ -88,7 +88,8 @@ def test_a_draft_turntable_is_enqueued_with_its_estimate_and_viewer(make_ctx, to
     shown, result = render(make_ctx)
     assert shown is None
     assert result.startswith("Started a draft turntable of bench version 1: about")
-    assert "/packages/bench/versions/1/files/viewer.html" in result
+    assert result.endswith("When it finishes, a Review button appears in this chat.")
+    assert "viewer.html" not in result
     state = wait_for_status(folder_of(tool_state), "succeeded")
     job = wait_job(folder_of(tool_state), "turntable")
     assert job["tier"] == "draft"
@@ -172,7 +173,7 @@ def test_a_room_render_carries_the_room_fit_document(make_ctx, tool_deps, tool_s
 
     shown, result = render(make_ctx, kind="still", room=document)
     assert shown is None
-    assert "/packages/bench/versions/1/files/room/still.png" in result
+    assert "a Review button appears in this chat" in result and "still.png" not in result
     job = wait_job(folder_of(tool_state), "room-still")
     assert job["tier"] == "draft"
     scene = json.loads((folder_of(tool_state) / "room" / "scene.json").read_text(encoding="utf-8"))
@@ -242,7 +243,8 @@ def test_a_draft_shell_turntable_is_enqueued_with_its_estimate_and_viewer(make_c
     assert render_preview(args, make_ctx()) is None
     result = render_run(args, make_ctx())
     assert result.startswith("Started a draft turntable of the Flat shell version 1: about")
-    assert "/apartments/flat/shell/versions/1/files/viewer.html" in result
+    assert result.endswith("When it finishes, a notice appears in this chat.")
+    assert "viewer.html" not in result
     folder = storage.shell_version_dir(tool_state.settings.render_root, "flat", 1)
     job = wait_job(folder, "turntable")
     assert job["tier"] == "draft"
@@ -297,7 +299,8 @@ def test_a_draft_turntable_of_a_composition_starts_with_its_estimate(make_ctx, t
     assert render_preview(args, make_ctx()) is None
     result = render_run(args, make_ctx())
     assert result.startswith("Started a draft turntable of Wohnen version 1: about")
-    assert "/compositions/wohnen/versions/1/files/viewer.html" in result and "no longer approved" not in result
+    assert result.endswith("When it finishes, a notice appears in this chat.")
+    assert "viewer.html" not in result and "no longer approved" not in result
     folder = storage.composition_version_dir(tool_state.settings.render_root, "wohnen", 1)
     job = wait_job(folder, "turntable")
     assert job["tier"] == "draft"
@@ -333,3 +336,63 @@ def test_the_reply_says_when_a_placed_version_is_no_longer_approved(make_ctx, to
         session.commit()
     result = render_run({"composition": "Wohnen", "tier": "draft", "kind": "still"}, make_ctx())
     assert result.endswith("Note: bench v1 is no longer approved.")
+
+
+# --- the notice a conversation's render posts (studio-layout) ------------------------------
+
+
+def wait_notices(tool_deps, thread, count: int = 1, seconds: float = 10.0) -> list:
+    import time
+
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        with tool_deps.session() as session:
+            found = [(n.outcome, n.tier, n.package_id, n.version) for n in house_file.notices_for(session, thread)]
+        if len(found) >= count:
+            return found
+        time.sleep(0.05)
+    return found
+
+
+def test_a_draft_turntable_started_in_a_thread_posts_one_succeeded_notice(make_ctx, tool_deps, tool_state) -> None:
+    from tests.graph_helpers import make_harness
+
+    harness = make_harness(tool_state)
+    tool_state.graph = harness.graph
+    thread = harness.thread
+    made(make_ctx, tool_state)
+    result = render_run(
+        {"package_id": "bench", "tier": "draft", "kind": "turntable"}, make_ctx(thread_id=thread)
+    )
+    assert result.startswith("Started a draft turntable")
+    assert wait_notices(tool_deps, thread) == [("succeeded", "draft", "bench", 1)]
+
+
+def test_a_failing_preview_posts_one_failed_notice_and_stays_failed(make_ctx, tool_deps, tool_state) -> None:
+    from tests.blender_fakes import fake_failure_launch
+    from tests.graph_helpers import make_harness
+
+    harness = make_harness(tool_state)
+    tool_state.graph = harness.graph
+    thread = harness.thread
+    made(make_ctx, tool_state)
+    tool_state.blender_launch = fake_failure_launch
+    render_run({"package_id": "bench", "tier": "preview", "kind": "turntable"}, make_ctx(thread_id=thread))
+    assert wait_notices(tool_deps, thread) == [("failed", "preview", "bench", 1)]
+    jobs = (storage.read_status(folder_of(tool_state)) or {}).get("renders", {})
+    assert jobs["turntable"]["status"] == "failed"
+
+
+def test_a_render_with_no_thread_posts_no_notice(make_ctx, tool_deps, tool_state) -> None:
+    import time
+
+    from tests.graph_helpers import make_harness
+
+    harness = make_harness(tool_state)
+    tool_state.graph = harness.graph
+    thread = harness.thread
+    made(make_ctx, tool_state)
+    render_run({"package_id": "bench", "tier": "draft", "kind": "turntable"}, make_ctx())
+    wait_job(folder_of(tool_state), "turntable")
+    time.sleep(0.3)
+    assert wait_notices(tool_deps, thread, seconds=0.1) == []

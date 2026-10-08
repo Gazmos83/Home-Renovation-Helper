@@ -53,13 +53,6 @@ function RenderCard({ packageId, version, item }: { packageId: string; version: 
         {item.tier && <Badge variant="secondary">{item.tier}</Badge>}
       </div>
       <img src={item.preview} alt={`${item.label} of ${packageId} version ${version}`} className="max-h-72 rounded-md border" />
-      {item.viewer && (
-        <p>
-          <a href={item.viewer} target="_blank" rel="noreferrer" className="underline">
-            Open the {item.label.toLowerCase()} viewer
-          </a>
-        </p>
-      )}
       {item.can_rate ? (
         <div className="flex flex-wrap items-center gap-2">
           <Button

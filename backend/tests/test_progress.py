@@ -166,3 +166,14 @@ def test_the_readiness_helpers_match_what_the_foreman_used(db_session: Session, 
     (folder / "model.blend").write_bytes(b"blend")
     assert progress.detail_ready(render_root, "hall-bench", 1)
     assert not progress.detail_ready(render_root, None, 1)
+
+
+def test_a_render_is_running_only_while_one_is_queued_or_running(db_session: Session, render_root: Path) -> None:
+    folder = _piece(db_session, render_root)
+    assert _read(db_session, render_root)["rendering"] is False
+    for state, expected in (("queued", True), ("running", True), ("succeeded", False), ("failed", False)):
+        storage.write_render_status(folder, "turntable", status=state, tier="draft")
+        assert _read(db_session, render_root)["rendering"] is expected, state
+    storage.write_render_status(folder, "turntable", status="succeeded", tier="draft")
+    storage.write_render_status(folder, "still", status="running", tier="draft")
+    assert _read(db_session, render_root)["rendering"] is True

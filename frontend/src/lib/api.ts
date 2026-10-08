@@ -28,12 +28,17 @@ export type Pending = {
 export type AnswerRow = { question: string; answer: string };
 
 export type ChatMessage = {
-  role: "owner" | "assistant" | "confirmation";
+  role: "owner" | "assistant" | "confirmation" | "notice";
   text: string;
   /** `answers` is an answered question set, shown as its rows. */
   kind?: "text" | "answers";
   rows?: AnswerRow[];
   upload_ids?: string[];
+  /** A render notice: its outcome and tier, and for a piece version the piece and version. */
+  outcome?: "succeeded" | "failed";
+  tier?: string;
+  package_id?: string;
+  version?: number;
 };
 
 export type ThreadDetail = Thread & { messages: ChatMessage[]; pending: Pending | null };
@@ -84,6 +89,8 @@ export type Progress = {
   screenshot: string | null;
   still: string | null;
   viewer: string | null;
+  /** True while a render of the latest version is queued or running. */
+  rendering: boolean;
 };
 
 export type ModelsPayload = {

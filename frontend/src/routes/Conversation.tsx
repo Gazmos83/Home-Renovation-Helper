@@ -1,7 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Circle, Pencil } from "lucide-react";
-import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { Check, Circle, Pencil, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   api,
   type ChatMessage,
@@ -23,12 +23,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Page } from "@/components/Page";
 import { Attachment } from "@/components/chat/Attachment";
 import { Bubble } from "@/components/chat/Bubble";
+import { Notice } from "@/components/chat/Notice";
 import { Composer } from "@/components/chat/Composer";
 import { QuestionForm } from "@/components/chat/QuestionForm";
 import { Rail } from "@/components/chat/Rail";
 import { Reply } from "@/components/chat/Reply";
 import { ROLE_LABELS } from "@/components/chat/roles";
 import { WaitingBubble } from "@/components/chat/WaitingBubble";
+import { InspectorView } from "@/components/inspector/InspectorView";
 
 const STEP_LABELS: Record<string, string> = {
   brief: "Brief confirmed",
@@ -79,16 +81,15 @@ function Tools({ threadId }: { threadId: string }) {
   );
 }
 
-function ProjectPanel({ threadId }: { threadId: string }) {
-  const progress = useQuery({
-    queryKey: ["progress", threadId],
-    queryFn: () => api.progress(threadId),
-    refetchInterval: (query) => {
-      const status = query.state.data?.build_status;
-      return status === "queued" || status === "running" ? 3000 : false;
-    },
-  });
-
+function ProjectPanel({
+  threadId,
+  progress,
+  onInspect,
+}: {
+  threadId: string;
+  progress: UseQueryResult<Progress>;
+  onInspect: (packageId: string, version: number) => void;
+}) {
   const queryClient = useQueryClient();
   const change = useMutation({
     mutationFn: ({ approve, version }: { approve: boolean; version: number }) => {
@@ -158,18 +159,15 @@ function ProjectPanel({ threadId }: { threadId: string }) {
         </div>
       )}
       {picture && <img src={picture} alt={`Latest picture of ${p.package_id}`} className="max-h-56 rounded-md border" />}
-      {p.viewer && (
-        <p>
-          <a href={p.viewer} target="_blank" rel="noreferrer" className="underline">
-            Open the turntable viewer
-          </a>
-        </p>
-      )}
       {p.package_id && p.latest_version !== null && p.build_status === "succeeded" && (
         <p>
-          <Link to={`/pieces/${encodeURIComponent(p.package_id)}/versions/${p.latest_version}`} className="underline">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onInspect(p.package_id as string, p.latest_version as number)}
+          >
             Inspect version {p.latest_version}
-          </Link>
+          </Button>
         </p>
       )}
       <ol className="space-y-1">
@@ -310,6 +308,13 @@ function OwnerMessage({ m, uploadById }: { m: ChatMessage; uploadById: Map<strin
   );
 }
 
+/** `?inspect=<package-id>/<n>`: the version shown beside the chat, or `null`. */
+function parseInspect(value: string | null): { packageId: string; version: number } | null {
+  const found = value?.match(/^([a-z0-9][a-z0-9-]*)\/(\d+)$/i);
+  if (!found || Number(found[2]) < 1) return null;
+  return { packageId: found[1], version: Number(found[2]) };
+}
+
 type Running = { working: string | null; tool: string | null };
 
 export default function Conversation() {
@@ -320,7 +325,42 @@ export default function Conversation() {
   const [answerError, setAnswerError] = useState<string | null>(null);
   const [optimistic, setOptimistic] = useState<{ text: string; uploads: Upload[] } | null>(null);
   const [panel, setPanel] = useState<string | null>(null);
-  const thread = useQuery({ queryKey: ["thread", threadId], queryFn: () => api.thread(threadId) });
+  const [params, setParams] = useSearchParams();
+  const inspected = parseInspect(params.get("inspect"));
+
+  // The progress runs here so a finished build or render is noticed with the panel closed.
+  const progress = useQuery({
+    queryKey: ["progress", threadId],
+    queryFn: () => api.progress(threadId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.build_status;
+      return status === "queued" || status === "running" || query.state.data?.rendering ? 3000 : false;
+    },
+  });
+  const rendering = progress.data?.rendering ?? false;
+  const thread = useQuery({
+    queryKey: ["thread", threadId],
+    queryFn: () => api.thread(threadId),
+    refetchInterval: rendering ? 3000 : false,
+  });
+  // Once a render ends its notice is in the thread: read it again one last time.
+  const wasRendering = useRef(false);
+  useEffect(() => {
+    if (wasRendering.current && !rendering) queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
+    wasRendering.current = rendering;
+  }, [rendering, queryClient, threadId]);
+
+  function inspect(packageId: string | null, version?: number) {
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (packageId && version) next.set("inspect", `${packageId}/${version}`);
+        else next.delete("inspect");
+        return next;
+      },
+      { replace: true },
+    );
+  }
   const sentFiles = Boolean(thread.data?.messages.some((m) => m.upload_ids?.length));
   const uploads = useQuery({ queryKey: ["uploads", threadId], queryFn: () => api.uploads(threadId), enabled: sentFiles });
   const uploadById = new Map((uploads.data ?? []).map((u) => [u.upload_id, u]));
@@ -381,79 +421,101 @@ export default function Conversation() {
   const lastReply = messages.reduce((found, m, index) => (m.role === "assistant" && m.kind !== "answers" ? index : found), -1);
 
   return (
-    <Page>
-      <p><Link to="/conversations" className="underline">All conversations</Link></p>
-      <Title key={thread.data.title} threadId={threadId} title={thread.data.title} />
-      <div className="relative flex gap-2">
-        <Rail
-          open={panel}
-          onOpen={setPanel}
-          panels={[
-            { id: "tools", label: "Tools", icon: "tools", content: <Tools threadId={threadId} /> },
-            { id: "project", label: "Project", icon: "project", content: <ProjectPanel threadId={threadId} /> },
-          ]}
-        />
-        <div className="min-w-0 flex-1 space-y-4">
-          <section className={`${cardClass} space-y-4`} aria-label="Messages">
-            {messages.length === 0 && !optimistic && <p className="text-muted-foreground">Nothing said yet. Describe the piece you want.</p>}
-            {messages.map((m, index) => {
-              if (m.role === "confirmation") {
-                return (
-                  <p key={index} className="mx-auto w-fit rounded-md border px-3 py-2 text-sm text-muted-foreground" data-role="confirmation">
-                    Answered: {m.text}
-                  </p>
-                );
-              }
-              if (m.kind === "answers") {
-                return (
-                  <div key={index} className="mx-auto w-full max-w-xl" data-role="answers">
-                    <AnswersTable rows={m.rows ?? []} />
-                  </div>
-                );
-              }
-              if (m.role === "owner") return <OwnerMessage key={index} m={m} uploadById={uploadById} />;
-              return (
-                <Bubble key={index} side="left" speaker="Foreman">
-                  <Reply text={m.text} />
-                  {index === lastReply && specialists.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1" aria-label="Specialists in this turn">
-                      {specialists.map((role) => (
-                        <Badge key={role} variant="outline">{ROLE_LABELS[role] ?? role}</Badge>
-                      ))}
+    <div className="flex">
+      <Rail
+        open={panel}
+        onOpen={setPanel}
+        panels={[
+          { id: "tools", label: "Tools", icon: "tools", content: <Tools threadId={threadId} /> },
+          {
+            id: "project",
+            label: "Project",
+            icon: "project",
+            content: <ProjectPanel threadId={threadId} progress={progress} onInspect={inspect} />,
+          },
+        ]}
+      />
+      <Page wide>
+        <p><Link to="/conversations" className="underline">All conversations</Link></p>
+        <Title key={thread.data.title} threadId={threadId} title={thread.data.title} />
+        <div className={inspected ? "grid gap-4 lg:grid-cols-2 lg:items-start" : "mx-auto max-w-5xl"}>
+          <div className="min-w-0 space-y-4">
+            <section className={`${cardClass} space-y-4`} aria-label="Messages">
+              {messages.length === 0 && !optimistic && <p className="text-muted-foreground">Nothing said yet. Describe the piece you want.</p>}
+              {messages.map((m, index) => {
+                if (m.role === "confirmation") {
+                  return (
+                    <p key={index} className="mx-auto w-fit rounded-md border px-3 py-2 text-sm text-muted-foreground" data-role="confirmation">
+                      Answered: {m.text}
+                    </p>
+                  );
+                }
+                if (m.role === "notice") return <Notice key={index} m={m} onReview={inspect} />;
+                if (m.kind === "answers") {
+                  return (
+                    <div key={index} className="mx-auto w-full max-w-xl" data-role="answers">
+                      <AnswersTable rows={m.rows ?? []} />
                     </div>
-                  )}
-                </Bubble>
-              );
-            })}
-            {optimistic && (
-              <OwnerMessage m={{ role: "owner", text: optimistic.text, upload_ids: optimistic.uploads.map((u) => u.upload_id) }} uploadById={new Map(optimistic.uploads.map((u) => [u.upload_id, u]))} />
-            )}
-            {running && <WaitingBubble working={running.working} tool={running.tool} />}
-          </section>
-          {pending ? (
-            <>
-              {pending.kind === "questions" ? (
-                <QuestionForm
-                  key={pending.confirmation_id}
-                  questions={pending.questions ?? []}
-                  disabled={running !== null}
-                  onAnswer={(value) => void answer(pending, value)}
-                />
-              ) : (
-                <ConfirmationCard
-                  key={pending.confirmation_id}
-                  pending={pending}
-                  disabled={running !== null}
-                  onAnswer={(value) => void answer(pending, value)}
-                />
+                  );
+                }
+                if (m.role === "owner") return <OwnerMessage key={index} m={m} uploadById={uploadById} />;
+                return (
+                  <Bubble key={index} side="left" speaker="Foreman">
+                    <Reply text={m.text} />
+                    {index === lastReply && specialists.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1" aria-label="Specialists in this turn">
+                        {specialists.map((role) => (
+                          <Badge key={role} variant="outline">{ROLE_LABELS[role] ?? role}</Badge>
+                        ))}
+                      </div>
+                    )}
+                  </Bubble>
+                );
+              })}
+              {optimistic && (
+                <OwnerMessage m={{ role: "owner", text: optimistic.text, upload_ids: optimistic.uploads.map((u) => u.upload_id) }} uploadById={new Map(optimistic.uploads.map((u) => [u.upload_id, u]))} />
               )}
-              <FieldError message={answerError} />
-            </>
-          ) : (
-            <Composer threadId={threadId} running={running !== null} onSend={send} />
+              {running && <WaitingBubble working={running.working} tool={running.tool} />}
+            </section>
+            {pending ? (
+              <>
+                {pending.kind === "questions" ? (
+                  <QuestionForm
+                    key={pending.confirmation_id}
+                    questions={pending.questions ?? []}
+                    disabled={running !== null}
+                    onAnswer={(value) => void answer(pending, value)}
+                  />
+                ) : (
+                  <ConfirmationCard
+                    key={pending.confirmation_id}
+                    pending={pending}
+                    disabled={running !== null}
+                    onAnswer={(value) => void answer(pending, value)}
+                  />
+                )}
+                <FieldError message={answerError} />
+              </>
+            ) : (
+              <Composer threadId={threadId} running={running !== null} onSend={send} />
+            )}
+          </div>
+          {inspected && (
+            <aside
+              aria-label="Inspector"
+              className="min-w-0 space-y-2 lg:sticky lg:top-[calc(var(--header-h)+1rem)] lg:max-h-[calc(100vh-var(--header-h)-2rem)] lg:overflow-y-auto"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <h2>{`${inspected.packageId}, version ${inspected.version}`}</h2>
+                <Button type="button" variant="ghost" size="sm" aria-label="Close inspector" onClick={() => inspect(null)}>
+                  <X aria-hidden size={16} />
+                </Button>
+              </div>
+              <InspectorView key={`${inspected.packageId}/${inspected.version}`} packageId={inspected.packageId} version={inspected.version} compact />
+            </aside>
           )}
         </div>
-      </div>
-    </Page>
+      </Page>
+    </div>
   );
 }

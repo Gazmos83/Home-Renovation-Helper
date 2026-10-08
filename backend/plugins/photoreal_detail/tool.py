@@ -20,7 +20,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.agent import house_file
+from app.agent import house_file, notices
 from app.agent.tools.base import AgentTool, Confirmation, ToolContext, parse_args
 from app.agent.tools.shared import NOT_APPROVED, builds_unavailable, version_folder
 from app.blender import runner, storage
@@ -369,19 +369,16 @@ def render_run(arguments: dict[str, Any], ctx: ToolContext) -> str:
             tracing=deps.tracing,
             on_finished=lambda finished, actual: calibrate_after_render(deps.engine, finished, actual),
             before=session.save,
-            on_outcome=lambda outcome: feedback_runs.finish_run(deps.engine, run_id, outcome),
+            on_outcome=lambda outcome: notices.finished(deps, ctx.thread_id, run_id, ticket.quote, outcome),
             offload=deps.offload,
             on_remote_job=lambda record: offload_jobs.record_job(deps.engine, record),
         ),
         deps.loop,
     )
     what = "still" if priced.kind == "still" else "turntable"
-    route = _files_route(
-        package_id, number, "detail/still.png" if priced.kind == "still" else "detail/viewer.html", priced.record
-    )
     return (
         f"Started a final {what} of the detailed {package_id} version {number}: "
-        f"{priced.estimate_text}. When it finishes it will be at {route}."
+        f"{priced.estimate_text}. When it finishes, a Review button appears in this chat."
     )
 
 

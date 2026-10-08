@@ -98,6 +98,7 @@ def piece_progress(
         jobs = state.get("renders") or {}
 
     built = build_status == "succeeded"
+    rendering = any(j.get("status") in ("queued", "running") for j in jobs.values())
     done_model = {k: j for k, j in jobs.items() if k in _MODEL_RENDERS and j.get("status") == "succeeded"}
     rendered = bool(done_model) or bool(
         folder
@@ -139,6 +140,7 @@ def piece_progress(
         "latest_version": latest,
         "approved_version": piece["approved_version"] if piece else None,
         "build_status": build_status if has_piece else None,
+        "rendering": rendering,
         "steps": steps,
         "next_step": _next_step(steps, build_status, has_piece),
         "open_review_items": open_items,
