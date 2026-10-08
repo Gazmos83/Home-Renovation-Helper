@@ -49,4 +49,4 @@
   - deleting the room removes it and its composition, and the Pieces page shows its piece with "No room".
 
   Verify that the recording is saved with the change notes.
-- [ ] 6.3 Run `openspec validate rooms-page --strict`. Verify that it passes. Before archiving, confirm that `conversation-projects` is archived first, because the `design-agents` routing delta starts from its text.
+- [x] 6.3 Run `openspec validate rooms-page --strict`. Verify that it passes. Before archiving, confirm that `conversation-projects` is archived first, because the `design-agents` routing delta starts from its text.

@@ -15,7 +15,7 @@ Each turn SHALL be handled by exactly one specialist (Intake, Designer, Builder,
 - The Builder is never chosen when the thread has no bound piece with a built version.
 - The Reviewer is never chosen unless the bound piece's latest version has a screenshot or a render.
 - Lighting & materials is never chosen unless the bound piece's latest version has a successful build.
-- A thread with no piece and no confirmed brief goes to Intake, unless the owner asks to compose a room while the house file holds an approved piece version or a composition in the conversation's room or apartment (the Designer).
+- A thread with no piece and no confirmed brief goes to Intake, unless the owner asks to compose a room while the conversation has a confirmed room, or while the house file holds an approved piece version or a composition in the conversation's room or apartment (the Designer). A confirmed room is enough because a room may be composed with no items.
 - A thread with no piece and no confirmed brief SHALL also go to the Designer when the Foreman chose the Designer and the owner's message, or the reply just before it, names a piece in the house file by its package id or its name. This is so that the piece can be revised, rebuilt or given an imported version. A named piece that is not yet one of the conversation's builds joins them and becomes the active build.
 - The Researcher prices only a bound piece's version.
 
@@ -67,6 +67,10 @@ The two fixed questions SHALL be composed by the application, SHALL NOT need a m
 
 #### Scenario: Compose request in a new thread
 - **WHEN** a thread has no piece and no brief, its confirmed room is `Wohnen`, the house file holds an approved version of `bench` in `Wohnen`, and the owner asks to compose `Wohnen` with it
+- **THEN** the Designer answers, not Intake
+
+#### Scenario: Empty room compose request in a new thread
+- **WHEN** a thread has no piece and no brief, its confirmed room is `Hall`, nothing is approved and nothing is composed, and the owner asks to compose `Hall` with no furniture
 - **THEN** the Designer answers, not Intake
 
 #### Scenario: Revise a named piece from a new thread
@@ -250,11 +254,19 @@ A turn SHALL end with its reply, and nothing SHALL message the owner afterwards.
 - **THEN** the reply says the Project panel shows the build's status and that the owner can ask again, and it does not promise a later message
 
 ### Requirement: The Designer composes a room
-`compose_room` SHALL take a full composition: its scope (a room, or an apartment) and its list of items with their placements. It SHALL validate the composition, then pause for the owner's `yes` with a summary. The summary SHALL list each item with its size and placement, any design-rule warnings, and, when a composition already exists for that scope, the items added, moved and removed relative to its latest version. Only `yes` SHALL create the version and start its headless build. A refusal (unknown room, unapproved version, model not ready, invalid placement) SHALL be returned to the Designer without a pause, so the Designer can state it to the owner in plain words. The Designer SHALL never write or run Blender Python.
+`compose_room` SHALL take a full composition: its scope (a room, or an apartment) and its list of items with their placements. For a room the list SHALL be allowed to be empty, which composes the room alone. It SHALL validate the composition, then pause for the owner's `yes` with a summary. The summary SHALL list each item with its size and placement, or say that the room is composed with no items, any design-rule warnings, and, when a composition already exists for that scope, the items added, moved and removed relative to its latest version. Only `yes` SHALL create the version and start its headless build. A refusal (unknown room, unapproved version, model not ready, invalid placement, an apartment with no items) SHALL be returned to the Designer without a pause, so the Designer can state it to the owner in plain words. The Designer SHALL never write or run Blender Python.
 
 #### Scenario: Confirmed composition
 - **WHEN** the owner asks to see the approved listening wall in `Wohnen` with a sofa stand-in, and answers `yes` to the summary
 - **THEN** `Wohnen` v1 is created and its build is started, and the reply says so
+
+#### Scenario: Empty room confirmed
+- **WHEN** the owner asks for a composition of `Hall` with no furniture and answers `yes` to a summary saying the room is composed with no items
+- **THEN** `Hall` v1 is created with no items and its build is started, and the reply says so
+
+#### Scenario: Last item removed
+- **WHEN** `Hall` v1 holds one stand-in and the owner confirms `Hall` with no items
+- **THEN** the summary lists that stand-in as removed, and on `yes` `Hall` v2 is created with no items
 
 #### Scenario: Declined
 - **WHEN** the owner answers `no`
