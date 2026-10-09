@@ -2,7 +2,8 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { ThumbsDown, ThumbsUp } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { api, ApiError, downloads, type Pricing, type RenderItem } from "../lib/api";
+import { api, ApiError, downloads, versionFile, type Pricing, type RenderItem, type VersionInfo } from "../lib/api";
+import { pictureVersion } from "../lib/pieces";
 import { euros } from "../lib/money";
 import { FieldError } from "../lib/form";
 import { Badge } from "@/components/ui/badge";
@@ -101,7 +102,8 @@ function RenderCard({ packageId, version, item }: { packageId: string; version: 
   );
 }
 
-function Approval({ packageId, version }: { packageId: string; version: number }) {
+/** A built version's actions: approve or unapprove, and open it in the inspector. */
+function VersionActions({ packageId, version }: { packageId: string; version: number }) {
   const queryClient = useQueryClient();
   const info = useQuery({
     queryKey: ["version", packageId, version],
@@ -120,12 +122,17 @@ function Approval({ packageId, version }: { packageId: string; version: number }
   if (!info.data || info.data.status !== "succeeded") return null;
   const approved = info.data.approved_at !== null;
   return (
-    <div className="flex flex-wrap items-center gap-2" role="group" aria-label={`Approval of ${packageId} version ${version}`}>
-      {approved && <Badge>Approved</Badge>}
-      <Button type="button" variant={approved ? "outline" : "default"} disabled={change.isPending} onClick={() => change.mutate(!approved)}>
-        {approved ? "Unapprove" : "Approve"} version {version}
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label={`Approval of ${packageId} version ${version}`}>
+        {approved && <Badge>Approved</Badge>}
+        <Button type="button" variant={approved ? "outline" : "default"} disabled={change.isPending} onClick={() => change.mutate(!approved)}>
+          {approved ? "Unapprove" : "Approve"} version {version}
+        </Button>
+        <FieldError message={message(change.error)} />
+      </div>
+      <Button asChild variant="outline">
+        <Link to={`/pieces/${encodeURIComponent(packageId)}/versions/${version}`}>Inspect version {version}</Link>
       </Button>
-      <FieldError message={message(change.error)} />
     </div>
   );
 }
@@ -246,19 +253,29 @@ function Downloads({ packageId, version }: { packageId: string; version: number 
     queryFn: () => api.version(packageId, version),
   });
   return (
-    <p className="flex flex-wrap gap-4 text-sm">
-      <a href={downloads.design(packageId, version)} download={`${packageId}-v${version}.json`} className="underline">
-        Download design (version {version})
+    <p className="flex flex-wrap gap-2 text-sm" aria-label={`Downloads of ${packageId} version ${version}`}>
+      <span>Downloads:</span>{" "}
+      <a
+        href={downloads.design(packageId, version)}
+        download={`${packageId}-v${version}.json`}
+        aria-label={`Download design (version ${version})`}
+        className="underline"
+      >
+        Design (JSON)
       </a>
       {info.data?.status === "succeeded" && (
-        <a href={downloads.bundle(packageId, version)} download={`${packageId}-v${version}.zip`} className="underline">
-          Download bundle (version {version})
-        </a>
-      )}
-      {info.data?.status === "succeeded" && (
-        <Link to={`/pieces/${encodeURIComponent(packageId)}/versions/${version}`} className="underline">
-          Inspect version {version}
-        </Link>
+        <>
+          {" "}
+          <span aria-hidden>·</span>{" "}
+          <a
+            href={downloads.bundle(packageId, version)}
+            download={`${packageId}-v${version}.zip`}
+            aria-label={`Download bundle (version ${version})`}
+            className="underline"
+          >
+            Bundle (ZIP)
+          </a>
+        </>
       )}
     </p>
   );
@@ -284,7 +301,7 @@ function Version({ packageId, version }: { packageId: string; version: number })
   }
   return (
     <div className="grid gap-4">
-      <Approval packageId={packageId} version={version} />
+      <VersionActions packageId={packageId} version={version} />
       <Downloads packageId={packageId} version={version} />
       <PricingPanel packageId={packageId} version={version} />
       {shown}
@@ -327,6 +344,14 @@ function RoomPicker({ id, room }: { id: string; room: string | null }) {
   );
 }
 
+/** A version dropdown entry: "Version N" and its state, if it has one (approved, failed, building). */
+function versionLabel(version: number, info: VersionInfo | undefined): string {
+  if (info?.approved_at) return `Version ${version} (approved)`;
+  if (info?.status === "failed") return `Version ${version} (failed)`;
+  if (info?.status === "queued" || info?.status === "running") return `Version ${version} (building)`;
+  return `Version ${version}`;
+}
+
 function Piece({ id, versions, room }: { id: string; versions: number[]; room: string | null }) {
   const queryClient = useQueryClient();
   const [chosen, setVersion] = useState(versions[0]);
@@ -340,27 +365,40 @@ function Piece({ id, versions, room }: { id: string; versions: number[]; room: s
   });
   const approved = infos.find((q) => q.data?.approved_at)?.data?.version;
   const shown = infos[versions.indexOf(version)]?.data;
+  // The approved version's screenshot, else the newest one's: it does not follow the dropdown.
+  const picture = pictureVersion(infos.map((q) => q.data));
   return (
     <section className={cardClass} aria-label={id}>
       <h2>{id}</h2>
+      {picture && (
+        <figure className="grid w-fit gap-1">
+          <img
+            src={versionFile(id, picture.version, "screenshot.png")}
+            alt={`${id} version ${picture.version}`}
+            className="max-h-48 rounded-md border object-contain"
+          />
+          <figcaption className="text-sm text-muted-foreground">
+            Version {picture.version}
+            {picture.approved ? " (approved)" : ""}
+          </figcaption>
+        </figure>
+      )}
       <p className="text-sm text-muted-foreground">
         {approved ? `Approved: version ${approved}` : "No version approved yet."}
       </p>
       <RoomPicker id={id} room={room} />
-      <div className="flex flex-wrap gap-2" role="group" aria-label={`Versions of ${id}`}>
-        {versions.map((n) => (
-          <Button
-            key={n}
-            type="button"
-            size="sm"
-            variant={n === version ? "default" : "outline"}
-            aria-pressed={n === version}
-            onClick={() => setVersion(n)}
-          >
-            Version {n}
-          </Button>
+      <Select
+        aria-label={`Versions of ${id}`}
+        className="w-auto max-w-full min-w-0"
+        value={version}
+        onChange={(event) => setVersion(Number(event.target.value))}
+      >
+        {versions.map((n, index) => (
+          <option key={n} value={n}>
+            {versionLabel(n, infos[index]?.data)}
+          </option>
         ))}
-      </div>
+      </Select>
       {shown && !shown.approved_at && (
         <DeleteVersion
           key={version}

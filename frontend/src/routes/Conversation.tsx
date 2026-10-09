@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { Check, Circle, Pencil, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   api,
@@ -352,6 +352,9 @@ function parseInspect(value: string | null): { packageId: string; version: numbe
 
 type Running = { working: string | null; tool: string | null };
 
+/** How close to the end of the messages box still counts as being at the last message. */
+const AT_BOTTOM_PX = 32;
+
 export default function Conversation() {
   const { threadId = "" } = useParams();
   const queryClient = useQueryClient();
@@ -390,6 +393,34 @@ export default function Conversation() {
     if (wasFollowing.current && !following) queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
     wasFollowing.current = following;
   }, [following, queryClient, threadId]);
+  // The messages box scrolls by itself and follows new items only while the owner is at its end.
+  const list = useRef<HTMLElement>(null);
+  const atBottom = useRef(true);
+  const column = useRef<HTMLDivElement>(null);
+  const [columnTop, setColumnTop] = useState(0);
+  const loaded = thread.data !== undefined;
+  useLayoutEffect(() => {
+    function measure() {
+      if (column.current) setColumnTop(column.current.getBoundingClientRect().top + window.scrollY);
+    }
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [loaded]);
+  useEffect(() => {
+    atBottom.current = true;
+  }, [threadId]);
+  const messageCount = thread.data?.messages.length ?? 0;
+  const lastLength = thread.data?.messages.at(-1)?.text.length ?? 0;
+  useLayoutEffect(() => {
+    if (list.current && atBottom.current) list.current.scrollTop = list.current.scrollHeight;
+    // `columnTop` too: measuring the column shortens the box after its first scroll.
+  }, [loaded, columnTop, messageCount, lastLength, optimistic, running?.working, running?.tool, kept.length]);
+  function onScroll() {
+    const box = list.current;
+    if (box) atBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight <= AT_BOTTOM_PX;
+  }
+
   const inspectedSpec = useQuery({
     queryKey: ["spec", inspected?.packageId, inspected?.version],
     queryFn: () => api.pieceSpec(inspected?.packageId as string, inspected?.version as number),
@@ -471,6 +502,7 @@ export default function Conversation() {
   async function send(text: string, files: Upload[]): Promise<string | null> {
     const edited = editing;
     setEditing(null);
+    atBottom.current = true;
     setOptimistic({ text, uploads: edited ? [] : files });
     const refused = await follow((onEvent, signal) =>
       edited
@@ -483,6 +515,7 @@ export default function Conversation() {
 
   async function answer(pending: Pending, value: ResumeBody) {
     setAnswerError(null);
+    atBottom.current = true;
     setAnswerError(await follow((onEvent) => api.streamResume(threadId, pending.confirmation_id, value, onEvent)));
   }
 
@@ -518,9 +551,22 @@ export default function Conversation() {
       <Page wide>
         <p><Link to="/conversations" className="underline">All conversations</Link></p>
         <Title key={thread.data.title} threadId={threadId} title={thread.data.title} />
-        <div className={inspected ? "grid gap-4 lg:grid-cols-2 lg:items-start" : "mx-auto max-w-5xl"}>
-          <div className="min-w-0 space-y-4">
-            <section className={`${cardClass} space-y-4`} aria-label="Messages">
+        <div
+          className={inspected ? "grid gap-4 lg:grid-cols-2 lg:items-start" : "mx-auto max-w-5xl"}
+          // The window height left under the header and the title, less the page's bottom padding:
+          // the chat column's height, and the inspector's at most beside it.
+          style={{ "--chat-h": `calc(100vh - ${columnTop}px - 2rem)` } as CSSProperties}
+        >
+          <div
+            ref={column}
+            className="flex h-(--chat-h) min-w-0 flex-col gap-4"
+          >
+            <section
+              ref={list}
+              onScroll={onScroll}
+              className={`${cardClass} min-h-48 flex-1 space-y-4 overflow-y-auto`}
+              aria-label="Messages"
+            >
               {messages.length === 0 && !optimistic && <p className="text-muted-foreground">Nothing said yet. Describe the piece you want.</p>}
               {messages.map((m, index) => {
                 if (m.role === "confirmation") {
@@ -605,7 +651,7 @@ export default function Conversation() {
           {inspected && (
             <aside
               aria-label="Inspector"
-              className="min-w-0 space-y-2 lg:sticky lg:top-[calc(var(--header-h)+1rem)] lg:max-h-[calc(100vh-var(--header-h)-2rem)] lg:overflow-y-auto"
+              className="min-w-0 space-y-2 lg:sticky lg:top-[calc(var(--header-h)+1rem)] lg:max-h-(--chat-h) lg:overflow-y-auto"
             >
               <div className="flex items-center justify-between gap-2">
                 <h2>{inspectedSpec.data?.name || inspected.packageId}</h2>

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { expect, test } from "vitest";
@@ -142,8 +142,29 @@ test("another version loads its own renders", async () => {
   });
   show();
   await screen.findByRole("img");
-  await user.click(screen.getByRole("button", { name: "Version 1" }));
+  await user.selectOptions(screen.getByRole("combobox", { name: "Versions of bench" }), "1");
   expect(await screen.findByText("No renders of this version yet.")).toBeInTheDocument();
+});
+
+test("the versions are a dropdown, newest first, each with its state", async () => {
+  serve([turntable], (call) => {
+    if (call === "GET /packages") return { body: [{ package_id: "bench", versions: [4, 3, 2, 1] }] };
+    if (call === "GET /packages/bench/versions/4") return { body: info(4, 4) };
+    if (call === "GET /packages/bench/versions/3") return { body: info(3, 4, "failed") };
+    if (call === "GET /packages/bench/versions/2") return { body: info(2, 4, "running") };
+    if (call === "GET /packages/bench/versions/4/renders") return { body: [] };
+  });
+  show();
+  const versions = await screen.findByRole("combobox", { name: "Versions of bench" });
+  expect(await screen.findByRole("option", { name: "Version 2 (building)" })).toBeInTheDocument();
+  expect(within(versions).getAllByRole("option").map((o) => o.textContent)).toEqual([
+    "Version 4 (approved)",
+    "Version 3 (failed)",
+    "Version 2 (building)",
+    "Version 1",
+  ]);
+  expect(versions).toHaveValue("4");
+  expect(screen.queryByRole("button", { name: /^Version \d/ })).toBeNull();
 });
 
 test("a built version is approved from the page and the badge shows without a reload", async () => {
@@ -210,7 +231,12 @@ test("a built version offers the design and the bundle downloads", async () => {
   const bundle = await screen.findByRole("link", { name: "Download bundle (version 2)" });
   expect(bundle).toHaveAttribute("href", "/packages/bench/versions/2/bundle");
   expect(bundle).toHaveAttribute("download", "bench-v2.zip");
-  expect(screen.getByRole("link", { name: "Inspect version 2" })).toHaveAttribute("href", "/pieces/bench/versions/2");
+  const inspect = screen.getByRole("link", { name: "Inspect version 2" });
+  expect(inspect).toHaveAttribute("href", "/pieces/bench/versions/2");
+  expect(inspect).toHaveAttribute("data-slot", "button");
+  const line = design.closest("p")!;
+  expect(line).toHaveTextContent("Downloads: Design (JSON) · Bundle (ZIP)");
+  expect(line).not.toContainElement(inspect);
 });
 
 test("a version still building offers the design but not the bundle", async () => {
@@ -377,9 +403,9 @@ test("a confirmed delete drops the version from the piece and shows another", as
   expect(calls.some(([m, u]) => m === "DELETE" && u === "/packages/bench/versions/2")).toBe(false);
   await user.click(screen.getByRole("button", { name: "Yes, delete version 2" }));
   expect(await screen.findByText("No renders of this version yet.")).toBeInTheDocument();
-  const versions = screen.getByRole("group", { name: "Versions of bench" });
+  const versions = screen.getByRole("combobox", { name: "Versions of bench" });
   expect(versions).not.toHaveTextContent("Version 2");
-  expect(screen.getByRole("button", { name: "Version 1" })).toHaveAttribute("aria-pressed", "true");
+  expect(versions).toHaveValue("1");
 });
 
 test("an approved version offers no delete", async () => {
@@ -404,4 +430,40 @@ test("deleting the only version says the piece goes and drops the piece", async 
   expect(screen.getByText(/the whole piece will be deleted/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Yes, delete version 2" }));
   expect(await screen.findByText("No pieces yet. Describe one in a conversation.")).toBeInTheDocument();
+});
+
+// --- the piece's picture (pieces-page-and-chat-scroll) -----------------------------------
+
+test("the card shows the newest screenshot, keeps it when another version is chosen, and moves to an approved one", async () => {
+  const user = userEvent.setup();
+  const state = { approved: null as number | null };
+  const built = (version: number) => ({ ...info(version, state.approved), files: ["screenshot.png", "still.png"] });
+  serve([turntable], (call) => {
+    const read = /^GET \/packages\/bench\/versions\/(\d)$/.exec(call);
+    if (read) return { body: built(Number(read[1])) };
+    if (call === "GET /packages/bench/versions/1/renders") return { body: [] };
+    if (call === "PUT /packages/bench/versions/1/approval") {
+      state.approved = 1;
+      return { body: built(1) };
+    }
+  }, state);
+  show();
+  const picture = await screen.findByRole("img", { name: "bench version 2" });
+  expect(picture).toHaveAttribute("src", "/packages/bench/versions/2/files/screenshot.png");
+  expect(picture.closest("figure")).toHaveTextContent("Version 2");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Versions of bench" }), "1");
+  expect(await screen.findByText("No renders of this version yet.")).toBeInTheDocument();
+  expect(screen.getByRole("img", { name: "bench version 2" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Approve version 1" }));
+  const approved = await screen.findByRole("img", { name: "bench version 1" });
+  expect(approved).toHaveAttribute("src", "/packages/bench/versions/1/files/screenshot.png");
+  expect(approved.closest("figure")).toHaveTextContent("Version 1 (approved)");
+});
+
+test("a piece with no screenshot shows no picture", async () => {
+  serve([turntable], undefined, { approved: null, status: "running" });
+  show();
+  await screen.findByRole("img", { name: "Turntable of bench version 2" });
+  expect(screen.queryByRole("img", { name: /^bench version/ })).toBeNull();
+  expect(screen.queryByRole("figure")).toBeNull();
 });

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -1045,4 +1045,129 @@ test("a build notice appears without a reload once the followed build ends", asy
     await vi.advanceTimersByTimeAsync(3100);
   });
   expect(await list.findByRole("button", { name: "Inspect version 1" })).toBeInTheDocument();
+});
+
+// --- the messages box scrolls by itself (pieces-page-and-chat-scroll) --------------------
+
+/** jsdom has no layout: the Messages box gets a stated scroll height and view height, and keeps its scrollTop. */
+function boxGeometry(scrollHeight: number, clientHeight: number) {
+  const geometry = { scrollHeight, clientHeight };
+  const tops = new WeakMap<Element, number>();
+  const isBox = (el: Element) => el.getAttribute("aria-label") === "Messages";
+  const spies = [
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return isBox(this) ? geometry.scrollHeight : 0;
+    }),
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return isBox(this) ? geometry.clientHeight : 0;
+    }),
+    vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(function (this: Element) {
+      return tops.get(this) ?? 0;
+    }),
+    vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (this: Element, value: number) {
+      tops.set(this, value);
+    }),
+  ];
+  return { geometry, restore: () => spies.forEach((spy) => spy.mockRestore()) };
+}
+
+function scrollBoxTo(box: HTMLElement, top: number) {
+  box.scrollTop = top;
+  fireEvent.scroll(box);
+}
+
+test("the messages scroll in their own box with the composer below it", async () => {
+  messages = [owner("a hall bench"), reply("How wide?")];
+  show();
+  const box = await screen.findByRole("region", { name: "Messages" });
+  expect(box).toHaveClass("overflow-y-auto", "flex-1", "min-h-48");
+  const composer = screen.getByLabelText("Message");
+  expect(box).not.toContainElement(composer);
+  const column = box.parentElement!;
+  expect(column).toHaveClass("flex", "flex-col", "h-(--chat-h)");
+  expect(column).toContainElement(composer);
+  expect(column.parentElement!.style.getPropertyValue("--chat-h")).toMatch(/^calc\(100vh /);
+});
+
+test("a conversation opens at its last message", async () => {
+  const { restore } = boxGeometry(2000, 400);
+  try {
+    messages = Array.from({ length: 30 }, (_, i) => (i % 2 ? reply(`reply ${i}`) : owner(`message ${i}`)));
+    show();
+    const box = await screen.findByRole("region", { name: "Messages" });
+    await waitFor(() => expect(box.scrollTop).toBe(2000));
+  } finally {
+    restore();
+  }
+});
+
+test("a reply is followed while the owner is at the bottom", async () => {
+  const { geometry, restore } = boxGeometry(2000, 400);
+  try {
+    const user = userEvent.setup();
+    const live = controlledStream();
+    turn = () => ({ events: live.stream });
+    messages = [owner("a hall bench"), reply("How wide?")];
+    show();
+    const box = await screen.findByRole("region", { name: "Messages" });
+    await user.type(screen.getByLabelText("Message"), "1200 mm");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByRole("status");
+    messages = [...messages, owner("1200 mm"), reply("Noted: 1200 mm wide.")];
+    geometry.scrollHeight = 2600;
+    live.send({ event: "reply", data: { reply: "Noted: 1200 mm wide.", specialists: ["intake"] } });
+    live.send({ event: "done", data: {} });
+    live.close();
+    expect(await screen.findByText("Noted: 1200 mm wide.")).toBeInTheDocument();
+    await waitFor(() => expect(box.scrollTop).toBe(2600));
+  } finally {
+    restore();
+  }
+});
+
+test("a reply does not move the box while the owner reads older messages", async () => {
+  const { geometry, restore } = boxGeometry(2000, 400);
+  try {
+    const user = userEvent.setup();
+    const live = controlledStream();
+    turn = () => ({ events: live.stream });
+    messages = [owner("a hall bench"), reply("How wide?")];
+    show();
+    const box = await screen.findByRole("region", { name: "Messages" });
+    await user.type(screen.getByLabelText("Message"), "1200 mm");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByRole("status");
+    scrollBoxTo(box, 100);
+    messages = [...messages, owner("1200 mm"), reply("Noted: 1200 mm wide.")];
+    geometry.scrollHeight = 2600;
+    live.send({ event: "reply", data: { reply: "Noted: 1200 mm wide.", specialists: ["intake"] } });
+    live.send({ event: "done", data: {} });
+    live.close();
+    expect(await screen.findByText("Noted: 1200 mm wide.")).toBeInTheDocument();
+    expect(box.scrollTop).toBe(100);
+  } finally {
+    restore();
+  }
+});
+
+test("sending jumps to the bottom even when the owner had scrolled up", async () => {
+  const { geometry, restore } = boxGeometry(2000, 400);
+  try {
+    const user = userEvent.setup();
+    const live = controlledStream();
+    turn = () => ({ events: live.stream });
+    messages = [owner("a hall bench"), reply("How wide?")];
+    show();
+    const box = await screen.findByRole("region", { name: "Messages" });
+    await waitFor(() => expect(box.scrollTop).toBe(2000));
+    scrollBoxTo(box, 100);
+    geometry.scrollHeight = 2300;
+    await user.type(screen.getByLabelText("Message"), "1200 mm");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByRole("status");
+    expect(box.scrollTop).toBe(2300);
+    live.close();
+  } finally {
+    restore();
+  }
 });
