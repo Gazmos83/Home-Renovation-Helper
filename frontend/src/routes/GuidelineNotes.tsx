@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cardClass } from "@/components/ui/card";
 import { Page } from "@/components/Page";
+import { HardwareDataSection } from "@/components/HardwareDataSection";
 
 const FIELDS = ["title", "body", "citation", "value", "unit"];
 
@@ -88,6 +89,7 @@ export default function GuidelineNotes() {
         ),
       )}
       <NoteForm onDone={reload} />
+      <HardwareDataSection />
     </Page>
   );
 }

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.agent.tools.base import AgentTool, ToolContext, parse_args
 from app.agent.tools.shared import read_input, version_folder
+from app.blender import storage
 from app.blender.custom_build import derive as custom_derive
 
 
@@ -30,7 +31,8 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
     document = read_input(folder)
     if document is None:
         return f"version {number} of {args.package_id!r} has no readable document"
-    parts, hardware, _assembly = custom_derive.derive(document)
+    inputs = storage.read_hardware_inputs(folder)
+    parts, hardware, _assembly = custom_derive.derive(document, inputs)
     lines = [f"Cut list for {args.package_id} version {number}:"]
     for part in parts:
         lines.append(
@@ -40,8 +42,13 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
     lines.append(f"Parts: {len(parts)} rows, {sum(p['qty'] for p in parts)} pieces in all")
     lines.append("Hardware:")
     for item in hardware:
-        lines.append(f"- {item['item']} ({item['id']}): {item['qty']}")
-    lines.append(f"Hardware: {len(hardware)} lines, {sum(h['qty'] for h in hardware)} items in all")
+        lines.append(f"- {item['item']} ({item['id']}): {item['qty'] if item['qty'] != '' else 'no quantity'}")
+    counted = [h["qty"] for h in hardware if h["qty"] != ""]
+    lines.append(f"Hardware: {len(hardware)} lines, {sum(counted)} items in all")
+    unknown = [h["id"] for h in hardware if h["qty"] == ""]
+    if unknown:
+        lines.append(f"Hardware with no quantity (a value is missing): {', '.join(unknown)}")
+    lines += custom_derive.drilling_lines(None if inputs is None else custom_derive.drilling(document, inputs))
     return "\n".join(lines)
 
 

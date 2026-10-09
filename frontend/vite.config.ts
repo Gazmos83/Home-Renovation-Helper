@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
 
-const API = "http://127.0.0.1:8000";
+const API = process.env.API_PROXY ?? "http://127.0.0.1:8000";
 
 // These pages share their path with an API route: a browser navigation (it asks for
 // HTML) gets the app, every other request goes to the API.
@@ -35,6 +35,8 @@ export default defineConfig({
       "/snapshots": page,
       "/remnants": page,
       "/guideline-notes": page,
+      // API-only: hardware data sheets live on the guidelines page, not their own route.
+      "/hardware-data": API,
     },
   },
   test: {

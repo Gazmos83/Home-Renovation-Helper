@@ -10,10 +10,12 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import Any, Final
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.blender.custom_build.derive import BRACKET_COUNT_CHECK, BRACKET_SPACING_CHECK
 from app.blender.room_contract import Point, RoomBuildContext
 
 Applies = str  # "placement" | "piece"
@@ -54,6 +56,42 @@ class SpanEntry(BaseModel):
 class ShelfSpan(BaseModel):
     model_config = ConfigDict(extra="forbid")
     table: list[SpanEntry] = Field(min_length=1)
+
+
+class BracketRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    max_length_mm: float = Field(gt=0)
+    min_brackets: int = Field(ge=1)
+
+
+class BracketCount(BaseModel):
+    """The count table: the first row whose length is at least the board's gives the minimum."""
+
+    model_config = ConfigDict(extra="forbid")
+    table: list[BracketRow] = Field(min_length=1)
+
+
+class EndRange(BaseModel):
+    """The cited distance from a board's end to its outer bracket, kept as the range it is quoted as."""
+
+    model_config = ConfigDict(extra="forbid")
+    min: float = Field(gt=0)
+    max: float = Field(gt=0)
+    unit: str = "mm"
+
+    @model_validator(mode="after")
+    def _ordered(self) -> EndRange:
+        if self.unit != "mm":
+            raise ValueError("end_distance_mm must be in mm")
+        if self.min >= self.max:
+            raise ValueError("end_distance_mm needs min below max")
+        return self
+
+
+class BracketSpacing(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    end_distance_mm: EndRange
+    even_tolerance_mm: float = Field(gt=0, description="the owner's measuring tolerance, not a quoted limit")
 
 
 # --- placement checks ------------------------------------------------------------
@@ -179,7 +217,7 @@ def shelf_span(spec: Mapping[str, Any], params: ShelfSpan) -> list[Measurement]:
     table = sorted(params.table, key=lambda entry: entry.thickness_mm)
     found = []
     for module in spec.get("modules", []):
-        if not module.get("shelves"):
+        if not (module.get("shelves") or module.get("adjustable_shelves")):
             continue
         thickness = spec["materials"][module["carcass"]]["thickness_mm"]
         entry = max((e for e in table if e.thickness_mm <= thickness), key=lambda e: e.thickness_mm, default=None)
@@ -190,6 +228,49 @@ def shelf_span(spec: Mapping[str, Any], params: ShelfSpan) -> list[Measurement]:
             what=f"shelf span in module {module['id']!r} ({thickness} mm board)", value=f"{span:g} mm",
             limit=f"at most {entry.max_span_mm:g} mm", breached=span > entry.max_span_mm,
         ))
+    return found
+
+
+def _owner_shelves(spec: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Wall shelves whose bracket positions the owner set; calculated brackets are the rules' own."""
+    return [shelf for shelf in spec.get("wall_shelves") or [] if shelf.get("bracket_positions_mm")]
+
+
+def shelf_bracket_count(spec: Mapping[str, Any], params: BracketCount) -> list[Measurement]:
+    """A wall shelf's brackets against the minimum for its length (next row up; the last row beyond the table)."""
+    table = sorted(params.table, key=lambda row: row.max_length_mm)
+    found = []
+    for shelf in _owner_shelves(spec):
+        row = next((r for r in table if shelf["length"] <= r.max_length_mm), table[-1])
+        count = len(shelf["bracket_positions_mm"])
+        found.append(Measurement(
+            what=f"brackets on wall shelf {shelf['id']!r} ({shelf['length']:g} mm long)",
+            value=f"{count} bracket{'s' if count != 1 else ''}", limit=f"at least {row.min_brackets} brackets",
+            breached=count < row.min_brackets,
+        ))
+    return found
+
+
+def shelf_bracket_spacing(spec: Mapping[str, Any], params: BracketSpacing) -> list[Measurement]:
+    """The owner's outer brackets against the cited end range, and the gaps between them for evenness."""
+    low, high = params.end_distance_mm.min, params.end_distance_mm.max
+    found = []
+    for shelf in _owner_shelves(spec):
+        positions, length = shelf["bracket_positions_mm"], shelf["length"]
+        for side, distance in (("left", positions[0]), ("right", length - positions[-1])):
+            found.append(Measurement(
+                what=f"outer bracket of wall shelf {shelf['id']!r}, from its {side} end", value=f"{distance:g} mm",
+                limit=f"{low:g} to {high:g} mm", breached=not low <= distance <= high,
+            ))
+        if len(positions) >= 3:
+            gaps = [later - earlier for earlier, later in pairwise(positions)]
+            mean = sum(gaps) / len(gaps)
+            largest = max(abs(gap - mean) for gap in gaps)
+            found.append(Measurement(
+                what=f"gaps between the brackets of wall shelf {shelf['id']!r} (not evenly spaced; mean gap {mean:g} mm)",
+                value=f"largest difference from the mean gap {largest:g} mm",
+                limit=f"at most {params.even_tolerance_mm:g} mm", breached=largest > params.even_tolerance_mm,
+            ))
     return found
 
 
@@ -205,4 +286,6 @@ CHECKS: Final[dict[str, CheckSpec]] = {
     "door_swing_clear": CheckSpec("placement", DoorSwingClear, door_swing_clear),
     "height_range_mm": CheckSpec("piece", HeightRange, height_range),
     "shelf_span_mm_for_thickness": CheckSpec("piece", ShelfSpan, shelf_span),
+    BRACKET_COUNT_CHECK: CheckSpec("piece", BracketCount, shelf_bracket_count),
+    BRACKET_SPACING_CHECK: CheckSpec("piece", BracketSpacing, shelf_bracket_spacing),
 }

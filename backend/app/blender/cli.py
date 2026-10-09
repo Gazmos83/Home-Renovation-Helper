@@ -103,6 +103,31 @@ def parse_generator_arguments(argv: list[str]) -> tuple[Path, Path]:
     return _readable_file(parsed.spec, "spec"), _new_output(parsed.out)
 
 
+def parse_build_arguments(argv: list[str]) -> tuple[Path, Path, Path | None]:
+    """Resolved spec and output paths for the package build, and the version's frozen
+    hardware inputs when the runner passes `--hardware-data` (none for an older version)."""
+    parser = _ArgumentParser(add_help=False)
+    parser.add_argument("--spec", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--hardware-data")
+    parsed = parser.parse_args(_after_separator(argv, "--spec and --out"))
+    hardware = _readable_file(parsed.hardware_data, "hardware data") if parsed.hardware_data else None
+    return _readable_file(parsed.spec, "spec"), _new_output(parsed.out), hardware
+
+
+def load_hardware_inputs(path: Path | None) -> dict | None:
+    """The frozen hardware inputs a build derives with, or None when the version has none."""
+    if path is None:
+        return None
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise InputError(f"hardware data: {path.name} is not readable JSON: {error}") from None
+    if not isinstance(document, dict):
+        raise InputError("hardware data: the file must hold one JSON object")
+    return document
+
+
 def parse_render_arguments(argv: list[str]) -> tuple[Path, Path, TierArguments]:
     """Resolved `model.blend` and output paths, and the tier, for a still or
     turntable of a built piece."""

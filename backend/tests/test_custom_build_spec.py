@@ -538,3 +538,76 @@ def test_the_room_schema_refuses_tier_owned_output_fields_by_name(output: dict) 
     with pytest.raises(ValidationError) as caught:
         RoomSceneSpec.model_validate(document)
     assert next(k for k in output if k != "kind") in describe_validation_error(caught.value)
+
+
+# --- adjustable shelves, hinge keys and wall shelves (cabinet-hardware-calculator) ------------
+
+
+def _shelf_build(**shelf) -> dict:
+    entry = {
+        "id": "wall-shelf-1", "name": "Wall shelf", "x": 100, "z": 1400, "length": 1200, "depth": 250,
+        "material": "carcass", "bracket": "bracket-white",
+    }
+    entry.update(shelf)
+    return {
+        "kind": "custom_build", "schema_version": 1, "units": "mm", "name": "Shelf",
+        "materials": {"carcass": {"material": "Eiche 18 mm", "thickness_mm": 18}},
+        "envelope": {"width": 2000, "height": 2000, "depth": 400},
+        "wall_shelves": [entry],
+    }
+
+
+def test_adjustable_shelves_and_the_hinge_key_are_accepted(desk: dict) -> None:
+    desk["modules"][0]["adjustable_shelves"] = 2
+    desk["modules"][0]["shelf_pin"] = "shelf-pin-5mm"
+    spec = CustomBuildSpec.model_validate(desk)
+    assert spec.modules[0].adjustable_shelves == 2 and spec.modules[0].shelf_pin == "shelf-pin-5mm"
+
+
+def test_a_door_defaults_to_the_concealed_hinge_and_can_name_another() -> None:
+    starter = json.loads((TEMPLATES / "custom-build.json").read_text(encoding="utf-8"))
+    assert CustomBuildSpec.model_validate(starter).modules[0].fronts[0].hinge == "hinge-concealed-110"
+    starter["modules"][0]["fronts"][0]["hinge"] = "hinge-blum-clip-110"
+    assert CustomBuildSpec.model_validate(starter).modules[0].fronts[0].hinge == "hinge-blum-clip-110"
+
+
+@pytest.mark.parametrize("positions", [None, [150, 600, 1050]])
+def test_a_wall_shelf_is_accepted_with_and_without_positions(positions: list[int] | None) -> None:
+    document = _shelf_build(bracket_positions_mm=positions) if positions else _shelf_build()
+    spec = CustomBuildSpec.model_validate(document)
+    assert spec.wall_shelves[0].bracket_positions_mm == positions
+
+
+def test_a_bracket_outside_the_board_is_refused_naming_the_field() -> None:
+    message = _refusal(_shelf_build(length=900, bracket_positions_mm=[100, 950]))
+    assert "wall_shelves[0].bracket_positions_mm" in message and "900" in message
+
+
+def test_positions_out_of_order_are_refused() -> None:
+    message = _refusal(_shelf_build(bracket_positions_mm=[600, 150, 1050]))
+    assert "wall_shelves[0].bracket_positions_mm" in message and "strictly increasing" in message
+
+
+@pytest.mark.parametrize("positions", [[], list(range(10, 220, 10))])
+def test_an_empty_or_long_position_list_is_refused(positions: list[int]) -> None:
+    assert "wall_shelves.0.bracket_positions_mm" in _refusal(_shelf_build(bracket_positions_mm=positions))
+
+
+def test_a_wall_shelf_id_must_be_unique_across_modules_and_parts(desk: dict) -> None:
+    document = _shelf_build(id=desk["modules"][0]["id"])
+    document["modules"] = [desk["modules"][0]]
+    document["materials"] = desk["materials"]
+    message = _refusal(document)
+    assert "wall_shelves[0].id" in message
+
+
+def test_a_wall_shelf_outside_the_envelope_or_without_a_slot_is_refused() -> None:
+    assert "outside the envelope" in _refusal(_shelf_build(x=1000))
+    assert "undefined material slot" in _refusal(_shelf_build(material="nope"))
+
+
+@pytest.mark.parametrize("field", ["load_kg", "pin_pitch_mm"])
+def test_unknown_shelf_and_module_fields_are_refused_by_name(desk: dict, field: str) -> None:
+    assert f"wall_shelves.0.{field}" in _refusal(_shelf_build(**{field: 5}))
+    desk["modules"][0][field] = 5
+    assert f"modules.0.{field}" in _refusal(desk)

@@ -192,6 +192,28 @@ export type GuidelineNote = {
 
 export type NewGuidelineNote = Omit<GuidelineNote, "id">;
 
+/** One measured value of a hardware data sheet: a single number or a range, as its source gives it. */
+export type HardwareMeasure = { value: number } | { min: number; max: number };
+
+export type HardwareKind = "hinge" | "shelf_pin";
+
+/** The drilling values of one hinge or shelf-pin item and the source they were read from (hardware-drilling). */
+export type HardwareDataSheet = {
+  id: string;
+  key: string;
+  kind: HardwareKind;
+  maker: string;
+  model: string;
+  values: Record<string, unknown>;
+  source_kind: "toom" | "manual";
+  page_url: string | null;
+  datasheet_url: string | null;
+  citation: string;
+  updated_at: string;
+};
+
+export type NewHardwareDataSheet = Omit<HardwareDataSheet, "id" | "updated_at">;
+
 export type PieceSummary = { package_id: string; versions: number[]; room: string | null };
 
 /** A measured room of the house file, with what deleting it would touch (rooms-page). */
@@ -263,7 +285,31 @@ export type SpecPart = {
   module: string;
 };
 
-export type SpecHardware = { id: string; item: string; qty: number; notes: string };
+/** `""` when a missing data-sheet value leaves the quantity unknown (hardware-drilling). */
+export type SpecHardware = { id: string; item: string; qty: number | ""; notes: string };
+
+/** A drilling position: an exact value, a range, or its rule in words (hardware-drilling). */
+export type DrillForm = { mm: number } | { min_mm: number; max_mm: number } | { rule: string };
+
+export type DrillEntry = {
+  calculation: string;
+  part: string;
+  what: string;
+  /** The whole line the workshop reads, source included. */
+  text: string;
+  positions: { label: string; position: DrillForm; from: string }[];
+  missing: string[];
+  problem: string | null;
+};
+
+/** The drilling list a version was calculated with; absent on a version made before it existed. */
+export type DrillingList = {
+  calculated: true;
+  complete: boolean;
+  warnings: string[];
+  counts: Record<string, number | null>;
+  entries: DrillEntry[];
+};
 
 /** The parts of a built version's emitted `spec.json` the inspector reads (piece-inspector). */
 export type PieceSpec = {
@@ -278,6 +324,7 @@ export type PieceSpec = {
   layers: Record<string, string[]>;
   parts?: SpecPart[];
   hardware?: SpecHardware[];
+  drilling?: DrillingList;
 };
 
 export type RenderItem = {
@@ -620,4 +667,10 @@ export const api = {
   updateNote: (id: string, note: NewGuidelineNote) =>
     request<GuidelineNote>(`/guideline-notes/${id}`, { method: "PUT", body: JSON.stringify(note) }),
   deleteNote: (id: string) => request<void>(`/guideline-notes/${id}`, { method: "DELETE" }),
+  hardwareData: () => request<HardwareDataSheet[]>("/hardware-data"),
+  createHardwareData: (sheet: NewHardwareDataSheet) =>
+    request<HardwareDataSheet>("/hardware-data", { method: "POST", body: JSON.stringify(sheet) }),
+  updateHardwareData: (id: string, sheet: Omit<NewHardwareDataSheet, "key">) =>
+    request<HardwareDataSheet>(`/hardware-data/${id}`, { method: "PUT", body: JSON.stringify(sheet) }),
+  deleteHardwareData: (id: string) => request<void>(`/hardware-data/${id}`, { method: "DELETE" }),
 };

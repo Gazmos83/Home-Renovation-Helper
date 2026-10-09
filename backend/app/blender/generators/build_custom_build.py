@@ -48,7 +48,8 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.blender.cli import (
     InputError,
     load_custom_build,
-    parse_generator_arguments,
+    load_hardware_inputs,
+    parse_build_arguments,
 )
 from app.blender.custom_build import derive as rules
 from app.blender.generators._scene import (
@@ -101,6 +102,7 @@ Box = tuple[tuple[float, float, float], tuple[float, float, float]]  # (size, ce
 @dataclass
 class BuildState:
     spec: Mapping[str, Any]
+    inputs: Mapping[str, Any] | None = None
     materials: dict[str, bpy.types.Material] = field(default_factory=dict)
     layers: LayerRegistry = field(default_factory=lambda: LayerRegistry.for_layers(rules.LAYER_NAMES))
 
@@ -143,13 +145,24 @@ def _module_boxes(module: Mapping[str, Any], materials: Mapping[str, Any]) -> di
             [((width, b, height), (x + width / 2, y + depth - b / 2, z + height / 2))],
         )
     shelves = module["shelves"]
+    adjustable = module.get("adjustable_shelves", 0)
+    # Fixed and adjustable shelves are spaced evenly together, the fixed ones in the lowest slots.
+    step = (height - 2 * t) / (shelves + adjustable + 1)
     if shelves:
-        step = (height - 2 * t) / (shelves + 1)
         pieces[f"{mid}-shelf"] = (
             "shelves",
             [
                 ((inner_w, inner_d, t), (x + width / 2, y + inner_d / 2, z + t + step * (k + 1)))
                 for k in range(shelves)
+            ],
+        )
+    if adjustable:
+        board_w = math.floor(inner_w - rules.ADJUSTABLE_SHELF_CLEARANCE_MM)
+        pieces[f"{mid}-adjustable-shelf"] = (
+            "shelves",
+            [
+                ((board_w, inner_d, t), (x + width / 2, y + inner_d / 2, z + t + step * (shelves + k + 1)))
+                for k in range(adjustable)
             ],
         )
 
@@ -205,6 +218,17 @@ def _extra_boxes(spec: Mapping[str, Any], right_edge: float, front_edge: float) 
             )
             offset_y += extra["width"] + 20
         pieces[extra["id"]] = ("extras", boxes)
+    return pieces
+
+
+def _wall_shelf_boxes(spec: Mapping[str, Any]) -> dict[str, tuple[str, list[Box]]]:
+    """Each wall shelf is one board at its stated position; brackets are never drawn."""
+    pieces: dict[str, tuple[str, list[Box]]] = {}
+    for shelf in spec.get("wall_shelves") or []:
+        t = spec["materials"][shelf["material"]]["thickness_mm"]
+        size = (shelf["length"], shelf["depth"], t)
+        centre = (shelf["x"] + shelf["length"] / 2, shelf["y"] + shelf["depth"] / 2, shelf["z"] + t / 2)
+        pieces[shelf["id"]] = ("shelves", [(size, centre)])
     return pieces
 
 
@@ -280,10 +304,11 @@ def _frame(spec: Mapping[str, Any]) -> tuple[float, float, float, dict[str, int]
     modules = spec["modules"]
     if spec.get("envelope") is not None or not modules:
         return 0.0, 0.0, 0.0, overall
+    placed = [*modules, *(spec.get("wall_shelves") or [])]
     return (
-        float(min(module["x"] for module in modules)),
-        float(min(module["y"] for module in modules)),
-        float(min(module["z"] for module in modules)),
+        float(min(item["x"] for item in placed)),
+        float(min(item["y"] for item in placed)),
+        float(min(item["z"] for item in placed)),
         overall,
     )
 
@@ -325,6 +350,8 @@ def _build_scene(state: BuildState, parts: list[dict[str, Any]]) -> None:
             pieces[row_id] = (module["id"], layer, boxes)
     for row_id, (layer, boxes) in _extra_boxes(spec, x0 + overall["w"], y0).items():
         pieces[row_id] = (rules.EXTRAS_MODULE, layer, boxes)
+    for row_id, (layer, boxes) in _wall_shelf_boxes(spec).items():
+        pieces[row_id] = (row_id, layer, boxes)
 
     empties: dict[str, bpy.types.Object] = {}
     collections: dict[str, bpy.types.Collection] = {}
@@ -336,6 +363,15 @@ def _build_scene(state: BuildState, parts: list[dict[str, Any]]) -> None:
         )
         collections[module["id"]] = _collection(f"{index + 1:02d}_{module['id']}", root_collection)
         empties[module["id"]] = _empty(f"MOD_{module['id']}", centre, collections[module["id"]], root)
+    for index, shelf in enumerate(spec.get("wall_shelves") or [], start=len(spec["modules"])):
+        thickness = spec["materials"][shelf["material"]]["thickness_mm"]
+        centre = (
+            shelf["x"] + shelf["length"] / 2 - shift[0],
+            shelf["y"] + shelf["depth"] / 2 - shift[1],
+            shelf["z"] + thickness / 2,
+        )
+        collections[shelf["id"]] = _collection(f"{index + 1:02d}_{shelf['id']}", root_collection)
+        empties[shelf["id"]] = _empty(f"MOD_{shelf['id']}", centre, collections[shelf["id"]], root)
     if spec.get("extra_parts"):
         collections[rules.EXTRAS_MODULE] = _collection("99_extras", root_collection)
         empties[rules.EXTRAS_MODULE] = _empty("MOD_extras", (0, 0, 0), collections[rules.EXTRAS_MODULE], root)
@@ -490,7 +526,7 @@ def _build_cameras_lights(overall: Mapping[str, int], z0: float) -> None:
 
 
 def _write_shop_data(state: BuildState, output_dir: Path, parts: list[dict[str, Any]], hardware: list[dict[str, Any]]) -> None:
-    emitted = rules.emitted_spec(state.spec)
+    emitted = rules.emitted_spec(state.spec, state.inputs)
     emitted["blender_version"] = bpy.app.version_string
     emitted["layers"] = state.layers.as_json()
     emitted["notes"] = [
@@ -554,9 +590,9 @@ def _write_views(output_dir: Path) -> None:
     face_camera(scene.camera)
 
 
-def _build_package(spec: Mapping[str, Any], output_dir: Path) -> None:
-    state = BuildState(spec=spec)
-    parts, hardware, _assembly = rules.derive(spec)
+def _build_package(spec: Mapping[str, Any], output_dir: Path, inputs: Mapping[str, Any] | None = None) -> None:
+    state = BuildState(spec=spec, inputs=inputs)
+    parts, hardware, _assembly = rules.derive(spec, inputs)
     try:
         _build_scene(state, parts)
     except GeneratorError:
@@ -589,11 +625,12 @@ def _build_package(spec: Mapping[str, Any], output_dir: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     stage: Path | None = None
     try:
-        spec_path, output_path = parse_generator_arguments(list(sys.argv if argv is None else argv))
+        spec_path, output_path, hardware_path = parse_build_arguments(list(sys.argv if argv is None else argv))
         spec = load_custom_build(spec_path)
+        inputs = load_hardware_inputs(hardware_path)
         stage = output_path.parent / f".{output_path.name}.tmp-{uuid.uuid4().hex}"
         stage.mkdir()
-        _build_package(spec, stage)
+        _build_package(spec, stage, inputs)
         os.replace(stage, output_path)
         stage = None
         print(f"WROTE {output_path}")

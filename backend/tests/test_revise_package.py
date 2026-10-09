@@ -158,3 +158,24 @@ def test_a_rebuild_without_approval_or_declined_creates_nothing(make_ctx, tool_s
 def test_a_rebuild_of_an_unknown_piece_is_refused(make_ctx) -> None:
     refused = rebuild_preview({"package_id": "no-such-piece"}, make_ctx())
     assert isinstance(refused, str) and "no piece 'no-such-piece'" in refused
+
+
+def test_the_preview_warns_about_owner_brackets_and_still_lets_the_owner_confirm(make_ctx, tool_state) -> None:
+    from app.guidelines.rules import load_rules
+
+    make_piece(make_ctx, tool_state)
+    tool_state.design_rules = load_rules()
+    shelf = {
+        "id": "wall-shelf-1", "name": "Wall shelf", "x": 0, "z": 1500, "length": 1500, "depth": 250,
+        "material": "carcass", "bracket": "bracket-white", "bracket_positions_mm": [150, 1350],
+    }
+    shown = preview({"package_id": "hall-bench", "changes": {"add_wall_shelves": [shelf]}}, make_ctx())
+    assert isinstance(shown, Confirmation)
+    assert "shelf-bracket-count" in shown.summary and "wall-shelf-1" in shown.summary
+    assert "2 brackets" in shown.summary and "at least 3" in shown.summary
+    assert "topnotch-shelf-brackets" in shown.summary
+    assert "shelf-bracket-spacing" not in shown.summary  # 150 mm from each end is inside 100 to 200 mm
+
+    output = run({"package_id": "hall-bench", "changes": {"add_wall_shelves": [shelf]}}, replace(make_ctx(), approved=True))
+    assert "version 2" in output.text
+    wait_for_status(storage.version_dir(tool_state.settings.render_root, "hall-bench", 2))

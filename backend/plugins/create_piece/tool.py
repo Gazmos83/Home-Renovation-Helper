@@ -30,6 +30,7 @@ from app.agent.tools.shared import (
 from app.blender import storage
 from app.blender.custom_build import derive as custom_derive
 from app.db.models import Piece
+from app.guidelines.hardware_inputs import freeze_inputs
 from app.guidelines.rules import piece_outcome
 from app.packages import service
 
@@ -125,11 +126,14 @@ def create_and_record(
     ctx: ToolContext, package_id: str, spec: dict[str, Any], changes: list[str] | None = None
 ) -> int:
     """Create version 1, record the piece and the version, bind the thread and start the build."""
+    with ctx.deps.session() as session:
+        inputs = freeze_inputs(session, ctx.deps.design_rules, spec)
     created = service.create_version(
         ctx.deps.render_root,
         package_id,
         spec,
         lambda version: ctx.deps.start_build(package_id, version),
+        inputs=inputs,
     )
     room_id, _refusal = piece_room(ctx)
     with ctx.deps.session() as session:

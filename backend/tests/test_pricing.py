@@ -297,3 +297,70 @@ def test_a_pricing_reports_the_approval_moving_to_another_version(session, setti
 
     assert describe_pricing(session, row)["version_approved"] is False
     assert describe_pricing(session, row)["total_cents"] == row.total_cents
+
+
+# --- hinge cup borings and hardware with no quantity (cabinet-hardware-calculator) -------------
+
+
+def door_document(*, adjustable: int = 0) -> dict:
+    document = desk()
+    module = document["modules"][0]
+    module["height"] = 700
+    module["fronts"] = [{"type": "door", "count": 4, "opening": "hinge"}]
+    if adjustable:
+        module["adjustable_shelves"] = adjustable
+    return document
+
+
+def write_frozen(root: Path, document: dict) -> None:
+    write_version(root, document)
+    folder = storage.version_dir(root, "hall-desk", 1)
+    storage.write_hardware_inputs(folder, {"data_sheets": {}, "rules": {}})
+
+
+def set_boring_price(session: Session, cents: int | None) -> None:
+    session.execute(text("UPDATE store_services SET price_cents = :c WHERE service = 'topfband_bohrung'"), {"c": cents})
+
+
+def test_hinge_borings_are_charged_per_cut_counted_when_shared_and_incomplete_without_a_price(
+    session, settings
+) -> None:
+    write_frozen(settings.render_root, door_document())
+    home_store(session)
+    price_the_desk(session)
+    set_boring_price(session, 299)
+
+    per_cut = price_cut_list(session, settings.render_root, "hall-desk", 1, settings, cut_charge_mode="per_cut")
+    assert per_cut.result["drilling"]["hinge_cup_borings"] == 8  # 2 hinges x 4 doors of 700 mm
+    assert per_cut.result["drilling"]["hinge_boring_fee_cents"] == 8 * 299
+    assert per_cut.cut_service_cents == per_cut.result["per_cut_fee_cents"] + 8 * 299
+
+    shared = price_cut_list(session, settings.render_root, "hall-desk", 1, settings, cut_charge_mode="shared")
+    assert shared.result["drilling"]["hinge_cup_borings"] == 8
+    assert shared.result["drilling"]["hinge_boring_fee_cents"] is None and shared.cut_service_cents == 0
+
+    set_boring_price(session, None)
+    unpriced = price_cut_list(session, settings.render_root, "hall-desk", 1, settings, cut_charge_mode="per_cut")
+    assert not unpriced.complete
+    assert any("hinge-boring" in line.get("reason", "") for line in unpriced.result["unpriced"])
+
+
+def test_a_pin_line_with_no_quantity_is_unpriced_and_holes_are_not_counted(session, settings) -> None:
+    write_frozen(settings.render_root, door_document(adjustable=2))
+    home_store(session)
+    price_the_desk(session)
+    price_list.create_entry(session, key="shelf-pin", label="Pin", category="hardware", unit="per_piece", base_cents=5)
+    pricing = price_cut_list(session, settings.render_root, "hall-desk", 1, settings)
+    line = next(item for item in pricing.result["hardware"] if item["id"] == "shelf-pin")
+    assert line["cost_cents"] is None and line["qty"] == ""
+    unpriced = next(item for item in pricing.result["unpriced"] if item.get("id") == "shelf-pin")
+    assert unpriced["reason"].startswith("no quantity")
+    assert not pricing.complete
+    assert pricing.result["drilling"]["shelf_pin_holes"] is None
+
+
+def test_a_version_without_frozen_inputs_is_priced_as_before(session, settings) -> None:
+    write_version(settings.render_root, door_document())
+    home_store(session)
+    price_the_desk(session)
+    assert "drilling" not in price_cut_list(session, settings.render_root, "hall-desk", 1, settings).result

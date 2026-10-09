@@ -1101,3 +1101,38 @@ class GuidelineNote(Base):
         CheckConstraint("btrim(body) <> ''", name="ck_guideline_notes_body_not_blank"),
         CheckConstraint("btrim(citation) <> ''", name="ck_guideline_notes_citation_not_blank"),
     )
+
+
+class HardwareDataSheet(Base):
+    """The drilling values of one hinge or shelf-pin item, with a cited source.
+
+    `key` is the price-list and hardware-line key. `values` is validated per `kind` by
+    `app.guidelines.datasheets`; a measured field is one value or a min-max range, a count is
+    one whole number. The sheet is mirrored into the corpus like a guideline note.
+    """
+
+    __tablename__ = "hardware_data_sheets"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    maker: Mapped[str] = mapped_column(String(120), nullable=False)
+    model: Mapped[str] = mapped_column(String(120), nullable=False)
+    values: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    source_kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    page_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    datasheet_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    citation: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("btrim(key) <> ''", name="ck_hardware_data_sheets_key_not_blank"),
+        CheckConstraint("kind IN ('hinge', 'shelf_pin')", name="ck_hardware_data_sheets_kind_known"),
+        CheckConstraint("source_kind IN ('toom', 'manual')", name="ck_hardware_data_sheets_source_known"),
+        CheckConstraint("btrim(citation) <> ''", name="ck_hardware_data_sheets_citation_not_blank"),
+    )

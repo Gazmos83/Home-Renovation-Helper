@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { PieceSpec, SpecPart } from "@/lib/api";
+import type { DrillEntry, DrillingList, PieceSpec, SpecPart } from "@/lib/api";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
@@ -28,6 +29,53 @@ export function moduleLabel(spec: Pick<PieceSpec, "module_names">, module: strin
   return spec.module_names?.[module] ?? (module === "extras" ? "Extra parts" : module);
 }
 
+/** The line of one drilling entry without its part, which has its own column. */
+function drillingText(entry: DrillEntry): string {
+  const prefix = `${entry.part}: `;
+  return entry.text.startsWith(prefix) ? entry.text.slice(prefix.length) : entry.text;
+}
+
+function workCounts(counts: DrillingList["counts"]): string {
+  const work = [`${counts.hinge_cup_borings ?? 0} hinge cup borings`];
+  if ("shelf_pin_holes" in counts) {
+    work.push(counts.shelf_pin_holes === null ? "shelf-pin holes not counted" : `${counts.shelf_pin_holes} shelf-pin holes`);
+  }
+  return work.join(", ");
+}
+
+function DrillingTable({ drilling }: { drilling: DrillingList | undefined }) {
+  if (!drilling) {
+    return <p className="text-sm text-muted-foreground">Drilling was not calculated for this version.</p>;
+  }
+  return (
+    <>
+      {drilling.entries.length === 0 ? (
+        <p className="text-sm text-muted-foreground">This version has nothing to drill.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Part</TableHead>
+                <TableHead>Drilling</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {drilling.entries.map((entry, index) => (
+                <TableRow key={`${entry.part}-${entry.what}-${index}`}>
+                  <TableCell className="font-mono text-xs">{entry.part}</TableCell>
+                  <TableCell className="text-sm">{drillingText(entry)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+      <p className="text-sm text-muted-foreground">Drilling work: {workCounts(drilling.counts)}.</p>
+    </>
+  );
+}
+
 export function CutListTables({ spec }: { spec: PieceSpec }) {
   const allParts = spec.parts ?? [];
   const hardware = spec.hardware ?? [];
@@ -37,6 +85,14 @@ export function CutListTables({ spec }: { spec: PieceSpec }) {
   const pieces = parts.reduce((total, part) => total + part.qty, 0);
   return (
     <div className="grid gap-6">
+      {spec.drilling && !spec.drilling.complete && (
+        <Alert variant="destructive">
+          <strong>The drilling list is incomplete.</strong>
+          <ul className="mt-1 list-disc pl-5">
+            {spec.drilling.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+          </ul>
+        </Alert>
+      )}
       <section aria-label="Cut list" className="grid gap-2">
         <h2>Cut list</h2>
         {allParts.length === 0 ? (
@@ -122,7 +178,7 @@ export function CutListTables({ spec }: { spec: PieceSpec }) {
                   <TableRow key={item.id}>
                     <TableCell className="font-mono text-xs">{item.id}</TableCell>
                     <TableCell>{item.item}</TableCell>
-                    <TableCell className="tabular-nums">{item.qty}</TableCell>
+                    <TableCell className="tabular-nums">{item.qty === "" ? "no quantity" : item.qty}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{item.notes}</TableCell>
                   </TableRow>
                 ))}
@@ -130,6 +186,10 @@ export function CutListTables({ spec }: { spec: PieceSpec }) {
             </Table>
           </div>
         )}
+      </section>
+      <section aria-label="Drilling" className="grid gap-2">
+        <h2>Drilling</h2>
+        <DrillingTable drilling={spec.drilling} />
       </section>
     </div>
   );

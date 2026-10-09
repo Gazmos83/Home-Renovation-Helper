@@ -70,11 +70,21 @@ def room_context(*, door_wall: int | None = None):
 
 
 def test_the_shipped_table_loads() -> None:
-    assert load_rules() == ()
+    shipped = {r.check: r for r in load_rules()}
+    assert set(shipped) == {"shelf_bracket_count_for_length", "shelf_bracket_spacing_mm"}
+    assert all(r.severity == "warn" and r.source.publication == "topnotch-shelf-brackets" for r in shipped.values())
+    spacing = shipped["shelf_bracket_spacing_mm"].params
+    assert (spacing.end_distance_mm.min, spacing.end_distance_mm.max, spacing.end_distance_mm.unit) == (100, 200, "mm")
+    assert [(row.max_length_mm, row.min_brackets) for row in shipped["shelf_bracket_count_for_length"].params.table] == [
+        (600, 2), (1200, 2), (1800, 3), (2000, 4),
+    ]
 
 
 def test_every_check_is_loadable_by_its_name(tmp_path: Path) -> None:
-    rules = table(tmp_path, passage(900), swing(), height(), span(1000))
+    spacing = rule("spacing", "shelf_bracket_spacing_mm",
+                   {"end_distance_mm": {"min": 100, "max": 200, "unit": "mm"}, "even_tolerance_mm": 10},
+                   applies_to="piece")
+    rules = table(tmp_path, passage(900), swing(), height(), span(1000), bracket_count(), spacing)
     assert {r.check for r in rules} == set(CHECKS)
 
 
@@ -197,3 +207,26 @@ def test_without_rules_nothing_changes(make_ctx) -> None:
     shown = preview({"package_id": "hall-bench", "spec": desk()}, make_ctx())
     assert isinstance(shown, Confirmation) and "Design-rule" not in shown.summary
     assert partition([]) == ([], [])
+
+
+# --- bracket rules and adjustable shelves (cabinet-hardware-calculator) -----------------------
+
+
+def bracket_count(rule_id: str = "bracket-count") -> dict:
+    return rule(rule_id, "shelf_bracket_count_for_length",
+                {"table": [{"max_length_mm": 1200, "min_brackets": 2}]}, applies_to="piece")
+
+
+def test_two_rules_on_one_bracket_check_fail_naming_both(tmp_path: Path) -> None:
+    with pytest.raises(DesignRulesError, match="'bracket-count' and 'other-count'"):
+        table(tmp_path, bracket_count(), bracket_count("other-count"))
+
+
+def test_the_span_check_counts_adjustable_shelves_too(tmp_path: Path) -> None:
+    spec = desk()
+    spec["modules"][0]["shelves"] = 0
+    spec["modules"][0]["adjustable_shelves"] = 2
+    (finding,) = evaluate(table(tmp_path, span(900)), "piece", spec)
+    assert finding.measurement.value == "964 mm" and finding.rule.id == "span"
+    spec["modules"][0]["adjustable_shelves"] = 0
+    assert evaluate(table(tmp_path, span(900)), "piece", spec) == []

@@ -23,12 +23,15 @@ def create_version(
     package_id: str,
     spec: dict[str, Any],
     start: Callable[[int], None],
+    inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Write the next version's input, mark it queued and hand it to `start`."""
+    """Write the next version's input (and its frozen hardware inputs), mark it queued, hand it to `start`."""
     version = storage.next_version(root, package_id)
     folder = storage.version_dir(root, package_id, version)
     folder.mkdir(parents=True)
     (folder / storage.INPUT_FILE).write_text(json.dumps(spec, indent=2), encoding="utf-8")
+    if inputs is not None:
+        storage.write_hardware_inputs(folder, inputs)
     runner.mark_build_queued(folder)
     start(version)
     logger.info(

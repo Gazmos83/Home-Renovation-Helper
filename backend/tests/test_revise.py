@@ -81,3 +81,68 @@ def test_changes_must_state_something_and_unknown_fields_are_refused() -> None:
         PackageChanges()
     with pytest.raises(ValidationError, match="bevel_mm"):
         PackageChanges.model_validate({"modules": {"cabinet": {"bevel_mm": 3}}})
+
+
+# --- wall shelves, adjustable shelves and hinge keys (cabinet-hardware-calculator) ------------
+
+WALL_SHELF = {
+    "id": "wall-shelf-1", "name": "Wall shelf", "x": 100, "y": 0, "z": 1400, "length": 1200, "depth": 250,
+    "material": "carcass", "bracket": "bracket-white",
+}
+
+
+@pytest.fixture
+def shelved(desk: dict) -> dict:
+    desk["materials"].setdefault("carcass", {"material": "Eiche 18 mm", "thickness_mm": 18})
+    desk["envelope"] = {"width": 2000, "height": 2000, "depth": 400}
+    desk["wall_shelves"] = [dict(WALL_SHELF)]
+    return desk
+
+
+def _revise(document: dict, **changes) -> tuple[dict, list[str]]:
+    return revise_spec(document, PackageChanges.model_validate(changes))
+
+
+def test_a_wall_shelf_is_added_and_removed(desk: dict, shelved: dict) -> None:
+    second = WALL_SHELF | {"id": "wall-shelf-2", "z": 1700}
+    revised, lines = _revise(shelved, add_wall_shelves=[second], remove_wall_shelves=["wall-shelf-1"])
+    assert [shelf["id"] for shelf in revised["wall_shelves"]] == ["wall-shelf-2"]
+    assert "wall-shelf-1: wall shelf removed" in lines
+    assert any(line.startswith("wall-shelf-2: wall shelf added") for line in lines)
+
+
+def test_bracket_positions_are_set_and_cleared_with_old_and_new_in_the_line(shelved: dict) -> None:
+    revised, lines = _revise(shelved, wall_shelves={"wall-shelf-1": {"bracket_positions_mm": [150, 600, 1050]}})
+    assert revised["wall_shelves"][0]["bracket_positions_mm"] == [150, 600, 1050]
+    assert lines == ["wall-shelf-1: bracket positions calculated → [150, 600, 1050]"]
+    CustomBuildSpec.model_validate(revised)
+
+    cleared, lines = _revise(revised, wall_shelves={"wall-shelf-1": {"bracket_positions_mm": []}})
+    assert "bracket_positions_mm" not in cleared["wall_shelves"][0]
+    assert lines == ["wall-shelf-1: bracket positions [150, 600, 1050] → calculated"]
+    CustomBuildSpec.model_validate(cleared)
+
+
+def test_an_unknown_wall_shelf_is_refused_naming_the_shelves_present(shelved: dict) -> None:
+    with pytest.raises(ReviseError, match="wall-shelf-1"):
+        _revise(shelved, wall_shelves={"nope": {"length": 900}})
+    with pytest.raises(ReviseError, match="wall-shelf-1"):
+        _revise(shelved, remove_wall_shelves=["nope"])
+
+
+def test_adjustable_shelves_and_the_pin_key_are_changed_on_a_module(desk: dict) -> None:
+    module_id = desk["modules"][0]["id"]
+    revised, lines = _revise(desk, modules={module_id: {"adjustable_shelves": 2, "shelf_pin": "shelf-pin-5mm"}})
+    assert revised["modules"][0]["adjustable_shelves"] == 2
+    assert f"{module_id}: adjustable_shelves 0 → 2" in lines
+
+
+def test_a_hinge_item_is_set_on_the_hinged_doors() -> None:
+    starter = json.loads((TEMPLATES / "custom-build.json").read_text(encoding="utf-8"))
+    module_id = starter["modules"][0]["id"]
+    revised, lines = _revise(starter, modules={module_id: {"hinge": "hinge-blum-clip-110"}})
+    assert revised["modules"][0]["fronts"][0]["hinge"] == "hinge-blum-clip-110"
+    assert lines == [f"{module_id}: hinge hinge-concealed-110 → hinge-blum-clip-110"]
+    assert "hinge" not in revised["modules"][0]
+    with pytest.raises(ReviseError, match="no hinged door"):
+        _revise(revised | {"modules": [revised["modules"][0] | {"fronts": []}]}, modules={module_id: {"hinge": "x"}})

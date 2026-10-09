@@ -30,6 +30,7 @@ from app.blender.schemas import CustomBuildSpec, describe_validation_error
 from app.blender.spec_contract import SpecValidationError
 from app.db.models import Piece
 from app.design_import import export_document
+from app.guidelines.hardware_inputs import freeze_inputs
 from app.packages import service
 
 logger = logging.getLogger("app")
@@ -185,11 +186,14 @@ def _start_build(
 def _create_version(
     request: Request, background: BackgroundTasks, package_id: str, spec: dict[str, Any]
 ) -> dict[str, Any]:
+    with Session(request.app.state.engine) as session:
+        inputs = freeze_inputs(session, request.app.state.design_rules, spec)
     return service.create_version(
         render_root(request),
         package_id,
         spec,
         lambda version: _start_build(request, background, package_id, version),
+        inputs=inputs,
     )
 
 

@@ -5,16 +5,27 @@
 #   door_swing_clear              placement  params: (none)
 #   height_range_mm               piece      params: match [words in module id/name], min_mm, max_mm
 #   shelf_span_mm_for_thickness   piece      params: table [{thickness_mm, max_span_mm}]
+#                                            (fixed and adjustable shelves alike)
+#   shelf_bracket_count_for_length piece     params: table [{max_length_mm, min_brackets}]
+#                                            (a wall shelf takes the first row whose length is at least its own,
+#                                            the last row beyond the table; judged for the owner's positions,
+#                                            and it gives the bracket calculator its count)
+#   shelf_bracket_spacing_mm      piece      params: end_distance_mm {min, max, unit: mm}, even_tolerance_mm
+#                                            (the cited end range is kept as a range; the owner's outer brackets
+#                                            are judged against it, and the gaps between them for evenness; it
+#                                            gives the calculator its end range)
+# At most one rule may name each bracket check.
 # with a severity (warn | refuse) and the clause the limit is quoted from:
 #   source: {publication: <id in guideline_sources.yaml, or owner:<note uuid>>, section: ..., quote: ...}
 # A rule without a source, with an unknown check or source, or with parameters its check does not
 # take stops startup naming the rule id.
 #
-# No limit is entered yet: a number here must be quoted from the clause it cites, and none of the
-# official publications could be read for this review (see config/guideline_sources.yaml; each host
-# refused this service's identity). TODO(user): add each rule below by quoting its clause (from an
-# official text you have read, or from an owner note added under /guideline-notes and cited as
-# `owner:<note id>`). Example shape, not a rule:
+# No official limit is entered yet: a number here must be quoted from the clause it cites, and none of
+# the official publications could be read for this review (see config/guideline_sources.yaml; each host
+# refused this service's identity). The only rules shipped are the two bracket rules below, quoted from
+# `topnotch-shelf-brackets` (retailer guidance, not an official rule; hence `warn`). TODO(user): add each
+# further rule by quoting its clause (from an official text you have read, or from an owner note added
+# under /guideline-notes and cited as `owner:<note id>`). Example shape, not a rule:
 #
 #   - id: wardrobe-front-clearance
 #     applies_to: placement
@@ -22,4 +33,33 @@
 #     params: {min_mm: <quoted value>}
 #     severity: warn
 #     source: {publication: owner:<note id>, section: "<book, page>", quote: "<the clause>"}
-rules: []
+rules:
+  - id: shelf-bracket-count
+    applies_to: piece
+    check: shelf_bracket_count_for_length
+    # Each row is the minimum of the guide's range for that length: up to 60 cm "2", 70-120 cm "2 to 3",
+    # 130-180 cm "3 to 4", 190-200 cm "4 or more". Counts are whole numbers, never ranges.
+    params:
+      table:
+        - {max_length_mm: 600, min_brackets: 2}
+        - {max_length_mm: 1200, min_brackets: 2}
+        - {max_length_mm: 1800, min_brackets: 3}
+        - {max_length_mm: 2000, min_brackets: 4}
+    severity: warn
+    source:
+      publication: topnotch-shelf-brackets
+      section: How Many Brackets Do I Need for a Shelf?
+      quote: "Up to 60cm: 2 brackets; 70cm to 120cm: 2 to 3 brackets; 130cm to 180cm: 3 to 4 brackets; 190cm to 200cm: 4 or more brackets"
+  - id: shelf-bracket-spacing
+    applies_to: piece
+    check: shelf_bracket_spacing_mm
+    # The end distance is the range the guide gives; no value inside it is picked.
+    # TODO(user): even_tolerance_mm is your own measuring tolerance for "even" (10 mm proposed), not a quoted limit.
+    params:
+      end_distance_mm: {min: 100, max: 200, unit: mm}
+      even_tolerance_mm: 10
+    severity: warn
+    source:
+      publication: topnotch-shelf-brackets
+      section: How close should brackets be to the end of a shelf?
+      quote: "The outer brackets are commonly positioned approximately 10cm to 20cm from each end. If additional brackets are required, position them at equal distances between the two outer brackets."

@@ -41,6 +41,7 @@ from app.api.design_import import router as design_import_router
 from app.api.feedback import admin_router as admin_feedback_router
 from app.api.feedback import router as feedback_router
 from app.api.guideline_notes import router as guideline_notes_router
+from app.api.hardware_data import router as hardware_data_router
 from app.api.health import router as health_router
 from app.api.limits import RateLimiter
 from app.api.models import router as models_router
@@ -300,6 +301,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(price_list_router)
     app.include_router(pricing_router)
     app.include_router(guideline_notes_router)
+    app.include_router(hardware_data_router)
     app.include_router(admin_render_router)
     app.include_router(admin_models_router)
     app.include_router(admin_plugins_router)

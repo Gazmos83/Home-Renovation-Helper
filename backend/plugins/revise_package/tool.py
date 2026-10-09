@@ -38,6 +38,7 @@ from app.agent.tools.shared import (
 from app.blender import storage
 from app.blender.schemas import PackageChanges, describe_validation_error
 from app.db.models import Piece
+from app.guidelines.hardware_inputs import freeze_inputs
 from app.guidelines.rules import piece_outcome
 from app.packages import service
 
@@ -141,11 +142,14 @@ def record_next(
     ctx: ToolContext, package_id: str, latest: int, spec: dict[str, Any], lines: list[str]
 ) -> int:
     """Create and record the next version revised from `latest`, bind the thread, start the build."""
+    with ctx.deps.session() as session:
+        inputs = freeze_inputs(session, ctx.deps.design_rules, spec)
     created = service.create_version(
         ctx.deps.render_root,
         package_id,
         spec,
         lambda version: ctx.deps.start_build(package_id, version),
+        inputs=inputs,
     )
     with ctx.deps.session() as session:
         if session.get(Piece, package_id) is None:

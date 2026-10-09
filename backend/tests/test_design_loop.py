@@ -182,7 +182,7 @@ def test_review_then_fix_it_revises_to_version_2(tool_state) -> None:
         "expected": "two drawers",
         "expected_source": "brief",
         "observed": "one drawer",
-        "image": 1,
+        "view": "iso",
         "severity": "major",
     }
     models = fake_models(

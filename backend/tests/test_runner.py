@@ -546,3 +546,15 @@ def test_the_composition_renderer_is_a_render_script_a_build_cannot_launch() -> 
 
     assert "render_composition.py" in RENDER_SCRIPTS
     assert "build_composition.py" not in RENDER_SCRIPTS
+
+
+def test_a_build_passes_the_versions_frozen_hardware_inputs_and_an_old_one_does_not(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+    new = new_version(tmp_path, "cabinet")
+    (new / storage.HARDWARE_INPUTS_FILE).write_text('{"data_sheets": {}, "rules": {}}', encoding="utf-8")
+    old = new_version(tmp_path, "shelf")
+    for package_id in ("cabinet", "shelf"):
+        run(build(tmp_path, fake_success_launch(calls=calls), package_id=package_id))
+    with_inputs, without = calls
+    assert arg_value(with_inputs, "--hardware-data") == str(new / storage.HARDWARE_INPUTS_FILE)
+    assert "--hardware-data" not in without and old.is_dir()

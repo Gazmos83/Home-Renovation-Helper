@@ -27,13 +27,19 @@ def _normalised(path: Path = TEMPLATE) -> dict:
     return CustomBuildSpec.model_validate(document).model_dump(mode="json")
 
 
-def _build(blender_bin: Path, spec: dict, tmp_path: Path) -> tuple[subprocess.CompletedProcess, Path]:
+def _build(
+    blender_bin: Path, spec: dict, tmp_path: Path, inputs: dict | None = None
+) -> tuple[subprocess.CompletedProcess, Path]:
     spec_path = tmp_path / "spec.json"
     spec_path.write_text(json.dumps(spec), encoding="utf-8")
     out = tmp_path / "out"
+    extra: list[str] = []
+    if inputs is not None:
+        (tmp_path / "hardware_inputs.json").write_text(json.dumps(inputs), encoding="utf-8")
+        extra = ["--hardware-data", str(tmp_path / "hardware_inputs.json")]
     result = subprocess.run(
         [str(blender_bin), "--background", "--python", str(GENERATOR), "--",
-         "--spec", str(spec_path), "--out", str(out)],
+         "--spec", str(spec_path), "--out", str(out), *extra],
         capture_output=True, text=True, timeout=300, check=False,
     )
     return result, out

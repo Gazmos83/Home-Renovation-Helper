@@ -27,12 +27,40 @@ def _unknown(kind: str, slug: str, present: set[str]) -> ReviseError:
 def _apply_module_change(module: dict[str, Any], change: dict[str, Any], lines: list[str]) -> None:
     module_id = module["id"]
     for field, value in change.items():
+        if field == "hinge":
+            _set_hinge(module, value, lines)
+            continue
         before = module.get(field)
         if field in ("fronts", "hardware"):
             lines.append(f"{module_id}: {field} {len(before or [])} → {len(value)} entries")
         else:
             lines.append(f"{module_id}: {field} {before} → {value}")
         module[field] = value
+
+
+def _set_hinge(module: dict[str, Any], hinge: str, lines: list[str]) -> None:
+    doors = [front for front in module.get("fronts") or [] if front.get("type") == "door" and front.get("opening") == "hinge"]
+    if not doors:
+        raise ReviseError(f"module {module['id']!r} has no hinged door to take hinge {hinge!r}")
+    for door in doors:
+        lines.append(f"{module['id']}: hinge {door.get('hinge', 'hinge-concealed-110')} → {hinge}")
+        door["hinge"] = hinge
+
+
+def _apply_shelf_change(shelf: dict[str, Any], change: dict[str, Any], lines: list[str]) -> None:
+    for field, value in change.items():
+        before = shelf.get(field)
+        if field == "bracket_positions_mm":
+            was = before if before else "calculated"
+            now = value if value else "calculated"
+            lines.append(f"{shelf['id']}: bracket positions {was} → {now}")
+            if value:
+                shelf[field] = value
+            else:
+                shelf.pop(field, None)
+            continue
+        lines.append(f"{shelf['id']}: {field} {before} → {value}")
+        shelf[field] = value
 
 
 def revise_spec(
@@ -75,6 +103,25 @@ def revise_spec(
         lines.append(f"{part['id']}: extra part added")
     if parts or "extra_parts" in spec:
         spec["extra_parts"] = parts
+
+    shelves: list[dict[str, Any]] = list(spec.get("wall_shelves") or [])
+    known_shelves = {shelf["id"] for shelf in shelves}
+    for slug in requested.get("remove_wall_shelves") or []:
+        if slug not in known_shelves:
+            raise _unknown("wall shelf", slug, known_shelves)
+        shelves = [shelf for shelf in shelves if shelf["id"] != slug]
+        known_shelves.discard(slug)
+        lines.append(f"{slug}: wall shelf removed")
+    for slug, change in (requested.get("wall_shelves") or {}).items():
+        if slug not in known_shelves:
+            raise _unknown("wall shelf", slug, known_shelves)
+        _apply_shelf_change(next(shelf for shelf in shelves if shelf["id"] == slug), change, lines)
+    for shelf in requested.get("add_wall_shelves") or []:
+        shelves.append(shelf)
+        known_shelves.add(shelf["id"])
+        lines.append(f"{shelf['id']}: wall shelf added ({shelf['length']}×{shelf['depth']} mm)")
+    if shelves or "wall_shelves" in spec:
+        spec["wall_shelves"] = shelves
 
     if "name" in requested:
         lines.append(f"name: {spec.get('name')} → {requested['name']}")

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -36,6 +37,7 @@ from app.blender.spec_contract import SpecValidationError
 
 MAX_DIMENSION_MM = 10_000
 MAX_MODULES = 20
+MAX_WALL_SHELVES = 20
 MAX_DERIVED_ROWS = 200
 
 Millimetres = Annotated[int, Field(gt=0, le=MAX_DIMENSION_MM)]
@@ -94,6 +96,7 @@ class DoorIn(BaseModel):
     count: Annotated[int, Field(ge=1, le=20)]
     opening: Literal["hinge", "push_latch"]
     height: Millimetres | None = None
+    hinge: Slug = "hinge-concealed-110"
 
 
 class DrawerIn(BaseModel):
@@ -129,8 +132,27 @@ class ModuleIn(BaseModel):
     carcass: SlotName
     back: SlotName | None = None
     shelves: Annotated[int, Field(ge=0, le=20)] = 0
+    adjustable_shelves: Annotated[int, Field(ge=0, le=20)] = 0
+    shelf_pin: Slug = "shelf-pin"
     fronts: Annotated[list[FrontIn], Field(max_length=10)] = []
     hardware: Annotated[list[HardwareLineIn], Field(max_length=50)] = []
+
+
+class WallShelfIn(BaseModel):
+    """A board hung on brackets. Its bracket count and positions are calculated unless the owner sets them."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    id: Slug
+    name: Label
+    x: Position
+    y: Position = 0
+    z: Position
+    length: Millimetres
+    depth: Millimetres
+    material: SlotName
+    bracket: Slug
+    bracket_positions_mm: Annotated[list[Position], Field(min_length=1, max_length=20)] | None = None
 
 
 class ExtraPartIn(BaseModel):
@@ -205,6 +227,7 @@ class CustomBuildSpec(BaseModel):
     envelope: EnvelopeIn | None = None
     modules: Annotated[list[ModuleIn], Field(max_length=MAX_MODULES)] = []
     extra_parts: Annotated[list[ExtraPartIn], Field(max_length=100)] = []
+    wall_shelves: Annotated[list[WallShelfIn], Field(max_length=MAX_WALL_SHELVES)] = []
     hardware: Annotated[list[HardwareLineIn], Field(max_length=100)] = []
     assembly_notes: Annotated[list[Note], Field(max_length=20)] = []
     part_overrides: Annotated[list[PartOverrideIn], Field(max_length=MAX_DERIVED_ROWS)] = []
@@ -258,6 +281,8 @@ class CustomBuildSpec(BaseModel):
                     f"extra_parts[{index}].material: undefined material slot {part.material!r}"
                 )
 
+        self._check_wall_shelves(seen)
+
         for i, first in enumerate(self.modules):
             for second in self.modules[i + 1 :]:
                 if _boxes_overlap(first, second):
@@ -288,6 +313,33 @@ class CustomBuildSpec(BaseModel):
                 raise SpecValidationError(f"{where}.id: row {override.id!r} is overridden twice")
             overridden.add(override.id)
         return self
+
+    def _check_wall_shelves(self, module_ids: set[str]) -> None:
+        taken = module_ids | {part.id for part in self.extra_parts}
+        for index, shelf in enumerate(self.wall_shelves):
+            where = f"wall_shelves[{index}]"
+            if shelf.id in taken:
+                raise SpecValidationError(f"{where}.id: {shelf.id!r} is already used by a module, part or shelf")
+            taken.add(shelf.id)
+            if shelf.material not in self.materials:
+                raise SpecValidationError(f"{where}.material: undefined material slot {shelf.material!r}")
+            thickness = self.materials[shelf.material].thickness_mm
+            if self.envelope is not None and (
+                shelf.x + shelf.length > self.envelope.width
+                or shelf.z + thickness > self.envelope.height
+                or shelf.y + shelf.depth > self.envelope.depth
+            ):
+                raise SpecValidationError(f"{where}: shelf {shelf.id!r} lies outside the envelope")
+            positions = shelf.bracket_positions_mm
+            if positions is None:
+                continue
+            if any(position <= 0 or position >= shelf.length for position in positions):
+                raise SpecValidationError(
+                    f"{where}.bracket_positions_mm: every position must lie inside the board "
+                    f"(0 to {shelf.length} mm)"
+                )
+            if any(later <= earlier for earlier, later in pairwise(positions)):
+                raise SpecValidationError(f"{where}.bracket_positions_mm: positions must be strictly increasing")
 
     def _check_fronts(self, where: str, module: ModuleIn, t: int) -> None:
         document = module.model_dump(mode="json")
@@ -336,8 +388,30 @@ class ModuleChange(BaseModel):
     carcass: SlotName | None = None
     back: SlotName | None = None
     shelves: Annotated[int, Field(ge=0, le=20)] | None = None
+    adjustable_shelves: Annotated[int, Field(ge=0, le=20)] | None = None
+    shelf_pin: Slug | None = None
+    hinge: Slug | None = None  # sets the hinge item of every hinged door in the module
     fronts: Annotated[list[FrontIn], Field(max_length=10)] | None = None
     hardware: Annotated[list[HardwareLineIn], Field(max_length=50)] | None = None
+
+
+class WallShelfChange(BaseModel):
+    """Every `WallShelfIn` field but its id, each optional; an absent field keeps its value.
+
+    An empty `bracket_positions_mm` clears the owner's positions, so the brackets are calculated again.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    name: Label | None = None
+    x: Position | None = None
+    y: Position | None = None
+    z: Position | None = None
+    length: Millimetres | None = None
+    depth: Millimetres | None = None
+    material: SlotName | None = None
+    bracket: Slug | None = None
+    bracket_positions_mm: Annotated[list[Position], Field(max_length=20)] | None = None
 
 
 class PackageChanges(BaseModel):
@@ -353,6 +427,9 @@ class PackageChanges(BaseModel):
     remove_modules: Annotated[list[Slug], Field(max_length=MAX_MODULES)] = []
     add_extra_parts: Annotated[list[ExtraPartIn], Field(max_length=100)] = []
     remove_extra_parts: Annotated[list[Slug], Field(max_length=100)] = []
+    add_wall_shelves: Annotated[list[WallShelfIn], Field(max_length=MAX_WALL_SHELVES)] = []
+    remove_wall_shelves: Annotated[list[Slug], Field(max_length=MAX_WALL_SHELVES)] = []
+    wall_shelves: dict[Slug, WallShelfChange] = {}
     part_overrides: Annotated[list[PartOverrideIn], Field(max_length=MAX_DERIVED_ROWS)] = []
 
     @model_validator(mode="after")
@@ -367,6 +444,9 @@ class PackageChanges(BaseModel):
                 self.remove_modules,
                 self.add_extra_parts,
                 self.remove_extra_parts,
+                self.add_wall_shelves,
+                self.remove_wall_shelves,
+                self.wall_shelves,
                 self.part_overrides,
             )
         ):
@@ -374,6 +454,9 @@ class PackageChanges(BaseModel):
         for slug, change in self.modules.items():
             if not change.model_dump(exclude_none=True):
                 raise ValueError(f"modules.{slug}: state at least one field to change")
+        for slug, shelf_change in self.wall_shelves.items():
+            if not shelf_change.model_dump(exclude_none=True):
+                raise ValueError(f"wall_shelves.{slug}: state at least one field to change")
         return self
 
 

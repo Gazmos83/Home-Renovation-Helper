@@ -22,7 +22,7 @@ from uuid import UUID, uuid4
 from sqlalchemy.orm import Session
 
 from app.blender import storage
-from app.blender.custom_build.derive import derive, supply_note
+from app.blender.custom_build.derive import derive, drilling, supply_note
 from app.config import Settings
 from app.db.models import (
     CutListPricing,
@@ -673,7 +673,8 @@ def price_cut_list(
         )
     # The rows are what the version derives from its own document: the same rows
     # `cut_list` shows and the cut list a build writes, so an unbuilt version is priced too.
-    parts, hardware, _assembly = derive(document)
+    hardware_inputs = storage.read_hardware_inputs(folder)
+    parts, hardware, _assembly = derive(document, hardware_inputs)
     cutlist_rows = [{key: str(value) for key, value in row.items()} for row in parts]
     hardware_rows = [{key: str(value) for key, value in row.items()} for row in hardware]
     if not cutlist_rows:
@@ -966,7 +967,9 @@ def price_cut_list(
         if cost is None:
             unpriced_count += 1
             line["reason"] = (
-                "no price-list entry for this hardware item"
+                f"no quantity ({row['notes']})"
+                if not row["qty"].strip()
+                else "no price-list entry for this hardware item"
                 if entry is None
                 else "the quantity or the price-list entry's price could not be resolved"
             )
@@ -1021,6 +1024,35 @@ def price_cut_list(
     else:
         cut_service_cents = 0
 
+    drilling_result: dict[str, Any] | None = None
+    if hardware_inputs is not None:
+        counts = drilling(document, hardware_inputs)["counts"]
+        borings = counts["hinge_cup_borings"]
+        boring_service = find_service(
+            session, resolved_store_key, SERVICE_FOR_GEOMETRY[CutGeometry.HINGE_BORING]
+        )
+        boring_price = (
+            boring_service.price_cents if boring_service is not None and boring_service.price_is_known else None
+        )
+        boring_fee = None if boring_price is None else borings * boring_price
+        if charge_mode == "per_cut" and borings:
+            if boring_fee is None:
+                unpriced_count += 1
+                unpriced.append(
+                    {
+                        "kind": "cut_service",
+                        "reason": "the store has no recorded hinge-boring (topfband_bohrung) price",
+                    }
+                )
+            else:
+                cut_service_cents += boring_fee
+        drilling_result = {
+            "hinge_cup_borings": borings,
+            "hinge_boring_fee_cents": boring_fee if charge_mode == "per_cut" else None,
+            # Holes are listed, not priced; None when they are blank or given as a rule in words.
+            "shelf_pin_holes": counts.get("shelf_pin_holes"),
+        }
+
     complete = unpriced_count == 0 and undetermined_count == 0 and total_unfitting == 0
 
     result: dict[str, Any] = {
@@ -1042,6 +1074,8 @@ def price_cut_list(
         "remnants_used": remnants_used,
         "banding": band_lines,
     }
+    if drilling_result is not None:
+        result["drilling"] = drilling_result
 
     total_cents = (
         materials_cents + hardware_cents + banding_cents + cut_service_cents + delivery_cents

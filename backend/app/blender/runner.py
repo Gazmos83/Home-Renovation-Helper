@@ -215,6 +215,9 @@ async def run_build(
     try:
         argv = [str(blender_bin), "--background", "--python", str(script), "--",
                 "--spec", str(folder / storage.INPUT_FILE), "--out", str(stage)]
+        hardware_data = folder / storage.HARDWARE_INPUTS_FILE
+        if not shell and not room and hardware_data.is_file():
+            argv += ["--hardware-data", str(hardware_data)]
         if room:
             unbuilt = composition_unbuilt_pieces(root, folder)
             if unbuilt:

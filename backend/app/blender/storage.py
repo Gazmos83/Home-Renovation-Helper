@@ -27,6 +27,7 @@ SHELLS_DIRNAME: Final = "shells"
 ROOMS_DIRNAME: Final = "rooms"
 
 INPUT_FILE: Final = "input.json"
+HARDWARE_INPUTS_FILE: Final = "hardware_inputs.json"
 STATUS_FILE: Final = "status.json"
 
 # What a successful build publishes, by name and media type.
@@ -308,6 +309,20 @@ def sweep_stale_siblings(target: Path) -> list[Path]:
             shutil.rmtree(stale, ignore_errors=True)
             removed.append(stale)
     return removed
+
+
+def write_hardware_inputs(version_folder: Path, inputs: dict[str, Any]) -> None:
+    """Freeze the data sheets and bracket rules a version is calculated from."""
+    (version_folder / HARDWARE_INPUTS_FILE).write_text(json.dumps(inputs, indent=2), encoding="utf-8")
+
+
+def read_hardware_inputs(version_folder: Path) -> dict[str, Any] | None:
+    """The version's own frozen inputs; None for a version made without them (drilling not calculated)."""
+    try:
+        document = json.loads((version_folder / HARDWARE_INPUTS_FILE).read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+    return document if isinstance(document, dict) else None
 
 
 def read_status(version_folder: Path) -> dict[str, Any] | None:

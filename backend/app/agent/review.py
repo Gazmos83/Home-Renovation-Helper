@@ -136,16 +136,23 @@ def _spread(n: int) -> list[int]:
     return [round(k * n / 4) % n for k in range(4)]
 
 
-def _spec_facts(document: dict[str, Any]) -> str:
+def _spec_facts(document: dict[str, Any], inputs: dict[str, Any] | None = None) -> str:
     overall = custom_derive.overall(document)
     lines = [
         f"Overall: {overall['w']} × {overall['h']} × {overall['d']} mm (w × h × d).",
     ]
     try:
-        parts, hardware, _assembly = custom_derive.derive(document)
+        parts, hardware, _assembly = custom_derive.derive(document, inputs)
         lines.append(f"Cut-list rows: {len(parts)}; hardware lines: {len(hardware)}.")
     except (KeyError, TypeError, ValueError):
         logger.debug("review facts: cut list not derived", exc_info=True)
+    if inputs is not None:
+        # A built version's spec.json carries the stored document as `input`.
+        source = document["input"] if isinstance(document.get("input"), dict) else document
+        try:
+            lines += custom_derive.drilling_lines(custom_derive.drilling(source, inputs))
+        except (KeyError, TypeError, ValueError):
+            logger.debug("review facts: drilling not derived", exc_info=True)
     materials = document.get("materials") or {}
     if materials:
         named = ", ".join(
@@ -254,7 +261,7 @@ def collect(root: Path, package_id: str, version: int) -> Evidence:
     document = _document(folder)
     if document:
         try:
-            evidence.facts = _spec_facts(document)
+            evidence.facts = _spec_facts(document, storage.read_hardware_inputs(folder))
         except Exception:  # noqa: BLE001 - a bad document still lets the images through
             evidence.facts = ""
         evidence.warnings = _design_warnings(document)
