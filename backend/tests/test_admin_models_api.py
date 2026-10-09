@@ -18,7 +18,8 @@ from tests.api_helpers import reset_owner, sign_in
 from tests.blender_fakes import fake_pipeline_launch
 
 HAIKU = "anthropic/claude-haiku-4.5"
-DESIGNER_DEFAULT = "deepseek/deepseek-v4-pro-0813"
+ALIAS = "~deepseek/deepseek-v4-flash-latest"
+DESIGNER_DEFAULT = "~deepseek/deepseek-v4-flash-latest"
 
 
 def _client(database_url: str, render_root: Path, binary: Path, *, dev: bool) -> TestClient:
@@ -94,6 +95,29 @@ def test_a_failed_probe_leaves_routing_unchanged(client: TestClient) -> None:
     assert response.status_code == 422
     assert HAIKU in response.json()["detail"]["reason"]
     assert client.app.state.routing.model_for("designer") == DESIGNER_DEFAULT
+
+
+def test_a_text_only_model_is_refused_on_an_image_slot_without_a_probe(client: TestClient) -> None:
+    with patch("app.api.admin_models.probe_slug") as probe:
+        response = client.put("/admin/routing/intake", json={"model": "deepseek/deepseek-v4-flash"})
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["failure_class"] == "text_only_model"
+    assert "text-only" in detail["reason"] and "intake" in detail["reason"]
+    probe.assert_not_called()
+
+
+def test_the_v4_flash_alias_is_accepted_for_the_designer_and_probed_with_text(client: TestClient) -> None:
+    with patch("app.api.admin_models.probe_slug") as probe:
+        response = client.put("/admin/routing/designer", json={"model": ALIAS})
+    assert response.status_code == 200
+    assert probe.call_args.kwargs["image"] is False
+    assert client.app.state.routing.model_for("designer") == ALIAS
+
+
+def test_the_model_list_marks_only_the_alias(client: TestClient) -> None:
+    registry = client.get("/admin/models").json()["registry"]
+    assert {row["slug"] for row in registry if row["alias"]} == {ALIAS}
 
 
 def test_reset_restores_the_file(client: TestClient) -> None:

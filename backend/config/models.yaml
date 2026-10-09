@@ -6,9 +6,9 @@
 # The developer panel (step 7) writes per-slot overrides to operator_settings
 # (`routing:<slot>`), which the loader resolves over this file.
 agents:
-  foreman: openai/gpt-5.6-luna
+  foreman: ~deepseek/deepseek-v4-flash-latest
   intake: deepseek/deepseek-v4.1-flash
-  designer: deepseek/deepseek-v4-pro-0813
+  designer: ~deepseek/deepseek-v4-flash-latest
   builder: deepseek/deepseek-v4-pro-0813
   lighting: openai/gpt-5.6-sol
   reviewer: deepseek/deepseek-v4.1-flash

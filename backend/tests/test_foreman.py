@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
@@ -850,3 +851,59 @@ def test_a_conversation_whose_room_was_deleted_is_asked_for_the_room_again(tool_
         house_file.delete_room(session, tool_state.settings.render_root, "Wohnen")
     state = harness.turn("make it wider")
     assert last_reply(state) == "Which room is this for?" and models["designer"].calls == 0
+
+
+PIECE_HEADER = "Piece hall-bench v1:"
+
+
+def _bind_stored_piece(tool_state, harness) -> None:
+    """hall-bench v1 with a readable document (3 shelves, one hinged door) and a second build."""
+    document = desk()
+    document["modules"][0] |= {"shelves": 3, "fronts": [{"type": "door", "count": 1, "opening": "hinge"}]}
+    root = tool_state.settings.render_root
+    for package_id, stored in (("hall-bench", document), ("shoe-rack", desk())):
+        folder = root / package_id / "v1"
+        folder.mkdir(parents=True)
+        (folder / "input.json").write_text(json.dumps(stored), encoding="utf-8")
+    with ToolDeps(tool_state).session() as session:
+        house_file.record_piece(session, "hall-bench", "Hall bench")
+        house_file.record_version(session, "hall-bench", 1)
+        house_file.record_piece(session, "shoe-rack", "Shoe rack")
+        house_file.record_version(session, "shoe-rack", 1)
+        house_file.add_build(session, harness.thread, "shoe-rack")
+        house_file.touch_thread(session, harness.thread, package_id="hall-bench")
+        session.commit()
+    place_in_room(harness, "hall-bench")
+    place_in_room(harness, "shoe-rack")
+
+
+def test_the_designer_sees_the_active_builds_modules_and_only_the_designer(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("designer"), decision("intake")]},
+        designer={"replies": ["Here it is."]},
+        intake={"replies": ["Noted."]},
+    )
+    harness = make_harness(tool_state, models)
+    _bind_stored_piece(tool_state, harness)
+    harness.turn("what does the hall bench look like now?")
+
+    system = str(models["designer"].prompts[-1][0].content)
+    assert PIECE_HEADER in system
+    cabinet = next(line for line in system.splitlines() if line.startswith("- cabinet "))
+    assert "3 shelves" in cabinet and "fronts: 1 door (hinge)" in cabinet
+    assert "Piece shoe-rack" not in system
+    assert "- shoe-rack (Shoe rack): v1" in system
+    assert system.endswith(UNTRUSTED_CONTENT_PREAMBLE)
+    assert system.index(PIECE_HEADER) < system.index("Template custom-build:")
+    foreman_prompt = "\n".join(str(m.content) for m in models["foreman"].decision_prompts[-1])
+    assert PIECE_HEADER not in foreman_prompt
+
+    harness.turn("the hall is 1250 wide, not 1200")
+    assert PIECE_HEADER not in "\n".join(str(m.content) for m in models["intake"].prompts[-1])
+
+
+def test_without_an_active_build_no_piece_is_summarised(tool_state) -> None:
+    models = fake_models(foreman={"decisions": [decision("intake")]}, intake={"replies": ["Tell me more."]})
+    state = make_harness(tool_state, models).turn("I want a bench")
+    assert state["piece_note"] == ""
+    assert "Piece " not in "\n".join(str(m.content) for m in models["intake"].prompts[-1])

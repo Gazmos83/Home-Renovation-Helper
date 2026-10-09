@@ -46,7 +46,7 @@ export default function Models() {
   });
 
   if (!models.data) return <Page>Loading…</Page>;
-  const slugs = models.data.registry.filter((row) => row.slug).map((row) => row.slug);
+  const entries = models.data.registry.filter((row) => row.slug);
 
   return (
     <Page>
@@ -62,9 +62,9 @@ export default function Models() {
             value={slot.model}
             onChange={(event) => route.mutate({ slot: slot.slot, model: event.target.value })}
           >
-            {slugs.map((slug) => (
-              <option key={slug} value={slug}>
-                {slug}
+            {entries.map((entry) => (
+              <option key={entry.slug} value={entry.slug}>
+                {entry.alias ? `${entry.slug} (alias — follows the newest V4 Flash)` : entry.slug}
               </option>
             ))}
           </Select>

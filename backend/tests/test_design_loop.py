@@ -233,3 +233,51 @@ def test_review_then_fix_it_revises_to_version_2(tool_state) -> None:
     assert last_reply(done) == "Version 2 is created."
     assert storage.versions(root, "hall-bench") == [1, 2]
     wait_for_status(storage.version_dir(root, "hall-bench", 2))
+
+
+def test_a_revision_is_restated_gathered_into_one_call_and_a_decline_reason_asks_again(tool_state) -> None:
+    """Graph plumbing for restate-before-revise with a scripted Designer, not the live model's compliance."""
+    root = tool_state.settings.render_root
+    document = desk()
+    module = document["modules"][0]
+    width, shelves = module["width"] - 100, module["shelves"] + 1
+    service.create_version(root, "hall-bench", document, lambda version: None)
+    with Session(tool_state.engine) as session:
+        house_file.record_piece(session, "hall-bench", "Hall bench")
+        house_file.record_version(session, "hall-bench", 1)
+        session.commit()
+
+    restated = f"So far: cabinet: width → {width} mm. Should anything else change?"
+    asked_again = f"So far: cabinet: width → {width} mm; shelves stay. Should anything else change?"
+    decision = {"specialist": "designer", "reason": "change it"}
+    models = fake_models(
+        foreman={"decisions": [decision, decision]},
+        designer={
+            "steps": [
+                restated,
+                [tool_call("revise_package", {
+                    "package_id": "hall-bench",
+                    "changes": {"modules": {"cabinet": {"width": width, "shelves": shelves}}},
+                })],
+                asked_again,
+            ]
+        },
+    )
+    harness = make_harness(tool_state, models)
+    harness.start(package_id="hall-bench")
+
+    first = harness.turn(f"make the cabinet {width} wide")
+    assert last_reply(first) == restated
+    assert harness.snapshot().interrupts == ()
+
+    harness.turn(f"and {shelves} shelves, that is all")
+    interrupts = harness.snapshot().interrupts
+    assert len(interrupts) == 1
+    summary = interrupts[0].value["summary"]
+    assert f"cabinet: width {module['width']} → {width}" in summary
+    assert f"cabinet: shelves {module['shelves']} → {shelves}" in summary
+
+    declined = harness.answer("no", "keep the shelves as they are")
+    assert last_reply(declined) == asked_again
+    assert harness.snapshot().interrupts == ()
+    assert storage.versions(root, "hall-bench") == [1]

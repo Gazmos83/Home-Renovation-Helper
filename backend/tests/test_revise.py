@@ -146,3 +146,78 @@ def test_a_hinge_item_is_set_on_the_hinged_doors() -> None:
     assert "hinge" not in revised["modules"][0]
     with pytest.raises(ReviseError, match="no hinged door"):
         _revise(revised | {"modules": [revised["modules"][0] | {"fronts": []}]}, modules={module_id: {"hinge": "x"}})
+
+
+DOORS = [{"type": "door", "count": 2, "opening": "hinge"}]
+
+
+def _with_fronts(desk: dict, fronts: list[dict], hardware: list[dict] | None = None) -> dict:
+    module = desk["modules"][0] | {"fronts": fronts}
+    if hardware is not None:
+        module["hardware"] = hardware
+    return desk | {"modules": [module]}
+
+
+def test_a_fronts_change_is_described_before_and_after(desk: dict) -> None:
+    doors = _with_fronts(desk, DOORS)
+    _revised, lines = _revise(
+        doors,
+        modules={"cabinet": {"fronts": [
+            {"type": "door", "count": 1, "opening": "hinge"},
+            {"type": "drawer", "count": 1, "height": 200},
+        ]}},
+    )
+    assert lines == ["cabinet: fronts 2 doors (hinge) → 1 door (hinge), 1 drawer 200 mm"]
+
+
+def test_a_non_default_hinge_is_named_and_an_empty_list_reads_none(desk: dict) -> None:
+    doors = _with_fronts(desk, DOORS)
+    _revised, lines = _revise(
+        doors, modules={"cabinet": {"fronts": [{"type": "door", "count": 2, "opening": "hinge", "hinge": "hinge-blum-155"}]}}
+    )
+    assert lines == ["cabinet: fronts 2 doors (hinge) → 2 doors (hinge, hinge-blum-155)"]
+    _revised, lines = _revise(doors, modules={"cabinet": {"fronts": []}})
+    assert lines == ["cabinet: fronts 2 doors (hinge) → none"]
+
+
+def test_a_hardware_change_names_id_item_and_quantity(desk: dict) -> None:
+    handled = _with_fronts(desk, DOORS, [{"id": "handle", "item": "Bar handle", "qty": 2, "notes": ""}])
+    _revised, lines = _revise(
+        handled, modules={"cabinet": {"hardware": [{"id": "handle", "item": "Bar handle", "qty": 4}]}}
+    )
+    assert lines == ['cabinet: hardware handle "Bar handle" ×2 → handle "Bar handle" ×4']
+    assert not any("entries" in line for line in lines)
+
+
+def test_a_value_the_module_already_has_gives_no_line(desk: dict) -> None:
+    height = desk["modules"][0]["height"]
+    shelves = desk["modules"][0]["shelves"]
+    _revised, lines = _revise(desk, modules={"cabinet": {"height": height, "shelves": shelves + 1}})
+    assert lines == [f"cabinet: shelves {shelves} → {shelves + 1}"]
+
+
+def test_unchanged_name_envelope_material_fronts_and_shelf_values_give_no_line(desk: dict, shelved: dict) -> None:
+    module = shelved["modules"][0]
+    _revised, lines = _revise(
+        shelved,
+        name=shelved["name"],
+        envelope=shelved["envelope"],
+        materials={"carcass": shelved["materials"]["carcass"]},
+        modules={"cabinet": {"fronts": module["fronts"], "hardware": module["hardware"]}},
+        wall_shelves={"wall-shelf-1": {"length": WALL_SHELF["length"], "bracket_positions_mm": []}},
+    )
+    assert lines == []
+
+
+def test_a_hinge_every_hinged_door_already_has_gives_no_line() -> None:
+    starter = json.loads((TEMPLATES / "custom-build.json").read_text(encoding="utf-8"))
+    module_id = starter["modules"][0]["id"]
+    _revised, lines = _revise(starter, modules={module_id: {"hinge": "hinge-concealed-110"}})
+    assert lines == []
+
+
+def test_adds_removes_and_overrides_always_give_lines(desk: dict, shelved: dict) -> None:
+    _revised, lines = _revise(shelved, add_wall_shelves=[WALL_SHELF | {"id": "wall-shelf-2", "z": 1700}])
+    assert lines and lines[0].startswith("wall-shelf-2: wall shelf added")
+    _revised, lines = _revise(shelved, remove_wall_shelves=["wall-shelf-1"])
+    assert lines == ["wall-shelf-1: wall shelf removed"]

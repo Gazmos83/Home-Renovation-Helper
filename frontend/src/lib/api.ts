@@ -94,7 +94,8 @@ export type Progress = {
 };
 
 export type ModelsPayload = {
-  registry: { slug: string; display_name: string; supports_images: boolean }[];
+  /** `alias`: the gateway redirects the slug to the newest model of its family. */
+  registry: { slug: string; display_name: string; supports_images: boolean; alias: boolean }[];
   slots: { slot: string; model: string; override: boolean }[];
   models: {
     slug: string;

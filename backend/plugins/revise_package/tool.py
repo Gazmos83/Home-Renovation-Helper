@@ -88,6 +88,11 @@ def _revised(
         revised, lines = revise_spec(document, changes)
     except ReviseError as error:
         return None, None, None, [], str(error)
+    if not lines:
+        return None, None, None, [], (
+            f"nothing would change: every requested value equals version {latest}; "
+            "to build the same design again as a new version, use rebuild_piece"
+        )
     spec, problem = validated_custom_build(ctx, revised, package_id)
     if spec is None:
         return None, None, None, [], problem

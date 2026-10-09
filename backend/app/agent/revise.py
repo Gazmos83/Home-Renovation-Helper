@@ -19,6 +19,51 @@ class ReviseError(ValueError):
     """A change names a module or part the document does not contain."""
 
 
+DEFAULT_HINGE = "hinge-concealed-110"
+
+
+def _without_none(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _without_none(item) for key, item in value.items() if item is not None}
+    if isinstance(value, list):
+        return [_without_none(item) for item in value]
+    return value
+
+
+def _same(before: Any, after: Any) -> bool:
+    """Whether a requested value equals the stored one; the request carries no `None` fields."""
+    return _without_none(before) == _without_none(after)
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def describe_front(front: dict[str, Any]) -> str:
+    """One front in words: type, count, height when set, and its opening."""
+    kind = front.get("type")
+    height = f" {front['height']} mm" if front.get("height") else ""
+    if kind == "flap":
+        return f"1 flap{height} ({front.get('hinged')}-hinged)"
+    if kind == "door":
+        details = [str(front.get("opening"))]
+        hinge = front.get("hinge", DEFAULT_HINGE)
+        if front.get("opening") == "hinge" and hinge != DEFAULT_HINGE:
+            details.append(hinge)
+        return f"{_plural(front.get('count', 1), 'door')}{height} ({', '.join(details)})"
+    return f"{_plural(front.get('count', 1), str(kind))}{height}"
+
+
+def describe_fronts(fronts: list[dict[str, Any]] | None) -> str:
+    """A module's fronts as written, in words, e.g. "1 door (hinge), 1 drawer 200 mm"."""
+    return ", ".join(describe_front(front) for front in fronts or []) or "none"
+
+
+def describe_hardware(lines: list[dict[str, Any]] | None) -> str:
+    """A module's hardware lines by id, item and quantity, e.g. 'handle "Bar handle" ×2'."""
+    return ", ".join(f'{line["id"]} "{line["item"]}" ×{line["qty"]}' for line in lines or []) or "none"
+
+
 def _unknown(kind: str, slug: str, present: set[str]) -> ReviseError:
     listed = ", ".join(sorted(present)) or "none"
     return ReviseError(f"{kind} {slug!r} is not in the package; its {kind}s are: {listed}")
@@ -31,8 +76,12 @@ def _apply_module_change(module: dict[str, Any], change: dict[str, Any], lines: 
             _set_hinge(module, value, lines)
             continue
         before = module.get(field)
-        if field in ("fronts", "hardware"):
-            lines.append(f"{module_id}: {field} {len(before or [])} → {len(value)} entries")
+        if _same(before, value):
+            continue  # a value the module already has changes nothing
+        if field == "fronts":
+            lines.append(f"{module_id}: fronts {describe_fronts(before)} → {describe_fronts(value)}")
+        elif field == "hardware":
+            lines.append(f"{module_id}: hardware {describe_hardware(before)} → {describe_hardware(value)}")
         else:
             lines.append(f"{module_id}: {field} {before} → {value}")
         module[field] = value
@@ -43,13 +92,17 @@ def _set_hinge(module: dict[str, Any], hinge: str, lines: list[str]) -> None:
     if not doors:
         raise ReviseError(f"module {module['id']!r} has no hinged door to take hinge {hinge!r}")
     for door in doors:
-        lines.append(f"{module['id']}: hinge {door.get('hinge', 'hinge-concealed-110')} → {hinge}")
+        if door.get("hinge", DEFAULT_HINGE) == hinge:
+            continue
+        lines.append(f"{module['id']}: hinge {door.get('hinge', DEFAULT_HINGE)} → {hinge}")
         door["hinge"] = hinge
 
 
 def _apply_shelf_change(shelf: dict[str, Any], change: dict[str, Any], lines: list[str]) -> None:
     for field, value in change.items():
         before = shelf.get(field)
+        if _same(before, value) or (field == "bracket_positions_mm" and not before and not value):
+            continue  # a value the shelf already has changes nothing
         if field == "bracket_positions_mm":
             was = before if before else "calculated"
             now = value if value else "calculated"
@@ -123,16 +176,18 @@ def revise_spec(
     if shelves or "wall_shelves" in spec:
         spec["wall_shelves"] = shelves
 
-    if "name" in requested:
+    if "name" in requested and not _same(spec.get("name"), requested["name"]):
         lines.append(f"name: {spec.get('name')} → {requested['name']}")
         spec["name"] = requested["name"]
-    if "envelope" in requested:
+    if "envelope" in requested and not _same(spec.get("envelope"), requested["envelope"]):
         envelope = requested["envelope"]
         lines.append(f"envelope: {envelope['width']}×{envelope['height']}×{envelope['depth']} mm")
         spec["envelope"] = envelope
     materials: dict[str, Any] = dict(spec.get("materials") or {})
     for slot, entry in (requested.get("materials") or {}).items():
         before = materials.get(slot)
+        if _same(before, entry):
+            continue
         was = f"{before['material']} {before['thickness_mm']} mm" if before else "new slot"
         lines.append(f"materials.{slot}: {was} → {entry['material']} {entry['thickness_mm']} mm")
         materials[slot] = entry

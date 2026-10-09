@@ -6,8 +6,10 @@ import Models from "./Models";
 
 const payload = {
   registry: [
-    { slug: "deepseek/deepseek-v4-pro-0813", display_name: "Pro", supports_images: false },
-    { slug: "anthropic/claude-haiku-4.5", display_name: "Haiku", supports_images: false },
+    { slug: "deepseek/deepseek-v4-pro-0813", display_name: "Pro", supports_images: false, alias: false },
+    { slug: "anthropic/claude-haiku-4.5", display_name: "Haiku", supports_images: false, alias: false },
+    { slug: "deepseek/deepseek-v4-flash", display_name: "V4 Flash", supports_images: false, alias: false },
+    { slug: "~deepseek/deepseek-v4-flash-latest", display_name: "V4 Flash (latest)", supports_images: false, alias: true },
   ],
   slots: [{ slot: "designer", model: "deepseek/deepseek-v4-pro-0813", override: false }],
   models: [
@@ -66,6 +68,14 @@ test("a refused routing change is shown next to the slot", async () => {
   const select = await screen.findByLabelText("Model");
   await user.selectOptions(select, "anthropic/claude-haiku-4.5");
   expect(await screen.findByText("model blocked by gateway")).toBeInTheDocument();
+});
+
+test("an alias model is marked in the model list and a pinned one is not", async () => {
+  ui();
+  expect(
+    await screen.findByRole("option", { name: "~deepseek/deepseek-v4-flash-latest (alias — follows the newest V4 Flash)" }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "deepseek/deepseek-v4-flash" })).toBeInTheDocument();
 });
 
 test("a refused budget value is shown next to its field", async () => {

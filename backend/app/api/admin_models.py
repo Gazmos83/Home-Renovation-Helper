@@ -11,7 +11,13 @@ from pydantic import BaseModel, Field
 from app.agent.models.budgets import InvalidBudgetSettings
 from app.agent.models.probe import probe_slug
 from app.agent.models.profiles import InvalidGenerationSettings
-from app.agent.models.registry import BY_ID, MODELS, is_available, is_known
+from app.agent.models.registry import (
+    BY_ID,
+    MODELS,
+    is_available,
+    is_known,
+    supports_images,
+)
 from app.agent.models.routing import (
     IMAGE_SLOTS,
     SLOTS,
@@ -82,6 +88,7 @@ def list_models(request: Request) -> dict[str, Any]:
             "supports_temperature": entry.supports_temperature,
             "supports_images": entry.supports_images,
             "available": entry.availability == "available",
+            "alias": entry.alias,
         }
         for entry in MODELS
     ]
@@ -121,6 +128,10 @@ def set_routing(slot: str, body: RoutingIn, request: Request) -> dict[str, Any]:
     slug = body.model
     if not is_known(slug) or not is_available(slug):
         raise _refused(422, "unknown_model", f"unknown or unavailable model {slug}", "model")
+    if slot in IMAGE_SLOTS and not supports_images(slug):
+        raise _refused(
+            422, "text_only_model", f"slot {slot!r} needs image input but {slug!r} is text-only", "model"
+        )
     try:
         probe_slug(request.app.state.settings, slug, image=slot in IMAGE_SLOTS)
     except ConfigurationError as error:

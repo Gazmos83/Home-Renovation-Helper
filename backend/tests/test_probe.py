@@ -60,6 +60,25 @@ def test_all_routed_models_answer_the_probe() -> None:
     assert set(probed) == set(routing.distinct_slugs())
 
 
+def test_the_shipped_v4_flash_alias_is_probed_with_text() -> None:
+    import json
+
+    alias = "~deepseek/deepseek-v4-flash-latest"
+    routing = load_routing()
+    assert routing.model_for("foreman") == alias and routing.model_for("designer") == alias
+    sent: list[Any] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        if body["model"] == alias:
+            sent.append(body["messages"])
+        return httpx2.Response(200, json=_completion(body["model"]))
+
+    probe_models(_settings(), routing, http_client=httpx2.Client(transport=httpx2.MockTransport(handler)))
+    assert len(sent) == 1
+    assert "image_url" not in json.dumps(sent[0])
+
+
 def test_a_guardrail_block_fails_startup_naming_the_slug_and_slot() -> None:
     routing = load_routing()
     with pytest.raises(ConfigurationError) as caught:

@@ -70,15 +70,15 @@ Routing lives in `config/models.yaml`: one registry entry per agent, no backup. 
 
 | Agent | Model | Reason |
 |---|---|---|
-| Foreman | `openai/gpt-5.6-luna` | cheap, frequent, strong aggregate score for its price |
+| Foreman | `~deepseek/deepseek-v4-flash-latest` | the predecessor's model family; alias by the owner's decision of 2026-10-09 |
 | Intake | `deepseek/deepseek-v4.1-flash` | reads blueprints and room photos, so it needs image input (decided 2026-10-06); same model as the Reviewer |
-| Designer | `deepseek/deepseek-v4-pro-0813` | schema-validated output, so the cheaper top coder leads |
+| Designer | `~deepseek/deepseek-v4-flash-latest` | the predecessor's model family; alias by the owner's decision of 2026-10-09 |
 | Builder | `deepseek/deepseek-v4-pro-0813` | bpy is well-trodden; allow-list and schema catch mistakes |
 | Lighting & materials | `openai/gpt-5.6-sol` | physics-heavy node graphs; leads the aggregate index; text-only, it reads the scene as a code-authored report (decided 2026-10-06) |
 | Reviewer | `deepseek/deepseek-v4.1-flash` | image input confirmed; different family from the Builder. `deepseek-v4-flash-0731` is text-only and must not be used here |
 | Researcher | `openai/gpt-5.6-luna` | long context, tool use, cheap |
 
-The registry holds exactly these four slugs plus `anthropic/claude-haiku-4.5`, which passed the probe and is available if a slot must change. Excluded by decision (blocked by the owner's OpenRouter guardrail, 2026-10-05): `anthropic/claude-sonnet-5.5`, `anthropic/claude-opus-5.5`, `google/gemini-3.5-flash`, `z-ai/glm-5.3-flash`.
+The registry holds seven slugs: `openai/gpt-5.6-luna`, `openai/gpt-5.6-sol`, `deepseek/deepseek-v4-pro-0813`, `deepseek/deepseek-v4.1-flash` and `anthropic/claude-haiku-4.5` (probed 2026-10-05), and `deepseek/deepseek-v4-flash` and `~deepseek/deepseek-v4-flash-latest` (probed 2026-10-09, text-only). `~deepseek/deepseek-v4-flash-latest` is an alias that follows the newest V4 Flash model, so the model behind it can change without a new probe. It is the one exception to pinned slugs, chosen by the owner, and is marked as an alias in `/admin`. `deepseek/deepseek-v4-flash-0731`, the predecessor's model, is not listed on the owner's key (2026-10-09). A slot is changed only from `/admin`, and a saved override there wins over `config/models.yaml`. Excluded by decision (blocked by the owner's OpenRouter guardrail, 2026-10-05): `anthropic/claude-sonnet-5.5`, `anthropic/claude-opus-5.5`, `google/gemini-3.5-flash`, `z-ai/glm-5.3-flash`.
 
 **Gateway probe 2026-10-05.** `deepseek/deepseek-v4.1-flash` answered an image correctly through OpenRouter; the other four registry slugs answered text. Startup validation must report a guardrail block as a configuration error naming the slug, not as a model failure.
 

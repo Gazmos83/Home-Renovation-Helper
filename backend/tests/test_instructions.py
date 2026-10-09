@@ -224,3 +224,16 @@ def test_intake_lists_note_conflicts_in_a_table_before_proposing() -> None:
 def test_the_designer_composes_an_empty_room_on_request() -> None:
     text = load_instructions()["designer"].text
     assert "When the owner wants the room with no furniture, call `compose_room` with the room and an empty item list." in text
+
+
+def test_the_designer_restates_a_revision_and_asks_before_calling_the_tool() -> None:
+    text = load_instructions()["designer"].text
+    assert "first restate the changes you understood as a short list" in text
+    assert "ask whether anything else should change" in text
+    assert "Call `revise_package` only once the owner says the list is complete" in text
+    assert "every change asked for since the last created revision in that one call" in text
+    assert "add it to the list and ask again" in text
+    assert "treat the reason as one more change: restate the whole list and ask again" in text
+    assert "Do not call `revise_package` again in that reply." in text
+    assert "write the new list starting from the summary's" in text
+    assert "Never resend the whole document." in text

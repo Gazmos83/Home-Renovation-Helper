@@ -53,6 +53,7 @@ from app.agent.prompts import (
     composition_note,
     house_note,
     neutralise,
+    piece_note,
     render_feedback_note,
     wrap_note,
 )
@@ -65,6 +66,7 @@ from app.agent.tools.base import (
     ToolDeps,
     ToolOutput,
 )
+from app.agent.tools.shared import read_input
 from app.assets import models as model_library
 from app.blender import storage
 from app.config import Settings
@@ -136,6 +138,7 @@ class ChatState(TypedDict, total=False):
     specialist: str
     reason: str
     house_note: str
+    piece_note: str
     feedback_note: str
     facts: str
     round_count: int
@@ -531,6 +534,13 @@ def build_graph(
         detail_ready = progress.detail_ready(
             settings.render_root, package_id, bound["latest_version"] if bound else None
         )
+        piece_text = ""
+        if bound and bound["latest_version"]:
+            try:
+                document = read_input(storage.version_dir(settings.render_root, package_id, bound["latest_version"]))
+            except ValueError:
+                document = None
+            piece_text = piece_note(package_id, bound["latest_version"], document)
         open_review = []
         recent_feedback: list[dict[str, Any]] = []
         if package_id:
@@ -603,6 +613,7 @@ def build_graph(
                 no_room=not room_confirmed,
             )
             or "",
+            "piece_note": piece_text,
             "feedback_note": render_feedback_note(recent_feedback),
             "facts": facts,
             "package_id": package_id,
@@ -797,6 +808,8 @@ def build_graph(
             notes = [state.get("facts", "")]
             if name in ("intake", "designer"):
                 notes.append(state.get("house_note", ""))
+            if name == "designer":
+                notes.append(state.get("piece_note", ""))
             if name in ("designer", "builder"):
                 notes.append(state.get("composition_note", ""))
             if name in ("designer", "lighting"):

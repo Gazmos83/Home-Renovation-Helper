@@ -51,6 +51,16 @@ def test_yes_creates_the_next_version_revised_from_the_latest(make_ctx, tool_dep
     assert second["changes"] == [f"cabinet: shelves {before} → 3"]
 
 
+def test_a_revision_that_changes_nothing_is_refused_and_creates_nothing(make_ctx, tool_state) -> None:
+    shelves = make_piece(make_ctx, tool_state)
+    same = {"package_id": "hall-bench", "changes": {"modules": {"cabinet": {"shelves": shelves}}}}
+    shown = preview(same, make_ctx())
+    assert isinstance(shown, str)
+    assert shown.startswith("nothing would change: every requested value equals version 1")
+    assert run(same, replace(make_ctx(), approved=True)) == shown
+    assert storage.versions(tool_state.settings.render_root, "hall-bench") == [1]
+
+
 def test_declining_is_the_graphs_job_so_previewing_alone_creates_nothing(make_ctx, tool_state) -> None:
     make_piece(make_ctx, tool_state)
     preview(SHELVES, make_ctx())
