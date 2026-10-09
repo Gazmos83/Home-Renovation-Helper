@@ -117,7 +117,8 @@ Nothing SHALL be deleted until the owner confirms in the dialog. Cancelling SHAL
 **Compositions.** For each composition the page SHALL show:
 - its scope, its latest version and that version's build status;
 - its items by name and type, with each piece's version and approval state ("no longer approved" shown plainly), or "The room only, no furniture" when it has no items;
-- the latest screenshot or still, and a link to the viewer when a turntable exists.
+- the latest screenshot or still, and a link to the viewer when a turntable exists;
+- for the latest built version that has `model.glb`, a 3D view of the composition, loaded only when the owner opens it. It SHALL use the piece inspector's camera controls (free rotate and zoom, Iso, Front, Side and Plan) and its Workshop and Blueprint modes. It SHALL offer one switch per surface of the version's surface map: each wall, the floor, the ceiling and the items, plus "All walls". Switching a surface off SHALL hide exactly the meshes the map lists under it, and a mesh the map does not name stays visible. All surfaces SHALL start switched on, except the ceiling, which starts off so the room can be seen from above. A version without `model.glb` SHALL show its screenshot or still and say that composing the room again adds the 3D view.
 
 **Model library.** The page SHALL show the library with each model's name, stated size and check state (`checking`, `ready`, or `refused` with its reason). It SHALL offer an upload form taking a file, a name and the three dimensions, and a delete action. A refused upload or delete SHALL show its reason next to the form.
 
@@ -162,6 +163,18 @@ The page SHALL NOT show model names of language models, prompts, token counts or
 #### Scenario: Check finishes
 - **WHEN** an uploaded model's check finishes while the page is open
 - **THEN** its state changes from `checking` to `ready` without a reload
+
+#### Scenario: Room shown in 3D
+- **WHEN** composition `Wohnen` v2 has `model.glb` and the owner opens its 3D view
+- **THEN** the composition is shown from the Iso camera with switches for each wall, the floor, the ceiling, the items and "All walls", and the ceiling is off
+
+#### Scenario: Wall switched off
+- **WHEN** the owner switches wall 2 off
+- **THEN** every mesh the surface map lists under wall 2 is hidden and the pieces behind it can be seen, and all other surfaces stay as they were
+
+#### Scenario: Older composition without a model
+- **WHEN** composition `Hall` v1 was built before this change and has no `model.glb`
+- **THEN** the Rooms page shows its screenshot and says that composing `Hall` again adds the 3D view
 
 ### Requirement: The conversation view is the homeowner's chat
 The conversation view SHALL show the owner's messages and the replies in order as chat bubbles: replies aligned to the left, the owner's messages to the right, and forms, confirmations and question sets centred. Reply text SHALL be set in Commissioner and headings and speaker names in Oswald, served with the app, with a line height of at least 1.6 and space between paragraphs. A reply SHALL be rendered as formatted text — headings, bullet and numbered lists, tables, emphasis, inline code — with raw HTML shown as text and never rendered, and an image shown only when it points at one of the app's own routes. A fenced block marked `calc` SHALL be shown in a framed box set apart from the reply's text. A file route of a piece, a composition or an apartment shell in a reply, written bare or as a link, SHALL be shown as a link that opens in a new tab; no other address in a reply SHALL be linked. A composer SHALL send one message as one turn, and the turn's refusal SHALL be shown in words next to the composer when the service refuses it. While a turn is running the composer SHALL be disabled and a waiting bubble SHALL stand in the reply position: left-aligned, rounded, with a 2 px border and animated dots, naming the specialist currently working ("Designer is working…") and updating as the turn moves on, or "The Foreman is working…" before a specialist is chosen. Under each reply the specialists that ran in that turn SHALL be listed by role name only. A reply's title event SHALL update the heading without a reload. The heading SHALL be editable in place; saving sends the new title and an empty title is refused in words.
@@ -490,3 +503,55 @@ When the list is incomplete, the tab SHALL show a banner, above the tables, that
 #### Scenario: Incomplete banner
 - **WHEN** the owner opens the Cut list of a version whose hinge data sheet lacks the cup edge distance
 - **THEN** a banner says the drilling list is incomplete and names "cup edge distance"
+
+### Requirement: The inspector switches and follows versions
+The inspector, both its page and the conversation's split view, SHALL offer a version switcher. The switcher SHALL list every version of the piece with its number and build state, the approved one marked. Choosing a version SHALL show that version and update the URL: the page path, or the split view's `inspect` parameter. While the inspector is open, it SHALL notice within five seconds when a newer version of the piece is created, switch to the newest version, update the URL, and say "Showing version N, the newest". It SHALL then show that version's build state until the build succeeds, and then its model. A version the owner chose that is older than the newest SHALL be left alone until a version newer than the newest one at that time is created.
+
+#### Scenario: Older version chosen
+- **WHEN** the owner inspects `murphy-bed` v3 and chooses v1 in the switcher
+- **THEN** v1's model and cut list are shown and the URL names version 1
+
+#### Scenario: Revision created while inspecting
+- **WHEN** the split view shows `murphy-bed` v3 and the owner confirms a revision that creates v4
+- **THEN** within five seconds the split view shows v4's build state, the `inspect` parameter names v4, and once the build succeeds v4's model is shown
+
+### Requirement: The chat can stop a turn and edit the latest message
+While a turn runs, the conversation view SHALL show a Stop button in place of Send. Pressing it SHALL stop the turn and show the `stopped` message in plain words, and the composer SHALL take input again. The owner's latest message SHALL offer an Edit action when no turn is running and no confirmation is pending. Edit SHALL put the message's text into the composer. Before it sends, it SHALL say that the message and the replies after it are replaced, and that builds or versions already made stay. Sending SHALL replace the message and run it again. Cancelling SHALL change nothing. Older messages SHALL NOT offer Edit. The view SHALL pass a recorded browser check before it counts as done.
+
+#### Scenario: Stop pressed
+- **WHEN** a turn is running and the owner presses Stop
+- **THEN** the turn ends, the message and its partial progress are gone from the thread, and the composer is ready
+
+#### Scenario: Latest message edited
+- **WHEN** the owner chooses Edit on "make it 60 cm deep", changes it to "make it 45 cm deep" and sends
+- **THEN** the thread shows the edited message and its new reply, and the old ones are gone
+
+#### Scenario: Only the latest message
+- **WHEN** the thread holds three owner messages
+- **THEN** only the third offers Edit
+
+### Requirement: The Pieces page shows each approved version's pricing
+On the Pieces page, an approved version SHALL offer a "Pricing" dropdown. It SHALL list the version's stored pricings, newest first, by date, total and whether they are complete. The selected pricing SHALL show:
+- its sheets with material and count;
+- its cut lines;
+- its hardware lines;
+- its total in EUR;
+- every unpriced part, named, with "Pricing incomplete".
+
+A "Price this version" action SHALL create a new pricing and select it. A refusal SHALL show its reason next to the action. A version that is not approved SHALL say that it must be approved before it can be priced, and SHALL offer no action. The dropdown SHALL NOT show a model name, prompt, token count or a GPU cost. The page SHALL pass a recorded browser check before it counts as done.
+
+#### Scenario: Priced version
+- **WHEN** `bench` v2 is approved and has one complete pricing of 184.20 EUR
+- **THEN** its Pricing dropdown lists that pricing and shows its sheets, cuts, hardware and 184.20 EUR
+
+#### Scenario: Incomplete pricing
+- **WHEN** a pricing of `bench` v2 has no price for the oak edge banding
+- **THEN** the dropdown shows "Pricing incomplete" and names the edge banding
+
+#### Scenario: Price this version
+- **WHEN** the owner presses "Price this version" on approved `bench` v2
+- **THEN** a new pricing is created, listed first and selected
+
+#### Scenario: Unapproved version
+- **WHEN** `bench` v3 is not approved
+- **THEN** v3 says it must be approved before it can be priced and offers no action
