@@ -169,11 +169,15 @@ When the Designer's document names a field the schema does not define, `create_p
 - **THEN** it is refused naming `drawers` and listing the piece's modules, and no confirmation is raised
 
 ### Requirement: The cut list is derived without rendering
-`cut_list` SHALL return a version's derived parts (id, qty, length, width, thickness, material) and hardware lines from its stored document, with totals, without starting any Blender process.
+`cut_list` SHALL return a version's derived parts (id, qty, length, width, thickness, material) and hardware lines from its stored document and its saved hardware inputs, with totals, and its drilling list per part with the drilling-work counts, without starting any Blender process. A ranged position SHALL be reported as its range and a position given as a rule as its words, never as a single number. When the drilling list is incomplete, `cut_list` SHALL say so and name every missing value; for a version with no saved inputs it SHALL say that drilling was not calculated.
 
 #### Scenario: Parts listed
 - **WHEN** the Designer calls `cut_list` for `hall-bench` version 1
 - **THEN** the result lists every derived part with its dimensions and no process is started
+
+#### Scenario: Drilling incomplete
+- **WHEN** the Designer calls `cut_list` for a version whose hinge data sheet lacks the cup edge distance
+- **THEN** the result lists the drilling positions it has, says the drilling list is incomplete, and names "cup edge distance"
 
 ### Requirement: Room fit checks a placement against a house-file room
 `room_fit` SHALL take a piece version, a room name, a wall index and an offset, read the piece's overall size and the room from the house file, and either refuse naming the wall and the excess in millimetres (or the ceiling, an opening or a furnishing in the way, or a design rule of severity `refuse`) or return the placement, any design-rule warnings with their sources, and the room-scene document a room render uses. A room that is not in the house file SHALL be refused naming the room, listing the rooms that are, and saying that Intake records a room from its measurements or a plan; a room is required here even when the piece's brief has none.
