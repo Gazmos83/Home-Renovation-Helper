@@ -1,9 +1,10 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError, versionFile } from "@/lib/api";
 import type { CameraPreset, Layers, ViewMode } from "@/lib/inspector";
 import { Button } from "@/components/ui/button";
 import { cardClass } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { CutListTables } from "@/components/inspector/CutListTables";
 
@@ -13,11 +14,15 @@ import { CutListTables } from "@/components/inspector/CutListTables";
  * views, and its cut list. Every figure comes from the version's own files. The 3D
  * stage is a lazy import, so three.js loads only when a model is shown. The inspector
  * page and the conversation's split view both render this one component.
+ *
+ * With `onChoose`, a version switcher lists every version of the piece, and the view
+ * follows a newer version created while it is open: the newest seen at mount (or at
+ * the owner's last choice) is remembered, and a larger one is switched to.
  */
 
 const InspectorCanvas = lazy(() => import("@/components/inspector/InspectorCanvas"));
 
-const CAMERAS: { id: CameraPreset; label: string }[] = [
+export const CAMERAS: { id: CameraPreset; label: string }[] = [
   { id: "iso", label: "Iso" },
   { id: "front", label: "Front" },
   { id: "side", label: "Side" },
@@ -36,7 +41,7 @@ const VIEWS = [
   { file: "top.png", label: "Top", shows: "width and depth" },
 ];
 
-function Choice<T extends string>({
+export function Choice<T extends string>({
   label,
   options,
   value,
@@ -71,6 +76,16 @@ function buildState(status: string | null, version: number): string {
   return `Version ${version} is not built yet, so there is no model to inspect.`;
 }
 
+function stateWord(status: string | null): string {
+  if (status === "succeeded") return "built";
+  if (status === "queued" || status === "running") return "building";
+  if (status === "failed") return "build failed";
+  return "not built";
+}
+
+/** Polls the piece's versions while open; how often, in milliseconds. */
+const VERSION_POLL_MS = 3000;
+
 function problem(error: unknown, what: string): string {
   if (error instanceof ApiError && error.status === 404) return `There is no ${what}.`;
   return error instanceof Error ? error.message : `The ${what} could not be read.`;
@@ -81,12 +96,15 @@ export function InspectorView({
   version,
   compact = false,
   versionLabel = String(version),
+  onChoose,
 }: {
   packageId: string;
   version: number;
   compact?: boolean;
   /** What to call the version when it is not a number, as the address spelled it. */
   versionLabel?: string;
+  /** Show another version: the owner's choice in the switcher, or a newer version followed. */
+  onChoose?: (version: number) => void;
 }) {
   const [tab, setTab] = useState<"model" | "cutlist">("model");
   const [mode, setMode] = useState<ViewMode>("workshop");
@@ -101,6 +119,54 @@ export function InspectorView({
     refetchInterval: (query) => (["queued", "running"].includes(query.state.data?.status ?? "") ? 3000 : false),
   });
   const built = info.data?.status === "succeeded";
+
+  const versions = useQuery({
+    queryKey: ["piece-versions", packageId],
+    queryFn: () => api.piece(packageId),
+    enabled: Boolean(onChoose),
+    refetchInterval: VERSION_POLL_MS,
+  });
+  const listed = versions.data?.versions ?? [];
+  const newest = listed.length ? Math.max(...listed.map((v) => v.version)) : null;
+  const baseline = useRef<number | null>(null);
+  const [followed, setFollowed] = useState<number | null>(null);
+  useEffect(() => {
+    if (newest === null || !onChoose) return;
+    if (baseline.current === null) baseline.current = newest;
+    else if (newest > baseline.current) {
+      baseline.current = newest;
+      setFollowed(newest);
+      onChoose(newest);
+    }
+  }, [newest, onChoose]);
+
+  function choose(next: number) {
+    if (newest !== null) baseline.current = newest;
+    setFollowed(null);
+    onChoose?.(next);
+  }
+
+  const switcher = onChoose && listed.length > 0 && (
+    <div className="flex flex-wrap items-center gap-2">
+      <Select
+        aria-label="Version"
+        className="w-auto"
+        value={String(version)}
+        onChange={(event) => choose(Number(event.target.value))}
+      >
+        {listed.map((v) => (
+          <option key={v.version} value={v.version}>
+            {`Version ${v.version}, ${stateWord(v.status)}${v.approved_at ? ", approved" : ""}`}
+          </option>
+        ))}
+      </Select>
+      {followed === version && (
+        <p role="status" className="text-sm">
+          Showing version {version}, the newest
+        </p>
+      )}
+    </div>
+  );
   const spec = useQuery({
     queryKey: ["spec", packageId, version],
     queryFn: () => api.pieceSpec(packageId, version),
@@ -210,5 +276,10 @@ export function InspectorView({
     );
   }
 
-  return <section className={`${cardClass} grid gap-4`}>{body}</section>;
+  return (
+    <section className={`${cardClass} grid gap-4`}>
+      {switcher}
+      {body}
+    </section>
+  );
 }

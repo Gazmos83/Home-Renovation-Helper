@@ -200,3 +200,18 @@ def test_a_stored_room_named_in_a_brief_is_confirmed_by_yes(make_ctx, tool_deps)
     assert _thread_room(tool_deps, thread_id) is None
     run({"room_name": "Hall", "purpose": "a coat rack"}, replace(ctx, approved=True))
     assert _thread_room(tool_deps, thread_id) == "Hall"
+
+
+def test_correcting_an_apartment_room_keeps_it_in_its_apartment(make_ctx, tool_deps) -> None:
+    kitchen = {"name": "Küche", "corners_mm": [[0, 0], [3000, 0], [3000, 2800], [0, 2800]]}
+    with tool_deps.session() as session:
+        house_file.upsert_apartment(session, "Wohnung", 2600, 100, [kitchen])
+        session.commit()
+    run(
+        {"room_name": "Küche", "ceiling_height_mm": 2450, "purpose": "a spice shelf"},
+        replace(make_ctx(), approved=True),
+    )
+    with tool_deps.session() as session:
+        room = house_file.room_by_name(session, "Küche")
+        assert room.height_mm == 2450
+        assert room.apartment_id == house_file.apartment_by_name(session, "Wohnung").id

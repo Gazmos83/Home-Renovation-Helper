@@ -189,3 +189,67 @@ def test_the_preview_warns_about_owner_brackets_and_still_lets_the_owner_confirm
     output = run({"package_id": "hall-bench", "changes": {"add_wall_shelves": [shelf]}}, replace(make_ctx(), approved=True))
     assert "version 2" in output.text
     wait_for_status(storage.version_dir(tool_state.settings.render_root, "hall-bench", 2))
+
+
+# --- the owner's measurements, checked by code (app-check-2026-10-09) ---------------------
+
+
+def _said(make_ctx, *texts: str):
+    from langchain_core.messages import HumanMessage
+
+    return make_ctx(history=tuple(HumanMessage(text) for text in texts))
+
+
+def _wider(width: int, *requested: dict) -> dict:
+    return {
+        "package_id": "hall-bench",
+        "changes": {"modules": {"cabinet": {"width": width}}},
+        "requested": list(requested),
+    }
+
+
+def test_an_absolute_width_the_owner_gave_is_confirmed(make_ctx, tool_state) -> None:
+    make_piece(make_ctx, tool_state)
+    ctx = _said(make_ctx, "make the cabinet 90 cm wide")
+    shown = preview(_wider(900, {"quote": "90 cm wide", "target": "cabinet", "field": "width", "value_mm": 900}), ctx)
+    assert isinstance(shown, Confirmation)
+    assert "cabinet: width 1000 → 900" in shown.summary
+
+
+def test_an_invented_value_is_refused_with_no_confirmation(make_ctx, tool_state) -> None:
+    make_piece(make_ctx, tool_state)
+    ctx = _said(make_ctx, "make the cabinet 90 cm wide")
+    refused = preview(_wider(850, {"quote": "90 cm wide", "target": "cabinet", "field": "width", "value_mm": 900}), ctx)
+    assert isinstance(refused, str)
+    assert "'90 cm wide'" in refused and "900 mm expected" in refused and "set 850 mm" in refused
+    assert run(_wider(850, {"quote": "90 cm wide", "target": "cabinet", "field": "width", "value_mm": 900}),
+               replace(ctx, approved=True)) == refused
+    assert storage.versions(tool_state.settings.render_root, "hall-bench") == [1]
+
+
+def test_a_relative_width_is_resolved_against_the_latest_version(make_ctx, tool_state) -> None:
+    make_piece(make_ctx, tool_state)
+    ctx = _said(make_ctx, "5 cm wider please")
+    shown = preview(_wider(1050, {"quote": "5 cm wider", "target": "cabinet", "field": "width", "value_mm": 1050}), ctx)
+    assert isinstance(shown, Confirmation)
+    assert "cabinet: width 1000 → 1050" in shown.summary
+
+
+def test_a_length_left_out_is_refused_naming_it(make_ctx, tool_state) -> None:
+    make_piece(make_ctx, tool_state)
+    ctx = _said(make_ctx, "90 cm wide and 35 cm deep")
+    refused = preview(_wider(900, {"quote": "90 cm wide", "target": "cabinet", "field": "width", "value_mm": 900}), ctx)
+    assert isinstance(refused, str) and "'35 cm' is not covered" in refused
+
+
+def test_no_requested_list_is_refused_when_the_owner_gave_a_length(make_ctx, tool_state) -> None:
+    make_piece(make_ctx, tool_state)
+    refused = preview(_wider(900), _said(make_ctx, "make it 90 cm wide"))
+    assert isinstance(refused, str) and "'90 cm' is not covered" in refused
+
+
+def test_a_quote_the_owner_did_not_write_is_refused(make_ctx, tool_state) -> None:
+    make_piece(make_ctx, tool_state)
+    ctx = _said(make_ctx, "make it a bit wider")
+    refused = preview(_wider(900, {"quote": "90 cm", "target": "cabinet", "field": "width", "value_mm": 900}), ctx)
+    assert isinstance(refused, str) and "'90 cm' is not in the owner's messages" in refused

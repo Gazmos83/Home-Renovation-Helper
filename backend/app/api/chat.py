@@ -2,7 +2,7 @@
 
 A thread is started, listed, read and deleted; a turn is one message in and one reply out;
 a gated action pauses the turn until the owner answers `yes` or `no` on the
-thread. A turn and an answer can also be followed as Server-Sent Events
+thread. A running turn can be stopped, and the latest owner message edited and run again. A turn and an answer can also be followed as Server-Sent Events
 (studio-chat-polish): each specialist and tool as it starts, then one ending event.
 The response models and event bodies are the only exit: they have no field for a
 model, a prompt, a token count, a cost or a file-system path (CLAUDE.md §1).
@@ -65,6 +65,13 @@ class RenameIn(BaseModel):
 class TurnIn(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
     upload_ids: list[UUID] = Field(default_factory=list)
+
+
+class EditIn(BaseModel):
+    """The latest owner message, by id, and its new text (homeowner-chat)."""
+
+    message_id: str = Field(min_length=1, max_length=100)
+    message: str = Field(min_length=1, max_length=8000)
 
 
 class ResumeIn(BaseModel):
@@ -140,6 +147,8 @@ class MessageOut(BaseModel):
     rows: list[AnswerRowOut] | None = Field(default=None, exclude_if=lambda rows: rows is None)
     # The files sent with an owner's message; left out when none were.
     upload_ids: list[UUID] | None = Field(default=None, exclude_if=lambda ids: ids is None)
+    # An owner's message's id, so the latest one can be edited; left out for the other roles.
+    message_id: str | None = Field(default=None, exclude_if=lambda v: v is None)
     # A render notice (studio-layout): its outcome and tier, and for a piece version the
     # piece and version; all left out for the other roles.
     outcome: Literal["succeeded", "failed"] | None = Field(default=None, exclude_if=lambda v: v is None)
@@ -263,10 +272,12 @@ def _turn_running(request: Request, thread_id: UUID):
             if house_file.get_thread(session, thread_id) is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not Found")
         _running.add(thread_id)
+        chat.begin_turn(thread_id)
     try:
         yield
     finally:
         with _running_lock:
+            chat.end_turn(thread_id)
             _running.discard(thread_id)
 
 
@@ -318,11 +329,10 @@ def _run(request: Request, thread: Any, owner: UUID, message: str, make_events: 
     with _turn_running(request, thread.id):
         result = chat.final_result(_events(request, thread, owner, message, make_events))
     if result.failure_class is not None:
-        code = (
-            status.HTTP_503_SERVICE_UNAVAILABLE
-            if result.failure_class == "unavailable"
-            else status.HTTP_502_BAD_GATEWAY
-        )
+        code = {
+            "unavailable": status.HTTP_503_SERVICE_UNAVAILABLE,
+            "stopped": status.HTTP_409_CONFLICT,
+        }.get(result.failure_class, status.HTTP_502_BAD_GATEWAY)
         raise _refusal(code, result.failure_class, result.failure_reason or "the turn failed")
     return TurnOut(
         reply=result.reply or "",
@@ -549,6 +559,57 @@ def stream_turn(
 ) -> StreamingResponse:
     thread, make_events = _turn_factory(request, thread_id, body, login.user_id)
     return _stream(request, thread, login.user_id, body.message, make_events)
+
+
+@router.post("/threads/{thread_id}/turns/stop")
+def stop_turn(thread_id: UUID, request: Request) -> dict[str, bool]:
+    """Stop the thread's running turn at its next step; it ends its stream with `stopped`
+    and is removed from the thread. A pending confirmation is not a running turn."""
+    _load_thread(request, thread_id)
+    if not chat.request_stop(thread_id):
+        raise _refusal(status.HTTP_409_CONFLICT, "no_turn_running", "no reply is being written in this conversation")
+    return {"stopping": True}
+
+
+@router.post("/threads/{thread_id}/turns/latest", response_class=StreamingResponse)
+def edit_latest_turn(
+    thread_id: UUID,
+    body: EditIn,
+    request: Request,
+    login: Annotated[AuthSessionRecord, Depends(require_owner)],
+) -> StreamingResponse:
+    """Replace the latest owner message and run it again, streamed like a turn.
+
+    The thread is rewound to before that message; what the rewound turn confirmed stays
+    and is named in the first event (`rewound`). Refused while a turn runs or an answer
+    is pending, and for any message but the latest owner message."""
+    thread = _load_thread(request, thread_id)
+    graph = _graph(request)
+    owner = login.user_id
+    with _running_lock:
+        if thread_id in _running:
+            raise _refusal(status.HTTP_409_CONFLICT, "turn_running", "a reply is still being written; stop it or wait")
+    waiting = _current_pending(request, graph, thread_id, owner)
+    if waiting is not None:
+        raise _refusal(
+            status.HTTP_409_CONFLICT, "confirmation_pending", f"answer the pending {_pending_label(waiting)} first"
+        )
+    try:
+        latest = chat.latest_owner_message_id(graph, thread_id=thread_id, owner_id=owner)
+    except psycopg.OperationalError as error:
+        logger.error("chat memory unavailable", extra={"context": {"error_type": type(error).__name__}})
+        raise _refusal(status.HTTP_503_SERVICE_UNAVAILABLE, "unavailable", MEMORY_DOWN) from None
+    if latest is None or latest != body.message_id:
+        raise _refusal(status.HTTP_409_CONFLICT, "not_latest", "only the latest message can be edited")
+
+    def make_events(run_config: dict[str, Any]) -> Iterator[chat.TurnEvent]:
+        # The rewind runs inside the turn, so no other turn can start in between.
+        return chat.edit_events(
+            graph, thread_id=thread_id, owner_id=owner, message_id=body.message_id,
+            message=body.message, run_config=run_config,
+        )
+
+    return _stream(request, thread, owner, body.message, make_events)
 
 
 @router.post("/threads/{thread_id}/resume")

@@ -894,7 +894,7 @@ def test_the_designer_sees_the_active_builds_modules_and_only_the_designer(tool_
     assert "Piece shoe-rack" not in system
     assert "- shoe-rack (Shoe rack): v1" in system
     assert system.endswith(UNTRUSTED_CONTENT_PREAMBLE)
-    assert system.index(PIECE_HEADER) < system.index("Template custom-build:")
+    assert "Template custom-build" not in system
     foreman_prompt = "\n".join(str(m.content) for m in models["foreman"].decision_prompts[-1])
     assert PIECE_HEADER not in foreman_prompt
 
@@ -907,3 +907,124 @@ def test_without_an_active_build_no_piece_is_summarised(tool_state) -> None:
     state = make_harness(tool_state, models).turn("I want a bench")
     assert state["piece_note"] == ""
     assert "Piece " not in "\n".join(str(m.content) for m in models["intake"].prompts[-1])
+
+
+def test_a_stored_apartment_reaches_a_new_conversation_only_through_a_confirmation(tool_state, tmp_path) -> None:
+    import io
+
+    from app.agent import uploads
+    from tests.blender_fakes import png_bytes
+
+    tool_state.settings.upload_root = tmp_path / "uploads"
+    models = fake_models(foreman={"decisions": [decision("intake")]}, intake={"replies": ["I read the plan."]})
+    first = make_harness(tool_state, models, room=None)
+    with ToolDeps(tool_state).session() as session:
+        flat = house_file.upsert_apartment(
+            session, "Wohnung", 2610, 100,
+            [
+                {"name": "Wohnen", "corners_mm": [[0, 0], [5230, 0], [5230, 4010], [0, 4010]]},
+                {"name": "Küche", "corners_mm": [[5230, 0], [8000, 0], [8000, 4010], [5230, 4010]]},
+            ],
+        )
+        house_file.set_thread_apartment(session, first.thread, flat)
+        house_file.delete_thread(session, first.thread)
+        session.commit()
+
+    second = make_harness(tool_state, models, room=None)
+    second.graph = first.graph
+    with ToolDeps(tool_state).session() as session:
+        upload_id = str(
+            uploads.add_upload(
+                session, tool_state.settings.upload_root, second.thread, io.BytesIO(png_bytes(8, 8)),
+                original_name="grundriss.png", max_bytes=1_000_000, max_per_thread=10,
+            ).id
+        )
+    state = second.graph.invoke(
+        {"messages": [HumanMessage("here is my flat", additional_kwargs={"upload_ids": [upload_id]})]},
+        config=second.config,
+    )
+    assert state["specialist"] == "intake"
+    assert not second.snapshot().interrupts
+    for text in (state["house_note"], str(models["intake"].prompts[-1][0].content)):
+        assert "Wohnen" not in text and "Küche" not in text and "Wohnung" not in text
+        assert "5230" not in text and "2610" not in text
+    assert "no room confirmed yet" in state["facts"]
+    with ToolDeps(tool_state).session() as session:
+        assert house_file.thread_scope(session, second.thread) == (None, None)
+        assert house_file.room_by_name(session, "Wohnen") is not None
+
+
+def composing(specialist: str, composes_room: bool) -> dict:
+    return {"specialist": specialist, "reason": "test", "composes_room": composes_room}
+
+
+@pytest.mark.parametrize("chosen", ["designer", "intake"])
+def test_composing_the_confirmed_room_without_naming_it_reaches_the_designer(tool_state, chosen) -> None:
+    models = fake_models(
+        foreman={"decisions": [composing(chosen, True)]}, designer={"replies": ["Placing the sofa."]},
+    )
+    state = make_harness(tool_state, models, room="Wohnen").turn(
+        "put a sofa stand-in 2200 by 900 against the window wall"
+    )
+    assert state["specialist"] == "designer"
+    assert models["intake"].calls == 0
+
+
+def test_a_piece_wish_in_a_confirmed_room_still_goes_to_intake(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [composing("designer", False)]}, intake={"replies": ["What is it for?"]},
+    )
+    state = make_harness(tool_state, models, room="Wohnen").turn("I want a new bookshelf")
+    assert state["specialist"] == "intake"
+    assert models["designer"].calls == 0
+
+
+def test_composing_without_a_confirmed_room_still_asks_which_room(tool_state) -> None:
+    models = fake_models(foreman={"decisions": [composing("designer", True)]})
+    state = make_harness(tool_state, models, room=None).turn("put a sofa against the window wall")
+    assert last_reply(state) == "Which room is this for?"
+    assert models["designer"].calls == 0
+
+
+def test_a_new_piece_turn_carries_the_templates(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("intake"), decision("designer")]},
+        intake={"tool_call_scripts": [[tool_call("record_brief", HALL)]], "replies": ["Saved."]},
+        designer={"replies": ["Designing."]},
+    )
+    harness = make_harness(tool_state, models)
+    _confirmed_brief(harness)
+    harness.turn("design it")
+    assert "Template custom-build:" in str(models["designer"].prompts[-1][0].content)
+
+
+def test_the_measurement_check_reads_only_the_owners_messages_after_the_last_version(tool_state, make_ctx) -> None:
+    from app.blender import storage
+
+    create_run({"package_id": "bench", "spec": desk()}, replace(make_ctx(), approved=True))
+    wait_for_status(storage.version_dir(tool_state.settings.render_root, "bench", 1))
+    wider = {
+        "package_id": "bench", "changes": {"modules": {"cabinet": {"width": 1050}}},
+        "requested": [{"quote": "5 cm wider", "target": "cabinet", "field": "width", "value_mm": 1050}],
+    }
+    narrower = {
+        "package_id": "bench", "changes": {"modules": {"cabinet": {"width": 900}}},
+        "requested": [{"quote": "90 cm wide", "target": "cabinet", "field": "width", "value_mm": 900}],
+    }
+    models = fake_models(
+        foreman={"decisions": [decision("designer"), decision("designer")]},
+        designer={
+            "steps": [[tool_call("revise_package", wider)], "Revised.", [tool_call("revise_package", narrower)]],
+        },
+    )
+    harness = make_harness(tool_state, models)
+    harness.start(package_id="bench")
+    harness.turn("make the cabinet 5 cm wider")
+    harness.answer("yes")
+    wait_for_status(storage.version_dir(tool_state.settings.render_root, "bench", 2))
+
+    # "5 cm" came before v2 was created, so it needs no entry now.
+    harness.turn("now make it 90 cm wide")
+    [pending] = harness.snapshot().interrupts
+    assert pending.value["subject"] == "revise"
+    assert "cabinet: width 1050 → 900" in pending.value["summary"]

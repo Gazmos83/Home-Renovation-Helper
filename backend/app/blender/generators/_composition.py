@@ -25,13 +25,18 @@ from typing import Any
 import bpy
 from mathutils import Matrix, Vector
 
-from app.blender.composition_contract import room_geometry
+from app.blender.composition_contract import (
+    apartment_wall_labels,
+    room_geometry,
+    surface_map,
+)
 from app.blender.generators import build_room_scene as room_gen
 from app.blender.generators import build_shell as shell_gen
 from app.blender.generators._scene import GeneratorError
 from app.blender.generators.check_model import import_objects, measure
 from app.blender.room_contract import interior_point
 from app.blender.shell_contract import normalise_shell
+from app.blender.spec_contract import SpecValidationError
 
 MM = 0.001
 
@@ -48,6 +53,8 @@ class CompositionScene:
     ceiling_mm: float = 2500.0
     radius_mm: float = 1000.0
     report: list[dict[str, Any]] = field(default_factory=list)
+    # Every placed item's meshes, for the surface map's `items`.
+    item_meshes: list[Any] = field(default_factory=list)
 
 
 def _shim(room: dict[str, Any]) -> SimpleNamespace:
@@ -230,7 +237,26 @@ def build_scene(document: dict[str, Any], *, pieces_root: Path, models_root: Pat
             meshes = _place_stand_in(placed, item["colour"], items)
         entry["final_mm"], entry["lowest_mm"] = _final(meshes, placed["rotation_deg"])
         scene.report.append(entry)
+        scene.item_meshes.extend(meshes)
     return scene
+
+
+def surfaces(scene: CompositionScene) -> dict[str, list[str]]:
+    """The scene's surface map: each wall, floor and ceiling (per room in an apartment) and the items."""
+    meshes = [obj.name for obj in bpy.context.scene.objects if obj.type == "MESH"]
+    labels = None
+    if "apartment" in scene.document["scope"]:
+        labels = apartment_wall_labels(normalise_shell(scene.document["resolved"]["shell"]).walls)
+    try:
+        return surface_map(meshes, [obj.name for obj in scene.item_meshes], labels)
+    except SpecValidationError as error:
+        raise GeneratorError(f"build: {error}") from None
+
+
+def extent_mm(scene: CompositionScene) -> dict[str, list[float]]:
+    """The rooms' plan bounds and the highest ceiling, for framing the 3D view."""
+    x0, y0, x1, y1 = _bounds(scene.rooms)
+    return {"min": [x0, y0, 0.0], "max": [x1, y1, float(scene.ceiling_mm)]}
 
 
 def wall_objects() -> list[bpy.types.Object]:

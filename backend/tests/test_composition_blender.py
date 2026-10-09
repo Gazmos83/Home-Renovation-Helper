@@ -181,3 +181,85 @@ def test_an_empty_room_builds_the_room_alone_and_renders_a_draft_still(
     )
     assert result.returncode == 0, result.stderr[-1500:]
     assert png_size(tmp_path / "still" / "still.png") == (draft.resolution, draft.resolution)
+
+
+# --- the 3D model and its surface map (app-check-2026-10-09) ---------------------------------
+
+
+def _build_document(blender_bin: Path, root: Path, models: Path, slug: str, document: dict) -> Path:
+    folder = storage.composition_version_dir(root, slug, 1)
+    folder.mkdir(parents=True)
+    (folder / storage.INPUT_FILE).write_text(json.dumps(document), encoding="utf-8")
+    out = folder / ".build-out"
+    result = subprocess.run(
+        [str(blender_bin), "--background", "--python", str(GENERATORS / "build_composition.py"), "--",
+         "--spec", str(folder / storage.INPUT_FILE), "--pieces", str(root), "--models", str(models),
+         "--out", str(out)],
+        capture_output=True, text=True, timeout=300, check=False,
+    )
+    assert result.returncode == 0, result.stderr[-1500:]
+    return out
+
+
+def _mapped(out: Path) -> tuple[dict, list[str]]:
+    from app.blender.verify import glb_mesh_nodes
+
+    surfaces = json.loads((out / "report.json").read_text(encoding="utf-8"))["surfaces"]
+    listed = [name for names in surfaces.values() for name in names]
+    assert sorted(listed) == sorted(glb_mesh_nodes(out / "model.glb"))
+    assert len(listed) == len(set(listed))
+    return surfaces, listed
+
+
+STAND_IN = {"id": "bench", "type": "stand-in", "name": "Bench", "width_mm": 1200, "depth_mm": 400, "height_mm": 450,
+            "colour": "#7a6a58", "placement": {"wall": 2, "offset_mm": 500}}
+
+
+@pytest.mark.parametrize("items", [[], [STAND_IN]], ids=["empty", "stand-in"])
+def test_a_four_walled_hall_publishes_its_model_and_surface_map(blender_bin: Path, tmp_path: Path, items) -> None:
+    root, models = tmp_path / "renders", tmp_path / "models"
+    models.mkdir()
+    parsed = parse_composition({
+        "kind": "room_composition", "schema_version": 1, "units": "mm", "scope": {"room": "Hall"}, "items": items,
+    }, max_items=30)
+    document, _subjects = place_items(parsed, rooms={"Hall": room_geometry("Hall", ROOM)}, piece_sizes={}, scope_room="Hall")
+    out = _build_document(blender_bin, root, models, "hall", document)
+    assert {p.name for p in out.iterdir()} == set(storage.COMPOSITION_FILES)
+    surfaces, _listed = _mapped(out)
+    expected = ["wall 1", "wall 2", "wall 3", "wall 4", "floor", "ceiling"] + (["items"] if items else [])
+    assert list(surfaces) == expected
+    assert surfaces["floor"] == ["Floor"] and surfaces["ceiling"] == ["Ceiling"]
+    if items:
+        assert surfaces["items"] == ["STAND_bench"]
+    extent = json.loads((out / "report.json").read_text(encoding="utf-8"))["extent_mm"]
+    assert extent == {"min": [0, 0, 0.0], "max": [5000, 4000, 2600.0]}
+
+
+def test_an_apartments_surfaces_are_named_by_room(blender_bin: Path, tmp_path: Path) -> None:
+    from app.agent.house_file import validate_apartment
+
+    root, models = tmp_path / "renders", tmp_path / "models"
+    models.mkdir()
+    rooms = [
+        {"name": "Wohnen", "corners_mm": [[0, 0], [5000, 0], [5000, 4000], [0, 4000]]},
+        {"name": "Küche", "corners_mm": [[5000, 0], [8000, 0], [8000, 4000], [5000, 4000]]},
+    ]
+    shell = validate_apartment("Wohnung", 2600, 100, rooms).input_document()
+    parsed = parse_composition({
+        "kind": "room_composition", "schema_version": 1, "units": "mm", "scope": {"apartment": "Wohnung"},
+        "items": [{**STAND_IN, "room": "Küche"}],
+    }, max_items=30)
+    geometry = {
+        room["name"]: room_geometry(room["name"], {"corners_mm": room["corners"], "height_mm": room["height_mm"],
+                                                   "wall_thickness_mm": shell["apartment"]["wall_thickness_mm"],
+                                                   "openings": room["openings"]})
+        for room in shell["rooms"]
+    }
+    document, _subjects = place_items(parsed, rooms=geometry, piece_sizes={})
+    document["resolved"]["shell"] = shell
+    out = _build_document(blender_bin, root, models, "apartment-wohnung", document)
+    surfaces, _listed = _mapped(out)
+    assert "Wohnen: wall 1" in surfaces and "Küche: wall 1" in surfaces
+    assert surfaces["Wohnen: floor"] == ["Floor_Wohnen"] and surfaces["Küche: ceiling"] == ["Ceiling_Küche"]
+    assert surfaces["items"] == ["STAND_bench"]
+    assert list(surfaces)[-1] == "items"

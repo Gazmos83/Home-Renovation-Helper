@@ -10,9 +10,11 @@ import {
   cameraPresets,
   customBuildExplode,
   layerVisible,
+  PIECE_ISO,
   type CameraPreset,
   type Layers,
   type Preset,
+  type Vec3,
   type ViewMode,
 } from "@/lib/inspector";
 
@@ -30,6 +32,10 @@ export type InspectorCanvasProps = {
   camera: CameraPreset;
   explode: number;
   layers: Layers;
+  /** Moves the model so its centre is the stage's: a room composition is in its plan's frame. */
+  offset?: Vec3;
+  /** Where the Iso camera looks from; a room is seen from higher than a piece. Keep it stable. */
+  isoDirection?: Vec3;
 };
 
 function CameraRig({ preset, reach }: { preset: Preset; reach: number }) {
@@ -126,12 +132,21 @@ function Ground({ blueprint, reach }: { blueprint: boolean; reach: number }) {
   );
 }
 
-export default function InspectorCanvas({ url, spec, mode, camera, explode, layers }: InspectorCanvasProps) {
+export default function InspectorCanvas({
+  url,
+  spec,
+  mode,
+  camera,
+  explode,
+  layers,
+  offset = [0, 0, 0],
+  isoDirection = PIECE_ISO,
+}: InspectorCanvasProps) {
   const blueprint = mode === "blueprint";
   const base = baseOf(spec);
   const reach = Math.max(spec.overall.w, spec.overall.h, spec.overall.d) / 1000;
   // Memoised: a new preset object would move the camera back on every slider step.
-  const presets = useMemo(() => cameraPresets(spec.overall, base), [spec.overall, base]);
+  const presets = useMemo(() => cameraPresets(spec.overall, base, isoDirection), [spec.overall, base, isoDirection]);
   const offsets = useMemo(() => customBuildExplode(spec), [spec]);
   const showDimensions = layerVisible(layers, "dimensions") && mode !== "exploded";
   return (
@@ -146,7 +161,9 @@ export default function InspectorCanvas({ url, spec, mode, camera, explode, laye
       <CameraRig preset={presets[camera]} reach={reach} />
       <Ground blueprint={blueprint} reach={reach} />
       <Suspense fallback={null}>
-        <PieceModel url={url} layerMap={spec.layers} layers={layers} mode={mode} explode={explode} offsets={offsets} />
+        <group position={offset}>
+          <PieceModel url={url} layerMap={spec.layers} layers={layers} mode={mode} explode={explode} offsets={offsets} />
+        </group>
         {showDimensions && <DimensionOverlay overall={spec.overall} base={base} />}
       </Suspense>
     </Canvas>

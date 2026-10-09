@@ -12,6 +12,7 @@ never a half-stored turn.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -64,7 +65,38 @@ class TurnEvent:
     result: TurnResult | None = None
 
 
-ENDING_EVENTS = frozenset({"reply", "pending", "error"})
+ENDING_EVENTS = frozenset({"reply", "pending", "error", "stopped"})
+
+# The stop signal of each thread's running turn (homeowner-chat, app-check-2026-10-09).
+# Process-local: the app runs one process, so this registry is complete.
+_stops: dict[UUID, threading.Event] = {}
+_stops_lock = threading.Lock()
+
+
+def begin_turn(thread_id: UUID) -> None:
+    """Register a running turn of the thread, so it can be stopped."""
+    with _stops_lock:
+        _stops[thread_id] = threading.Event()
+
+
+def end_turn(thread_id: UUID) -> None:
+    with _stops_lock:
+        _stops.pop(thread_id, None)
+
+
+def request_stop(thread_id: UUID) -> bool:
+    """Ask the thread's running turn to stop at its next step; whether one is running."""
+    with _stops_lock:
+        signal = _stops.get(thread_id)
+        if signal is None:
+            return False
+        signal.set()
+        return True
+
+
+def _stop_signal(thread_id: UUID) -> threading.Event | None:
+    with _stops_lock:
+        return _stops.get(thread_id)
 
 
 def plain_tool_name(tool: str) -> str:
@@ -146,24 +178,53 @@ def _ending(result: TurnResult) -> TurnEvent:
     return TurnEvent("reply", {"reply": result.reply or "", "specialists": list(result.specialists)}, result)
 
 
+def _stopped(started: list[str]) -> TurnEvent:
+    text = "Stopped. This message and its replies were removed."
+    if started:
+        text += (
+            f" Already started before the stop and not undone: {', '.join(dict.fromkeys(started))}; "
+            "anything it finished stays."
+        )
+    return TurnEvent("stopped", {"text": text}, TurnResult(failure_class="stopped", failure_reason=text))
+
+
 def run_events(
-    graph: Any, graph_input: Any, config: dict[str, Any], *, human: HumanMessage | None = None
+    graph: Any,
+    graph_input: Any,
+    config: dict[str, Any],
+    *,
+    human: HumanMessage | None = None,
+    stop: threading.Event | None = None,
 ) -> Iterator[TurnEvent]:
     """Run the graph on `graph_input`, yielding each specialist and tool as it starts and
     then exactly one ending event. `human` is the turn's owner message, forgotten again
-    when the gateway fails (a resume has none)."""
+    when the gateway fails (a resume has none).
+
+    When `stop` is set the turn ends at its next step with a `stopped` event, and the
+    thread is rewound to before the owner's message. A model call already running
+    finishes and is discarded; a tool that already ran is not undone."""
     specialists: list[str] = []
+    started: list[str] = []
+    stream = None
     try:
-        for _namespace, mode, chunk in graph.stream(
-            graph_input, config=config, stream_mode=["updates", "custom"], subgraphs=True
-        ):
+        if stop is not None and stop.is_set():
+            yield _stopped(started)
+            return
+        stream = graph.stream(graph_input, config=config, stream_mode=["updates", "custom"], subgraphs=True)
+        for _namespace, mode, chunk in stream:
             if mode == "custom" and isinstance(chunk, dict) and chunk.get("tool"):
-                yield TurnEvent("tool", {"plugin": plain_tool_name(str(chunk["tool"]))})
+                started.append(plain_tool_name(str(chunk["tool"])))
+                yield TurnEvent("tool", {"plugin": started[-1]})
             elif mode == "updates" and isinstance(chunk, dict):
                 role = (chunk.get("foreman") or {}).get("specialist") if isinstance(chunk.get("foreman"), dict) else None
                 if role:
                     specialists.append(role)
                     yield TurnEvent("specialist", {"role": role})
+            if stop is not None and stop.is_set():
+                stream.close()
+                _forget_unanswered(graph, config, human)
+                yield _stopped(started)
+                return
         snapshot = graph.get_state(config)
     except GatewayError as error:
         if human is not None:
@@ -201,7 +262,11 @@ def turn_events(
         return
     human = owner_message(message, upload_ids)
     yield from run_events(
-        graph, {"messages": [human]}, _config(thread_id, owner_id, run_config), human=human
+        graph,
+        {"messages": [human]},
+        _config(thread_id, owner_id, run_config),
+        human=human,
+        stop=_stop_signal(thread_id),
     )
 
 
@@ -217,7 +282,76 @@ def resume_events(
     if graph is None:
         yield _failed(_unavailable())
         return
-    yield from run_events(graph, Command(resume=value), _config(thread_id, owner_id, run_config))
+    yield from run_events(
+        graph, Command(resume=value), _config(thread_id, owner_id, run_config), stop=_stop_signal(thread_id)
+    )
+
+
+def _first_sentence(text: str) -> str:
+    return text.split(". ")[0].rstrip(".")
+
+
+def latest_owner_message_id(graph: Any, *, thread_id: UUID, owner_id: UUID) -> str | None:
+    """The id of the thread's latest owner message, if it has one. Raises on an unreachable store."""
+    messages = graph.get_state(_config(thread_id, owner_id)).values.get("messages", [])
+    owners = [m for m in messages if isinstance(m, HumanMessage)]
+    return owners[-1].id if owners else None
+
+
+def rewind_latest(
+    graph: Any, *, thread_id: UUID, owner_id: UUID, message_id: str
+) -> tuple[HumanMessage, list[str]] | str:
+    """Remove the thread's latest owner message and every reply after it.
+
+    The removed message, and each action the rewound turn confirmed (in the tool result's
+    own words: these stay), or why nothing was rewound: `message_id` is not the latest
+    owner message. Builds, versions, renders and house-file writes are never undone.
+    """
+    config = _config(thread_id, owner_id)
+    messages = list(graph.get_state(config).values.get("messages", []))
+    owners = [i for i, m in enumerate(messages) if isinstance(m, HumanMessage)]
+    if not owners or messages[owners[-1]].id != message_id:
+        return "only the latest message can be edited"
+    start = owners[-1]
+    kept = [
+        _first_sentence(_text(m.content))
+        for m in messages[start:]
+        if isinstance(m, ToolMessage) and (m.additional_kwargs.get("confirmation") or {}).get("answer") == "yes"
+    ]
+    graph.update_state(config, {"messages": [RemoveMessage(id=m.id) for m in messages[start:]]})
+    return messages[start], kept
+
+
+def edit_events(
+    graph: Any,
+    *,
+    thread_id: UUID,
+    owner_id: UUID,
+    message_id: str,
+    message: str,
+    run_config: dict[str, Any] | None = None,
+) -> Iterator[TurnEvent]:
+    """`run_events` for an edited latest message: the thread is rewound to before it, then
+    the first event names what the rewound turn confirmed (it stays), then the new text
+    runs as a turn with the replaced message's files."""
+    if graph is None:
+        yield _failed(_unavailable())
+        return
+    try:
+        rewound = rewind_latest(graph, thread_id=thread_id, owner_id=owner_id, message_id=message_id)
+    except psycopg.OperationalError as error:
+        _log_store_failure(error)
+        yield _failed(_unavailable())
+        return
+    if isinstance(rewound, str):
+        yield _failed(TurnResult(failure_class="not_latest", failure_reason=rewound))
+        return
+    replaced, kept = rewound
+    yield TurnEvent("rewound", {"kept": kept})
+    upload_ids = [UUID(i) for i in replaced.additional_kwargs.get("upload_ids") or []]
+    yield from turn_events(
+        graph, thread_id=thread_id, owner_id=owner_id, message=message, upload_ids=upload_ids, run_config=run_config
+    )
 
 
 def final_result(events: Iterator[TurnEvent]) -> TurnResult:
@@ -235,13 +369,28 @@ def _log_store_failure(error: Exception) -> None:
     )
 
 
-def _forget_unanswered(graph: Any, config: dict[str, Any], human: HumanMessage) -> None:
-    """Remove the failed turn from the thread, from the owner's message onward."""
+def _committed_messages(graph: Any, config: dict[str, Any]) -> list[Any]:
+    """The thread's messages as last committed. A turn stopped inside a specialist leaves
+    that specialist's writes pending; they are not in the stored messages, so a removal
+    built from them would name ids that do not exist."""
+    checkpointer = getattr(graph, "checkpointer", None)
+    saved = checkpointer.get_tuple(config) if checkpointer is not None else None
+    if saved is None:
+        return list(graph.get_state(config).values.get("messages", []))
+    return list(saved.checkpoint.get("channel_values", {}).get("messages", []))
+
+
+def _forget_unanswered(graph: Any, config: dict[str, Any], human: HumanMessage | None) -> None:
+    """Remove the failed turn from the thread, from the owner's message onward (without
+    `human`, from the thread's last owner message: a stopped resume)."""
     try:
-        snapshot = graph.get_state(config)
-        messages = snapshot.values.get("messages", [])
+        messages = _committed_messages(graph, config)
         ids = [m.id for m in messages]
-        start = ids.index(human.id) if human.id in ids else None
+        if human is None:
+            owners = [i for i, m in enumerate(messages) if isinstance(m, HumanMessage)]
+            start = owners[-1] if owners else None
+        else:
+            start = ids.index(human.id) if human.id in ids else None
         if start is None:
             return
         graph.update_state(config, {"messages": [RemoveMessage(id=m.id) for m in messages[start:]]})
@@ -375,6 +524,8 @@ def history(
             shown.append(_notice_entry(waiting_notices.pop(0)))
         if isinstance(message, HumanMessage):
             entry = {"role": "owner", "text": _text(message.content)}
+            if message.id:
+                entry["message_id"] = message.id
             if message.additional_kwargs.get("upload_ids"):
                 entry["upload_ids"] = list(message.additional_kwargs["upload_ids"])
             shown.append(entry)

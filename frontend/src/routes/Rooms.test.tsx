@@ -1,9 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { stubFetch } from "../test/fetchStub";
 import Rooms from "./Rooms";
+
+// No WebGL in jsdom: the 3D stage is a stub that shows the props it is given.
+vi.mock("@/components/inspector/InspectorCanvas", () => ({
+  default: (props: Record<string, unknown>) => <div data-testid="canvas" data-props={JSON.stringify(props)} />,
+}));
 
 const wohnen = {
   scope: "room", name: "Wohnen", slug: "wohnen", latest_version: 2, status: "succeeded",
@@ -175,4 +180,83 @@ test("an empty composition says it is the room only", async () => {
   const card = within(await screen.findByRole("region", { name: "Wohnen" }));
   expect(card.getByText("The room only, no furniture.")).toBeInTheDocument();
   expect(card.getByRole("link", { name: "Open the turntable viewer of Wohnen" })).toBeInTheDocument();
+});
+
+
+// --- rooms in 3D (app-check-2026-10-09) ----------------------------------------------------
+
+const SURFACES = {
+  "wall 1": ["Wall_0_0"], "wall 2": ["Wall_1_0", "Wall_1_lintel_0"], "wall 3": ["Wall_2_0"], "wall 4": ["Wall_3_0"],
+  floor: ["Floor"], ceiling: ["Ceiling"], items: ["STAND_sofa"],
+};
+const modelled = {
+  ...wohnen,
+  model: "/compositions/wohnen/versions/2/files/model.glb",
+  surfaces: "/compositions/wohnen/versions/2/files/report.json",
+};
+
+function serve3d() {
+  return stubFetch((call) => {
+    if (call === "GET /compositions") return { body: [modelled] };
+    if (call === "GET /models") return { body: [] };
+    if (call === "GET /compositions/wohnen/versions/2/files/report.json")
+      return { body: { surfaces: SURFACES, extent_mm: { min: [0, 0, 0], max: [5000, 4000, 2600] } } };
+  });
+}
+
+async function canvasProps() {
+  const canvas = await screen.findByTestId("canvas");
+  return JSON.parse(canvas.dataset.props ?? "{}") as Record<string, unknown>;
+}
+
+test("a composition with a model opens in 3D from Iso with the ceiling off", async () => {
+  const user = userEvent.setup();
+  const calls = serve3d();
+  show();
+  const card = within(await screen.findByRole("region", { name: "Wohnen" }));
+  expect(calls.some(([, url]) => url.endsWith("report.json"))).toBe(false);
+  await user.click(card.getByRole("button", { name: "Open the 3D view of Wohnen" }));
+  const switches = within(await card.findByRole("group", { name: "Surfaces" }));
+  expect(switches.getAllByRole("button").map((b) => b.textContent)).toEqual([
+    "All walls", "wall 1", "wall 2", "wall 3", "wall 4", "floor", "ceiling", "items",
+  ]);
+  expect(switches.getByRole("button", { name: "ceiling" })).toHaveAttribute("aria-pressed", "false");
+  expect(switches.getByRole("button", { name: "All walls" })).toHaveAttribute("aria-pressed", "true");
+  const props = await canvasProps();
+  expect(props).toMatchObject({ url: modelled.model, camera: "iso", mode: "workshop", layers: { ceiling: false, dimensions: false } });
+  expect(props.spec).toEqual({ overall: { w: 5000, h: 2600, d: 4000 }, layers: SURFACES });
+  expect(props.offset).toEqual([-2.5, 0, 2]);
+  expect(props.isoDirection).toEqual([2.7, 3.6, 3.25]);
+});
+
+test("switching wall 2 off hides only wall 2, and All walls switches every wall", async () => {
+  const user = userEvent.setup();
+  serve3d();
+  show();
+  const card = within(await screen.findByRole("region", { name: "Wohnen" }));
+  await user.click(card.getByRole("button", { name: "Open the 3D view of Wohnen" }));
+  const switches = within(await card.findByRole("group", { name: "Surfaces" }));
+  await user.click(switches.getByRole("button", { name: "wall 2" }));
+  expect((await canvasProps()).layers).toEqual({ ceiling: false, "wall 2": false, dimensions: false });
+  expect(switches.getByRole("button", { name: "All walls" })).toHaveAttribute("aria-pressed", "false");
+
+  await user.click(switches.getByRole("button", { name: "All walls" }));
+  expect((await canvasProps()).layers).toMatchObject({ "wall 1": true, "wall 2": true, "wall 3": true, "wall 4": true });
+  await user.click(switches.getByRole("button", { name: "All walls" }));
+  expect((await canvasProps()).layers).toMatchObject({
+    "wall 1": false, "wall 2": false, "wall 3": false, "wall 4": false, ceiling: false,
+  });
+});
+
+test("an older composition without a model shows its picture and says how to get the 3D view", async () => {
+  stubFetch((call) => {
+    if (call === "GET /compositions")
+      return { body: [{ ...wohnen, name: "Hall", slug: "hall", latest_version: 1, model: null, surfaces: null }] };
+    if (call === "GET /models") return { body: [] };
+  });
+  show();
+  const card = within(await screen.findByRole("region", { name: "Hall" }));
+  expect(card.getByRole("img")).toHaveAttribute("src", wohnen.picture);
+  expect(card.getByText("Composing Hall again adds the 3D view.")).toBeInTheDocument();
+  expect(card.queryByRole("button", { name: /3D view/ })).not.toBeInTheDocument();
 });

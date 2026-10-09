@@ -20,6 +20,7 @@ const SPEC = {
 type Msg = {
   role: "owner" | "assistant" | "confirmation" | "notice";
   text: string;
+  message_id?: string;
   outcome?: "succeeded" | "failed";
   tier?: string;
   package_id?: string;
@@ -56,6 +57,8 @@ let turn: (body: Record<string, unknown>) => Promise<Streamed> | Streamed;
 let resume: (body: Record<string, unknown>) => Promise<Streamed> | Streamed;
 let upload: () => Reply;
 let calls: [string, string, unknown][];
+/** Answers a test adds before the shared ones; `undefined` falls through to them. */
+let extra: (call: string) => Reply | undefined;
 
 const json = (reply: Reply) =>
   new Response(JSON.stringify(reply.body ?? {}), { status: reply.status ?? 200, headers: { "Content-Type": "application/json" } });
@@ -93,6 +96,7 @@ beforeEach(() => {
   pending = null;
   progressNow = progress([]);
   calls = [];
+  extra = () => undefined;
   turn = () => ({ events: replied("ok", "intake") });
   resume = () => ({ events: replied("ok", "designer") });
   upload = () => ({ status: 201, body: { upload_id: "u1", kind: "jpeg", size_bytes: 3, original_name: "blueprint.jpeg" } });
@@ -104,6 +108,8 @@ beforeEach(() => {
       const body = typeof init.body === "string" ? JSON.parse(init.body) : init.body;
       calls.push([method, url, body]);
       const call = `${method} ${url}`;
+      const added = extra(call);
+      if (added) return json(added);
       if (call === "GET /chat/threads/t1")
         return json({ body: { thread_id: "t1", title, package_id: null, created_at: "", last_turn_at: "", messages, pending } });
       if (call === "GET /chat/threads/t1/progress") return json({ body: progressNow });
@@ -123,6 +129,7 @@ beforeEach(() => {
       }
       if (call === "PUT /chat/threads/t1/tools/room_fit") return json({ body: { ...tools[0], enabled: false } });
       if (call === "POST /chat/threads/t1/turns/stream") return streamed(await turn(body));
+      if (call === "POST /chat/threads/t1/turns/latest") return streamed(await turn(body));
       if (call === "POST /chat/threads/t1/resume/stream") return streamed(await resume(body));
       if (call === "PATCH /chat/threads/t1") {
         title = String(body.title);
@@ -829,4 +836,124 @@ test("the rail sits at the screen's edge, outside the page's centred content", a
   expect(rail.closest("main")).toBeNull();
   expect(rail).toHaveClass("sticky");
   expect(screen.getByRole("main")).not.toHaveClass("max-w-5xl");
+});
+
+
+// --- the inspector follows versions (app-check-2026-10-09) ---------------------------------
+
+const version = (n: number, status: string) => ({ package_id: "hall-bench", version: n, status, approved_at: null, files: [] });
+
+test("the split view follows a version created while it is open", async () => {
+  let listed = [version(1, "succeeded")];
+  let second = "queued";
+  extra = (call) => {
+    if (call === "GET /packages/hall-bench") return { body: { package_id: "hall-bench", versions: listed } };
+    if (call === "GET /packages/hall-bench/versions/2")
+      return { body: { ...version(2, second), files: second === "succeeded" ? ["model.glb", "spec.json"] : [] } };
+    if (call === "GET /packages/hall-bench/versions/2/files/spec.json") return { body: SPEC };
+  };
+  messages = [owner("one more shelf"), reply("Revised.")];
+  show("/conversations/t1?inspect=hall-bench/1");
+  const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
+  expect(await inspector.findByRole("combobox", { name: "Version" })).toHaveValue("1");
+
+  // A confirmed revision creates version 2: within the poll, the view switches to it.
+  listed = [version(2, "queued"), version(1, "succeeded")];
+  expect(await inspector.findByRole("heading", { name: "hall-bench, version 2" }, { timeout: 5000 })).toBeInTheDocument();
+  expect(inspector.getByRole("status")).toHaveTextContent("Showing version 2, the newest");
+  expect(await inspector.findByText(/Version 2 is building/)).toBeInTheDocument();
+
+  second = "succeeded";
+  expect(await inspector.findByText("Overall: W 1200 mm × H 450 mm × D 400 mm", undefined, { timeout: 5000 })).toBeInTheDocument();
+}, 15000);
+
+
+// --- stop and edit (app-check-2026-10-09) ------------------------------------------------
+
+test("Stop calls the stop route, shows the stop in words and frees the composer", async () => {
+  const user = userEvent.setup();
+  const live = controlledStream();
+  turn = () => ({ events: live.stream });
+  extra = (call) => (call === "POST /chat/threads/t1/turns/stop" ? { body: { stopping: true } } : undefined);
+  show();
+  await user.type(await screen.findByLabelText("Message"), "make it wider");
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  live.send({ event: "specialist", data: { role: "designer" } });
+  await user.click(await screen.findByRole("button", { name: "Stop" }));
+  expect(calls.some(([m, url]) => m === "POST" && url === "/chat/threads/t1/turns/stop")).toBe(true);
+
+  live.send({ event: "stopped", data: { text: "Stopped. This message and its replies were removed." } });
+  live.send({ event: "done", data: {} });
+  live.close();
+  expect(await screen.findByText("Stopped. This message and its replies were removed.")).toBeInTheDocument();
+  expect(screen.getByLabelText("Message")).toBeEnabled();
+  expect(screen.getByLabelText("Message")).toHaveValue("make it wider");
+  expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+});
+
+test("Stop with no turn left on the server stops following the stream", async () => {
+  const user = userEvent.setup();
+  const live = controlledStream();
+  turn = () => ({ events: live.stream });
+  extra = (call) =>
+    call === "POST /chat/threads/t1/turns/stop"
+      ? { status: 409, body: { detail: { failure_class: "no_turn_running", reason: "no reply is being written" } } }
+      : undefined;
+  show();
+  await user.type(await screen.findByLabelText("Message"), "make it wider");
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  await user.click(await screen.findByRole("button", { name: "Stop" }));
+  await waitFor(() => expect(screen.getByLabelText("Message")).toBeEnabled());
+});
+
+test("only the latest owner message offers Edit", async () => {
+  messages = [
+    { ...owner("first"), message_id: "m1" }, reply("One."),
+    { ...owner("second"), message_id: "m2" }, reply("Two."),
+    { ...owner("third"), message_id: "m3" }, reply("Three."),
+  ];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  const edits = list.getAllByRole("button", { name: "Edit" });
+  expect(edits).toHaveLength(1);
+  expect(edits[0].closest("[data-side]")).toHaveTextContent("third");
+});
+
+test("no Edit while a confirmation is pending", async () => {
+  messages = [{ ...owner("one more shelf"), message_id: "m1" }];
+  pending = card;
+  show();
+  await screen.findByRole("region", { name: "Confirmation needed" });
+  expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+});
+
+test("Edit puts the message in the composer, warns, and sends to the latest-turn route", async () => {
+  const user = userEvent.setup();
+  messages = [{ ...owner("make it 60 cm deep"), message_id: "m1" }, reply("Which wall?")];
+  turn = () => ({ events: [{ event: "rewound", data: { kept: ["Created bench version 3"] } }, ...replied("45 cm, noted.", "designer")] });
+  show();
+  await user.click(await screen.findByRole("button", { name: "Edit" }));
+  const box = screen.getByLabelText("Message");
+  expect(box).toHaveValue("make it 60 cm deep");
+  expect(screen.getByRole("note")).toHaveTextContent(
+    "Sending replaces this message and the replies after it. Builds or versions already made stay.",
+  );
+  await user.clear(box);
+  await user.type(box, "make it 45 cm deep");
+  await user.click(screen.getByRole("button", { name: "Send edit" }));
+  const sent = calls.find(([m, url]) => m === "POST" && url === "/chat/threads/t1/turns/latest");
+  expect(sent?.[2]).toEqual({ message_id: "m1", message: "make it 45 cm deep" });
+  expect(await screen.findByText("Kept from the replaced message: Created bench version 3.")).toBeInTheDocument();
+  expect(calls.some(([, url]) => url === "/chat/threads/t1/turns/stream")).toBe(false);
+});
+
+test("cancelling an edit sends nothing", async () => {
+  const user = userEvent.setup();
+  messages = [{ ...owner("make it 60 cm deep"), message_id: "m1" }, reply("Which wall?")];
+  show();
+  await user.click(await screen.findByRole("button", { name: "Edit" }));
+  await user.click(screen.getByRole("button", { name: "Cancel edit" }));
+  expect(screen.queryByRole("note")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Message")).toHaveValue("");
+  expect(calls.some(([m]) => m === "POST")).toBe(false);
 });

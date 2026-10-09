@@ -70,3 +70,20 @@ def test_an_unreadable_document_says_so_and_lists_no_module() -> None:
 
 def test_no_version_gives_no_note() -> None:
     assert piece_note("hall-bench", None, None) == ""
+
+
+def test_the_envelope_comes_first() -> None:
+    document = _starter()
+    document["envelope"] = {"width": 2206, "height": 2238, "depth": 400}
+    note = piece_note("listening-wall", 7, document)
+    lines = note.splitlines()
+    header = lines.index("Piece listening-wall v7:")
+    assert lines[header + 1] == "Envelope: 2206 × 2238 × 400 mm (width × height × depth)"
+    assert note.index("Envelope:") < note.index("Modules:")
+
+
+def test_without_an_envelope_the_modules_bounds_are_given() -> None:
+    document = _starter()
+    document.pop("envelope", None)
+    note = piece_note("hall-bench", 1, document)
+    assert "Envelope: 800 × 1800 × 400 mm (width × height × depth) (the modules' outer bounds; no envelope set)" in note

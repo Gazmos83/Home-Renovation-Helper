@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
-from app.agent import house_file
+from app.agent import house_file, measurements
 from app.agent.revise import ReviseError, revise_spec
 from app.agent.tools.base import (
     AgentTool,
@@ -43,12 +43,25 @@ from app.guidelines.rules import piece_outcome
 from app.packages import service
 
 
+class RequestedMeasure(BaseModel):
+    """One length the owner asked for, tied to the field it sets."""
+
+    quote: str = Field(description="the owner's own words giving the length, e.g. '80 cm wide' or '5 cm wider'")
+    target: str = Field(
+        description="the module id, 'envelope', a wall shelf id, or 'none' for a length not about the piece"
+    )
+    field: str = Field(description="the field the length sets, e.g. width, height, depth, length; empty for 'none'")
+    value_mm: float = Field(description="the field's new value in mm; a relative length is added to the latest version's value")
+
+
 class ReviseArgs(BaseModel):
     """What the tool parses: the changes are checked by the tool itself, so an
-    unknown field can be refused by name and recorded."""
+    unknown field can be refused by name and recorded. A missing `requested` is an
+    empty list, which the measurement check refuses whenever the owner gave a length."""
 
     package_id: str
     changes: dict[str, Any]
+    requested: list[RequestedMeasure] = Field(default_factory=list)
 
 
 class RevisePackageSchema(BaseModel):
@@ -57,6 +70,12 @@ class RevisePackageSchema(BaseModel):
     package_id: str = Field(description="the piece's package id")
     changes: PackageChanges = Field(
         description="only what changes; name each module by its id"
+    )
+    requested: list[RequestedMeasure] = Field(
+        description=(
+            "every length with a unit (mm, cm, m) the owner wrote since the piece's last version, one entry "
+            "each; an empty list only when the owner gave none"
+        )
     )
 
 
@@ -93,6 +112,15 @@ def _revised(
             f"nothing would change: every requested value equals version {latest}; "
             "to build the same design again as a new version, use rebuild_piece"
         )
+    # The owner's lengths must land in the changes, checked before any confirmation.
+    refusals = measurements.check(
+        [measurements.Requested(r.quote, r.target, r.field, r.value_mm) for r in args.requested],
+        measurements.owner_texts_since_version(ctx.history, package_id),
+        document,
+        revised,
+    )
+    if refusals:
+        return None, None, None, [], "the requested measurements do not hold: " + "; ".join(refusals)
     spec, problem = validated_custom_build(ctx, revised, package_id)
     if spec is None:
         return None, None, None, [], problem

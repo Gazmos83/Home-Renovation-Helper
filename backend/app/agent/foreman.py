@@ -167,6 +167,10 @@ class Decision(BaseModel):
 
     specialist: Literal["intake", "designer", "builder", "lighting", "reviewer", "researcher"]
     reason: str = Field(description="one sentence")
+    composes_room: bool = Field(
+        default=False,
+        description="true when the owner wants a room furnished or composed, not a piece designed",
+    )
 
 
 def _image_blocks(
@@ -768,7 +772,12 @@ def build_graph(
             chosen = "builder" if buildable else ("designer" if state.get("brief") else "intake")
         if chosen == "lighting" and not state.get("detail_ready"):
             chosen = "builder" if buildable else ("designer" if state.get("brief") else "intake")
-        composing = chosen == "designer" and state.get("compose_ready")
+        # A room the conversation has confirmed may be composed whether or not the message names
+        # it, when the model reads the request as composing a room (app-check-2026-10-09).
+        room_wish = bool(getattr(decision, "composes_room", False)) and bool(state.get("room_confirmed"))
+        if room_wish and chosen == "intake":
+            chosen = "designer"
+        composing = chosen == "designer" and (state.get("compose_ready") or room_wish)
         # A piece the owner or the last reply names can be revised, rebuilt or given an imported
         # version by the Designer, even here (piece-versions-and-chat-delete).
         naming = chosen == "designer" and state.get("piece_named")
@@ -814,7 +823,8 @@ def build_graph(
                 notes.append(state.get("composition_note", ""))
             if name in ("designer", "lighting"):
                 notes.append(state.get("feedback_note", ""))
-            if name == "designer":
+            # The templates only for a new piece: a revision sees only the active build's figures.
+            if name == "designer" and not state.get("package_id"):
                 notes.append(designer_note)
             notes.append(FORMATTING_NOTE)
             capped = round_count >= MAX_TOOL_ROUNDS
@@ -866,6 +876,7 @@ def build_graph(
                 package_id=state.get("package_id"),
                 brief=dict(state.get("brief") or {}),
                 last_message=_last_human_text(state),
+                history=tuple(state.get("messages", [])),
                 trace_id=configurable.get("trace_id"),
                 slot=instruction.slot,
                 model=model_ids(instruction.slot),

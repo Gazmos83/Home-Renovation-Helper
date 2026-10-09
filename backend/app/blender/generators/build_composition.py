@@ -6,9 +6,10 @@ Usage (the arguments after ``--`` belong to this script)::
       --spec <version>/input.json --pieces <render root> --models <upload root>/models \
       --out /absolute/new-dir
 
-Publishes `model.blend`, a Workbench `screenshot.png` and `report.json`, which lists
-each item's stated and final size and, for a library model, its per-axis scale
-factors. A still or turntable of the composition is `render_composition.py`'s job,
+Publishes `model.blend`, `model.glb` (for the Rooms page's 3D view), a Workbench
+`screenshot.png` and `report.json`, which lists each item's stated and final size and,
+for a library model, its per-axis scale factors, and holds the surface map: each
+wall, floor and ceiling and the items, with the mesh names in `model.glb`. A still or turntable of the composition is `render_composition.py`'s job,
 behind the render guard.
 """
 
@@ -31,7 +32,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.blender.generators import _composition as composition
 from app.blender.generators import build_shell as shell_gen
-from app.blender.generators._scene import GeneratorError
+from app.blender.generators._scene import GeneratorError, export_glb
 from app.blender.generators._scene import add_camera as _add_camera
 from app.blender.generators._scene import aim_at as _aim_at
 from app.blender.verify import VerificationError, verify_composition
@@ -75,15 +76,20 @@ def build(document: dict, pieces: Path, models: Path, output_dir: Path) -> None:
     except Exception as error:
         raise GeneratorError(f"build: {type(error).__name__}: {error}") from error
     try:
+        surfaces = composition.surfaces(scene)
         report = {
             "kind": "room_composition_build",
             "scope": document["scope"],
             "blender_version": bpy.app.version_string,
             "items": scene.report,
+            "surfaces": surfaces,
+            "extent_mm": composition.extent_mm(scene),
         }
         (output_dir / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         shell_gen._write_screenshot(output_dir / "screenshot.png")
         bpy.ops.wm.save_as_mainfile(filepath=str(output_dir / "model.blend"), check_existing=False)
+        # Every mesh, ceilings included: the 3D view switches each surface itself.
+        export_glb({name for names in surfaces.values() for name in names}, output_dir / "model.glb", hide_helpers=False)
     except GeneratorError:
         raise
     except Exception as error:

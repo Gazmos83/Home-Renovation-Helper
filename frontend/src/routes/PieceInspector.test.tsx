@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { expect, test, vi } from "vitest";
@@ -177,4 +177,36 @@ test("a single-module version has no module filter", async () => {
   show();
   await userEvent.setup().click(await screen.findByRole("button", { name: "Cut list" }));
   expect(screen.queryByRole("group", { name: "Filter by module" })).not.toBeInTheDocument();
+});
+
+
+// --- the version switcher (app-check-2026-10-09) ------------------------------------------
+
+test("choosing an older version shows it and puts it in the address", async () => {
+  const user = userEvent.setup();
+  stubFetch((call) => {
+    if (call === "GET /packages/murphy-bed")
+      return {
+        body: {
+          package_id: "murphy-bed",
+          versions: [3, 2, 1].map((v) => ({
+            package_id: "murphy-bed", version: v, status: "succeeded",
+            approved_at: v === 2 ? "2026-10-08T10:00:00+00:00" : null,
+          })),
+        },
+      };
+    const read = /^GET \/packages\/murphy-bed\/versions\/(\d)$/.exec(call);
+    if (read)
+      return { body: { package_id: "murphy-bed", version: Number(read[1]), status: "succeeded", approved_at: null, files: FILES_WITH_VIEWS } };
+    if (/^GET \/packages\/murphy-bed\/versions\/\d\/files\/spec.json$/.test(call)) return { body: SPEC };
+  });
+  show("/pieces/murphy-bed/versions/3");
+  const switcher = await screen.findByRole("combobox", { name: "Version" });
+  expect([...switcher.querySelectorAll("option")].map((o) => o.textContent)).toEqual([
+    "Version 3, built", "Version 2, built, approved", "Version 1, built",
+  ]);
+  await user.selectOptions(switcher, "1");
+  expect(await screen.findByRole("heading", { name: "murphy-bed, version 1" })).toBeInTheDocument();
+  await waitFor(async () => expect((await canvasProps()).url).toBe("/packages/murphy-bed/versions/1/files/model.glb"));
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });

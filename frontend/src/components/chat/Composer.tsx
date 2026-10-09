@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Upload } from "@/lib/api";
 import { FieldError } from "@/lib/form";
 import { Button } from "@/components/ui/button";
@@ -13,19 +13,34 @@ function message(error: unknown): string | null {
   return error instanceof Error ? error.message : null;
 }
 
+export const EDIT_WARNING =
+  "Sending replaces this message and the replies after it. Builds or versions already made stay.";
+
 /**
  * One message as one turn. `onSend` runs the turn and resolves to its refusal in words, or
- * `null`; a refused message and its files are given back to the owner.
+ * `null`; a refused message and its files are given back to the owner. While a turn runs,
+ * Stop takes Send's place. With `editing`, the latest message's text is put in the box
+ * and sending replaces it (`onCancelEdit` leaves it as it was).
  */
-export function Composer({ threadId, running, onSend }: {
+export function Composer({ threadId, running, onSend, onStop, editing = null, onCancelEdit }: {
   threadId: string;
   running: boolean;
   onSend: (text: string, uploads: Upload[]) => Promise<string | null>;
+  onStop?: () => void;
+  editing?: { text: string } | null;
+  onCancelEdit?: () => void;
 }) {
   const [text, setText] = useState("");
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [error, setError] = useState<string | null>(null);
   const files = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) {
+      setText(editing.text);
+      setError(null);
+    }
+  }, [editing]);
 
   async function attach(list: FileList | null) {
     setError(null);
@@ -75,6 +90,22 @@ export function Composer({ threadId, running, onSend }: {
           ))}
         </div>
       )}
+      {editing && (
+        <div className="flex flex-wrap items-center gap-2 text-sm" role="note">
+          <span>{EDIT_WARNING}</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setText("");
+              onCancelEdit?.();
+            }}
+          >
+            Cancel edit
+          </Button>
+        </div>
+      )}
       <Input
         aria-label="Message"
         value={text}
@@ -83,7 +114,11 @@ export function Composer({ threadId, running, onSend }: {
         onChange={(event) => setText(event.target.value)}
       />
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="submit" disabled={running || !text.trim()}>Send</Button>
+        {running && onStop ? (
+          <Button type="button" variant="outline" onClick={onStop}>Stop</Button>
+        ) : (
+          <Button type="submit" disabled={running || !text.trim()}>{editing ? "Send edit" : "Send"}</Button>
+        )}
         <Label className="cursor-pointer text-sm underline">
           {ATTACH_LABEL}
           <input
@@ -93,7 +128,7 @@ export function Composer({ threadId, running, onSend }: {
             multiple
             className="sr-only"
             aria-label={ATTACH_LABEL}
-            disabled={running}
+            disabled={running || Boolean(editing)}
             onChange={(event) => void attach(event.target.files)}
           />
         </Label>

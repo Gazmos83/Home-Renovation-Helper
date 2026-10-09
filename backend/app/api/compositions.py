@@ -2,7 +2,8 @@
 
 Compositions are created only by a confirmed `compose_room`; here they are listed,
 each with its latest version, build status and items (a placed piece version that is
-no longer approved is marked), and a version's files are served by exact name.
+no longer approved is marked), its 3D model and surface map when the latest version has
+them, and a version's files are served by exact name.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ def list_compositions(request: Request) -> list[dict[str, Any]]:
         listed = house_file.compositions(session, root)
     for composition in listed:
         latest = composition["latest_version"]
-        picture = viewer = None
+        picture = viewer = model = surfaces = None
         if latest is not None:
             folder = storage.composition_version_dir(root, composition["slug"], latest)
             for name in ("still.png", "screenshot.png"):
@@ -45,8 +46,14 @@ def list_compositions(request: Request) -> list[dict[str, Any]]:
                     break
             if (folder / "viewer.html").is_file():
                 viewer = _route(composition["slug"], latest, "viewer.html")
+            # The 3D view: a version built before the model was published has none.
+            if (folder / "model.glb").is_file():
+                model = _route(composition["slug"], latest, "model.glb")
+                surfaces = _route(composition["slug"], latest, "report.json")
         composition["picture"] = picture
         composition["viewer"] = viewer
+        composition["model"] = model
+        composition["surfaces"] = surfaces
     return listed
 
 

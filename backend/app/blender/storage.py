@@ -52,9 +52,10 @@ SHELL_FILES: Final[dict[str, str]] = {
     "screenshot.png": "image/png",
 }
 
-# What a successful room-composition build publishes (room-composition): no GLB,
-# because a composition is rendered from its own scene, never re-imported.
+# What a successful room-composition build publishes (room-composition). The GLB is
+# for the Rooms page's 3D view only; a composition is rendered from its own scene.
 COMPOSITION_FILES: Final[dict[str, str]] = {
+    "model.glb": "model/gltf-binary",
     "model.blend": "application/octet-stream",
     "screenshot.png": "image/png",
     "report.json": "application/json",

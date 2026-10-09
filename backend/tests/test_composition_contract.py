@@ -224,3 +224,43 @@ def test_an_empty_apartment_is_refused() -> None:
 def test_items_that_are_not_a_list_are_refused() -> None:
     with pytest.raises(SpecValidationError, match="items must be a list"):
         parse_composition({**document(), "items": "sofa"}, max_items=30)
+
+
+# --- the surface map (app-check-2026-10-09) -------------------------------------------------
+
+
+def test_a_rooms_surface_map_names_each_wall_the_floor_the_ceiling_and_the_items() -> None:
+    from app.blender.composition_contract import surface_map
+
+    meshes = ["Ceiling", "Floor", "Wall_0_0", "Wall_0_1", "Wall_0_lintel_0", "Wall_1_0", "Wall_2_0",
+              "Wall_3_0", "Wall_10_0", "cabinet-side", "STAND_sofa"]
+    surfaces = surface_map(meshes, ["cabinet-side", "STAND_sofa"])
+    assert list(surfaces) == ["wall 1", "wall 2", "wall 3", "wall 4", "wall 11", "floor", "ceiling", "items"]
+    assert surfaces["wall 1"] == ["Wall_0_0", "Wall_0_1", "Wall_0_lintel_0"]
+    assert surfaces["items"] == ["STAND_sofa", "cabinet-side"]
+    assert sorted(n for names in surfaces.values() for n in names) == sorted(meshes)
+
+
+def test_an_apartments_surfaces_are_named_by_room() -> None:
+    from types import SimpleNamespace
+
+    from app.blender.composition_contract import apartment_wall_labels, surface_map
+
+    walls = [SimpleNamespace(id="wall-1", rooms=("Wohnen",)), SimpleNamespace(id="wall-2", rooms=("Wohnen", "Küche")),
+             SimpleNamespace(id="wall-3", rooms=("Küche",))]
+    labels = apartment_wall_labels(walls)
+    assert labels == {"wall-1": "Wohnen: wall 1", "wall-2": "Wohnen: wall 2", "wall-3": "Küche: wall 1"}
+    surfaces = surface_map(
+        ["Wall_wall-1_0", "Wall_wall-2_0", "Wall_wall-3_0", "Floor_Wohnen", "Ceiling_Wohnen", "Floor_Küche"],
+        [], labels,
+    )
+    assert list(surfaces) == [
+        "Küche: wall 1", "Küche: floor", "Wohnen: wall 1", "Wohnen: wall 2", "Wohnen: floor", "Wohnen: ceiling",
+    ]
+
+
+def test_a_mesh_no_surface_takes_is_refused_by_name() -> None:
+    from app.blender.composition_contract import surface_map
+
+    with pytest.raises(SpecValidationError, match="no surface takes the mesh 'Lamp'"):
+        surface_map(["Floor", "Lamp"], [])

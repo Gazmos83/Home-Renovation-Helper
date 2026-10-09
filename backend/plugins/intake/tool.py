@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 from app.agent import house_file
 from app.agent.house_file import HouseFileError
@@ -177,6 +176,7 @@ def run_brief(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
         return refusal
     with ctx.deps.session() as session:
         if room is not None:
+            # No apartment is passed: a room of an apartment stays in it.
             house_file.upsert_room(
                 session,
                 room["name"],
@@ -250,29 +250,42 @@ def _room_dicts(args: RecordPlanArgs) -> list[dict[str, Any]]:
 
 
 def _validated(args: RecordPlanArgs, ctx: ToolContext):
-    """The normalised apartment, or a refusal that names the room or the overlap."""
+    """The normalised apartment and what it replaces, or a refusal naming the room, the overlap or the busy build.
+
+    A read replaces a stored apartment of that name, so overlap is checked among its own rooms only.
+    """
     rooms = _room_dicts(args)
     printed = {r.name.strip(): r.printed_area_m2 for r in args.rooms if r.printed_area_m2}
     try:
         context = house_file.validate_apartment(
             args.apartment_name, args.ceiling_height_mm, args.wall_thickness_mm, rooms, printed
         )
-        # The same check against rooms already stored in this apartment; nothing is kept.
-        with Session(ctx.deps.engine) as session:
-            house_file.upsert_apartment(
-                session, args.apartment_name, args.ceiling_height_mm, args.wall_thickness_mm, rooms
+        with ctx.deps.session() as session:
+            replacement = house_file.apartment_replacement(
+                session, ctx.deps.render_root, args.apartment_name.strip(), rooms
             )
-            session.rollback()
     except HouseFileError as error:
-        return None, f"the plan cannot be stored: {error}"
-    return context, ""
+        return None, None, f"the plan cannot be stored: {error}"
+    return context, replacement, ""
+
+
+def _replacement_lines(replacement: dict[str, Any]) -> list[str]:
+    lines = []
+    for room in replacement["removed"]:
+        verb = "becomes" if len(room["pieces"]) == 1 else "become"
+        what = [f"{', '.join(room['pieces'])} {verb} \"No room\"" if room["pieces"] else "no pieces in it"]
+        if room["composition"]:
+            composition = room["composition"]
+            what.append(f"its composition {composition['name']} ({composition['versions']} version(s)) is removed")
+        lines.append(f"Removed: {room['name']}; " + "; ".join(what))
+    return lines
 
 
 def preview_plan(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
     args, problem = parse_args(RecordPlanArgs, arguments)
     if args is None:
         return problem
-    context, refusal = _validated(args, ctx)
+    context, replacement, refusal = _validated(args, ctx)
     if refusal:
         return refusal
     shared = sum(1 for w in context.walls if w.shared)
@@ -281,13 +294,24 @@ def preview_plan(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | 
         f"walls {context.wall_thickness_mm:g} mm, {len(context.rooms)} room(s), {shared} shared wall(s)"
     )
     lines = [headline]
+    if replacement is not None:
+        lines.append(f"Replaces the stored apartment {replacement['apartment']}")
+    stored = {room["name"]: room["stored"] for room in (replacement or {}).get("rooms", [])}
     for room in context.rooms:
         xs = [c[0] for c in room.corners]
         ys = [c[1] for c in room.corners]
+        if room.name in stored:
+            note = f" (stored {stored[room.name][0]:g} × {stored[room.name][1]:g} mm)"
+        elif replacement is not None:
+            note = " (new)"
+        else:
+            note = ""
         lines.append(
-            f"- {room.name}: {max(xs) - min(xs):g} × {max(ys) - min(ys):g} mm, "
+            f"- {room.name}: {max(xs) - min(xs):g} × {max(ys) - min(ys):g} mm{note}, "
             f"{polygon_area_m2(room.corners):.2f} m², {len(room.openings)} opening(s)"
         )
+    if replacement is not None:
+        lines += _replacement_lines(replacement)
     lines.append(f"Scale: {args.scale_note}")
     for assumption in args.assumptions:
         lines.append(f"Assumed: {assumption}")
@@ -307,6 +331,7 @@ def preview_plan(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | 
             "scale_note": args.scale_note,
             "assumptions": args.assumptions,
             "warnings": list(context.warnings),
+            "replaces": replacement,
         },
     )
 
@@ -317,23 +342,31 @@ def run_plan(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
     args, problem = parse_args(RecordPlanArgs, arguments)
     if args is None:
         return problem
-    _context, refusal = _validated(args, ctx)
+    _context, replacement, refusal = _validated(args, ctx)
     if refusal:
         return refusal
-    with ctx.deps.session() as session:
-        apartment = house_file.upsert_apartment(
-            session,
-            args.apartment_name,
-            args.ceiling_height_mm,
-            args.wall_thickness_mm,
-            _room_dicts(args),
-            notes="; ".join(args.assumptions),
-        )
-        if ctx.thread_id is not None:
-            house_file.set_thread_apartment(session, ctx.thread_id, apartment)
-        session.commit()
+    try:
+        with ctx.deps.session() as session:
+            # Replaces a stored apartment of this name, deleting the rooms the read leaves out; commits.
+            apartment = house_file.upsert_apartment(
+                session,
+                args.apartment_name,
+                args.ceiling_height_mm,
+                args.wall_thickness_mm,
+                _room_dicts(args),
+                notes="; ".join(args.assumptions),
+                replace=True,
+                render_root=ctx.deps.render_root,
+            )
+            if ctx.thread_id is not None:
+                house_file.set_thread_apartment(session, ctx.thread_id, apartment)
+            session.commit()
+    except HouseFileError as error:
+        return f"the plan cannot be stored: {error}"
+    removed = [room["name"] for room in (replacement or {}).get("removed", [])]
+    gone = f" Removed: {', '.join(removed)}." if removed else ""
     return ToolOutput(
-        text=f"The plan is saved: apartment {args.apartment_name.strip()} with {len(args.rooms)} room(s)."
+        text=f"The plan is saved: apartment {args.apartment_name.strip()} with {len(args.rooms)} room(s).{gone}"
     )
 
 

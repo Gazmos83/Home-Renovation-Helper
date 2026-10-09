@@ -237,3 +237,36 @@ def test_the_designer_restates_a_revision_and_asks_before_calling_the_tool() -> 
     assert "Do not call `revise_package` again in that reply." in text
     assert "write the new list starting from the summary's" in text
     assert "Never resend the whole document." in text
+
+
+def test_intake_reuses_a_stored_room_only_through_a_confirmation() -> None:
+    text = load_instructions()["intake"].text
+    assert "Never ask for what it already says about this conversation's confirmed room." in text
+    assert "Never ask for what it already says.\n" not in text
+    assert "A stored room or apartment that this conversation has not confirmed is never assumed" in text
+    assert "Offer it with `confirm_room`, which shows its stored measurements" in text
+    assert "use none of its figures before the owner's yes" in text
+
+
+def test_intake_takes_the_room_path_for_a_room_only_wish() -> None:
+    text = load_instructions()["intake"].text
+    assert "When the owner wants a room designed or furnished rather than a piece, take the room path." in text
+    assert "ask what the room should hold" in text
+    assert "Never ask which piece to design, or a piece's purpose, size or budget" in text
+    assert "never call `record_brief` for a room-only wish" in text
+    assert "offer to compose the room with what it should hold, not to design a piece" in text
+
+
+def test_the_foreman_flags_composing_a_room_apart_from_a_piece_wish() -> None:
+    text = load_instructions()["foreman"].text
+    assert "Set `composes_room` to true only when the owner wants a room furnished or composed" in text
+    assert "A wish for a new piece is never composing a room." in text
+
+
+def test_the_designer_fills_requested_with_the_owners_lengths() -> None:
+    text = load_instructions()["designer"].text
+    assert "Fill `requested` in every `revise_package` call with each length with a unit" in text
+    assert "quote the owner's own words" in text
+    assert "is added to the value in the piece summary" in text
+    assert "Use target `none` for a length that is not about the piece" in text
+    assert "never invent a value" in text

@@ -618,3 +618,99 @@ def test_notices_are_listed_by_position_then_time_and_a_missing_thread_is_a_no_o
     assert house_file.add_notice(db_session, gone.id, after_messages=0, outcome="failed", tier="draft", text="x") is None
     assert house_file.add_notice(db_session, uuid4(), after_messages=0, outcome="failed", tier="draft", text="x") is None
     assert house_file.notices_for(db_session, gone.id) == []
+
+
+# --- a plan read again replaces the apartment (app-check-2026-10-09) --------------------
+
+WOHNEN = {"name": "Wohnen", "corners_mm": [[0, 0], [5200, 0], [5200, 4000], [0, 4000]]}
+KUECHE = {"name": "Küche", "corners_mm": [[5200, 0], [8000, 0], [8000, 4000], [5200, 4000]]}
+BAD = {"name": "Bad", "corners_mm": [[0, 4000], [2500, 4000], [2500, 6000], [0, 6000]]}
+
+
+def _wohnung(db_session) -> None:
+    house_file.upsert_apartment(db_session, "Wohnung", 2600, 100, [WOHNEN, KUECHE, BAD])
+
+
+def test_a_room_written_without_its_apartment_keeps_it(db_session) -> None:
+    _wohnung(db_session)
+    flat = house_file.apartment_by_name(db_session, "Wohnung")
+    house_file.upsert_room(db_session, "Küche", KUECHE["corners_mm"], 2450)
+    kitchen = house_file.room_by_name(db_session, "Küche")
+    assert kitchen.height_mm == 2450 and kitchen.apartment_id == flat.id
+
+
+def test_a_replacing_read_lists_kept_new_and_removed_rooms(db_session, render_root: Path) -> None:
+    _wohnung(db_session)
+    bad = house_file.room_by_name(db_session, "Bad")
+    house_file.record_piece(db_session, "towel-rack", "Towel rack", room_id=bad.id)
+    narrower = {**WOHNEN, "corners_mm": [[0, 0], [5100, 0], [5100, 4000], [0, 4000]]}
+    flur = {"name": "Flur", "corners_mm": [[5200, 4000], [8000, 4000], [8000, 5000], [5200, 5000]]}
+    plan = house_file.apartment_replacement(db_session, render_root, "Wohnung", [narrower, KUECHE, flur])
+    assert plan["apartment"] == "Wohnung"
+    assert {"name": "Wohnen", "stored": [5200, 4000], "read": [5100, 4000]} in plan["rooms"]
+    assert plan["new"] == ["Flur"]
+    assert plan["removed"] == [{"name": "Bad", "pieces": ["towel-rack"], "composition": None}]
+    assert house_file.apartment_replacement(db_session, render_root, "Elsewhere", [WOHNEN]) is None
+
+
+def test_replacing_deletes_removed_rooms_and_unassigns_their_pieces(db_session, render_root: Path) -> None:
+    from app.blender import storage
+    from app.db.models import Piece
+
+    _wohnung(db_session)
+    bad = house_file.room_by_name(db_session, "Bad")
+    house_file.record_piece(db_session, "towel-rack", "Towel rack", room_id=bad.id)
+    thread = house_file.create_thread(db_session, "Bad")
+    house_file.set_thread_room(db_session, thread.id, bad)
+    _composed(db_session, render_root, "Bad")
+    db_session.commit()
+    try:
+        narrower = {**WOHNEN, "corners_mm": [[0, 0], [5100, 0], [5100, 4000], [0, 4000]]}
+        flat = house_file.upsert_apartment(
+            db_session, "Wohnung", 2600, 100, [narrower, KUECHE], replace=True, render_root=render_root
+        )
+        db_session.expire_all()
+        assert [r.name for r in house_file.rooms_of(db_session, flat)] == ["Küche", "Wohnen"]
+        assert house_file.room_by_name(db_session, "Wohnen").corners_mm[1] == [5100, 0]
+        assert house_file.room_by_name(db_session, "Bad") is None
+        assert db_session.get(Piece, "towel-rack").room_id is None
+        assert house_file.thread_scope(db_session, thread.id) == (None, None)
+        assert house_file.composition_by_scope(db_session, "room", "Bad") is None
+        assert not storage.composition_dir(render_root, "bad").exists()
+    finally:
+        from tests.conftest import clean_house_file
+
+        db_session.rollback()
+        clean_house_file(db_session.get_bind())
+
+
+def test_replacing_checks_overlap_among_the_read_rooms_only(db_session, render_root: Path) -> None:
+    _wohnung(db_session)
+    db_session.commit()
+    try:
+        # The new room covers where `Bad` was; `Bad` is not in the read, so it does not clash.
+        bigger = {"name": "Bad neu", "corners_mm": [[0, 4000], [3000, 4000], [3000, 6000], [0, 6000]]}
+        house_file.upsert_apartment(
+            db_session, "Wohnung", 2600, 100, [WOHNEN, KUECHE, bigger], replace=True, render_root=render_root
+        )
+        db_session.expire_all()
+        assert house_file.room_by_name(db_session, "Bad") is None
+        assert house_file.room_by_name(db_session, "Bad neu") is not None
+    finally:
+        from tests.conftest import clean_house_file
+
+        db_session.rollback()
+        clean_house_file(db_session.get_bind())
+
+
+def test_replacing_is_refused_while_a_removed_rooms_composition_builds(db_session, render_root: Path) -> None:
+    from app.blender import storage
+
+    _wohnung(db_session)
+    _composed(db_session, render_root, "Bad", status="running")
+    with pytest.raises(HouseFileError, match="Bad is building or rendering; read the plan again"):
+        house_file.upsert_apartment(
+            db_session, "Wohnung", 2600, 100, [WOHNEN, KUECHE], replace=True, render_root=render_root
+        )
+    assert house_file.room_by_name(db_session, "Bad") is not None
+    assert storage.composition_dir(render_root, "bad").is_dir()

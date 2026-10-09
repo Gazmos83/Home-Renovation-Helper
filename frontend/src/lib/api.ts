@@ -34,6 +34,8 @@ export type ChatMessage = {
   kind?: "text" | "answers";
   rows?: AnswerRow[];
   upload_ids?: string[];
+  /** An owner's message's id: the latest one can be edited. */
+  message_id?: string;
   /** A render notice: its outcome and tier, and for a piece version the piece and version. */
   outcome?: "succeeded" | "failed";
   tier?: string;
@@ -53,6 +55,10 @@ export type TurnEvent =
   | { event: "pending"; data: { pending: Pending; specialists: string[] } }
   | { event: "title"; data: { title: string } }
   | { event: "error"; data: { failure_class: string; reason: string } }
+  /** The turn was stopped: it is removed from the thread; `text` says what had already started. */
+  | { event: "stopped"; data: { text: string } }
+  /** An edit rewound the thread; what the rewound turn confirmed stays. */
+  | { event: "rewound"; data: { kept: string[] } }
   | { event: "done"; data: Record<string, never> };
 
 /** The owner's answer to the pending item. */
@@ -249,6 +255,49 @@ export type Composition = {
   items: CompositionItem[];
   picture: string | null;
   viewer: string | null;
+  /** The latest version's `model.glb` and its build report (the surface map); absent on older versions. */
+  model?: string | null;
+  surfaces?: string | null;
+};
+
+/** What the Rooms page's 3D view reads from a composition's build report. */
+export type CompositionReport = {
+  /** Each surface the owner can switch, with the mesh names it holds. */
+  surfaces: Record<string, string[]>;
+  /** The rooms' plan bounds and the highest ceiling, in mm (x, y, z up). */
+  extent_mm: { min: [number, number, number]; max: [number, number, number] };
+};
+
+/** A stored pricing of an approved version (cut-list-pricing); money in euro cents. */
+export type Pricing = {
+  id: string;
+  package_id: string;
+  version: number;
+  computed_at: string;
+  total_cents: number;
+  complete: boolean;
+  result: {
+    /** Per material key: the sheets bought and the cut lines made from them. */
+    materials: Record<
+      string,
+      {
+        sheet_count?: number;
+        cost_cents: number | null;
+        cuts: { part_id: string; name: string; qty: number; status: string }[];
+      }
+    >;
+    hardware: { id: string; item: string; qty: string; cost_cents: number | null }[];
+    /** Every line with no price; named by whichever of its names it has. */
+    unpriced: {
+      kind: string;
+      reason: string;
+      name?: string;
+      item?: string;
+      label?: string;
+      material_key?: string;
+      key?: string;
+    }[];
+  };
 };
 
 export type ModelAsset = {
@@ -488,12 +537,18 @@ export function sseParser(onEvent: (event: TurnEvent) => void) {
 
 /** POST `body` to a streamed route and hand each event to `onEvent`; a refusal before the
  * stream opens is thrown as an `ApiError`, like any other request. */
-async function stream(path: string, body: unknown, onEvent: (event: TurnEvent) => void): Promise<void> {
+async function stream(
+  path: string,
+  body: unknown,
+  onEvent: (event: TurnEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
   const response = await fetch(path, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
     body: JSON.stringify(body),
+    signal,
   });
   if (response.status === 401) unauthorized.forEach((listener) => listener());
   if (!response.ok) throw await failure(response);
@@ -504,12 +559,20 @@ async function stream(path: string, body: unknown, onEvent: (event: TurnEvent) =
     return;
   }
   const reader = response.body.getReader();
+  // An abort also ends a body that is still being read.
+  const cancel = () => void reader.cancel();
+  signal?.addEventListener("abort", cancel);
   const decoder = new TextDecoder();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    parser.push(decoder.decode(value, { stream: true }));
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parser.push(decoder.decode(value, { stream: true }));
+    }
+  } finally {
+    signal?.removeEventListener("abort", cancel);
   }
+  if (signal?.aborted) throw new DOMException("The turn is no longer followed.", "AbortError");
   parser.push(decoder.decode());
   parser.end();
 }
@@ -540,8 +603,23 @@ export const api = {
     request<Thread>("/chat/threads", { method: "POST", body: JSON.stringify(title ? { title } : {}) }),
   renameThread: (threadId: string, title: string) =>
     request<Thread>(`/chat/threads/${threadId}`, { method: "PATCH", body: JSON.stringify({ title }) }),
-  streamTurn: (threadId: string, message: string, uploadIds: string[], onEvent: (event: TurnEvent) => void) =>
-    stream(`/chat/threads/${threadId}/turns/stream`, { message, upload_ids: uploadIds }, onEvent),
+  streamTurn: (
+    threadId: string,
+    message: string,
+    uploadIds: string[],
+    onEvent: (event: TurnEvent) => void,
+    signal?: AbortSignal,
+  ) => stream(`/chat/threads/${threadId}/turns/stream`, { message, upload_ids: uploadIds }, onEvent, signal),
+  /** Replace the latest owner message and run it again; its files stay with it. */
+  streamEdit: (
+    threadId: string,
+    messageId: string,
+    message: string,
+    onEvent: (event: TurnEvent) => void,
+    signal?: AbortSignal,
+  ) => stream(`/chat/threads/${threadId}/turns/latest`, { message_id: messageId, message }, onEvent, signal),
+  /** Stop the running turn at its next step; its stream then ends with `stopped`. */
+  stopTurn: (threadId: string) => request<{ stopping: boolean }>(`/chat/threads/${threadId}/turns/stop`, { method: "POST" }),
   streamResume: (threadId: string, confirmationId: string, answer: ResumeBody, onEvent: (event: TurnEvent) => void) =>
     stream(`/chat/threads/${threadId}/resume/stream`, { confirmation_id: confirmationId, ...answer }, onEvent),
   threadCalls: (threadId: string) => request<ThreadCall[]>(`/admin/threads/${threadId}/calls`),
@@ -592,6 +670,7 @@ export const api = {
       body: JSON.stringify({ room }),
     }),
   compositions: () => request<Composition[]>("/compositions"),
+  compositionReport: (url: string) => request<CompositionReport>(url),
   modelLibrary: () => request<ModelAsset[]>("/models"),
   uploadModel: (file: File, name: string, width: string, depth: string, height: string) => {
     const form = new FormData();
@@ -605,6 +684,13 @@ export const api = {
   deleteModel: (modelId: string) => request<void>(`/models/${modelId}`, { method: "DELETE" }),
   version: (packageId: string, version: number) =>
     request<VersionInfo>(`/packages/${encodeURIComponent(packageId)}/versions/${version}`),
+  /** Every version of a piece, newest first, with its build state and approval. */
+  piece: (packageId: string) =>
+    request<{ package_id: string; versions: VersionInfo[] }>(`/packages/${encodeURIComponent(packageId)}`),
+  pricings: (packageId: string, version: number) => request<Pricing[]>(`${versionPath(packageId, version)}/pricings`),
+  /** A new pricing at the pricing defaults (no delivery, the store's cut-charge mode). */
+  createPricing: (packageId: string, version: number) =>
+    request<Pricing>(`${versionPath(packageId, version)}/pricings`, { method: "POST", body: JSON.stringify({}) }),
   pieceSpec: (packageId: string, version: number) =>
     request<PieceSpec>(versionFile(packageId, version, "spec.json")),
   approveVersion: (packageId: string, version: number) =>

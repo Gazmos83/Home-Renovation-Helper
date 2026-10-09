@@ -94,11 +94,13 @@ def test_an_area_that_disagrees_with_the_plan_is_a_warning_not_a_refusal(make_ct
     assert shown.proposal["warnings"]
 
 
-def test_a_room_added_later_is_checked_against_the_ones_kept(make_ctx) -> None:
+def test_a_read_again_is_checked_among_its_own_rooms_only(make_ctx) -> None:
     run(PLAN, replace(make_ctx(), approved=True))
-    clash = {**PLAN, "rooms": [{"name": "Study", "corners_mm": [[4000, 0], [6000, 0], [6000, 3800], [4000, 3800]]}]}
-    refused = preview(clash, make_ctx())
-    assert isinstance(refused, str) and "overlap" in refused
+    # The study covers part of the stored living room, which this read leaves out.
+    study = {**PLAN, "rooms": [{"name": "Study", "corners_mm": [[4000, 0], [6000, 0], [6000, 3800], [4000, 3800]]}]}
+    shown = preview(study, make_ctx())
+    assert isinstance(shown, Confirmation)
+    assert "Removed: Living room; no pieces in it" in shown.summary
 
 
 def test_the_tool_is_gated(make_ctx) -> None:
@@ -114,3 +116,82 @@ def test_yes_makes_the_apartment_the_conversations_confirmed_scope(make_ctx, too
     with tool_deps.session() as session:
         room, apartment = house_file.thread_scope(session, thread_id)
         assert room is None and apartment.name == "Flat"
+
+
+# --- a plan read again (app-check-2026-10-09) --------------------------------------------
+
+WOHNUNG = {
+    "apartment_name": "Wohnung",
+    "ceiling_height_mm": 2600,
+    "scale_note": "the printed room areas",
+    "rooms": [
+        {"name": "Wohnen", "corners_mm": [[0, 0], [5200, 0], [5200, 4000], [0, 4000]]},
+        {"name": "Küche", "corners_mm": [[5200, 0], [8000, 0], [8000, 4000], [5200, 4000]]},
+        {"name": "Bad", "corners_mm": [[0, 4000], [2500, 4000], [2500, 6000], [0, 6000]]},
+    ],
+}
+READ_AGAIN = {
+    **WOHNUNG,
+    "rooms": [
+        {"name": "Wohnen", "corners_mm": [[0, 0], [5100, 0], [5100, 4000], [0, 4000]]},
+        WOHNUNG["rooms"][1],
+    ],
+}
+
+
+def _stored_wohnung(make_ctx, tool_deps) -> None:
+    run(WOHNUNG, replace(make_ctx(), approved=True))
+    with tool_deps.session() as session:
+        bad = house_file.room_by_name(session, "Bad")
+        house_file.record_piece(session, "towel-rack", "Towel rack", room_id=bad.id)
+        session.commit()
+
+
+def test_a_plan_read_again_shows_what_it_replaces(make_ctx, tool_deps) -> None:
+    _stored_wohnung(make_ctx, tool_deps)
+    shown = preview(READ_AGAIN, make_ctx())
+    assert isinstance(shown, Confirmation)
+    assert "Replaces the stored apartment Wohnung" in shown.summary
+    assert "- Wohnen: 5100 × 4000 mm (stored 5200 × 4000 mm)" in shown.summary
+    assert 'Removed: Bad; towel-rack becomes "No room"' in shown.summary
+    assert shown.proposal["replaces"]["removed"][0]["name"] == "Bad"
+    with tool_deps.session() as session:
+        assert house_file.room_by_name(session, "Bad") is not None
+
+
+def test_a_new_room_in_a_read_again_is_marked_new(make_ctx, tool_deps) -> None:
+    _stored_wohnung(make_ctx, tool_deps)
+    flur = {"name": "Flur", "corners_mm": [[5200, 4000], [8000, 4000], [8000, 5000], [5200, 5000]]}
+    shown = preview({**READ_AGAIN, "rooms": [*READ_AGAIN["rooms"], flur]}, make_ctx())
+    assert "- Flur: 2800 × 1000 mm (new)" in shown.summary
+
+
+def test_yes_to_a_read_again_deletes_the_removed_room(make_ctx, tool_deps) -> None:
+    from app.db.models import Piece
+
+    _stored_wohnung(make_ctx, tool_deps)
+    output = run(READ_AGAIN, replace(make_ctx(), approved=True))
+    assert "Removed: Bad." in output.text
+    with tool_deps.session() as session:
+        flat = house_file.apartment_by_name(session, "Wohnung")
+        assert [r.name for r in house_file.rooms_of(session, flat)] == ["Küche", "Wohnen"]
+        assert house_file.room_by_name(session, "Bad") is None
+        assert session.get(Piece, "towel-rack").room_id is None
+
+
+def test_a_read_again_is_refused_while_a_removed_rooms_composition_builds(make_ctx, tool_deps) -> None:
+    from app.blender import storage
+
+    _stored_wohnung(make_ctx, tool_deps)
+    with tool_deps.session() as session:
+        composition = house_file.record_composition(session, "room", "Bad")
+        house_file.record_composition_version(session, composition, 1, None, [])
+        session.commit()
+    folder = storage.composition_version_dir(tool_deps.render_root, "bad", 1)
+    folder.mkdir(parents=True)
+    storage.write_status(folder, status="running")
+    refused = preview(READ_AGAIN, make_ctx())
+    assert isinstance(refused, str)
+    assert "Bad is building or rendering; read the plan again once that has finished" in refused
+    with tool_deps.session() as session:
+        assert house_file.room_by_name(session, "Bad") is not None

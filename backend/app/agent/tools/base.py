@@ -171,6 +171,8 @@ class ToolContext:
     model: str | None = None
     # The owner's answer to a `Questions` pause: `{"answers": [...]}` or `{"declined": "..."}`.
     answer: dict[str, Any] | None = None
+    # The thread's messages, composed by code, for `revise_package`'s measurement check.
+    history: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True)

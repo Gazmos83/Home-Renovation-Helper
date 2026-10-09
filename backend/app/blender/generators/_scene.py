@@ -141,10 +141,14 @@ def hidden_for_presentation() -> hidden:
     return hidden(_is_presentation_helper)
 
 
-def export_glb(layer_names: set[str], output_path: Path) -> None:
+def export_glb(layer_names: set[str], output_path: Path, *, hide_helpers: bool = True) -> None:
     """Export the visible meshes as GLB, refusing when the layer map and the
-    visible meshes disagree (the spec's `layers` must cover every mesh)."""
-    with hidden(lambda obj: obj.type in {"CAMERA", "LIGHT"} or _is_presentation_helper(obj)):
+    visible meshes disagree (the spec's `layers` must cover every mesh).
+
+    `hide_helpers=False` keeps the presentation helpers (a room composition's
+    ceilings are a surface the owner switches)."""
+    helper = _is_presentation_helper if hide_helpers else (lambda obj: False)
+    with hidden(lambda obj: obj.type in {"CAMERA", "LIGHT"} or helper(obj)):
         visible = {
             obj.name
             for obj in bpy.context.scene.objects

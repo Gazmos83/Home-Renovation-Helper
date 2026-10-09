@@ -366,3 +366,67 @@ def place_items(
         },
     }
     return stored, subjects
+
+
+# --- the surface map (app-check-2026-10-09) --------------------------------------------------
+
+ITEMS_SURFACE: Final = "items"
+
+
+def _surface_order(label: str) -> tuple[int, str, int, int]:
+    if label == ITEMS_SURFACE:
+        return (1, "", 0, 0)
+    room, _sep, rest = label.rpartition(": ")
+    if rest.startswith("wall "):
+        return (0, room, 0, int(rest[5:]))
+    return (0, room, 1 if rest == "floor" else 2, 0)
+
+
+def surface_map(
+    mesh_names: Sequence[str], item_meshes: Sequence[str], wall_labels: Mapping[str, str] | None = None
+) -> dict[str, list[str]]:
+    """Each surface the owner can switch, with the mesh names it holds, in display order.
+
+    A room's walls are `Wall_<index>_…` (wall `<index + 1>`), its floor `Floor` and its
+    ceiling `Ceiling`. An apartment's walls are `Wall_<wall id>_…`, labelled by
+    `wall_labels` (wall id → "<room>: wall <n>"), and each room's floor and ceiling are
+    `Floor_<room>` and `Ceiling_<room>`. Every placed item's meshes are `items`. Raises
+    `SpecValidationError` naming a mesh no surface takes, so every mesh is mapped once.
+    """
+    items = set(item_meshes)
+    apartment = wall_labels is not None
+    surfaces: dict[str, list[str]] = {}
+    for name in sorted(mesh_names):
+        label: str | None = None
+        if name in items:
+            label = ITEMS_SURFACE
+        elif name.startswith("Wall_"):
+            key = name.split("_")[1]
+            if apartment:
+                label = wall_labels.get(key)
+            elif key.isdigit():
+                label = f"wall {int(key) + 1}"
+        elif not apartment and name in ("Floor", "Ceiling"):
+            label = name.lower()
+        elif apartment and name.startswith("Floor_"):
+            label = f"{name[len('Floor_'):]}: floor"
+        elif apartment and name.startswith("Ceiling_"):
+            label = f"{name[len('Ceiling_'):]}: ceiling"
+        if label is None:
+            _fail(f"surface map: no surface takes the mesh {name!r}")
+        surfaces.setdefault(label, []).append(name)
+    return {label: surfaces[label] for label in sorted(surfaces, key=_surface_order)}
+
+
+def apartment_wall_labels(walls: Sequence[Any]) -> dict[str, str]:
+    """An apartment shell's wall ids as "<room>: wall <n>", numbered per room in build order.
+
+    A wall two rooms share is built once, so it is labelled by the first room it names.
+    """
+    counts: dict[str, int] = {}
+    labels = {}
+    for wall in walls:
+        room = wall.rooms[0]
+        counts[room] = counts.get(room, 0) + 1
+        labels[wall.id] = f"{room}: wall {counts[room]}"
+    return labels

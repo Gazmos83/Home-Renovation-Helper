@@ -95,11 +95,27 @@ def write_shell_files(out: Path) -> None:
     (out / "screenshot.png").write_bytes(png_bytes(800, 500))
 
 
+def glb_bytes(mesh_nodes: list[str]) -> bytes:
+    """The smallest GLB whose JSON chunk names `mesh_nodes`, each a node with a mesh."""
+    chunk = json.dumps(
+        {"asset": {"version": "2.0"}, "nodes": [{"name": name, "mesh": 0} for name in mesh_nodes]}
+    ).encode("utf-8")
+    chunk += b" " * (-len(chunk) % 4)
+    return b"glTF" + struct.pack("<II", 2, 20 + len(chunk)) + struct.pack("<II", len(chunk), 0x4E4F534A) + chunk
+
+
+COMPOSITION_SURFACES = {"wall 1": ["Wall_0_0"], "floor": ["Floor"], "ceiling": ["Ceiling"]}
+
+
 def write_composition_files(out: Path) -> None:
     out.mkdir()
+    (out / "model.glb").write_bytes(glb_bytes([n for names in COMPOSITION_SURFACES.values() for n in names]))
     (out / "model.blend").write_bytes(b"BLENDER-fake")
     (out / "screenshot.png").write_bytes(png_bytes(800, 500))
-    (out / "report.json").write_text(json.dumps({"kind": "room_composition_build", "items": []}), encoding="utf-8")
+    (out / "report.json").write_text(
+        json.dumps({"kind": "room_composition_build", "items": [], "surfaces": COMPOSITION_SURFACES}),
+        encoding="utf-8",
+    )
 
 
 def write_frames(out: Path, *, frames: int, size: int, skip_empty: int | None = None) -> None:

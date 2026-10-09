@@ -78,8 +78,11 @@ export function baseOf(spec: Pick<PieceSpec, "modules">): number {
 
 export type Preset = { pos: Vec3; target: Vec3 };
 
+/** The piece inspector's Iso direction: from the front right, a little above. */
+export const PIECE_ISO: Vec3 = [2.7, 0.8, 3.25];
+
 /** The four cameras, framed on the piece's overall size and aimed at its centre. */
-export function cameraPresets(overall: PieceSpec["overall"], base = 0): Record<CameraPreset, Preset> {
+export function cameraPresets(overall: PieceSpec["overall"], base = 0, isoDirection: Vec3 = PIECE_ISO): Record<CameraPreset, Preset> {
   const reach = Math.max(overall.w, overall.h, overall.d) / 1000;
   const target: Vec3 = [0, base + overall.h / 2000, 0];
   const distance = Math.max(1.4, reach * 1.9);
@@ -92,7 +95,7 @@ export function cameraPresets(overall: PieceSpec["overall"], base = 0): Record<C
     ];
   };
   return {
-    iso: { pos: at([2.7, 0.8, 3.25]), target },
+    iso: { pos: at(isoDirection), target },
     front: { pos: at([0, 0, 1]), target },
     side: { pos: at([1, 0, 0]), target },
     // A hair off vertical, so the orbit controls keep their up direction.

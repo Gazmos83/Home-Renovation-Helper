@@ -103,7 +103,10 @@ def upsert_room(
     notes: str = "",
     apartment_id: UUID | None = None,
 ) -> Room:
-    """Store a room by its unique name, replacing the measurements of one that exists."""
+    """Store a room by its unique name, replacing the measurements of one that exists.
+
+    Without `apartment_id` a stored room keeps the apartment it belongs to.
+    """
     valid = validate_room(name, corners_mm, height_mm, openings, wall_thickness_mm)
     room = session.scalar(select(Room).where(Room.name == valid["name"]))
     if room is None:
@@ -114,7 +117,8 @@ def upsert_room(
     room.wall_thickness_mm = valid["wall_thickness_mm"]
     room.openings = valid["openings"]
     room.notes = notes
-    room.apartment_id = apartment_id
+    if apartment_id is not None:
+        room.apartment_id = apartment_id
     room.updated_at = _now()
     session.flush()
     return room
@@ -207,6 +211,67 @@ def validate_apartment(
         raise HouseFileError(str(error)) from None
 
 
+def _width_depth(corners_mm: Any) -> list[int | float]:
+    xs = [point[0] for point in corners_mm]
+    ys = [point[1] for point in corners_mm]
+    return [_whole(max(xs) - min(xs)), _whole(max(ys) - min(ys))]
+
+
+def apartment_replacement(
+    session: Session, render_root: Path, name: str, rooms: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """What a plan read replacing the stored apartment `name` changes, or `None` when none is stored.
+
+    Lists each room in both with its stored and read width and depth, the rooms the read
+    adds, and the stored rooms it does not name with the pieces in them and their room
+    composition. Refused with `HouseFileError` while a composition of a removed room or of
+    the apartment is building or rendering.
+    """
+    apartment = apartment_by_name(session, name)
+    if apartment is None:
+        return None
+    read = {(room.get("name") or "").strip(): room for room in rooms}
+    stored = rooms_of(session, apartment)
+    removed_rooms = [room for room in stored if room.name not in read]
+    watched = [composition_by_scope(session, "apartment", apartment.name)]
+    watched += [composition_by_scope(session, "room", room.name) for room in removed_rooms]
+    for composition in watched:
+        if composition is not None and _composition_busy(render_root, composition):
+            raise HouseFileError(
+                f"the composition of {composition.name} is building or rendering; "
+                "read the plan again once that has finished"
+            )
+    stored_names = {room.name for room in stored}
+    removed = []
+    for room in removed_rooms:
+        composition = composition_by_scope(session, "room", room.name)
+        removed.append(
+            {
+                "name": room.name,
+                "pieces": list(
+                    session.scalars(
+                        select(Piece.package_id).where(Piece.room_id == room.id).order_by(Piece.package_id)
+                    )
+                ),
+                "composition": (
+                    {"name": composition.name, "versions": len(composition_version_rows(session, composition))}
+                    if composition is not None
+                    else None
+                ),
+            }
+        )
+    return {
+        "apartment": apartment.name,
+        "rooms": [
+            {"name": room.name, "stored": _width_depth(room.corners_mm), "read": _width_depth(read[room.name]["corners_mm"])}
+            for room in stored
+            if room.name in read
+        ],
+        "new": [room_name for room_name in read if room_name not in stored_names],
+        "removed": removed,
+    }
+
+
 def upsert_apartment(
     session: Session,
     name: str,
@@ -214,16 +279,29 @@ def upsert_apartment(
     wall_thickness_mm: Any,
     rooms: list[dict[str, Any]],
     notes: str = "",
+    *,
+    replace: bool = False,
+    render_root: Path | None = None,
 ) -> Apartment:
     """Store an apartment and its rooms in one plan frame; rooms of the same name are replaced.
 
     Rooms already in the apartment that are not named here stay and are checked
     for overlap with the new ones. Flushes; the caller commits.
+
+    With `replace` (and `render_root`) the read replaces the stored apartment: overlap is
+    checked among the read's rooms only, and each stored room it does not name is deleted
+    as `delete_room` deletes it. Refused as `apartment_replacement` refuses. Like
+    `delete_room`, this mode commits.
     """
     name = (name or "").strip()
     apartment = apartment_by_name(session, name)
     kept = []
-    if apartment is not None:
+    replacement = None
+    if replace:
+        if render_root is None:
+            raise ValueError("replacing an apartment needs the render root")
+        replacement = apartment_replacement(session, render_root, name, rooms)
+    elif apartment is not None:
         named = {(room.get("name") or "").strip() for room in rooms}
         kept = [
             {
@@ -257,6 +335,9 @@ def upsert_apartment(
             context.wall_thickness_mm,
             apartment_id=apartment.id,
         )
+    if replace:
+        removed = [room_by_name(session, room["name"]) for room in (replacement or {}).get("removed", [])]
+        _settle_removal(session, _remove_rooms(session, render_root, removed))
     return apartment
 
 
@@ -591,27 +672,53 @@ def delete_room(session: Session, render_root: Path, name: str) -> bool:
             "it cannot be deleted on its own yet"
         )
     composition = composition_by_scope(session, "room", room.name)
-    hidden = None
-    if composition is not None:
-        if _composition_busy(render_root, composition):
-            raise HouseFileError(
-                f"the composition of {room.name} is building or rendering; delete it once that has finished"
-            )
-        hidden = storage.move_composition_aside(render_root, composition.slug)
+    if composition is not None and _composition_busy(render_root, composition):
+        raise HouseFileError(
+            f"the composition of {room.name} is building or rendering; delete it once that has finished"
+        )
+    _settle_removal(session, _remove_rooms(session, render_root, [room]))
+    return True
+
+
+def _remove_rooms(session: Session, render_root: Path, doomed: Sequence[Room]) -> list[tuple[Path, str, Path]]:
+    """Delete each room and its room composition, its folder moved aside; the hidden folders.
+
+    Pieces become unassigned and conversations lose the room through their `ON DELETE SET
+    NULL` keys. Does not commit: `_settle_removal` commits, then drops the hidden folders.
+    """
+    hidden: list[tuple[Path, str, Path]] = []
     try:
-        if composition is not None:
-            session.execute(delete(CompositionVersion).where(CompositionVersion.composition_id == composition.id))
-            session.execute(delete(Composition).where(Composition.id == composition.id))
-        session.execute(delete(Room).where(Room.id == room.id))
+        for room in doomed:
+            composition = composition_by_scope(session, "room", room.name)
+            if composition is not None:
+                hidden.append(
+                    (render_root, composition.slug, storage.move_composition_aside(render_root, composition.slug))
+                )
+                session.execute(delete(CompositionVersion).where(CompositionVersion.composition_id == composition.id))
+                session.execute(delete(Composition).where(Composition.id == composition.id))
+            session.execute(delete(Room).where(Room.id == room.id))
+    except Exception:
+        session.rollback()
+        _restore(hidden)
+        raise
+    return hidden
+
+
+def _restore(hidden: list[tuple[Path, str, Path]]) -> None:
+    for render_root, slug, folder in hidden:
+        storage.move_composition_back(render_root, slug, folder)
+
+
+def _settle_removal(session: Session, hidden: list[tuple[Path, str, Path]]) -> None:
+    """Commit a removal; on failure the rows are rolled back and the folders moved back."""
+    try:
         session.commit()
     except Exception:
         session.rollback()
-        if hidden is not None:
-            storage.move_composition_back(render_root, composition.slug, hidden)
+        _restore(hidden)
         raise
-    if hidden is not None:
-        shutil.rmtree(hidden, ignore_errors=True)
-    return True
+    for _root, _slug, folder in hidden:
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 # --- generator-extension requests ----------------------------------------------

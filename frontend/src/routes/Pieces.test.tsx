@@ -275,3 +275,86 @@ test("a refusal from the room route is shown next to the piece and its room is u
   expect(refusal.closest("section")).toHaveAccessibleName("bench");
   expect(screen.getByText("Room: Hall")).toBeInTheDocument();
 });
+
+// --- pricing per approved version (app-check-2026-10-09) ----------------------------------
+
+const complete = {
+  id: "p1", package_id: "bench", version: 2, computed_at: "2026-10-08T09:00:00+00:00", total_cents: 18420, complete: true,
+  result: {
+    materials: {
+      "oak-18": { sheet_count: 2, cost_cents: 12000, cuts: [{ part_id: "side", name: "Side", qty: 2, status: "covered" }] },
+    },
+    hardware: [{ id: "hinge", item: "Concealed hinge", qty: "4", cost_cents: 1600 }],
+    unpriced: [],
+  },
+};
+const incomplete = {
+  ...complete, id: "p0", computed_at: "2026-10-07T09:00:00+00:00", total_cents: 16800, complete: false,
+  result: { ...complete.result, unpriced: [{ kind: "banding", label: "Oak edge banding", key: "band:oak", reason: "no price-list entry" }] },
+};
+
+async function openPricing(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByText("Pricing"));
+}
+
+test("an approved version lists its pricing with sheets, cuts, hardware and the total", async () => {
+  const user = userEvent.setup();
+  serve([], (call) => (call === "GET /packages/bench/versions/2/pricings" ? { body: [complete] } : undefined), { approved: 2 });
+  show();
+  await openPricing(user);
+  expect(await screen.findByText("Total: 184,20 €")).toBeInTheDocument();
+  expect(screen.getByText("oak-18: 2 sheets, 120,00 €")).toBeInTheDocument();
+  expect(screen.getByText("2 × Side (oak-18, covered)")).toBeInTheDocument();
+  expect(screen.getByText("4 × Concealed hinge: 16,00 €")).toBeInTheDocument();
+  expect(screen.queryByText("Pricing incomplete")).not.toBeInTheDocument();
+  expect(screen.queryByText(/GPU|token|model/i)).not.toBeInTheDocument();
+});
+
+test("an incomplete pricing says so and names the unpriced line", async () => {
+  const user = userEvent.setup();
+  serve([], (call) => (call === "GET /packages/bench/versions/2/pricings" ? { body: [incomplete] } : undefined), { approved: 2 });
+  show();
+  await openPricing(user);
+  expect(await screen.findByText("Pricing incomplete")).toBeInTheDocument();
+  expect(screen.getByText("Oak edge banding: no price-list entry")).toBeInTheDocument();
+});
+
+test("pricing a version lists the new pricing first and selects it", async () => {
+  const user = userEvent.setup();
+  const calls = serve([], (call) => {
+    if (call === "GET /packages/bench/versions/2/pricings") return { body: [incomplete] };
+    if (call === "POST /packages/bench/versions/2/pricings") return { status: 201, body: complete };
+  }, { approved: 2 });
+  show();
+  await openPricing(user);
+  await screen.findByText("Pricing incomplete");
+  await user.click(screen.getByRole("button", { name: "Price this version" }));
+  expect(await screen.findByText("Total: 184,20 €")).toBeInTheDocument();
+  const options = screen.getAllByRole("option").filter((o) => /€/.test(o.textContent ?? ""));
+  expect(options[0]).toHaveTextContent("184,20 €");
+  expect(screen.getByLabelText("Pricings of bench version 2")).toHaveValue("p1");
+  expect(calls.find(([m, url]) => m === "POST" && url.endsWith("/pricings"))![2]).toEqual({});
+});
+
+test("a refused pricing shows its reason next to the action", async () => {
+  const user = userEvent.setup();
+  serve([], (call) => {
+    if (call === "GET /packages/bench/versions/2/pricings") return { body: [] };
+    if (call === "POST /packages/bench/versions/2/pricings")
+      return { status: 422, body: { detail: { failure_class: "refused", reason: "the cut list cannot be read" } } };
+  }, { approved: 2 });
+  show();
+  await openPricing(user);
+  await user.click(await screen.findByRole("button", { name: "Price this version" }));
+  expect(await screen.findByText("the cut list cannot be read")).toBeInTheDocument();
+});
+
+test("a version that is not approved must be approved before it is priced", async () => {
+  const user = userEvent.setup();
+  const calls = serve([], undefined, { approved: 1 });
+  show();
+  await openPricing(user);
+  expect(await screen.findByText("Version 2 must be approved before it can be priced.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Price this version" })).not.toBeInTheDocument();
+  expect(calls.some(([, url]) => url.endsWith("/pricings"))).toBe(false);
+});

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import json
+import struct
 from pathlib import Path
 
 from app.blender.storage import BUILD_FILES, COMPOSITION_FILES, SHELL_FILES
@@ -37,6 +38,20 @@ def verify_glb(path: Path) -> None:
     data = path.read_bytes()
     if len(data) < 20 or data[:4] != b"glTF":
         raise VerificationError("model.glb is not a GLB 2.0 file")
+
+
+def glb_mesh_nodes(path: Path) -> list[str]:
+    """The names of a GLB's nodes that carry a mesh, read from its JSON chunk."""
+    verify_glb(path)
+    data = path.read_bytes()
+    try:
+        length, kind = struct.unpack_from("<II", data, 12)
+        if kind != 0x4E4F534A:  # "JSON"
+            raise ValueError("the first chunk is not JSON")
+        document = json.loads(data[20:20 + length])
+    except (struct.error, ValueError) as error:
+        raise VerificationError(f"model.glb has no readable JSON chunk: {error}") from None
+    return [str(node.get("name", "")) for node in document.get("nodes", []) if "mesh" in node]
 
 
 def verify_build(directory: Path) -> None:
@@ -92,7 +107,7 @@ def verify_shell(directory: Path) -> None:
 
 
 def verify_composition(directory: Path) -> None:
-    """The three composition build files exist (exactly), are non-empty and parse."""
+    """The four composition build files exist (exactly), are non-empty and parse."""
     names = {entry.name for entry in directory.iterdir()}
     if names != set(COMPOSITION_FILES):
         raise VerificationError(
@@ -102,5 +117,19 @@ def verify_composition(directory: Path) -> None:
     for entry in directory.iterdir():
         if entry.stat().st_size == 0:
             raise VerificationError(f"{entry.name} is empty")
-    json.loads((directory / "report.json").read_text(encoding="utf-8"))
+    report = json.loads((directory / "report.json").read_text(encoding="utf-8"))
     verify_png(directory / "screenshot.png")
+    # Every mesh in the model belongs to exactly one surface of the report's map (app-check-2026-10-09).
+    surfaces = report.get("surfaces") if isinstance(report, dict) else None
+    if not isinstance(surfaces, dict):
+        raise VerificationError("report.json has no surface map")
+    listed = [name for names in surfaces.values() for name in names]
+    twice = sorted({name for name in listed if listed.count(name) > 1})
+    if twice:
+        raise VerificationError(f"the surface map lists {twice[0]!r} more than once")
+    meshes = set(glb_mesh_nodes(directory / "model.glb"))
+    if meshes != set(listed):
+        raise VerificationError(
+            "the surface map does not match the model's meshes "
+            f"(unmapped {sorted(meshes - set(listed))[:3]}, absent {sorted(set(listed) - meshes)[:3]})"
+        )

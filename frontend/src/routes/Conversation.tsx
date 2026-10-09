@@ -294,7 +294,12 @@ function Title({ threadId, title }: { threadId: string; title: string }) {
   );
 }
 
-function OwnerMessage({ m, uploadById }: { m: ChatMessage; uploadById: Map<string, Upload> }) {
+function OwnerMessage({ m, uploadById, onEdit }: {
+  m: ChatMessage;
+  uploadById: Map<string, Upload>;
+  /** Only the latest owner message, while nothing runs or waits, can be edited. */
+  onEdit?: () => void;
+}) {
   const files = (m.upload_ids ?? []).map((id) => uploadById.get(id)).filter((u): u is Upload => Boolean(u));
   return (
     <Bubble side="right" speaker="You">
@@ -303,6 +308,11 @@ function OwnerMessage({ m, uploadById }: { m: ChatMessage; uploadById: Map<strin
         <span className="mt-2 flex flex-wrap gap-2">
           {files.map((u) => <Attachment key={u.upload_id} upload={u} />)}
         </span>
+      )}
+      {onEdit && (
+        <Button type="button" variant="ghost" size="sm" className="mt-1" onClick={onEdit}>
+          Edit
+        </Button>
       )}
     </Bubble>
   );
@@ -325,6 +335,10 @@ export default function Conversation() {
   const [answerError, setAnswerError] = useState<string | null>(null);
   const [optimistic, setOptimistic] = useState<{ text: string; uploads: Upload[] } | null>(null);
   const [panel, setPanel] = useState<string | null>(null);
+  const [editing, setEditing] = useState<{ messageId: string; text: string } | null>(null);
+  const [kept, setKept] = useState<string[]>([]);
+  // The running turn's stream, aborted only when the stop route finds no turn to stop.
+  const stream = useRef<AbortController | null>(null);
   const [params, setParams] = useSearchParams();
   const inspected = parseInspect(params.get("inspect"));
 
@@ -374,10 +388,15 @@ export default function Conversation() {
     ]);
   }
 
-  /** Follow one turn's events; resolves to its refusal in words, or `null`. */
-  async function follow(run: (onEvent: (event: TurnEvent) => void) => Promise<void>): Promise<string | null> {
+  /** Follow one turn's events; resolves to its refusal (or its stop) in words, or `null`. */
+  async function follow(
+    run: (onEvent: (event: TurnEvent) => void, signal: AbortSignal) => Promise<void>,
+  ): Promise<string | null> {
     setRunning({ working: null, tool: null });
     setSpecialists([]);
+    setKept([]);
+    const controller = new AbortController();
+    stream.current = controller;
     let refused: string | null = null;
     try {
       await run((event) => {
@@ -386,19 +405,37 @@ export default function Conversation() {
         else if (event.event === "reply" || event.event === "pending") setSpecialists(event.data.specialists);
         else if (event.event === "title") {
           queryClient.setQueryData<ThreadDetail>(["thread", threadId], (old) => (old ? { ...old, title: event.data.title } : old));
-        } else if (event.event === "error") refused = event.data.reason;
-      });
+        } else if (event.event === "rewound") setKept(event.data.kept);
+        else if (event.event === "error") refused = event.data.reason;
+        else if (event.event === "stopped") refused = event.data.text;
+      }, controller.signal);
     } catch (error) {
-      refused = message(error) ?? "the turn failed";
+      refused = controller.signal.aborted ? "Stopped." : (message(error) ?? "the turn failed");
     }
+    stream.current = null;
     await refresh();
     setRunning(null);
     return refused;
   }
 
+  async function stop() {
+    try {
+      await api.stopTurn(threadId);
+    } catch {
+      // No turn to stop on the server (it has just ended): stop following it here.
+      stream.current?.abort();
+    }
+  }
+
   async function send(text: string, files: Upload[]): Promise<string | null> {
-    setOptimistic({ text, uploads: files });
-    const refused = await follow((onEvent) => api.streamTurn(threadId, text, files.map((u) => u.upload_id), onEvent));
+    const edited = editing;
+    setEditing(null);
+    setOptimistic({ text, uploads: edited ? [] : files });
+    const refused = await follow((onEvent, signal) =>
+      edited
+        ? api.streamEdit(threadId, edited.messageId, text, onEvent, signal)
+        : api.streamTurn(threadId, text, files.map((u) => u.upload_id), onEvent, signal),
+    );
     setOptimistic(null);
     return refused;
   }
@@ -419,6 +456,8 @@ export default function Conversation() {
   if (!thread.data) return <Page>Loading…</Page>;
   const { messages, pending } = thread.data;
   const lastReply = messages.reduce((found, m, index) => (m.role === "assistant" && m.kind !== "answers" ? index : found), -1);
+  const lastOwner = messages.reduce((found, m, index) => (m.role === "owner" && m.message_id ? index : found), -1);
+  const canEdit = running === null && !pending && !optimistic;
 
   return (
     <div className="flex">
@@ -458,7 +497,17 @@ export default function Conversation() {
                     </div>
                   );
                 }
-                if (m.role === "owner") return <OwnerMessage key={index} m={m} uploadById={uploadById} />;
+                if (m.role === "owner") {
+                  const editable = canEdit && index === lastOwner && editing === null;
+                  return (
+                    <OwnerMessage
+                      key={index}
+                      m={m}
+                      uploadById={uploadById}
+                      onEdit={editable ? () => setEditing({ messageId: m.message_id as string, text: m.text }) : undefined}
+                    />
+                  );
+                }
                 return (
                   <Bubble key={index} side="left" speaker="Foreman">
                     <Reply text={m.text} />
@@ -476,6 +525,11 @@ export default function Conversation() {
                 <OwnerMessage m={{ role: "owner", text: optimistic.text, upload_ids: optimistic.uploads.map((u) => u.upload_id) }} uploadById={new Map(optimistic.uploads.map((u) => [u.upload_id, u]))} />
               )}
               {running && <WaitingBubble working={running.working} tool={running.tool} />}
+              {kept.length > 0 && (
+                <p role="status" className="text-sm text-muted-foreground">
+                  Kept from the replaced message: {kept.join("; ")}.
+                </p>
+              )}
             </section>
             {pending ? (
               <>
@@ -497,7 +551,14 @@ export default function Conversation() {
                 <FieldError message={answerError} />
               </>
             ) : (
-              <Composer threadId={threadId} running={running !== null} onSend={send} />
+              <Composer
+                threadId={threadId}
+                running={running !== null}
+                onSend={send}
+                onStop={() => void stop()}
+                editing={editing}
+                onCancelEdit={() => setEditing(null)}
+              />
             )}
           </div>
           {inspected && (
@@ -511,7 +572,14 @@ export default function Conversation() {
                   <X aria-hidden size={16} />
                 </Button>
               </div>
-              <InspectorView key={`${inspected.packageId}/${inspected.version}`} packageId={inspected.packageId} version={inspected.version} compact />
+              {/* Keyed by piece only: following a new version keeps the view and its notice. */}
+              <InspectorView
+                key={inspected.packageId}
+                packageId={inspected.packageId}
+                version={inspected.version}
+                compact
+                onChoose={(next) => inspect(inspected.packageId, next)}
+              />
             </aside>
           )}
         </div>

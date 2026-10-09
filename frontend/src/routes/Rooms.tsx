@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cardClass } from "@/components/ui/card";
 import { Page } from "@/components/Page";
+import { RoomView } from "@/components/inspector/RoomView";
 
 function message(error: unknown): string | null {
   return error instanceof Error ? error.message : null;
@@ -15,6 +16,7 @@ function message(error: unknown): string | null {
 
 function CompositionCard({ composition }: { composition: Composition }) {
   const scope = composition.scope === "room" ? "Room" : "Apartment";
+  const [open3d, setOpen3d] = useState(false);
   return (
     <section className={cardClass} aria-label={composition.name}>
       <div className="flex flex-wrap items-center gap-2">
@@ -41,6 +43,23 @@ function CompositionCard({ composition }: { composition: Composition }) {
             Open the turntable viewer of {composition.name}
           </a>
         </p>
+      )}
+      {composition.model && composition.surfaces ? (
+        open3d ? (
+          <RoomView name={composition.name} model={composition.model} report={composition.surfaces} />
+        ) : (
+          <p>
+            <Button type="button" variant="outline" onClick={() => setOpen3d(true)}>
+              Open the 3D view of {composition.name}
+            </Button>
+          </p>
+        )
+      ) : (
+        composition.status === "succeeded" && (
+          <p className="text-sm text-muted-foreground">
+            Composing {composition.name} again adds the 3D view.
+          </p>
+        )
       )}
     </section>
   );

@@ -2,7 +2,8 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { ThumbsDown, ThumbsUp } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { api, ApiError, downloads, type RenderItem } from "../lib/api";
+import { api, ApiError, downloads, type Pricing, type RenderItem } from "../lib/api";
+import { euros } from "../lib/money";
 import { FieldError } from "../lib/form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -128,6 +129,116 @@ function Approval({ packageId, version }: { packageId: string; version: number }
   );
 }
 
+function unpricedName(line: Pricing["result"]["unpriced"][number]): string {
+  return line.name ?? line.item ?? line.label ?? line.material_key ?? line.key ?? line.kind;
+}
+
+function PricingDetail({ pricing }: { pricing: Pricing }) {
+  const materials = Object.entries(pricing.result.materials ?? {});
+  const unpriced = pricing.result.unpriced ?? [];
+  return (
+    <div className="grid gap-2 text-sm">
+      <p className="font-medium">Total: {euros(pricing.total_cents)}</p>
+      {!pricing.complete && <p className="text-destructive">Pricing incomplete</p>}
+      <h4>Sheets</h4>
+      <ul>
+        {materials.map(([material, entry]) => (
+          <li key={material}>
+            {material}: {entry.sheet_count ?? "no"} sheet{entry.sheet_count === 1 ? "" : "s"}, {euros(entry.cost_cents)}
+          </li>
+        ))}
+      </ul>
+      <h4>Cuts</h4>
+      <ul>
+        {materials.flatMap(([material, entry]) =>
+          (entry.cuts ?? []).map((cut) => (
+            <li key={`${material}-${cut.part_id}`}>
+              {cut.qty} × {cut.name} ({material}, {cut.status})
+            </li>
+          )),
+        )}
+      </ul>
+      <h4>Hardware</h4>
+      <ul>
+        {(pricing.result.hardware ?? []).map((line) => (
+          <li key={line.id}>
+            {line.qty} × {line.item}: {euros(line.cost_cents)}
+          </li>
+        ))}
+      </ul>
+      {unpriced.length > 0 && (
+        <>
+          <h4>Not priced</h4>
+          <ul>
+            {unpriced.map((line, index) => (
+              <li key={index}>
+                {unpricedName(line)}: {line.reason}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** An approved version's pricings, newest first, and a new one on request (Pieces page). */
+function PricingPanel({ packageId, version }: { packageId: string; version: number }) {
+  const queryClient = useQueryClient();
+  const info = useQuery({
+    queryKey: ["version", packageId, version],
+    queryFn: () => api.version(packageId, version),
+  });
+  const approved = Boolean(info.data?.approved_at);
+  const key = ["pricings", packageId, version];
+  const pricings = useQuery({ queryKey: key, queryFn: () => api.pricings(packageId, version), enabled: approved });
+  const [chosen, setChosen] = useState<string | null>(null);
+  const create = useMutation({
+    mutationFn: () => api.createPricing(packageId, version),
+    onSuccess: (made) => {
+      queryClient.setQueryData<Pricing[]>(key, (listed) => [made, ...(listed ?? [])]);
+      setChosen(made.id);
+    },
+  });
+  if (!info.data) return null;
+  const listed = pricings.data ?? [];
+  const shown = listed.find((p) => p.id === chosen) ?? listed[0];
+  return (
+    <details className="min-w-0 rounded-md border p-2">
+      <summary className="cursor-pointer">Pricing</summary>
+      {!approved ? (
+        <p className="text-sm">Version {version} must be approved before it can be priced.</p>
+      ) : (
+        <div className="mt-2 grid gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {listed.length > 0 && (
+              <Select
+                aria-label={`Pricings of ${packageId} version ${version}`}
+                className="w-auto max-w-full min-w-0"
+                value={shown?.id}
+                onChange={(event) => setChosen(event.target.value)}
+              >
+                {listed.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {new Date(p.computed_at).toLocaleString()} — {euros(p.total_cents)}
+                    {p.complete ? "" : " (incomplete)"}
+                  </option>
+                ))}
+              </Select>
+            )}
+            <Button type="button" size="sm" disabled={create.isPending} onClick={() => create.mutate()}>
+              Price this version
+            </Button>
+          </div>
+          <FieldError message={message(create.error ?? pricings.error)} />
+          {pricings.data && listed.length === 0 && <p className="text-sm">No pricing of this version yet.</p>}
+          {shown && <PricingDetail pricing={shown} />}
+        </div>
+      )}
+    </details>
+  );
+}
+
 function Downloads({ packageId, version }: { packageId: string; version: number }) {
   const info = useQuery({
     queryKey: ["version", packageId, version],
@@ -174,6 +285,7 @@ function Version({ packageId, version }: { packageId: string; version: number })
     <div className="grid gap-4">
       <Approval packageId={packageId} version={version} />
       <Downloads packageId={packageId} version={version} />
+      <PricingPanel packageId={packageId} version={version} />
       {shown}
     </div>
   );

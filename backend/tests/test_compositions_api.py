@@ -78,3 +78,21 @@ def test_version_files_are_served_by_exact_name_only(client: TestClient, render_
 def test_the_routes_need_the_owner(client: TestClient) -> None:
     assert client.get("/compositions").status_code == 401
     assert client.get("/compositions/wohnen/versions/1/files/screenshot.png").status_code == 401
+
+
+def test_the_latest_version_with_a_model_offers_it_and_its_surface_map(client: TestClient, render_root: Path) -> None:
+    from tests.blender_fakes import COMPOSITION_SURFACES, glb_bytes
+
+    sign_in(client)
+    folder = seed(client, render_root, approved=True)
+    [older] = client.get("/compositions").json()
+    assert older["model"] is None and older["surfaces"] is None
+
+    (folder / "model.glb").write_bytes(glb_bytes(["Floor"]))
+    (folder / "report.json").write_text(json.dumps({"surfaces": COMPOSITION_SURFACES}), encoding="utf-8")
+    [listed] = client.get("/compositions").json()
+    assert listed["model"] == "/compositions/wohnen/versions/1/files/model.glb"
+    assert listed["surfaces"] == "/compositions/wohnen/versions/1/files/report.json"
+    model = client.get(listed["model"])
+    assert model.status_code == 200 and model.headers["content-type"] == "model/gltf-binary"
+    assert client.get(listed["surfaces"]).json()["surfaces"] == COMPOSITION_SURFACES

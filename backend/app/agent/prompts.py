@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import Any, Final
 
 from app.agent.revise import describe_fronts, describe_hardware
+from app.blender.custom_build.derive import DeriveError, overall
 
 # Both delimiters start with this, so neutralising it neutralises both.
 SENTINEL: Final = "[[["
@@ -320,6 +321,12 @@ def piece_note(package_id: str, version: int | None, document: Mapping[str, Any]
     if document is None:
         lines.append("Its contents could not be read; ask the owner what they see before changing it.")
         return neutralise("\n".join(lines))
+    try:
+        size = overall(document)
+        bounds = "" if document.get("envelope") is not None else " (the modules' outer bounds; no envelope set)"
+        lines.append(f"Envelope: {size['w']} × {size['h']} × {size['d']} mm (width × height × depth){bounds}")
+    except (DeriveError, KeyError, TypeError):
+        pass
     lines.append("Modules:")
     for module in document.get("modules") or []:
         shelves = f"{module.get('shelves', 0)} shelves"
