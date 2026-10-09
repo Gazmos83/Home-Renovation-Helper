@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -26,11 +28,15 @@ SOURCES = Literal["brief", "spec", "rule"]
 SEVERITIES = Literal["minor", "major"]
 
 MAX_IMAGES = 10
-# The build's straight-on views and the dimension lines each shows (piece-inspector).
+# The build's straight-on views, named as in the Piece Inspector, with the dimensions each shows.
 VIEWS = (
-    ("front.png", "front view (width and height)"),
-    ("side.png", "side view (depth and height)"),
-    ("top.png", "top view (width and depth)"),
+    ("front.png", "front", "width and height"),
+    ("side.png", "side", "depth and height"),
+    ("top.png", "top", "width and depth"),
+)
+# Seen when facing the piece's front (Blender -Y); +X is the right side.
+DIRECTIONS = (
+    "front", "front-right", "right side", "back-right", "back", "back-left", "left side", "front-left",
 )
 MAX_ITEMS = 20
 
@@ -47,7 +53,7 @@ class Item(BaseModel):
     expected_source: SOURCES
     rule_id: str | None = Field(default=None, max_length=64)
     observed: str = Field(min_length=1, max_length=500)
-    image: int = Field(ge=1)
+    view: str = Field(min_length=1, max_length=100)
     severity: SEVERITIES
     suggestion: str | None = Field(default=None, max_length=500)
 
@@ -58,11 +64,12 @@ class Review(BaseModel):
     items: list[Item] = Field(max_length=MAX_ITEMS)
 
 
-def review_schema(image_count: int) -> type[Review]:
-    """A Review whose items must cite an image that was actually sent."""
+def review_schema(labels: Sequence[str]) -> type[Review]:
+    """A Review whose items must cite a view that was actually sent."""
+    view_type = Literal[tuple(labels)] if labels else str  # type: ignore[valid-type]
 
     class BoundItem(Item):
-        image: int = Field(ge=1, le=max(image_count, 1))
+        view: view_type  # type: ignore[valid-type]
 
     class BoundReview(Review):
         items: list[BoundItem] = Field(max_length=MAX_ITEMS)  # type: ignore[assignment]
@@ -75,6 +82,7 @@ class EvidenceImage:
     label: str
     path: Path
     relative: str
+    description: str = ""
 
 
 @dataclass
@@ -98,6 +106,26 @@ def _frame_count(frames_dir: Path) -> int:
     while (frames_dir / f"frame_{count:03d}.png").is_file():
         count += 1
     return count
+
+
+def direction_name(location: Sequence[float], target: Sequence[float]) -> str:
+    """The side a camera looks from, relative to the piece's front (-Y), as seen facing it."""
+    angle = math.degrees(math.atan2(location[1] - target[1], location[0] - target[0]))
+    relative = (angle + 90) % 360
+    return DIRECTIONS[round(relative / 45) % 8]
+
+
+def _turntable_directions(folder: Path) -> dict[int, str]:
+    """Frame index -> direction name from scene.json's recorded cameras; empty when unreadable."""
+    try:
+        record = json.loads((folder / "scene.json").read_text(encoding="utf-8"))["turntable"]
+        target = record["target_mm"]
+        return {
+            int(camera["index"]): direction_name(camera["location_mm"], target)
+            for camera in record["cameras"]
+        }
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        return {}
 
 
 def _spread(n: int) -> list[int]:
@@ -176,40 +204,44 @@ def collect(root: Path, package_id: str, version: int) -> Evidence:
     screenshot = _png(folder, "screenshot.png")
     if screenshot is not None:
         evidence.images.append(
-            EvidenceImage("screenshot", screenshot, "screenshot.png")
+            EvidenceImage("iso", screenshot, "screenshot.png")
         )
-    for name, label in VIEWS:
+    for name, label, shows in VIEWS:
         view = _png(folder, name)
         if view is not None:
-            evidence.images.append(EvidenceImage(label, view, name))
+            evidence.images.append(EvidenceImage(label, view, name, f"shows {shows}"))
 
     frames_dir = folder / "frames"
     n = _frame_count(frames_dir)
     still = _png(folder, "still.png")
     if n:
-        for index in _spread(n):
+        directions = _turntable_directions(folder)
+        used: set[str] = set()
+        for place, index in enumerate(_spread(n), start=1):
             relative = f"frames/frame_{index:03d}.png"
             path = folder / relative
             if path.is_file() and len(evidence.images) < MAX_IMAGES:
-                evidence.images.append(
-                    EvidenceImage(f"turntable frame {index} of {n}", path, relative)
-                )
+                label = f"turntable {directions[index]}" if index in directions else f"turntable view {place}"
+                if label in used:
+                    label += " 2"
+                used.add(label)
+                evidence.images.append(EvidenceImage(label, path, relative))
     elif still is not None and len(evidence.images) < MAX_IMAGES:
         evidence.images.append(EvidenceImage("still", still, "still.png"))
 
     room_still = _png(folder, "room/still.png")
     room_n = _frame_count(folder / "room" / "frames")
     if room_still is not None and len(evidence.images) < MAX_IMAGES:
-        evidence.images.append(EvidenceImage("room still", room_still, "room/still.png"))
+        evidence.images.append(EvidenceImage("room", room_still, "room/still.png"))
     elif room_n and len(evidence.images) < MAX_IMAGES:
         first = 0
         opposite = (room_n // 2) % room_n
-        for index in (first, opposite):
+        for index, label in ((first, "room"), (opposite, "room opposite side")):
             relative = f"room/frames/frame_{index:03d}.png"
             path = folder / relative
             if path.is_file() and len(evidence.images) < MAX_IMAGES:
                 evidence.images.append(
-                    EvidenceImage(f"room frame {index} of {room_n}", path, relative)
+                    EvidenceImage(label, path, relative)
                 )
 
     if not evidence.images:

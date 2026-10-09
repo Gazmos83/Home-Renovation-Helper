@@ -10,6 +10,12 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.agent import house_file
 from app.agent.models.openrouter_client import gateway_errors
+from app.agent.prompts import (
+    CLOSE_TOKEN,
+    OPEN_PREFIX,
+    UNTRUSTED_CONTENT_PREAMBLE,
+    neutralise,
+)
 from app.agent.review import ReviewRefused, collect, review_schema
 from app.agent.tools.base import AgentTool, ToolContext, parse_args
 from app.agent.tools.shared import version_folder
@@ -18,7 +24,7 @@ from app.observability.usage import UsageRecorder, operation
 REVIEW_NOTE = (
     "You compare the labelled images with the spec facts and the brief. "
     "List discrepancies. Quote measurements from the spec facts, never from the images. "
-    "Cite the image number you saw each issue in. An empty list means no discrepancies."
+    "Cite the view name you saw each issue in. An empty list means no discrepancies."
 )
 
 
@@ -27,6 +33,11 @@ class RevisionReviewArgs(BaseModel):
         default=None, description="the piece; the conversation's bound piece when left out"
     )
     version: int | None = Field(default=None, description="a version number; the latest when left out")
+    focus: str | None = Field(
+        default=None,
+        max_length=500,
+        description="what the owner asked to check, in their words",
+    )
 
 
 def _image_block(path) -> dict[str, Any]:
@@ -43,7 +54,7 @@ def _format_items(items: list[dict[str, Any]]) -> str:
         lines.append(
             f"{index}. {item['severity']} {item['aspect']}: expected {item['expected']} "
             f"({item['expected_source']}); observed {item['observed']} "
-            f"(image {item['image']}).{suggestion}"
+            f"(seen in the {item['view']} view).{suggestion}"
         )
     return "\n".join(lines)
 
@@ -71,7 +82,8 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
         brief = dict(stored["brief"])
 
     labels = "\n".join(
-        f"image {index}: {image.label}" for index, image in enumerate(evidence.images, start=1)
+        f"{image.label}: {image.description}" if image.description else image.label
+        for image in evidence.images
     )
     brief_text = json_brief(brief)
     warnings = "\n".join(evidence.warnings) if evidence.warnings else "(none)"
@@ -79,16 +91,21 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
         f"{REVIEW_NOTE}\n\nImages:\n{labels}\n\nSpec facts:\n{evidence.facts or '(none)'}\n\n"
         f"Brief:\n{brief_text}\n\nDesign-rule warnings:\n{warnings}"
     )
+    if args.focus:
+        text += (
+            f'\n\nThe owner asked:\n{OPEN_PREFIX} source="owner\'s question"]]]\n'
+            f"{neutralise(args.focus)}\n{CLOSE_TOKEN}"
+        )
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
     for image in evidence.images:
         content.append(_image_block(image.path))
-    schema = review_schema(len(evidence.images))
+    schema = review_schema([image.label for image in evidence.images])
     try:
         provide = ctx.deps.model_provider
         model = provide("reviewer")
         with gateway_errors(operation="chat.reviewer.review"), operation("chat.reviewer.review"):
             result = model.with_structured_output(schema).invoke(
-                [SystemMessage(REVIEW_NOTE), HumanMessage(content=content)],
+                [SystemMessage(f"{REVIEW_NOTE}\n\n{UNTRUSTED_CONTENT_PREAMBLE}"), HumanMessage(content=content)],
                 config={
                     "callbacks": [
                         UsageRecorder(
@@ -106,8 +123,10 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
 
     payload = result.model_dump()
     items = payload.get("items") or []
+    positions = {image.label: index for index, image in enumerate(evidence.images, start=1)}
+    recorded = [{**item, "image": positions[item["view"]]} for item in items]
     with ctx.deps.session() as session:
-        house_file.record_review(session, package_id, number, evidence.renders, items)
+        house_file.record_review(session, package_id, number, evidence.renders, recorded)
         session.commit()
     return _format_items(items)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
 from langchain_core.messages import HumanMessage
 
 from app.agent import house_file
@@ -587,6 +588,21 @@ def test_the_reviewer_is_never_chosen_without_a_screenshot_or_render(tool_state)
     assert state["specialist"] == "builder"
     assert models["reviewer"].calls == 0
     assert last_reply(state) == "Build it first so there is a screenshot to check."
+
+
+@pytest.mark.parametrize(
+    "question", ["is the top shelf in the side view right?", "is the shelf right in the exploded view?"]
+)
+def test_a_reviewer_choice_on_a_rendered_piece_is_kept(tool_state, question) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("reviewer")]},
+        reviewer={"replies": ["Checked."]},
+    )
+    harness = make_harness(tool_state, models)
+    _bind_piece(tool_state, harness, screenshot=True)
+    state = harness.turn(question)
+    assert state["specialist"] == "reviewer"
+    assert last_reply(state) == "Checked."
 
 
 def test_the_reviewer_binds_only_revision_review(tool_state) -> None:

@@ -157,6 +157,31 @@ def test_the_foreman_sends_room_corrections_to_intake_and_piece_changes_to_the_d
     assert "the piece itself" in designer_line and "numbers are confirmed" not in designer_line
 
 
+def test_the_foreman_sends_questions_about_what_the_owner_sees_to_the_reviewer() -> None:
+    text = load_instructions()["foreman"].text
+    assert (
+        "`reviewer`: the owner asks whether something they see in the inspector "
+        "(a view such as front or exploded, a module or a part) is right, "
+        "or wants the piece checked against the brief."
+    ) in text
+    assert (
+        "A request to change what they see goes to `designer`; "
+        "a question whether it is right goes to `reviewer`."
+    ) in text
+
+
+def test_the_reviewer_names_inspector_views_and_passes_the_focus() -> None:
+    text = load_instructions()["reviewer"].text
+    naming = "Name what you looked at by the inspector's views: front, side, top."
+    assert naming in text and "exploded" not in naming
+    assert (
+        "You have no exploded image; for a question about the exploded view, say so "
+        "and answer from the spec's parts and the views you have."
+    ) in text
+    assert "Pass the owner's question, in their words, as `focus`." in text
+    assert "which view" in text and "which image" not in text
+
+
 PLAIN_REFUSAL = (
     "If a tool result says nothing was done, tell the owner plainly that nothing was saved or changed and why; "
     "never say a tool failed or would not take an update."
