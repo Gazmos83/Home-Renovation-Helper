@@ -332,6 +332,17 @@ def piece_note(package_id: str, version: int | None, document: Mapping[str, Any]
         shelves = f"{module.get('shelves', 0)} shelves"
         if module.get("adjustable_shelves"):
             shelves += f" + {module['adjustable_shelves']} adjustable ({module.get('shelf_pin', 'shelf-pin')})"
+        if module.get("shelf_spacing_mm"):
+            shelves += f" {module['shelf_spacing_mm']} mm apart (clear gap)"
+        elif module.get("shelf_positions_mm"):
+            shelves += f" at {module['shelf_positions_mm']} mm (undersides above the bottom panel)"
+        if module.get("dividers"):
+            count = module["dividers"]
+            noun = "divider" if count == 1 else "dividers"
+            places = module.get("divider_positions_mm")
+            shelves += f", {count} {noun} " + (
+                f"at {places} mm from the left side's inner face" if places else "(equal bays)"
+            )
         back = f", back {module['back']}" if module.get("back") else ""
         lines.append(
             f'- {module["id"]} "{module.get("name", "")}": '

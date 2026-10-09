@@ -146,25 +146,45 @@ def _module_boxes(module: Mapping[str, Any], materials: Mapping[str, Any]) -> di
         )
     shelves = module["shelves"]
     adjustable = module.get("adjustable_shelves", 0)
-    # Fixed and adjustable shelves are spaced evenly together, the fixed ones in the lowest slots.
-    step = (height - 2 * t) / (shelves + adjustable + 1)
-    if shelves:
-        pieces[f"{mid}-shelf"] = (
-            "shelves",
+    # Fixed shelves take the lowest heights, adjustable ones the rest: evenly spaced unless the
+    # module states a spacing or positions (custom_build.derive.shelf_centres).
+    centres = [z + centre for centre in rules.shelf_centres(module, t)]
+    found = rules.bays(module, t)
+    if len(found) > 1:
+        pieces[f"{mid}-divider"] = (
+            "carcass",
             [
-                ((inner_w, inner_d, t), (x + width / 2, y + inner_d / 2, z + t + step * (k + 1)))
-                for k in range(shelves)
+                ((t, inner_d, height - 2 * t), (x + t + left + bay_w + t / 2, y + inner_d / 2, z + height / 2))
+                for left, bay_w in found[:-1]
             ],
         )
-    if adjustable:
-        board_w = math.floor(inner_w - rules.ADJUSTABLE_SHELF_CLEARANCE_MM)
-        pieces[f"{mid}-adjustable-shelf"] = (
-            "shelves",
-            [
-                ((board_w, inner_d, t), (x + width / 2, y + inner_d / 2, z + t + step * (shelves + k + 1)))
-                for k in range(adjustable)
-            ],
-        )
+    widths = rules.bay_cut_widths(module, t)
+    for prefix, name, count, heights, clearance in (
+        (f"{mid}-shelf", "Fixed shelf", shelves, centres[:shelves], 0),
+        (f"{mid}-adjustable-shelf", "Adjustable shelf", adjustable, centres[shelves:], rules.ADJUSTABLE_SHELF_CLEARANCE_MM),
+    ):
+        if not count:
+            continue
+        if len(found) == 1:
+            board_w = math.floor(inner_w - clearance) if clearance else inner_w
+            pieces[prefix] = (
+                "shelves",
+                [((board_w, inner_d, t), (x + width / 2, y + inner_d / 2, centre)) for centre in heights],
+            )
+            continue
+        rows = rules.bay_rows(prefix, name, count, widths)
+        for index, (row_id, _, _, cut_w) in enumerate(rows):
+            # One row covers every bay when the bays share a width; otherwise row n is bay n.
+            covered = found if len(rows) == 1 else [found[index]]
+            board_w = math.floor(cut_w - clearance) if clearance else cut_w
+            pieces[row_id] = (
+                "shelves",
+                [
+                    ((board_w, inner_d, t), (x + t + left + bay_w / 2, y + inner_d / 2, centre))
+                    for left, bay_w in covered
+                    for centre in heights
+                ],
+            )
 
     rects = rules.front_layout(module)
     bottom_t = materials[back]["thickness_mm"] if back is not None else t

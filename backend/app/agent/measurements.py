@@ -32,6 +32,10 @@ VERSION_TOOLS = frozenset(
 _LENGTH = re.compile(r"(?<![\w.,])(\d+(?:[.,]\d+)?)\s?(mm|cm|m)\b", re.IGNORECASE)
 _WORD = re.compile(r"[a-zäöüß]+")
 _ENVELOPE = {"width": "w", "height": "h", "depth": "d"}
+# Module length fields a module may leave unset, and those that hold a list of positions
+# (shelf-spacing-and-dividers): an absolute length sets one, and a list holds the value.
+LIST_FIELDS = frozenset({"shelf_positions_mm", "divider_positions_mm"})
+OPTIONAL_FIELDS = LIST_FIELDS | {"shelf_spacing_mm"}
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,21 @@ def field_value(document: Mapping[str, Any], target: str, field: str) -> float |
     return None
 
 
+def _module(document: Mapping[str, Any], target: str) -> Mapping[str, Any] | None:
+    return next((entry for entry in document.get("modules") or [] if entry.get("id") == target), None)
+
+
+def _holds(document: Mapping[str, Any], target: str, field: str, value: float) -> tuple[bool, str]:
+    """Whether the document's field holds `value` (a list field: among its values), and what it holds."""
+    if field in LIST_FIELDS:
+        module = _module(document, target)
+        listed = [v for v in (module or {}).get(field) or [] if _number(v) is not None]
+        shown = f"[{', '.join(_mm(float(v)) for v in listed)}]" if listed else "nothing"
+        return any(abs(v - value) < 0.5 for v in listed), shown
+    after = field_value(document, target, field)
+    return after is not None and abs(after - value) < 0.5, "nothing" if after is None else _mm(after)
+
+
 def _candidates(length: Length, before: float) -> list[float]:
     if not length.relative:
         return [length.mm]
@@ -149,8 +168,30 @@ def check(
             covered.update(length.key for length in found)
             continue
         before = field_value(current, entry.target, entry.field)
-        if before is None:
-            refusals.append(f"{entry.target} has no length field {entry.field!r} to set from {quote!r}")
+        if before is None or entry.field in LIST_FIELDS:
+            if entry.field not in OPTIONAL_FIELDS or _module(current, entry.target) is None:
+                refusals.append(f"{entry.target} has no length field {entry.field!r} to set from {quote!r}")
+                continue
+            absolute = [length for length in found if not length.relative]
+            if not absolute:
+                refusals.append(
+                    f"{quote!r} is relative, but {entry.target} {entry.field} is not set in the latest version; "
+                    "state an absolute value"
+                )
+                continue
+            matched = next((length for length in absolute if abs(length.mm - entry.value_mm) < 0.5), None)
+            if matched is None:
+                refusals.append(
+                    f"{quote!r} gives {entry.target} {entry.field} {_mm(absolute[0].mm)}, not {_mm(entry.value_mm)}"
+                )
+                continue
+            covered.add(matched.key)
+            held, shown = _holds(revised, entry.target, entry.field, entry.value_mm)
+            if not held:
+                refusals.append(
+                    f"{quote!r} asks for {entry.target} {entry.field} {_mm(entry.value_mm)} expected, "
+                    f"but the changes set {shown}"
+                )
             continue
         matched = next(
             (length for length in found if any(abs(v - entry.value_mm) < 0.5 for v in _candidates(length, before))),

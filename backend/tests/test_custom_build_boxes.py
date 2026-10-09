@@ -64,3 +64,37 @@ def test_every_cut_list_row_of_the_new_boards_has_a_box(generator) -> None:
     for row in parts:
         if row["id"] in ("m-adjustable-shelf", "wall-shelf-1"):
             assert len(placed[row["id"]][1]) == row["qty"]
+
+
+def test_shelves_355_mm_apart_and_two_dividers_are_laid_out_per_bay(generator) -> None:
+    spec = build(modules=[module(width=1000, height=1600, shelves=4, shelf_spacing_mm=355, dividers=2)])
+    pieces = generator._module_boxes(spec["modules"][0], spec["materials"])
+    layer, dividers = pieces["m-divider"]
+    assert layer == "carcass" and len(dividers) == 2
+    # left faces at 18 + 309 and 18 + 327 + 309 from the module's left face
+    assert [box[1][0] for box in dividers] == [18 + 309 + 9, 18 + 327 + 309 + 9]
+    assert all(box[0] == (18, 397, 1600 - 36) for box in dividers)
+    boards = pieces["m-shelf"][1]
+    assert len(boards) == 12
+    undersides = sorted({box[1][2] - 9 - 18 for box in boards})
+    assert undersides == [355, 728, 1101, 1474]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"shelves": 3, "dividers": 2},
+        {"shelves": 2, "adjustable_shelves": 1, "dividers": 1, "divider_positions_mm": [400]},
+        {"shelves": 3, "shelf_positions_mm": [300, 700, 1300]},
+    ],
+)
+def test_every_shelf_and_divider_row_has_one_box_per_piece(generator, fields: dict) -> None:
+    from app.blender.custom_build.derive import derive
+
+    spec = build(modules=[module(width=1000, height=1600, **fields)])
+    parts, _hardware, _assembly = derive(spec)
+    placed = generator._module_boxes(spec["modules"][0], spec["materials"])
+    for row in parts:
+        if "shelf" in row["id"] or "divider" in row["id"]:
+            assert len(placed[row["id"]][1]) == row["qty"]
+            assert all(box[0][0] in (row["l"], row["w"]) or box[0][2] == row["l"] for box in placed[row["id"]][1])

@@ -20,6 +20,7 @@ print(
                     "type": obj.type,
                     "parent": obj.parent.name if obj.parent else None,
                     "part_id": obj.get("part_id"),
+                    "location": list(obj.matrix_world.translation),
                     "dimension": obj.get("dimension"),
                     "text": obj.data.body if obj.type == "FONT" else None,
                     "faces": next(

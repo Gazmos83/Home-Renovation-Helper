@@ -21,6 +21,14 @@ slot's, or 0 without a back):
 - top and bottom: two, between the sides, (width − 2t) × (depth − b);
 - back: one, full width × full height in the back slot, fixed over the rear;
 - fixed shelves: between the sides, (width − 2t) × (depth − b);
+- shelf heights: evenly spaced, fixed shelves lowest; or, when stated, each
+  underside at `shelf_positions_mm`, or one `shelf_spacing_mm` clear gap above
+  the board below, measured from the top face of the bottom panel;
+- dividers: `dividers` full-height boards between the top and bottom,
+  (height − 2t) × (depth − b), splitting the inner width into bays (evenly,
+  rounded down, or at `divider_positions_mm` from the left side's inner face);
+  shelves then sit in every bay at the same heights, cut to the bay's width,
+  one row while the bays share a width, else one `-bay-<n>` row per bay;
 - fronts, stacked top to bottom in list order over the module's front face
   (an entry without a `height` shares what the others leave), each overlay
   with a 3 mm gap (1.5 mm at every edge):
@@ -37,7 +45,7 @@ slot's, or 0 without a back):
 - hinges are keyed by the door's hinge item; the count per door is the item's
   own count table when its data sheet has one, else the height rule above; a
   data sheet that names a mounting-plate item adds one plate per hinge;
-- confirmat screws: 8 per carcass plus 4 per fixed shelf;
+- confirmat screws: 8 per carcass plus 4 per fixed shelf board plus 4 per divider;
 - wall shelves (outside any module): one board row each, and one bracket line
   per bracket item: the owner's positions, else the count the bracket rules give.
 
@@ -103,6 +111,61 @@ def runner_length(inner_depth_mm: int) -> int | None:
     """The longest standard runner that fits a carcass's inner depth, or None."""
     fitting = [length for length in RUNNER_LENGTHS_MM if length + RUNNER_REAR_CLEARANCE_MM <= inner_depth_mm]
     return fitting[-1] if fitting else None
+
+
+def shelf_centres(module: Mapping[str, Any], t: int) -> list[float]:
+    """Each shelf's centre above the module's bottom face, lowest first: fixed shelves, then adjustable.
+
+    A stated `shelf_positions_mm` gives each shelf's underside above the top face of the
+    bottom panel; a stated `shelf_spacing_mm` is the clear gap below each shelf; without
+    either, the shelves are spaced evenly between the bottom and top panels.
+    """
+    count = module["shelves"] + module.get("adjustable_shelves", 0)
+    positions = module.get("shelf_positions_mm")
+    spacing = module.get("shelf_spacing_mm")
+    if positions:
+        undersides = list(positions)
+    elif spacing:
+        undersides = [spacing + k * (spacing + t) for k in range(count)]
+    else:
+        step = (module["height"] - 2 * t) / (count + 1)
+        return [t + step * (k + 1) for k in range(count)]
+    return [t + underside + t / 2 for underside in undersides]
+
+
+def shelf_undersides(module: Mapping[str, Any], t: int) -> list[float]:
+    """Each shelf's underside above the top face of the bottom panel, lowest first."""
+    return [centre - t - t / 2 for centre in shelf_centres(module, t)]
+
+
+def bays(module: Mapping[str, Any], t: int) -> list[tuple[int, int]]:
+    """Each bay's left edge and width, from the inner face of the left side, left to right.
+
+    A stated `divider_positions_mm` gives each divider's left face; without it the
+    dividers split the inner width evenly, each bay rounded down and the remainder
+    left to the last bay.
+    """
+    inner_w = module["width"] - 2 * t
+    count = module.get("dividers", 0)
+    if not count:
+        return [(0, inner_w)]
+    positions = module.get("divider_positions_mm")
+    if positions:
+        lefts = [0, *(position + t for position in positions)]
+        rights = [*positions, inner_w]
+        return [(left, right - left) for left, right in zip(lefts, rights)]
+    width = (inner_w - count * t) // (count + 1)
+    found = [(k * (width + t), width) for k in range(count)]
+    last = count * (width + t)
+    return [*found, (last, inner_w - last)]
+
+
+def bay_cut_widths(module: Mapping[str, Any], t: int) -> list[int]:
+    """Each bay's width as the cut list states it: evenly split bays share the rounded-down width."""
+    found = bays(module, t)
+    if module.get("dividers", 0) and not module.get("divider_positions_mm"):
+        return [found[0][1]] * len(found)
+    return [width for _, width in found]
 
 
 def overall(spec: Mapping[str, Any]) -> dict[str, int]:
@@ -250,6 +313,13 @@ class _Hardware:
             self.add(line["id"], line["item"], line["qty"], line.get("notes") or "")
 
 
+def bay_rows(prefix: str, name: str, per_bay: int, widths: list[int]) -> list[tuple[str, str, int, int]]:
+    """One row for bays of one width, else one row per bay named `-bay-<n>` from the left."""
+    if len(set(widths)) == 1:
+        return [(prefix, name, per_bay * len(widths), widths[0])]
+    return [(f"{prefix}-bay-{n}", f"{name}, bay {n}", per_bay, width) for n, width in enumerate(widths, start=1)]
+
+
 def _module_rows(
     module: Mapping[str, Any],
     materials: Mapping[str, Mapping[str, Any]],
@@ -284,8 +354,18 @@ def _module_rows(
                 notes="Rule: full-size back fixed over the carcass rear", module=mid,
             )
         )
+    dividers = module.get("dividers", 0)
+    if dividers:
+        rows.append(
+            _part(
+                f"{mid}-divider", "Divider", qty=dividers, l=height - 2 * t, w=inner_d, t=t, material=material,
+                grain="length (vertical)", banding="front edge",
+                notes="Rule: full-height dividers between the top and bottom at the back-reduced depth", module=mid,
+            )
+        )
+    widths = bay_cut_widths(module, t)
     shelves = module["shelves"]
-    if shelves:
+    if shelves and not dividers:
         rows.append(
             _part(
                 f"{mid}-shelf", "Fixed shelf", qty=shelves, l=inner_w, w=inner_d, t=t,
@@ -293,8 +373,18 @@ def _module_rows(
                 notes="Rule: fixed shelves between the sides at the back-reduced depth", module=mid,
             )
         )
+    elif shelves:
+        for row_id, name, qty, width in bay_rows(f"{mid}-shelf", "Fixed shelf", shelves, widths):
+            rows.append(
+                _part(
+                    row_id, name, qty=qty, l=width, w=inner_d, t=t,
+                    material=material, grain="length (left-right)", banding="front edge",
+                    notes="Rule: fixed shelves in every bay between the sides and dividers at the back-reduced depth",
+                    module=mid,
+                )
+            )
     adjustable = module.get("adjustable_shelves", 0)
-    if adjustable:
+    if adjustable and not dividers:
         rows.append(
             _part(
                 f"{mid}-adjustable-shelf", "Adjustable shelf", qty=adjustable,
@@ -307,13 +397,35 @@ def _module_rows(
                 module=mid,
             )
         )
-        _pin_line(module, adjustable, inputs, hardware)
-    hardware.add(
-        CONFIRMAT_ID,
-        "Confirmat screw 7×50 mm",
-        8 + 4 * shelves,
-        "Rule: 8 per carcass plus 4 per fixed shelf",
-    )
+    elif adjustable:
+        for row_id, name, qty, width in bay_rows(f"{mid}-adjustable-shelf", "Adjustable shelf", adjustable, widths):
+            rows.append(
+                _part(
+                    row_id, name, qty=qty, l=math.floor(width - ADJUSTABLE_SHELF_CLEARANCE_MM), w=inner_d, t=t,
+                    material=material, grain="length (left-right)", banding="front edge",
+                    notes=(
+                        f"Rule: in every bay less {ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance "
+                        "(rounded down), at the back-reduced depth"
+                    ),
+                    module=mid,
+                )
+            )
+    if adjustable:
+        _pin_line(module, adjustable * len(widths), inputs, hardware)
+    if dividers:
+        hardware.add(
+            CONFIRMAT_ID,
+            "Confirmat screw 7×50 mm",
+            8 + 4 * shelves * len(widths) + 4 * dividers,
+            "Rule: 8 per carcass plus 4 per fixed shelf board plus 4 per divider",
+        )
+    else:
+        hardware.add(
+            CONFIRMAT_ID,
+            "Confirmat screw 7×50 mm",
+            8 + 4 * shelves,
+            "Rule: 8 per carcass plus 4 per fixed shelf",
+        )
 
     rects = front_layout(module)
     bottom_slot = back if back is not None else carcass
@@ -562,6 +674,8 @@ def _assembly(spec: Mapping[str, Any]) -> list[dict[str, Any]]:
     ]
     for module in spec["modules"]:
         body = f"Fix the top and bottom between the sides of {module['id']} with confirmats and glue"
+        if module.get("dividers"):
+            body += f", then the {module['dividers']} dividers between them"
         if module["shelves"]:
             body += f", then the {module['shelves']} fixed shelves"
         body += "."
@@ -812,11 +926,18 @@ def _shelf_pin_entries(spec: Mapping[str, Any], inputs: Mapping[str, Any]) -> li
         key = module.get("shelf_pin") or SHELF_PIN_ID
         part, what = f"{module['id']}-side", "shelf-pin holes"
         sheet = _sheet(inputs, key)
+        dividers = module.get("dividers", 0)
+        divider_part = f"{module['id']}-divider"
         if sheet is None:
             entries.append(_entry(
                 "shelf_pins", part, what, positions=[], values=[], missing=_no_sheet(key),
                 counts={"shelf_pin_holes": None}, clauses=[], source_name=f"{key}: no data sheet",
             ))
+            if dividers:
+                entries.append(_entry(
+                    "shelf_pins", divider_part, what, positions=[], values=[], missing=_no_sheet(key),
+                    counts={"shelf_pin_holes": None}, clauses=[], source_name=f"{key}: no data sheet",
+                ))
             continue
         source, missing = sheet["source"], []
         raw = sheet.get("values") or {}
@@ -830,9 +951,12 @@ def _shelf_pin_entries(spec: Mapping[str, Any], inputs: Mapping[str, Any]) -> li
                 label = name.split()[0] + " column"
                 positions.append({"label": label, "position": form, "from": edge})
                 clauses.append(f"{label} {_say(form)} from the {edge}")
+        # A divider stands on the bottom panel, so its holes sit one board lower from its own bottom end.
+        divider_positions, divider_clauses = list(positions), list(clauses)
         t = spec["materials"][module["carcass"]]["thickness_mm"]
         pitch, first, last = (by_name[n]["form"] for n in ("pitch", "first hole", "last hole"))
         holes: int | None = None
+        divider_holes: int | None = None
         if pitch and first and last:
             if all("mm" in f for f in (pitch, first, last)):
                 top = module["height"] - t - last["mm"]
@@ -841,12 +965,15 @@ def _shelf_pin_entries(spec: Mapping[str, Any], inputs: Mapping[str, Any]) -> li
                     heights.append(_num(at))
                     at += pitch["mm"]
                 if heights:
-                    positions += [{"label": f"hole {i + 1}", "position": {"mm": h}, "from": "bottom end"}
-                                  for i, h in enumerate(heights)]
-                    shown = heights if len(heights) <= 4 else [*heights[:2], "…", heights[-1]]
-                    clauses.append("holes at " + ", ".join(h if h == "…" else _n(h) for h in shown) + " mm")
+                    for found, clause_list, offset in ((positions, clauses, 0), (divider_positions, divider_clauses, t)):
+                        listed = [_num(h - offset) for h in heights]
+                        found += [{"label": f"hole {i + 1}", "position": {"mm": h}, "from": "bottom end"}
+                                  for i, h in enumerate(listed)]
+                        shown = listed if len(listed) <= 4 else [*listed[:2], "…", listed[-1]]
+                        clause_list.append("holes at " + ", ".join(h if h == "…" else _n(h) for h in shown) + " mm")
                     if all(columns.values()):
                         holes = 2 * 2 * len(heights)
+                        divider_holes = 2 * 2 * len(heights) * dividers
                 else:
                     problem = "no hole fits between the first and last hole heights"
             else:
@@ -854,17 +981,27 @@ def _shelf_pin_entries(spec: Mapping[str, Any], inputs: Mapping[str, Any]) -> li
                     f"first hole {_say(first)} above the bottom shelf face, then every {_say(pitch)}, "
                     f"last hole at least {_say(last)} below the top"
                 )
-                positions.append({"label": "holes", "position": {"rule": words}, "from": "bottom end"})
-                clauses.append(f"holes: {words}")
+                for found, clause_list in ((positions, clauses), (divider_positions, divider_clauses)):
+                    found.append({"label": "holes", "position": {"rule": words}, "from": "bottom end"})
+                    clause_list.append(f"holes: {words}")
         for name in ("hole diameter", "hole depth", "pins per shelf"):
             form = by_name[name]["form"]
             if form is not None:
-                clauses.append(f"{name} {_say(form)}" if name != "hole diameter" else f"hole Ø {_say(form)}")
+                said = f"{name} {_say(form)}" if name != "hole diameter" else f"hole Ø {_say(form)}"
+                clauses.append(said)
+                divider_clauses.append(said)
         entries.append(_entry(
             "shelf_pins", part, what, positions=positions, values=list(by_name.values()), missing=missing,
             problem=problem, counts={"shelf_pin_holes": holes}, clauses=["both sides, inner face"] + clauses,
             source_name=f"{key} data sheet",
         ))
+        if dividers:
+            entries.append(_entry(
+                "shelf_pins", divider_part, what, positions=divider_positions, values=list(by_name.values()),
+                missing=list(missing), problem=problem, counts={"shelf_pin_holes": divider_holes},
+                clauses=[f"each of {dividers} dividers, both faces"] + divider_clauses,
+                source_name=f"{key} data sheet",
+            ))
     return entries
 
 

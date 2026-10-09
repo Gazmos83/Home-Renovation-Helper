@@ -20,6 +20,10 @@ class ReviseError(ValueError):
 
 
 DEFAULT_HINGE = "hinge-concealed-110"
+# The interior fields a change clears with 0 or an empty list (shelf-spacing-and-dividers).
+_CLEARED_BY = {"shelf_spacing_mm": 0, "shelf_positions_mm": [], "divider_positions_mm": []}
+# Spacing and positions exclude each other: setting one drops the other.
+_REPLACES = {"shelf_spacing_mm": "shelf_positions_mm", "shelf_positions_mm": "shelf_spacing_mm"}
 
 
 def _without_none(value: Any) -> Any:
@@ -75,6 +79,11 @@ def _apply_module_change(module: dict[str, Any], change: dict[str, Any], lines: 
         if field == "hinge":
             _set_hinge(module, value, lines)
             continue
+        if field in _CLEARED_BY:
+            _set_interior(module, field, value, change, lines)
+            continue
+        if field == "dividers" and not value and module.get("divider_positions_mm") and "divider_positions_mm" not in change:
+            lines.append(f"{module_id}: divider_positions_mm {module.pop('divider_positions_mm')} → not set")
         before = module.get(field)
         if _same(before, value):
             continue  # a value the module already has changes nothing
@@ -85,6 +94,24 @@ def _apply_module_change(module: dict[str, Any], change: dict[str, Any], lines: 
         else:
             lines.append(f"{module_id}: {field} {before} → {value}")
         module[field] = value
+
+
+def _set_interior(module: dict[str, Any], field: str, value: Any, change: dict[str, Any], lines: list[str]) -> None:
+    module_id = module["id"]
+    before = module.get(field)
+    cleared = value == _CLEARED_BY[field]
+    if (cleared and not before) or _same(before, value):
+        return  # a value the module already has changes nothing
+    was = before if before else "not set"
+    if cleared:
+        lines.append(f"{module_id}: {field} {was} → not set")
+        module.pop(field, None)
+        return
+    lines.append(f"{module_id}: {field} {was} → {value}")
+    module[field] = value
+    other = _REPLACES.get(field)
+    if other is not None and module.get(other) and other not in change:
+        lines.append(f"{module_id}: {other} {module.pop(other)} → not set (replaced by {field})")
 
 
 def _set_hinge(module: dict[str, Any], hinge: str, lines: list[str]) -> None:

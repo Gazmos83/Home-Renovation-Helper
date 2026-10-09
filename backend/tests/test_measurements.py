@@ -140,3 +140,49 @@ def test_a_composition_result_does_not_start_a_window() -> None:
         *_created("c", "Created bench version 3; its build has started.", "compose_room"),
     ]
     assert owner_texts_since_version(history, "bench") == ["80 cm wide"]
+
+
+# --- shelf spacing and divider positions (shelf-spacing-and-dividers) ------------------------
+
+SAID = "4 shelves 355 mm apart"
+
+
+def test_a_spacing_on_a_module_that_had_none_passes() -> None:
+    entry = Requested(SAID, "cabinet", "shelf_spacing_mm", 355)
+    assert check([entry], [SAID], CURRENT, revised(shelf_spacing_mm=355)) == []
+
+
+def test_an_invented_spacing_is_refused() -> None:
+    entry = Requested("355 mm apart", "cabinet", "shelf_spacing_mm", 355)
+    [refusal] = check([entry], [SAID], CURRENT, revised(shelf_spacing_mm=373))
+    assert "'355 mm apart'" in refusal and "355 mm expected" in refusal and "set 373 mm" in refusal
+    wrong = Requested("355 mm apart", "cabinet", "shelf_spacing_mm", 373)
+    assert "gives cabinet shelf_spacing_mm 355 mm, not 373 mm" in check([wrong], [SAID], CURRENT, revised())[0]
+
+
+def test_a_relative_length_on_an_unset_field_is_refused() -> None:
+    entry = Requested("5 cm more", "cabinet", "shelf_spacing_mm", 50)
+    refusal, uncovered = check([entry], ["5 cm more between the shelves"], CURRENT, revised(shelf_spacing_mm=50))
+    assert "not set in the latest version" in refusal and "'5 cm' is not covered" in uncovered
+
+
+def test_a_divider_position_is_found_in_the_revised_list() -> None:
+    said = "a divider 400 mm from the left"
+    entry = Requested(said, "cabinet", "divider_positions_mm", 400)
+    assert check([entry], [said], CURRENT, revised(dividers=1, divider_positions_mm=[400])) == []
+    [refusal] = check([entry], [said], CURRENT, revised(dividers=1, divider_positions_mm=[450]))
+    assert "400 mm expected" in refusal and "[450 mm]" in refusal
+
+
+def test_each_listed_position_needs_its_own_entry() -> None:
+    said = "shelves at 300 mm and 700 mm"
+    entry = Requested("300 mm", "cabinet", "shelf_positions_mm", 300)
+    [uncovered] = check([entry], [said], CURRENT, revised(shelf_positions_mm=[300, 700]))
+    assert "'700 mm' is not covered" in uncovered
+    second = Requested("700 mm", "cabinet", "shelf_positions_mm", 700)
+    assert check([entry, second], [said], CURRENT, revised(shelf_positions_mm=[300, 700])) == []
+
+
+def test_an_unknown_field_on_an_unset_module_value_is_still_refused() -> None:
+    entry = Requested(SAID, "cabinet", "shelf_gap", 355)
+    assert "has no length field 'shelf_gap'" in check([entry], [SAID], CURRENT, revised())[0]

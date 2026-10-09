@@ -15,7 +15,11 @@ from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.blender.custom_build.derive import BRACKET_COUNT_CHECK, BRACKET_SPACING_CHECK
+from app.blender.custom_build.derive import (
+    BRACKET_COUNT_CHECK,
+    BRACKET_SPACING_CHECK,
+    bay_cut_widths,
+)
 from app.blender.room_contract import Point, RoomBuildContext
 
 Applies = str  # "placement" | "piece"
@@ -212,7 +216,8 @@ def shelf_span(spec: Mapping[str, Any], params: ShelfSpan) -> list[Measurement]:
     """A shelf's span (the carcass's inner width) against the limit for its board thickness.
 
     The limit is the table entry for the board's thickness, or for the next thinner
-    one; a board thinner than every entry has no stated limit and is not judged.
+    one; a board thinner than every entry has no stated limit and is not judged. A
+    module with dividers is measured on its widest bay, named from the left.
     """
     table = sorted(params.table, key=lambda entry: entry.thickness_mm)
     found = []
@@ -223,9 +228,11 @@ def shelf_span(spec: Mapping[str, Any], params: ShelfSpan) -> list[Measurement]:
         entry = max((e for e in table if e.thickness_mm <= thickness), key=lambda e: e.thickness_mm, default=None)
         if entry is None:
             continue
-        span = module["width"] - 2 * thickness
+        widths = bay_cut_widths(module, thickness)
+        span = max(widths)
+        where = f" bay {widths.index(span) + 1}" if len(widths) > 1 else ""
         found.append(Measurement(
-            what=f"shelf span in module {module['id']!r} ({thickness} mm board)", value=f"{span:g} mm",
+            what=f"shelf span in module {module['id']!r}{where} ({thickness} mm board)", value=f"{span:g} mm",
             limit=f"at most {entry.max_span_mm:g} mm", breached=span > entry.max_span_mm,
         ))
     return found

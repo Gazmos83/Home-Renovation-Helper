@@ -77,3 +77,26 @@ def test_the_same_inputs_give_the_same_list() -> None:
 
 def test_a_module_without_adjustable_shelves_has_no_entry() -> None:
     assert drilling(build(modules=[module()]), inputs())["entries"] == []
+
+
+def test_holes_on_a_divider_are_listed_on_both_faces_from_its_own_bottom_end() -> None:
+    result = _run(PIN, dividers=1)
+    side, divider = result["entries"]
+    assert side["part"] == "m-side" and divider["part"] == "m-divider"
+    side_heights = [p["position"]["mm"] for p in side["positions"] if p["label"].startswith("hole")]
+    divider_heights = [p["position"]["mm"] for p in divider["positions"] if p["label"].startswith("hole")]
+    # the divider stands on the bottom panel, one 18 mm board above the side's bottom end
+    assert divider_heights == [h - 18 for h in side_heights]
+    assert "both faces" in divider["text"] and all(v["source"] == SOURCE for v in divider["values"])
+    assert side["counts"]["shelf_pin_holes"] == divider["counts"]["shelf_pin_holes"] == 2 * 2 * 19
+    assert result["counts"]["shelf_pin_holes"] == 2 * 2 * 2 * 19
+
+
+def test_a_module_without_dividers_lists_one_entry_as_before() -> None:
+    assert [entry["part"] for entry in _run(PIN)["entries"]] == ["m-side"]
+
+
+def test_no_data_sheet_blanks_the_divider_entry_too() -> None:
+    result = _run(None, dividers=2)
+    assert [entry["part"] for entry in result["entries"]] == ["m-side", "m-divider"]
+    assert result["counts"]["shelf_pin_holes"] is None

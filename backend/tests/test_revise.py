@@ -221,3 +221,34 @@ def test_adds_removes_and_overrides_always_give_lines(desk: dict, shelved: dict)
     assert lines and lines[0].startswith("wall-shelf-2: wall shelf added")
     _revised, lines = _revise(shelved, remove_wall_shelves=["wall-shelf-1"])
     assert lines == ["wall-shelf-1: wall shelf removed"]
+
+
+# --- shelf spacing and dividers (shelf-spacing-and-dividers) ---------------------------------
+
+
+def test_setting_a_spacing_replaces_stated_positions_and_names_both(desk: dict) -> None:
+    placed, lines = _revise(desk, modules={"cabinet": {"shelf_positions_mm": [200, 400]}})
+    assert lines == ["cabinet: shelf_positions_mm not set → [200, 400]"]
+    spaced, lines = _revise(placed, modules={"cabinet": {"shelf_spacing_mm": 150}})
+    assert lines == [
+        "cabinet: shelf_spacing_mm not set → 150",
+        "cabinet: shelf_positions_mm [200, 400] → not set (replaced by shelf_spacing_mm)",
+    ]
+    module = spaced["modules"][0]
+    assert module["shelf_spacing_mm"] == 150 and "shelf_positions_mm" not in module
+    CustomBuildSpec.model_validate(spaced)
+
+
+def test_zero_or_an_empty_list_clears_back_to_even_spacing_and_equal_bays(desk: dict) -> None:
+    spaced, _ = _revise(desk, modules={"cabinet": {"shelf_spacing_mm": 150, "dividers": 1, "divider_positions_mm": [400]}})
+    cleared, lines = _revise(spaced, modules={"cabinet": {"shelf_spacing_mm": 0, "divider_positions_mm": []}})
+    assert lines == ["cabinet: shelf_spacing_mm 150 → not set", "cabinet: divider_positions_mm [400] → not set"]
+    assert not {"shelf_spacing_mm", "divider_positions_mm"} & cleared["modules"][0].keys()
+    assert _revise(cleared, modules={"cabinet": {"shelf_spacing_mm": 0, "dividers": 1}})[1] == []
+
+
+def test_removing_the_dividers_drops_their_positions(desk: dict) -> None:
+    divided, _ = _revise(desk, modules={"cabinet": {"dividers": 1, "divider_positions_mm": [400]}})
+    plain, lines = _revise(divided, modules={"cabinet": {"dividers": 0}})
+    assert lines == ["cabinet: divider_positions_mm [400] → not set", "cabinet: dividers 1 → 0"]
+    CustomBuildSpec.model_validate(plain)

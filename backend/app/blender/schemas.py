@@ -38,6 +38,7 @@ from app.blender.spec_contract import SpecValidationError
 MAX_DIMENSION_MM = 10_000
 MAX_MODULES = 20
 MAX_WALL_SHELVES = 20
+MAX_DIVIDERS = 10
 MAX_DERIVED_ROWS = 200
 
 Millimetres = Annotated[int, Field(gt=0, le=MAX_DIMENSION_MM)]
@@ -134,8 +135,23 @@ class ModuleIn(BaseModel):
     shelves: Annotated[int, Field(ge=0, le=20)] = 0
     adjustable_shelves: Annotated[int, Field(ge=0, le=20)] = 0
     shelf_pin: Slug = "shelf-pin"
+    shelf_spacing_mm: Millimetres | None = None
+    shelf_positions_mm: Annotated[list[Position], Field(min_length=1, max_length=40)] | None = None
+    dividers: Annotated[int, Field(ge=0, le=MAX_DIVIDERS)] = 0
+    divider_positions_mm: Annotated[list[Position], Field(min_length=1, max_length=MAX_DIVIDERS)] | None = None
     fronts: Annotated[list[FrontIn], Field(max_length=10)] = []
     hardware: Annotated[list[HardwareLineIn], Field(max_length=50)] = []
+
+    @model_serializer(mode="wrap")
+    def _omit_unstated_interior(self, handler: Any) -> dict[str, Any]:
+        # A module without spacing, positions or dividers serialises exactly as before.
+        dumped = handler(self)
+        for field in ("shelf_spacing_mm", "shelf_positions_mm", "divider_positions_mm"):
+            if dumped.get(field) is None:
+                dumped.pop(field, None)
+        if not dumped.get("dividers"):
+            dumped.pop("dividers", None)
+        return dumped
 
 
 class WallShelfIn(BaseModel):
@@ -199,6 +215,58 @@ class CustomBuildContext:
     """What a caller outside the derivation needs: the build's overall size."""
 
     overall: dict[str, int]
+
+
+def _check_interior(where: str, module: ModuleIn, t: int) -> None:
+    """Shelf spacing or positions and dividers against the module's inner height and width."""
+    count = module.shelves + module.adjustable_shelves
+    spacing, positions = module.shelf_spacing_mm, module.shelf_positions_mm
+    if spacing is not None and positions is not None:
+        raise SpecValidationError(
+            f"{where}: shelf_spacing_mm and shelf_positions_mm cannot both be given; state one"
+        )
+    field = "shelf_spacing_mm" if spacing is not None else "shelf_positions_mm"
+    if (spacing is not None or positions is not None) and not count:
+        raise SpecValidationError(f"{where}.{field}: module {module.id!r} has no shelves to place")
+    if positions is not None:
+        if len(positions) != count:
+            raise SpecValidationError(
+                f"{where}.shelf_positions_mm: {len(positions)} positions given, {count} shelves expected "
+                "(fixed and adjustable together)"
+            )
+        if any(later - earlier < t for earlier, later in pairwise(positions)):
+            raise SpecValidationError(
+                f"{where}.shelf_positions_mm: positions must increase by at least the board thickness ({t} mm)"
+            )
+    if spacing is not None or positions is not None:
+        inner_h = module.height - 2 * t
+        top = custom_derive.shelf_undersides(module.model_dump(mode="json"), t)[-1] + t
+        if top > inner_h:
+            raise SpecValidationError(
+                f"{where}.{field}: the top shelf's top face at {top:g} mm is above the inner height of "
+                f"{inner_h} mm (measured from the top face of the bottom panel)"
+            )
+
+    inner_w = module.width - 2 * t
+    dividers, places = module.dividers, module.divider_positions_mm
+    if places is not None:
+        if len(places) != dividers:
+            raise SpecValidationError(
+                f"{where}.divider_positions_mm: {len(places)} positions given, {dividers} dividers expected"
+            )
+        if any(later - earlier <= t for earlier, later in pairwise(places)):
+            raise SpecValidationError(
+                f"{where}.divider_positions_mm: positions must increase by more than the board thickness ({t} mm)"
+            )
+        if places[0] <= 0 or places[-1] + t >= inner_w:
+            raise SpecValidationError(
+                f"{where}.divider_positions_mm: every divider must lie inside the inner width of {inner_w} mm "
+                "with a bay on each side (measured from the left side's inner face)"
+            )
+    elif dividers and (inner_w - dividers * t) // (dividers + 1) <= 0:
+        raise SpecValidationError(
+            f"{where}.dividers: {dividers} dividers leave no room for a bay in the inner width of {inner_w} mm"
+        )
 
 
 def _boxes_overlap(a: ModuleIn, b: ModuleIn) -> bool:
@@ -274,6 +342,7 @@ class CustomBuildSpec(BaseModel):
             ):
                 raise SpecValidationError(f"{where}: module {module.id!r} lies outside the envelope")
             self._check_fronts(where, module, t)
+            _check_interior(where, module, t)
 
         for index, part in enumerate(self.extra_parts):
             if part.material not in self.materials:
@@ -390,6 +459,11 @@ class ModuleChange(BaseModel):
     shelves: Annotated[int, Field(ge=0, le=20)] | None = None
     adjustable_shelves: Annotated[int, Field(ge=0, le=20)] | None = None
     shelf_pin: Slug | None = None
+    # 0 or an empty list clears the field: even spacing, or equal bays.
+    shelf_spacing_mm: Annotated[int, Field(ge=0, le=MAX_DIMENSION_MM)] | None = None
+    shelf_positions_mm: Annotated[list[Position], Field(max_length=40)] | None = None
+    dividers: Annotated[int, Field(ge=0, le=MAX_DIVIDERS)] | None = None
+    divider_positions_mm: Annotated[list[Position], Field(max_length=MAX_DIVIDERS)] | None = None
     hinge: Slug | None = None  # sets the hinge item of every hinged door in the module
     fronts: Annotated[list[FrontIn], Field(max_length=10)] | None = None
     hardware: Annotated[list[HardwareLineIn], Field(max_length=50)] | None = None

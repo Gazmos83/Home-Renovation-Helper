@@ -611,3 +611,101 @@ def test_unknown_shelf_and_module_fields_are_refused_by_name(desk: dict, field: 
     assert f"wall_shelves.0.{field}" in _refusal(_shelf_build(**{field: 5}))
     desk["modules"][0][field] = 5
     assert f"modules.0.{field}" in _refusal(desk)
+
+
+# --- shelf spacing, shelf positions and dividers (shelf-spacing-and-dividers) ---------------
+
+
+def _interior_build(**module) -> dict:
+    entry = {
+        "id": "cabinet", "name": "Cabinet", "x": 0, "y": 0, "z": 0, "width": 1000, "height": 1600,
+        "depth": 400, "carcass": "carcass", "shelves": 4,
+    }
+    entry.update(module)
+    return {
+        "kind": "custom_build", "schema_version": 1, "units": "mm", "name": "Cabinet",
+        "materials": {"carcass": {"material": "Eiche 18 mm", "thickness_mm": 18}},
+        "modules": [entry],
+    }
+
+
+def test_shelves_355_mm_apart_are_placed_from_the_bottom_panel() -> None:
+    from app.blender.custom_build.derive import shelf_undersides
+
+    spec = CustomBuildSpec.model_validate(_interior_build(shelf_spacing_mm=355))
+    module = spec.model_dump(mode="json")["modules"][0]
+    assert shelf_undersides(module, 18) == [355, 728, 1101, 1474]
+
+
+def test_a_spacing_that_does_not_fit_is_refused_naming_the_inner_height() -> None:
+    message = _refusal(_interior_build(height=1200, shelf_spacing_mm=355))
+    assert "modules[0].shelf_spacing_mm" in message and "1164 mm" in message
+
+
+def test_uneven_positions_are_accepted() -> None:
+    from app.blender.custom_build.derive import shelf_undersides
+
+    spec = CustomBuildSpec.model_validate(_interior_build(shelves=3, shelf_positions_mm=[300, 700, 1300]))
+    assert shelf_undersides(spec.model_dump(mode="json")["modules"][0], 18) == [300, 700, 1300]
+
+
+def test_the_wrong_number_of_positions_is_refused() -> None:
+    message = _refusal(_interior_build(shelves=3, shelf_positions_mm=[300, 700]))
+    assert "modules[0].shelf_positions_mm" in message and "3 shelves expected" in message
+
+
+def test_overlapping_positions_are_refused() -> None:
+    message = _refusal(_interior_build(shelves=2, shelf_positions_mm=[300, 310]))
+    assert "modules[0].shelf_positions_mm" in message and "18 mm" in message
+
+
+def test_spacing_and_positions_together_are_refused_naming_both() -> None:
+    message = _refusal(_interior_build(shelf_spacing_mm=355, shelf_positions_mm=[1, 100, 200, 300]))
+    assert "shelf_spacing_mm" in message and "shelf_positions_mm" in message
+
+
+def test_a_spacing_without_shelves_is_refused() -> None:
+    assert "no shelves" in _refusal(_interior_build(shelves=0, shelf_spacing_mm=355))
+
+
+def test_a_module_without_the_new_fields_serialises_as_before(desk: dict) -> None:
+    module = CustomBuildSpec.model_validate(desk).model_dump(mode="json")["modules"][0]
+    assert not {"shelf_spacing_mm", "shelf_positions_mm", "dividers", "divider_positions_mm"} & module.keys()
+
+
+def test_dividers_with_and_without_positions_are_accepted() -> None:
+    assert CustomBuildSpec.model_validate(_interior_build(dividers=2)).modules[0].dividers == 2
+    spec = CustomBuildSpec.model_validate(_interior_build(dividers=1, divider_positions_mm=[400]))
+    assert spec.modules[0].divider_positions_mm == [400]
+
+
+def test_a_divider_outside_the_inner_width_is_refused() -> None:
+    message = _refusal(_interior_build(dividers=1, divider_positions_mm=[960]))
+    assert "modules[0].divider_positions_mm" in message and "964 mm" in message
+
+
+@pytest.mark.parametrize(
+    ("dividers", "positions", "expected"),
+    [(0, [400], "0 dividers expected"), (2, [400], "2 dividers expected"), (2, [400, 410], "more than")],
+)
+def test_divider_positions_must_match_and_increase(dividers: int, positions: list[int], expected: str) -> None:
+    message = _refusal(_interior_build(dividers=dividers, divider_positions_mm=positions))
+    assert "modules[0].divider_positions_mm" in message and expected in message
+
+
+def test_too_many_dividers_for_the_width_are_refused() -> None:
+    assert "modules[0].dividers" in _refusal(_interior_build(width=200, dividers=10))
+
+
+def test_an_unknown_divider_field_is_refused_by_name() -> None:
+    assert "modules.0.divider_material" in _refusal(_interior_build(divider_material="oak"))
+
+
+def test_a_change_can_set_spacing_and_refuses_an_unknown_field() -> None:
+    from app.blender.schemas import PackageChanges
+
+    changes = PackageChanges.model_validate({"modules": {"cabinet": {"shelf_spacing_mm": 355}}})
+    assert changes.modules["cabinet"].shelf_spacing_mm == 355
+    with pytest.raises(ValidationError) as caught:
+        PackageChanges.model_validate({"modules": {"cabinet": {"divider_material": "oak"}}})
+    assert "divider_material" in _describe_validation_error(caught.value)

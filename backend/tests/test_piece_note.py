@@ -87,3 +87,14 @@ def test_without_an_envelope_the_modules_bounds_are_given() -> None:
     document.pop("envelope", None)
     note = piece_note("hall-bench", 1, document)
     assert "Envelope: 800 × 1800 × 400 mm (width × height × depth) (the modules' outer bounds; no envelope set)" in note
+
+
+def test_spacing_positions_and_dividers_are_shown() -> None:
+    document = _starter()
+    document["modules"][0] |= {"shelves": 4, "shelf_spacing_mm": 355, "dividers": 2}
+    line = next(line for line in piece_note("hall-bench", 2, document).splitlines() if line.startswith("- cabinet "))
+    assert "4 shelves 355 mm apart (clear gap)" in line and "2 dividers (equal bays)" in line
+    document["modules"][0] |= {"shelves": 2, "shelf_positions_mm": [300, 700], "dividers": 1, "divider_positions_mm": [400]}
+    del document["modules"][0]["shelf_spacing_mm"]
+    line = next(line for line in piece_note("hall-bench", 3, document).splitlines() if line.startswith("- cabinet "))
+    assert "2 shelves at [300, 700] mm" in line and "1 divider at [400] mm" in line

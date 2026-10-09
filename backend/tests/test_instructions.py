@@ -69,6 +69,13 @@ def test_the_designer_and_builder_never_offer_blender_code() -> None:
         assert "Never offer to write Blender code" in loaded[name].text or "Never write, show or run Blender code" in loaded[name].text
 
 
+def test_the_designer_knows_shelf_spacing_and_dividers() -> None:
+    text = load_instructions()["designer"].text
+    for field in ("shelf_spacing_mm", "shelf_positions_mm", "dividers", "divider_positions_mm"):
+        assert f"`{field}`" in text
+    assert '"shelf_spacing_mm": 355' in text and "Never compute shelf heights" in text
+
+
 def _break(tmp_path: Path, name: str, edit) -> str:
     directory = _copy(tmp_path)
     path = directory / f"{name}.md"

@@ -143,6 +143,21 @@ def test_height_range_and_shelf_span_measure_the_derived_spec(tmp_path: Path) ->
     assert evaluate(table(tmp_path, span(964)), "piece", spec) == []
 
 
+def test_dividers_bring_the_shelf_span_within_the_limit(tmp_path: Path) -> None:
+    spec = desk()
+    spec["modules"][0]["dividers"] = 2
+    assert evaluate(table(tmp_path, span(900)), "piece", spec) == []
+    (found,) = evaluate(table(tmp_path, span(300)), "piece", spec)
+    assert found.measurement.value == "309 mm" and "bay 1" in found.measurement.what
+
+
+def test_unequal_bays_measure_the_widest_and_name_it(tmp_path: Path) -> None:
+    spec = desk()
+    spec["modules"][0].update(dividers=1, divider_positions_mm=[400])
+    (found,) = evaluate(table(tmp_path, span(500)), "piece", spec)
+    assert found.measurement.value == "546 mm" and "bay 2" in found.measurement.what
+
+
 def test_a_board_thinner_than_every_table_entry_is_not_judged(tmp_path: Path) -> None:
     thin = rule("span", "shelf_span_mm_for_thickness", {"table": [{"thickness_mm": 25, "max_span_mm": 100}]},
                 applies_to="piece")
