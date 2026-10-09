@@ -30,8 +30,8 @@ export type AnswerRow = { question: string; answer: string };
 export type ChatMessage = {
   role: "owner" | "assistant" | "confirmation" | "notice";
   text: string;
-  /** `answers` is an answered question set, shown as its rows. */
-  kind?: "text" | "answers";
+  /** `answers` is an answered question set, shown as its rows; a notice is a `render` or a `build` notice. */
+  kind?: "text" | "answers" | "render" | "build";
   rows?: AnswerRow[];
   upload_ids?: string[];
   /** An owner's message's id: the latest one can be edited. */
@@ -87,6 +87,9 @@ export type Progress = {
   name: string | null;
   latest_version: number | null;
   approved_version: number | null;
+  /** How many versions the piece holds, and the most it can. */
+  version_count: number;
+  max_versions: number;
   build_status: string | null;
   steps: ProgressStep[];
   next_step: string;
@@ -375,6 +378,8 @@ export type PieceSpec = {
   parts?: SpecPart[];
   hardware?: SpecHardware[];
   drilling?: DrillingList;
+  /** The validated input the version was built from: where the model's centre is. */
+  input?: { envelope?: unknown; wall_shelves?: { x: number; y: number }[] };
 };
 
 export type RenderItem = {
@@ -701,6 +706,9 @@ export const api = {
     request<VersionInfo>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/approval`, {
       method: "DELETE",
     }),
+  /** Delete one version with its renders, reviews and pricings; the last one deletes the piece. */
+  deleteVersion: (packageId: string, version: number) =>
+    request<void>(`/packages/${encodeURIComponent(packageId)}/versions/${version}`, { method: "DELETE" }),
   renders: (packageId: string, version: number) =>
     request<RenderItem[]>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/renders`),
   rateRender: (packageId: string, version: number, render: string, rating: "up" | "down", comment: string | null) =>

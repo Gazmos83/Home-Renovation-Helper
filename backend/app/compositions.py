@@ -58,6 +58,22 @@ def placing_model(session: Session, root: Path, model_id: UUID) -> list[str]:
     return found
 
 
+def pieces_in_use(root: Path, package_id: str, version: int) -> list[str]:
+    """Every composition version that places the piece version, as "<scope> version <N>"."""
+    found = []
+    for slug, numbers in storage.list_compositions(root):
+        for number in numbers:
+            document = read_document(storage.composition_version_dir(root, slug, number))
+            if document is None:
+                continue
+            if any(
+                i.get("type") == "piece" and i.get("package_id") == package_id and i.get("version") == version
+                for i in document.get("items", [])
+            ):
+                found.append(f"{scope_name(document) or slug} version {number}")
+    return found
+
+
 def rule_outcome(rules: tuple[Rule, ...], subjects: list[tuple[str, ItemSubject]]) -> tuple[str | None, str]:
     """(a refusal naming the item and the rule, or `None`; the warnings, each naming its item)."""
     refusals: list[str] = []

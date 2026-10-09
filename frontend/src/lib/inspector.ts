@@ -52,6 +52,51 @@ export function customBuildExplode(spec: Pick<PieceSpec, "modules">): Offsets {
   return offsets;
 }
 
+/** Which dimension drawings show: the overall lines, or in Exploded mode each module's label instead. */
+export function dimensionOverlays(layers: Layers, mode: ViewMode): { overall: boolean; modules: boolean } {
+  const on = layerVisible(layers, "dimensions");
+  return { overall: on && mode !== "exploded", modules: on && mode === "exploded" };
+}
+
+export type ModuleLabel = { id: string; text: string; position: Vec3 };
+
+/**
+ * One label per module of the version's `spec.json` (version-cleanup-and-inspection):
+ * its name (or id) and width × height × depth in mm, at the module's centre in scene
+ * units, moved along its explode offset by `amount` (0 to 1) as the model's empty is.
+ * The model is centred on x and depth as the generator centres it: on the envelope
+ * when there is one, else on the modules and wall shelves; heights stay real.
+ */
+export function moduleLabels(
+  spec: Pick<PieceSpec, "modules" | "module_names" | "overall" | "input">,
+  offsets: Offsets,
+  amount: number,
+): ModuleLabel[] {
+  const modules = Object.entries(spec.modules ?? {});
+  if (modules.length === 0) return [];
+  const placed = [...modules.map(([, m]) => ({ x: m.x ?? 0, y: m.y ?? 0 })), ...(spec.input?.wall_shelves ?? [])];
+  const enveloped = spec.input?.envelope !== undefined && spec.input?.envelope !== null;
+  const x0 = enveloped ? 0 : Math.min(...placed.map((p) => p.x));
+  const y0 = enveloped ? 0 : Math.min(...placed.map((p) => p.y));
+  const shift = { x: x0 + spec.overall.w / 2, y: y0 + spec.overall.d / 2 };
+  return modules.map(([id, m]) => {
+    const w = m.w ?? 0;
+    const h = m.h ?? 0;
+    const d = m.d ?? 0;
+    const offset = offsets[`MOD_${id}`] ?? [0, 0, 0];
+    const centre: Vec3 = [
+      ((m.x ?? 0) + w / 2 - shift.x) / 1000,
+      ((m.z ?? 0) + h / 2) / 1000,
+      -((m.y ?? 0) + d / 2 - shift.y) / 1000,
+    ];
+    return {
+      id,
+      text: `${spec.module_names?.[id] ?? id} ${w} × ${h} × ${d} mm`,
+      position: [centre[0] + offset[0] * amount, centre[1] + offset[1] * amount, centre[2] + offset[2] * amount],
+    };
+  });
+}
+
 /** Never shown: the studio floor and any dimension geometry (the overlay draws its own). */
 function isHidden(name: string): boolean {
   return name === "StudioFloor" || name === "Plane" || name.startsWith("DIM_") || name.startsWith("MOD_Dimensions");

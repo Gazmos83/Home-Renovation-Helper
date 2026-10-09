@@ -253,3 +253,54 @@ def test_a_quote_the_owner_did_not_write_is_refused(make_ctx, tool_state) -> Non
     ctx = _said(make_ctx, "make it a bit wider")
     refused = preview(_wider(900, {"quote": "90 cm", "target": "cabinet", "field": "width", "value_mm": 900}), ctx)
     assert isinstance(refused, str) and "'90 cm' is not in the owner's messages" in refused
+
+
+# --- the version limit (version-cleanup-and-inspection) ---------------------------------------
+
+
+def _hold(tool_state, count: int) -> None:
+    """Copy the built version 1 into versions 2..count, so the piece holds `count` versions."""
+    import shutil
+
+    root = tool_state.settings.render_root
+    for number in range(2, count + 1):
+        shutil.copytree(storage.version_dir(root, "hall-bench", 1), storage.version_dir(root, "hall-bench", number))
+
+
+def test_a_revision_at_fifteen_versions_is_refused_before_any_confirmation(make_ctx, tool_state) -> None:
+    make_piece(make_ctx, tool_state)
+    _hold(tool_state, 15)
+    refused = preview(SHELVES, make_ctx())
+    assert isinstance(refused, str)
+    assert "hall-bench has 15 versions" in refused
+    assert "Pieces page" in refused and "Project panel" in refused
+    assert run(SHELVES, replace(make_ctx(), approved=True)) == refused
+    rebuilt = rebuild_preview({"package_id": "hall-bench"}, make_ctx())
+    assert rebuilt == refused
+    assert len(storage.versions(tool_state.settings.render_root, "hall-bench")) == 15
+
+
+def test_a_revision_making_the_thirteenth_version_carries_the_heads_up(make_ctx, tool_state) -> None:
+    make_piece(make_ctx, tool_state)
+    _hold(tool_state, 12)
+    shown = preview(SHELVES, make_ctx())
+    assert isinstance(shown, Confirmation)
+    assert shown.summary.endswith("This will be version 13 of 15 the piece can hold.")
+    rebuilt = rebuild_preview({"package_id": "hall-bench"}, make_ctx())
+    assert "This will be version 13 of 15 the piece can hold." in rebuilt.summary
+
+
+def test_an_early_revision_has_no_limit_line(make_ctx, tool_state) -> None:
+    make_piece(make_ctx, tool_state)
+    _hold(tool_state, 4)
+    shown = preview(SHELVES, make_ctx())
+    assert isinstance(shown, Confirmation)
+    assert "of 15" not in shown.summary
+
+
+def test_a_rebuild_after_the_highest_version_was_deleted_names_a_new_number(make_ctx, tool_state) -> None:
+    make_piece(make_ctx, tool_state)
+    _hold(tool_state, 3)
+    storage.remove_version(tool_state.settings.render_root, "hall-bench", 3)
+    shown = rebuild_preview({"package_id": "hall-bench"}, make_ctx())
+    assert shown.summary.startswith("Rebuild hall-bench as version 4, unchanged from version 2")

@@ -188,13 +188,16 @@ def _create_version(
 ) -> dict[str, Any]:
     with Session(request.app.state.engine) as session:
         inputs = freeze_inputs(session, request.app.state.design_rules, spec)
-    return service.create_version(
-        render_root(request),
-        package_id,
-        spec,
-        lambda version: _start_build(request, background, package_id, version),
-        inputs=inputs,
-    )
+    try:
+        return service.create_version(
+            render_root(request),
+            package_id,
+            spec,
+            lambda version: _start_build(request, background, package_id, version),
+            inputs=inputs,
+        )
+    except service.VersionLimitReached as error:
+        raise refused(status.HTTP_409_CONFLICT, "version_limit", str(error)) from None
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
@@ -304,6 +307,24 @@ def unapprove_version(package_id: str, version: int, request: Request):
             house_file.unapprove_version(session, package_id, version)
             session.commit()
     return describe_version(render_root(request), package_id, version)
+
+
+@router.delete("/{package_id}/versions/{version}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_version(package_id: str, version: int, request: Request) -> None:
+    """Delete one version with its folder and records; the last one deletes the piece.
+    Refused (nothing changed) with the reason when it is approved, placed in a room
+    composition, or still building or rendering (version-cleanup-and-inspection)."""
+    try:
+        storage.version_dir(render_root(request), package_id, version)
+    except (storage.InvalidPackageId, ValueError):
+        raise not_found() from None
+    with Session(request.app.state.engine) as session:
+        try:
+            house_file.delete_version(session, render_root(request), package_id, version)
+        except house_file.VersionMissing:
+            raise not_found() from None
+        except house_file.HouseFileError as error:
+            raise refused(status.HTTP_409_CONFLICT, "version_in_use", str(error)) from None
 
 
 @router.put("/{package_id}/spec", status_code=status.HTTP_202_ACCEPTED)

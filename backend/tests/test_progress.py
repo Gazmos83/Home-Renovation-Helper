@@ -177,3 +177,13 @@ def test_a_render_is_running_only_while_one_is_queued_or_running(db_session: Ses
     storage.write_render_status(folder, "turntable", status="succeeded", tier="draft")
     storage.write_render_status(folder, "still", status="running", tier="draft")
     assert _read(db_session, render_root)["rendering"] is True
+
+
+def test_the_version_count_and_limit_are_reported(db_session: Session, render_root: Path) -> None:
+    """version-cleanup-and-inspection: the Project panel's "N of 15 versions"."""
+    assert progress.piece_progress(db_session, render_root, None, brief_confirmed=False)["version_count"] == 0
+    _piece(db_session, render_root)
+    for number in (2, 3):
+        storage.version_dir(render_root, "hall-bench", number).mkdir()
+    result = _read(db_session, render_root)
+    assert (result["version_count"], result["max_versions"]) == (3, 15)

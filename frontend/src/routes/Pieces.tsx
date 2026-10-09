@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { cardClass } from "@/components/ui/card";
 import { Page } from "@/components/Page";
+import { DeleteVersion } from "@/components/DeleteVersion";
 
 function message(error: unknown): string | null {
   return error instanceof Error ? error.message : null;
@@ -327,7 +328,10 @@ function RoomPicker({ id, room }: { id: string; room: string | null }) {
 }
 
 function Piece({ id, versions, room }: { id: string; versions: number[]; room: string | null }) {
-  const [version, setVersion] = useState(versions[0]);
+  const queryClient = useQueryClient();
+  const [chosen, setVersion] = useState(versions[0]);
+  // After a delete the chosen version may be gone: show the newest left.
+  const version = versions.includes(chosen) ? chosen : versions[0];
   const infos = useQueries({
     queries: versions.map((n) => ({
       queryKey: ["version", id, n],
@@ -335,6 +339,7 @@ function Piece({ id, versions, room }: { id: string; versions: number[]; room: s
     })),
   });
   const approved = infos.find((q) => q.data?.approved_at)?.data?.version;
+  const shown = infos[versions.indexOf(version)]?.data;
   return (
     <section className={cardClass} aria-label={id}>
       <h2>{id}</h2>
@@ -356,6 +361,18 @@ function Piece({ id, versions, room }: { id: string; versions: number[]; room: s
           </Button>
         ))}
       </div>
+      {shown && !shown.approved_at && (
+        <DeleteVersion
+          key={version}
+          packageId={id}
+          version={version}
+          only={versions.length === 1}
+          onDeleted={() => {
+            queryClient.removeQueries({ queryKey: ["version", id, version] });
+            queryClient.invalidateQueries({ queryKey: ["pieces"] });
+          }}
+        />
+      )}
       <Version packageId={id} version={version} />
     </section>
   );

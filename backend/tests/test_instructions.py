@@ -69,6 +69,14 @@ def test_the_designer_and_builder_never_offer_blender_code() -> None:
         assert "Never offer to write Blender code" in loaded[name].text or "Never write, show or run Blender code" in loaded[name].text
 
 
+def test_the_designer_relays_the_version_limit_and_never_deletes() -> None:
+    text = load_instructions()["designer"].text
+    line = next(line for line in text.splitlines() if "15 versions" in line)
+    assert "pass the refusal on as it is" in line
+    assert "Pieces page or in the Project panel" in line
+    assert "never offer to delete a version yourself" in line
+
+
 def test_the_designer_knows_shelf_spacing_and_dividers() -> None:
     text = load_instructions()["designer"].text
     for field in ("shelf_spacing_mm", "shelf_positions_mm", "dividers", "divider_positions_mm"):

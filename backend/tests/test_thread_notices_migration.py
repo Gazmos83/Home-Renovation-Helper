@@ -73,3 +73,66 @@ def test_deleting_a_thread_removes_its_notices(migrated_database: str) -> None:
             session.execute(text("DELETE FROM threads WHERE id = :id"), {"id": thread_id})
             session.commit()
         engine.dispose()
+
+
+def test_0017_adds_the_kind_and_frees_the_tier(migrated_database: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """version-cleanup-and-inspection: a build notice has a kind and no tier; downgrading drops
+    build notices and restores the old shape, and upgrading again leaves no drift."""
+    monkeypatch.setenv("ALEMBIC_DATABASE_URL", migrated_database)
+    config = Config(str(BACKEND_ROOT / "alembic.ini"))
+    engine = make_engine(migrated_database)
+    thread_id = uuid4()
+    try:
+        with Session(engine) as session:
+            session.execute(text("INSERT INTO threads (id, title) VALUES (:id, 'kind check')"), {"id": thread_id})
+            session.execute(
+                text(
+                    "INSERT INTO thread_notices (id, thread_id, after_messages, outcome, tier, text) "
+                    "VALUES (:id, :thread, 1, 'succeeded', 'draft', 'render')"
+                ),
+                {"id": uuid4(), "thread": thread_id},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO thread_notices (id, thread_id, after_messages, outcome, kind, text) "
+                    "VALUES (:id, :thread, 2, 'succeeded', 'build', 'built')"
+                ),
+                {"id": uuid4(), "thread": thread_id},
+            )
+            session.commit()
+            kinds = session.execute(
+                text("SELECT kind, tier FROM thread_notices WHERE thread_id = :id ORDER BY after_messages"),
+                {"id": thread_id},
+            ).all()
+            assert [tuple(row) for row in kinds] == [("render", "draft"), ("build", None)]
+            with pytest.raises(Exception, match="ck_thread_notices_kind"):
+                session.execute(
+                    text(
+                        "INSERT INTO thread_notices (id, thread_id, after_messages, outcome, kind, text) "
+                        "VALUES (:id, :thread, 3, 'succeeded', 'other', 'x')"
+                    ),
+                    {"id": uuid4(), "thread": thread_id},
+                )
+            session.rollback()
+
+        command.downgrade(config, "-1")
+        try:
+            columns = {c["name"]: c for c in inspect(engine).get_columns("thread_notices")}
+            assert "kind" not in columns and columns["tier"]["nullable"] is False
+            with Session(engine) as session:
+                left = session.execute(
+                    text("SELECT text FROM thread_notices WHERE thread_id = :id"), {"id": thread_id}
+                ).scalars().all()
+            assert left == ["render"]
+        finally:
+            command.upgrade(config, "head")
+        with engine.connect() as connection:
+            context = MigrationContext.configure(connection, opts={"compare_type": True})
+            diff = compare_metadata(context, Base.metadata)
+        drift = [item for item in diff if "thread_notices" in repr(item)]
+        assert drift == [], f"schema drift after upgrade/downgrade: {drift!r}"
+    finally:
+        with Session(engine) as session:
+            session.execute(text("DELETE FROM threads WHERE id = :id"), {"id": thread_id})
+            session.commit()
+        engine.dispose()

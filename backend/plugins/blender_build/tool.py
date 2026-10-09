@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.agent import house_file
+from app.agent import house_file, notices
 from app.agent.tools.base import AgentTool, ToolContext, parse_args
 from app.agent.tools.shared import builds_unavailable, version_folder
 from app.blender import runner, storage
@@ -71,6 +71,7 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
     else:
         runner.mark_build_queued(folder)
         future = ctx.deps.start_build(package_id, number)
+        notices.follow_build(ctx.deps, ctx.thread_id, future, package_id, number)
         try:
             future.result(timeout=limit)
         except FutureTimeout:

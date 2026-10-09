@@ -104,3 +104,99 @@ def test_a_deleted_thread_gets_nothing_and_no_thread_posts_nothing(tool_state) -
     notices.post(deps, harness.thread, quote(tool_state.tiers), "succeeded")
     notices.post(deps, None, quote(tool_state.tiers), "succeeded")
     assert stored(tool_state, harness.thread) == []
+
+
+# --- build notices (version-cleanup-and-inspection) ---------------------------------------
+
+
+def built(tool_state, thread):
+    with ToolDeps(tool_state).session() as session:
+        return [
+            (n.kind, n.outcome, n.tier, n.text, n.package_id, n.version)
+            for n in house_file.notices_for(session, thread)
+        ]
+
+
+def test_a_finished_build_posts_a_build_notice(tool_state) -> None:
+    harness = make_harness(tool_state)
+    tool_state.graph = harness.graph
+    harness.turn("hello")
+    notices.post_build(ToolDeps(tool_state), harness.thread, "hall-bench", 2, "succeeded")
+    assert built(tool_state, harness.thread) == [
+        ("build", "succeeded", None, "hall-bench version 2 is built.", "hall-bench", 2)
+    ]
+
+
+def test_a_failed_build_says_so_without_error_text(tool_state) -> None:
+    harness = make_harness(tool_state)
+    tool_state.graph = harness.graph
+    notices.post_build(ToolDeps(tool_state), harness.thread, "hall-bench", 2, "failed")
+    [(kind, outcome, _tier, text, *_)] = built(tool_state, harness.thread)
+    assert (kind, outcome) == ("build", "failed")
+    assert text == "hall-bench version 2 did not build. You can ask for it again."
+
+
+def test_a_build_with_no_thread_or_a_deleted_thread_posts_nothing(tool_state) -> None:
+    harness = make_harness(tool_state)
+    tool_state.graph = harness.graph
+    deps = ToolDeps(tool_state)
+    with deps.session() as session:
+        house_file.delete_thread(session, harness.thread)
+        session.commit()
+    notices.post_build(deps, harness.thread, "hall-bench", 1, "succeeded")
+    notices.post_build(deps, None, "hall-bench", 1, "succeeded")
+    assert built(tool_state, harness.thread) == []
+
+
+def test_a_build_notice_that_cannot_be_posted_is_logged(tool_state, caplog) -> None:
+    harness = make_harness(tool_state)
+    tool_state.graph = None
+    notices.post_build(ToolDeps(tool_state), harness.thread, "hall-bench", 1, "succeeded")
+    assert built(tool_state, harness.thread) == []
+    assert "could not post a build notice" in caplog.text
+
+
+def test_follow_build_reads_the_outcome_from_the_status_when_the_future_is_done(tool_state) -> None:
+    from concurrent.futures import Future
+
+    from app.blender import storage
+
+    harness = make_harness(tool_state)
+    tool_state.graph = harness.graph
+    deps = ToolDeps(tool_state)
+    folder = storage.version_dir(tool_state.settings.render_root, "hall-bench", 3)
+    storage.write_status(folder, status="failed", error="Traceback: /home/secret/boom")
+    future: Future = Future()
+    notices.follow_build(deps, harness.thread, future, "hall-bench", 3)
+    assert built(tool_state, harness.thread) == []
+    future.set_result(None)
+    [(kind, outcome, _tier, text, package, version)] = built(tool_state, harness.thread)
+    assert (kind, outcome, package, version) == ("build", "failed", "hall-bench", 3)
+    assert "secret" not in text and "Traceback" not in text
+    notices.follow_build(deps, None, Future(), "hall-bench", 3)
+    notices.follow_build(deps, harness.thread, None, "hall-bench", 3)
+
+
+def test_a_revision_confirmed_in_a_conversation_posts_its_build_notice(tool_state, make_ctx) -> None:
+    import time
+    from dataclasses import replace
+
+    from app.agent.tools.create_piece import run as create_run
+    from app.agent.tools.revise_package import run as revise_run
+    from app.blender import storage
+    from tests.api_helpers import desk
+    from tests.conftest import wait_for_status
+
+    harness = make_harness(tool_state)
+    tool_state.graph = harness.graph
+    ctx = replace(make_ctx(thread_id=harness.thread), approved=True)
+    create_run({"package_id": "hall-bench", "spec": desk()}, ctx)
+    wait_for_status(storage.version_dir(tool_state.settings.render_root, "hall-bench", 1))
+    revise_run({"package_id": "hall-bench", "changes": {"modules": {"cabinet": {"shelves": 3}}}}, ctx)
+    wait_for_status(storage.version_dir(tool_state.settings.render_root, "hall-bench", 2))
+    deadline = time.monotonic() + 5
+    while len(built(tool_state, harness.thread)) < 2 and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert [(n[0], n[1], n[4], n[5]) for n in built(tool_state, harness.thread)] == [
+        ("build", "succeeded", "hall-bench", 1), ("build", "succeeded", "hall-bench", 2),
+    ]

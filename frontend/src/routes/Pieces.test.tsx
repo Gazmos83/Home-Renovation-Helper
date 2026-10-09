@@ -358,3 +358,50 @@ test("a version that is not approved must be approved before it is priced", asyn
   expect(screen.queryByRole("button", { name: "Price this version" })).not.toBeInTheDocument();
   expect(calls.some(([, url]) => url.endsWith("/pricings"))).toBe(false);
 });
+
+// --- deleting a version (version-cleanup-and-inspection) ---------------------------------
+
+test("a confirmed delete drops the version from the piece and shows another", async () => {
+  const user = userEvent.setup();
+  const listed = [2, 1];
+  const calls = serve([turntable], (call) => {
+    if (call === "GET /packages") return { body: [{ package_id: "bench", versions: [...listed] }] };
+    if (call === "GET /packages/bench/versions/1/renders") return { body: [] };
+    if (call === "DELETE /packages/bench/versions/2") {
+      listed.splice(0, 1);
+      return { status: 204 };
+    }
+  });
+  show();
+  await user.click(await screen.findByRole("button", { name: "Delete version 2" }));
+  expect(calls.some(([m, u]) => m === "DELETE" && u === "/packages/bench/versions/2")).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Yes, delete version 2" }));
+  expect(await screen.findByText("No renders of this version yet.")).toBeInTheDocument();
+  const versions = screen.getByRole("group", { name: "Versions of bench" });
+  expect(versions).not.toHaveTextContent("Version 2");
+  expect(screen.getByRole("button", { name: "Version 1" })).toHaveAttribute("aria-pressed", "true");
+});
+
+test("an approved version offers no delete", async () => {
+  serve([turntable], undefined, { approved: 2 });
+  show();
+  expect(await screen.findByText("Approved: version 2")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Delete version 2" })).toBeNull();
+});
+
+test("deleting the only version says the piece goes and drops the piece", async () => {
+  const user = userEvent.setup();
+  let gone = false;
+  serve([turntable], (call) => {
+    if (call === "GET /packages") return { body: gone ? [] : [{ package_id: "bench", versions: [2] }] };
+    if (call === "DELETE /packages/bench/versions/2") {
+      gone = true;
+      return { status: 204 };
+    }
+  });
+  show();
+  await user.click(await screen.findByRole("button", { name: "Delete version 2" }));
+  expect(screen.getByText(/the whole piece will be deleted/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Yes, delete version 2" }));
+  expect(await screen.findByText("No pieces yet. Describe one in a conversation.")).toBeInTheDocument();
+});

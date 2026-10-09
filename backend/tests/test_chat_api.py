@@ -405,6 +405,7 @@ def test_a_built_and_reviewed_piece_shows_in_the_progress(client: TestClient, re
     body = client.get(f"/chat/threads/{thread}/progress").json()
     done = {s["step"]: s for s in body["steps"]}
     assert body["latest_version"] == 1
+    assert (body["version_count"], body["max_versions"]) == (1, 15)
     assert body["approved_version"] is None
     assert done["built"]["done"] and done["rendered"]["done"] and done["reviewed"]["done"]
     assert not done["detail"]["done"] and not done["final"]["done"]
@@ -960,11 +961,17 @@ def test_a_render_notice_follows_the_reply_that_started_the_render(client: TestC
             session, UUID(thread), after_messages=2, outcome="failed", tier="preview",
             text="The preview still of the flat shell version 1 did not finish, so nothing new was published. You can ask for it again.",
         )
+        house_file.add_notice(
+            session, UUID(thread), after_messages=2, outcome="succeeded", kind="build", tier=None,
+            text="hall-bench version 2 is built.", package_id="hall-bench", version=2,
+        )
         session.commit()
 
     messages = client.get(f"/chat/threads/{thread}").json()["messages"]
-    assert [m["role"] for m in messages] == ["owner", "assistant", "notice", "notice"]
-    done, failed = messages[2], messages[3]
+    assert [m["role"] for m in messages] == ["owner", "assistant", "notice", "notice", "notice"]
+    done, failed, built = messages[2], messages[3], messages[4]
+    assert [m["kind"] for m in messages[2:]] == ["render", "render", "build"]
+    assert "tier" not in built and (built["package_id"], built["version"]) == ("hall-bench", 2)
     assert (done["outcome"], done["tier"], done["package_id"], done["version"]) == ("succeeded", "draft", "hall-bench", 1)
     assert (failed["outcome"], failed["tier"]) == ("failed", "preview")
     assert "package_id" not in failed and "version" not in failed and "package_id" not in messages[0]

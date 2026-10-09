@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.agent import house_file
 from app.blender import storage
+from app.packages import service
 
 STEPS: Final = ("brief", "piece", "built", "rendered", "reviewed", "detail", "final")
 
@@ -139,6 +140,9 @@ def piece_progress(
         "name": piece["name"] if piece else None,
         "latest_version": latest,
         "approved_version": piece["approved_version"] if piece else None,
+        # How many versions the piece holds, and the most it can (version-cleanup-and-inspection).
+        "version_count": len(storage.versions(root, package_id)) if has_piece and package_id else 0,
+        "max_versions": service.MAX_VERSIONS,
         "build_status": build_status if has_piece else None,
         "rendering": rendering,
         "steps": steps,

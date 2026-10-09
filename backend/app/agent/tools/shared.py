@@ -18,6 +18,7 @@ from app.agent.tools.base import (
 from app.blender import storage
 from app.blender.schemas import CustomBuildSpec, describe_validation_error
 from app.blender.spec_contract import SpecValidationError
+from app.packages import service
 
 NOT_APPROVED = "this action needs the owner's confirmation first and was not run"
 
@@ -41,6 +42,21 @@ def checked_package_id(package_id: str) -> tuple[str | None, str]:
 def latest_version(deps: ToolDeps, package_id: str) -> int | None:
     found = storage.versions(deps.render_root, package_id)
     return found[-1] if found else None
+
+
+def version_limit_refusal(deps: ToolDeps, package_id: str) -> str | None:
+    """The code-written refusal when the piece already holds the most versions, else `None`."""
+    if len(storage.versions(deps.render_root, package_id)) >= service.MAX_VERSIONS:
+        return service.version_limit_message(package_id)
+    return None
+
+
+def version_limit_line(deps: ToolDeps, package_id: str) -> str | None:
+    """The heads-up for a confirmation when the new version is one of the last three it can hold."""
+    count = len(storage.versions(deps.render_root, package_id)) + 1
+    if count > service.MAX_VERSIONS - 3:
+        return f"This will be version {count} of {service.MAX_VERSIONS} the piece can hold."
+    return None
 
 
 def version_folder(deps: ToolDeps, package_id: str, version: int | None) -> tuple[Path | None, int | None, str]:

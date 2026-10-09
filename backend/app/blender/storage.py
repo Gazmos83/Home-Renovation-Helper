@@ -140,9 +140,58 @@ def versions(root: Path, package_id: str) -> list[int]:
     return _version_numbers(package_dir(root, package_id))
 
 
+# The highest version number a package has ever had, kept beside its versions so a
+# deleted version's number is never given out again (version-cleanup-and-inspection).
+LAST_VERSION_FILE: Final = ".last_version"
+
+
+def _last_version(folder: Path) -> int:
+    try:
+        return max(int((folder / LAST_VERSION_FILE).read_text(encoding="utf-8").strip()), 0)
+    except (FileNotFoundError, ValueError):
+        return 0
+
+
 def next_version(root: Path, package_id: str) -> int:
     existing = versions(root, package_id)
-    return (existing[-1] + 1) if existing else 1
+    highest = max(existing[-1] if existing else 0, _last_version(package_dir(root, package_id)))
+    return highest + 1
+
+
+def move_version_aside(root: Path, package_id: str, version: int) -> Path:
+    """Record the package's highest number in `.last_version`, then move the version's folder
+    to a hidden `.deleting-v<N>-<hex>` sibling that no listing matches. Raises
+    `FileNotFoundError` when the version has no folder."""
+    folder = version_dir(root, package_id, version)
+    if not folder.is_dir():
+        raise FileNotFoundError(f"{package_id} version {version} has no folder")
+    package = folder.parent
+    highest = max(max(_version_numbers(package)), _last_version(package))
+    temp = package / f".{LAST_VERSION_FILE}.{uuid4().hex}.tmp"
+    temp.write_text(str(highest), encoding="utf-8")
+    os.replace(temp, package / LAST_VERSION_FILE)
+    hidden = package / f".deleting-v{version}-{uuid4().hex[:12]}"
+    os.replace(folder, hidden)
+    return hidden
+
+
+def move_version_back(root: Path, package_id: str, version: int, hidden: Path) -> None:
+    """Undo `move_version_aside` (the high-water file stays; it only ever grows)."""
+    os.replace(hidden, version_dir(root, package_id, version))
+
+
+def discard_version(root: Path, package_id: str, hidden: Path) -> None:
+    """Remove a folder moved aside; when the package has no version left, remove the
+    package's folder too. A leftover hidden folder is never listed, so errors are ignored."""
+    shutil.rmtree(hidden, ignore_errors=True)
+    package = package_dir(root, package_id)
+    if not _version_numbers(package):
+        shutil.rmtree(package, ignore_errors=True)
+
+
+def remove_version(root: Path, package_id: str, version: int) -> None:
+    """Move a version's folder aside and remove it."""
+    discard_version(root, package_id, move_version_aside(root, package_id, version))
 
 
 # --- apartment shells: `<root>/shells/<apartment-slug>/v<N>/` -----------------------------

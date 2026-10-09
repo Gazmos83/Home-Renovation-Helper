@@ -4,12 +4,13 @@ import { ContactShadows, Grid, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { PieceModel } from "./PieceModel";
 import { DimensionOverlay } from "./DimensionOverlay";
+import { ModuleLabels } from "./ModuleLabels";
 import type { PieceSpec } from "@/lib/api";
 import {
   baseOf,
   cameraPresets,
   customBuildExplode,
-  layerVisible,
+  dimensionOverlays,
   PIECE_ISO,
   type CameraPreset,
   type Layers,
@@ -148,7 +149,7 @@ export default function InspectorCanvas({
   // Memoised: a new preset object would move the camera back on every slider step.
   const presets = useMemo(() => cameraPresets(spec.overall, base, isoDirection), [spec.overall, base, isoDirection]);
   const offsets = useMemo(() => customBuildExplode(spec), [spec]);
-  const showDimensions = layerVisible(layers, "dimensions") && mode !== "exploded";
+  const { overall: showDimensions, modules: showModuleLabels } = dimensionOverlays(layers, mode);
   return (
     <Canvas
       shadows
@@ -163,6 +164,7 @@ export default function InspectorCanvas({
       <Suspense fallback={null}>
         <group position={offset}>
           <PieceModel url={url} layerMap={spec.layers} layers={layers} mode={mode} explode={explode} offsets={offsets} />
+          {showModuleLabels && <ModuleLabels spec={spec} offsets={offsets} explode={explode} />}
         </group>
         {showDimensions && <DimensionOverlay overall={spec.overall} base={base} />}
       </Suspense>

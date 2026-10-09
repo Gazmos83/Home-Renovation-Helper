@@ -142,8 +142,11 @@ class AnswerRowOut(BaseModel):
 class MessageOut(BaseModel):
     role: Literal["owner", "assistant", "confirmation", "notice"]
     text: str
-    # `answers` is an answered question set, shown as its `rows` (studio-chat-polish).
-    kind: Literal["text", "answers"] = Field(default="text", exclude_if=lambda kind: kind == "text")
+    # `answers` is an answered question set, shown as its `rows` (studio-chat-polish); a
+    # notice is a `render` or a `build` notice (version-cleanup-and-inspection).
+    kind: Literal["text", "answers", "render", "build"] = Field(
+        default="text", exclude_if=lambda kind: kind == "text"
+    )
     rows: list[AnswerRowOut] | None = Field(default=None, exclude_if=lambda rows: rows is None)
     # The files sent with an owner's message; left out when none were.
     upload_ids: list[UUID] | None = Field(default=None, exclude_if=lambda ids: ids is None)
@@ -178,6 +181,9 @@ class ProgressOut(BaseModel):
     name: str | None
     latest_version: int | None
     approved_version: int | None
+    # How many versions the piece holds and the most it can (version-cleanup-and-inspection).
+    version_count: int = 0
+    max_versions: int
     build_status: str | None
     steps: list[StepOut]
     next_step: str

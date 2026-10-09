@@ -119,6 +119,18 @@ def test_an_invalid_edit_creates_no_version(client: TestClient, render_root: Pat
     assert not (render_root / "hall-bench" / "v2").exists()
 
 
+def test_a_sixteenth_version_is_refused_and_writes_no_folder(client: TestClient, render_root: Path) -> None:
+    create(client)
+    for number in range(2, 16):
+        storage.version_dir(render_root, "hall-bench", number).mkdir()
+    response = client.put("/packages/hall-bench/spec", json={"spec": desk()})
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["failure_class"] == "version_limit"
+    assert "15 versions" in detail["reason"] and "Pieces page" in detail["reason"]
+    assert not (render_root / "hall-bench" / "v16").exists()
+
+
 def test_editing_an_unknown_package_is_not_found(client: TestClient) -> None:
     assert client.put("/packages/nope/spec", json={"spec": desk()}).status_code == 404
 
@@ -278,6 +290,7 @@ def test_a_symlink_leading_outside_the_root_is_not_served(
     [("GET", "/packages"), ("GET", "/packages/x"), ("POST", "/packages"),
      ("GET", "/packages/x/versions/1/files/spec.json"), ("PUT", "/packages/x/spec"),
      ("PUT", "/packages/x/versions/1/approval"), ("DELETE", "/packages/x/versions/1/approval"),
+     ("DELETE", "/packages/x/versions/1"),
      ("GET", "/packages/x/versions/1/design"), ("GET", "/packages/x/versions/1/bundle"),
      ("PUT", "/packages/x/room"), ("GET", "/rooms"), ("DELETE", "/rooms/x")],
 )
@@ -401,6 +414,42 @@ def test_approving_an_unknown_version_is_not_found(client: TestClient) -> None:
     assert client.put("/packages/hall-bench/versions/9/approval").status_code == 404
     assert client.put("/packages/nothing/versions/1/approval").status_code == 404
     assert client.delete("/packages/hall-bench/versions/9/approval").status_code == 404
+
+
+# --- deleting a version (version-cleanup-and-inspection) ---------------------------------------
+
+
+def test_a_deleted_version_is_gone_and_the_next_edit_gets_a_new_number(client: TestClient, render_root: Path) -> None:
+    create(client)
+    assert client.put("/packages/hall-bench/spec", json={"spec": desk()}).json()["version"] == 2
+    response = client.delete("/packages/hall-bench/versions/2")
+    assert response.status_code == 204
+    assert not (render_root / "hall-bench" / "v2").exists()
+    assert [v["version"] for v in client.get("/packages/hall-bench").json()["versions"]] == [1]
+    assert client.put("/packages/hall-bench/spec", json={"spec": desk()}).json()["version"] == 3
+
+
+def test_deleting_an_approved_version_is_refused_with_the_reason(client: TestClient, record) -> None:
+    create(client)
+    record("hall-bench", (1,))
+    client.put("/packages/hall-bench/versions/1/approval")
+    response = client.delete("/packages/hall-bench/versions/1")
+    assert response.status_code == 409
+    assert "unapprove version 1 first" in response.json()["detail"]["reason"]
+    assert client.get("/packages/hall-bench/versions/1").status_code == 200
+
+
+def test_deleting_the_only_version_removes_the_package(client: TestClient, render_root: Path) -> None:
+    create(client)
+    assert client.delete("/packages/hall-bench/versions/1").status_code == 204
+    assert not (render_root / "hall-bench").exists()
+    assert client.get("/packages").json() == []
+
+
+@pytest.mark.parametrize("path", ["/packages/hall-bench/versions/9", "/packages/Bad/versions/1", "/packages/hall-bench/versions/0"])
+def test_deleting_an_unknown_version_is_not_found(client: TestClient, path: str) -> None:
+    create(client)
+    assert client.delete(path).status_code == 404
 
 
 # --- export (design-import) -----------------------------------------------------------------

@@ -488,7 +488,7 @@ def _confirmation_line(answered: dict[str, Any]) -> str:
 
 
 def _notice_entry(notice: Any) -> dict[str, Any]:
-    entry = {"role": "notice", "text": notice.text, "outcome": notice.outcome, "tier": notice.tier}
+    entry = {"role": "notice", "kind": notice.kind, "text": notice.text, "outcome": notice.outcome, "tier": notice.tier}
     if notice.package_id is not None and notice.version is not None:
         entry |= {"package_id": notice.package_id, "version": notice.version}
     return entry

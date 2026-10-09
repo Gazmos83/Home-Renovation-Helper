@@ -416,13 +416,15 @@ class Thread(Base):
 
 
 class ThreadNotice(Base):
-    """A notice code posted into a conversation when a render it started ended
-    (studio-layout). `after_messages` is how many checkpointed messages the thread
-    held then, so history can place it; the text never carries error text or paths."""
+    """A notice code posted into a conversation when a render (studio-layout) or a build
+    (version-cleanup-and-inspection) it started ended. `after_messages` is how many
+    checkpointed messages the thread held then, so history can place it; the text never
+    carries error text or paths. A build notice has no tier."""
 
     __tablename__ = "thread_notices"
     __table_args__ = (
         CheckConstraint("outcome IN ('succeeded', 'failed')", name="ck_thread_notices_outcome"),
+        CheckConstraint("kind IN ('render', 'build')", name="ck_thread_notices_kind"),
         Index("ix_thread_notices_thread_id_after_messages", "thread_id", "after_messages"),
     )
 
@@ -436,7 +438,8 @@ class ThreadNotice(Base):
     )
     after_messages: Mapped[int] = mapped_column(Integer, nullable=False)
     outcome: Mapped[str] = mapped_column(String(16), nullable=False)
-    tier: Mapped[str] = mapped_column(String(16), nullable=False)
+    kind: Mapped[str] = mapped_column(String(8), nullable=False, server_default="render")
+    tier: Mapped[str | None] = mapped_column(String(16), nullable=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     package_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     version: Mapped[int | None] = mapped_column(Integer, nullable=True)

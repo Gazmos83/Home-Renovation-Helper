@@ -44,6 +44,40 @@ def test_next_version_follows_the_existing_folders(tmp_path: Path) -> None:
     assert storage.next_version(tmp_path, "desk") == 3
 
 
+def test_a_deleted_highest_version_number_is_not_reused(tmp_path: Path) -> None:
+    for number in (1, 2, 3):
+        storage.version_dir(tmp_path, "desk", number).mkdir(parents=True)
+    storage.remove_version(tmp_path, "desk", 3)
+    assert storage.versions(tmp_path, "desk") == [1, 2]
+    assert storage.next_version(tmp_path, "desk") == 4
+    storage.remove_version(tmp_path, "desk", 1)
+    assert storage.next_version(tmp_path, "desk") == 4
+
+
+def test_dot_files_are_not_listed_as_versions(tmp_path: Path) -> None:
+    for number in (1, 2):
+        storage.version_dir(tmp_path, "desk", number).mkdir(parents=True)
+    hidden = storage.move_version_aside(tmp_path, "desk", 2)
+    assert hidden.name.startswith(".deleting-v2-")
+    assert (tmp_path / "desk" / storage.LAST_VERSION_FILE).read_text(encoding="utf-8") == "2"
+    assert storage.versions(tmp_path, "desk") == [1]
+    assert storage.list_packages(tmp_path) == [("desk", [1])]
+    storage.move_version_back(tmp_path, "desk", 2, hidden)
+    assert storage.versions(tmp_path, "desk") == [1, 2]
+
+
+def test_removing_the_last_version_removes_the_package_folder(tmp_path: Path) -> None:
+    storage.version_dir(tmp_path, "desk", 1).mkdir(parents=True)
+    storage.remove_version(tmp_path, "desk", 1)
+    assert not (tmp_path / "desk").exists()
+    assert storage.list_packages(tmp_path) == []
+
+
+def test_moving_a_missing_version_aside_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        storage.move_version_aside(tmp_path, "desk", 1)
+
+
 def test_a_version_must_be_a_positive_integer(tmp_path: Path) -> None:
     for bad in (0, -1, True, "1"):
         with pytest.raises(ValueError):

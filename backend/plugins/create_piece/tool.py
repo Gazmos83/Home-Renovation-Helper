@@ -13,7 +13,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.agent import house_file
+from app.agent import house_file, notices
 from app.agent.tools.base import (
     AgentTool,
     Confirmation,
@@ -132,7 +132,9 @@ def create_and_record(
         ctx.deps.render_root,
         package_id,
         spec,
-        lambda version: ctx.deps.start_build(package_id, version),
+        lambda version: notices.follow_build(
+            ctx.deps, ctx.thread_id, ctx.deps.start_build(package_id, version), package_id, version
+        ),
         inputs=inputs,
     )
     room_id, _refusal = piece_room(ctx)

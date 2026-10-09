@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
-from app.agent import house_file, measurements
+from app.agent import house_file, measurements, notices
 from app.agent.revise import ReviseError, revise_spec
 from app.agent.tools.base import (
     AgentTool,
@@ -34,6 +34,8 @@ from app.agent.tools.shared import (
     latest_version,
     read_input,
     validated_custom_build,
+    version_limit_line,
+    version_limit_refusal,
 )
 from app.blender import storage
 from app.blender.schemas import PackageChanges, describe_validation_error
@@ -134,12 +136,18 @@ def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
     unavailable = builds_unavailable(ctx.deps)
     if unavailable:
         return unavailable
+    limited = version_limit_refusal(ctx.deps, package_id)
+    if limited:
+        return limited
     refusal, warnings = piece_outcome(ctx.deps.design_rules, spec)
     if refusal:
         return refusal
     summary = f"Revise {package_id} (from version {latest}):\n" + "\n".join(lines)
     if warnings:
         summary += f"\nDesign-rule warnings: {warnings}"
+    heads_up = version_limit_line(ctx.deps, package_id)
+    if heads_up:
+        summary += f"\n{heads_up}"
     return Confirmation(
         subject="revise",
         summary=summary,
@@ -159,6 +167,9 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
     refusal, _warnings = piece_outcome(ctx.deps.design_rules, spec)
     if refusal:
         return refusal
+    limited = version_limit_refusal(ctx.deps, package_id)
+    if limited:
+        return limited
 
     version = record_next(ctx, package_id, latest, spec, lines)
     return ToolOutput(
@@ -181,7 +192,9 @@ def record_next(
         ctx.deps.render_root,
         package_id,
         spec,
-        lambda version: ctx.deps.start_build(package_id, version),
+        lambda version: notices.follow_build(
+            ctx.deps, ctx.thread_id, ctx.deps.start_build(package_id, version), package_id, version
+        ),
         inputs=inputs,
     )
     with ctx.deps.session() as session:
@@ -232,13 +245,22 @@ def rebuild_preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation
     if unavailable:
         return unavailable
     package_id, latest, _spec = checked
+    limited = version_limit_refusal(ctx.deps, package_id)
+    if limited:
+        return limited
+    # Not `latest + 1`: a deleted version's number is never given out again.
+    following = storage.next_version(ctx.deps.render_root, package_id)
+    summary = (
+        f"Rebuild {package_id} as version {following}, unchanged from version {latest}: "
+        "the same design, built again with what the app now makes for every build."
+    )
+    heads_up = version_limit_line(ctx.deps, package_id)
+    if heads_up:
+        summary += f"\n{heads_up}"
     return Confirmation(
         subject="rebuild",
-        summary=(
-            f"Rebuild {package_id} as version {latest + 1}, unchanged from version {latest}: "
-            "the same design, built again with what the app now makes for every build."
-        ),
-        proposal={"package_id": package_id, "revised_from": latest, "version": latest + 1},
+        summary=summary,
+        proposal={"package_id": package_id, "revised_from": latest, "version": following},
     )
 
 
@@ -252,6 +274,9 @@ def rebuild_run(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str
     if unavailable:
         return unavailable
     package_id, latest, spec = checked
+    limited = version_limit_refusal(ctx.deps, package_id)
+    if limited:
+        return limited
     line = f"rebuilt unchanged from version {latest}"
     version = record_next(ctx, package_id, latest, spec, [line])
     return ToolOutput(

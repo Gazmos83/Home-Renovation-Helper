@@ -17,6 +17,21 @@ from app.blender import runner, storage
 
 logger = logging.getLogger("app")
 
+# The most versions a piece holds at a time; a deleted version does not count
+# (version-cleanup-and-inspection). The one place the limit is set.
+MAX_VERSIONS = 15
+
+
+class VersionLimitReached(ValueError):
+    """The package already holds `MAX_VERSIONS` versions; the message says what to do."""
+
+
+def version_limit_message(package_id: str) -> str:
+    return (
+        f"{package_id} has {MAX_VERSIONS} versions, the most a piece can hold. Delete one on "
+        "the Pieces page or in the Project panel, then ask again."
+    )
+
 
 def create_version(
     root: Path,
@@ -25,7 +40,12 @@ def create_version(
     start: Callable[[int], None],
     inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Write the next version's input (and its frozen hardware inputs), mark it queued, hand it to `start`."""
+    """Write the next version's input (and its frozen hardware inputs), mark it queued, hand it to `start`.
+
+    Raises `VersionLimitReached`, before anything is written, when the package already
+    holds `MAX_VERSIONS` versions."""
+    if len(storage.versions(root, package_id)) >= MAX_VERSIONS:
+        raise VersionLimitReached(version_limit_message(package_id))
     version = storage.next_version(root, package_id)
     folder = storage.version_dir(root, package_id, version)
     folder.mkdir(parents=True)

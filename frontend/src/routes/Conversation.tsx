@@ -31,6 +31,7 @@ import { Reply } from "@/components/chat/Reply";
 import { ROLE_LABELS } from "@/components/chat/roles";
 import { WaitingBubble } from "@/components/chat/WaitingBubble";
 import { InspectorView } from "@/components/inspector/InspectorView";
+import { DeleteVersion } from "@/components/DeleteVersion";
 
 const STEP_LABELS: Record<string, string> = {
   brief: "Brief confirmed",
@@ -85,10 +86,13 @@ function ProjectPanel({
   threadId,
   progress,
   onInspect,
+  onDeleted,
 }: {
   threadId: string;
   progress: UseQueryResult<Progress>;
   onInspect: (packageId: string, version: number) => void;
+  /** A version of the piece was deleted. */
+  onDeleted: (packageId: string, version: number) => void;
 }) {
   const queryClient = useQueryClient();
   const change = useMutation({
@@ -109,13 +113,15 @@ function ProjectPanel({
   const picture = p.still ?? p.screenshot;
   const canApproveLatest =
     p.latest_version !== null && p.build_status === "succeeded" && p.approved_version !== p.latest_version;
+  const building = p.build_status === "queued" || p.build_status === "running";
+  // The heads-up shows from three short of the limit ("13 of 15 versions").
+  const nearLimit = p.package_id !== null && p.version_count > p.max_versions - 3;
 
   return (
     <section className="space-y-3" aria-label="Project">
       {p.package_id ? (
         <p>
-          <strong>{p.name}</strong> <Badge variant="secondary">{p.package_id}</Badge>{" "}
-          {p.latest_version !== null && <span>version {p.latest_version}</span>}
+          <strong>{p.name}</strong> <Badge variant="secondary">{p.package_id}</Badge>
           {p.build_status && <Badge variant="outline" className="ml-2">{p.build_status}</Badge>}
         </p>
       ) : (
@@ -156,6 +162,25 @@ function ProjectPanel({
             )}
           </div>
           <FieldError message={message(change.error)} />
+        </div>
+      )}
+      {p.package_id && p.latest_version !== null && (
+        <div className="space-y-2">
+          {nearLimit && (
+            <p className="text-sm">
+              {p.version_count} of {p.max_versions} versions
+            </p>
+          )}
+          {/* No delete while the latest version builds (it would be refused) or once it is approved. */}
+          {!building && p.approved_version !== p.latest_version && (
+            <DeleteVersion
+              key={`${p.package_id}/${p.latest_version}`}
+              packageId={p.package_id}
+              version={p.latest_version}
+              only={p.version_count === 1}
+              onDeleted={() => onDeleted(p.package_id as string, p.latest_version as number)}
+            />
+          )}
         </div>
       )}
       {picture && <img src={picture} alt={`Latest picture of ${p.package_id}`} className="max-h-56 rounded-md border" />}
@@ -351,18 +376,34 @@ export default function Conversation() {
       return status === "queued" || status === "running" || query.state.data?.rendering ? 3000 : false;
     },
   });
-  const rendering = progress.data?.rendering ?? false;
+  const building = ["queued", "running"].includes(progress.data?.build_status ?? "");
+  // A render or a build posts its notice when it ends (version-cleanup-and-inspection).
+  const following = (progress.data?.rendering ?? false) || building;
   const thread = useQuery({
     queryKey: ["thread", threadId],
     queryFn: () => api.thread(threadId),
-    refetchInterval: rendering ? 3000 : false,
+    refetchInterval: following ? 3000 : false,
   });
-  // Once a render ends its notice is in the thread: read it again one last time.
-  const wasRendering = useRef(false);
+  // Once a render or build ends its notice is in the thread: read it again one last time.
+  const wasFollowing = useRef(false);
   useEffect(() => {
-    if (wasRendering.current && !rendering) queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
-    wasRendering.current = rendering;
-  }, [rendering, queryClient, threadId]);
+    if (wasFollowing.current && !following) queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
+    wasFollowing.current = following;
+  }, [following, queryClient, threadId]);
+  const inspectedSpec = useQuery({
+    queryKey: ["spec", inspected?.packageId, inspected?.version],
+    queryFn: () => api.pieceSpec(inspected?.packageId as string, inspected?.version as number),
+    enabled: inspected !== null,
+    retry: false,
+  });
+
+  function deleted(packageId: string, version: number) {
+    queryClient.removeQueries({ queryKey: ["version", packageId, version] });
+    queryClient.invalidateQueries({ queryKey: ["piece-versions", packageId] });
+    queryClient.invalidateQueries({ queryKey: ["pieces"] });
+    void refresh();
+    if (inspected?.packageId === packageId && inspected.version === version) inspect(null);
+  }
 
   function inspect(packageId: string | null, version?: number) {
     setParams(
@@ -470,7 +511,7 @@ export default function Conversation() {
             id: "project",
             label: "Project",
             icon: "project",
-            content: <ProjectPanel threadId={threadId} progress={progress} onInspect={inspect} />,
+            content: <ProjectPanel threadId={threadId} progress={progress} onInspect={inspect} onDeleted={deleted} />,
           },
         ]}
       />
@@ -567,7 +608,7 @@ export default function Conversation() {
               className="min-w-0 space-y-2 lg:sticky lg:top-[calc(var(--header-h)+1rem)] lg:max-h-[calc(100vh-var(--header-h)-2rem)] lg:overflow-y-auto"
             >
               <div className="flex items-center justify-between gap-2">
-                <h2>{`${inspected.packageId}, version ${inspected.version}`}</h2>
+                <h2>{inspectedSpec.data?.name || inspected.packageId}</h2>
                 <Button type="button" variant="ghost" size="sm" aria-label="Close inspector" onClick={() => inspect(null)}>
                   <X aria-hidden size={16} />
                 </Button>

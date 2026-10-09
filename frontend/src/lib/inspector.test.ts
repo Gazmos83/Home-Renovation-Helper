@@ -1,4 +1,4 @@
-import { baseOf, cameraPresets, customBuildExplode, layerOf, layerVisible } from "./inspector";
+import { baseOf, cameraPresets, customBuildExplode, dimensionOverlays, layerOf, layerVisible, moduleLabels } from "./inspector";
 
 describe("customBuildExplode", () => {
   it("moves two side-by-side modules apart along x and leaves the extras alone", () => {
@@ -60,5 +60,55 @@ describe("cameraPresets", () => {
   it("takes the base from the lowest module", () => {
     expect(baseOf({ modules: { a: { z: 900 }, b: { z: 1200 } } })).toBe(0.9);
     expect(baseOf({})).toBe(0);
+  });
+});
+
+describe("moduleLabels (version-cleanup-and-inspection)", () => {
+  const spec = {
+    overall: { w: 1200, h: 720, d: 560 },
+    modules: {
+      left: { x: 0, y: 0, z: 0, w: 600, h: 720, d: 560 },
+      right: { x: 600, y: 0, z: 0, w: 600, h: 720, d: 560 },
+    },
+    module_names: { left: "Left lower cabinet" },
+  };
+
+  it("names each module, or its id, with W × H × D in mm", () => {
+    const labels = moduleLabels(spec, {}, 0);
+    expect(labels.map((l) => l.text)).toEqual(["Left lower cabinet 600 × 720 × 560 mm", "right 600 × 720 × 560 mm"]);
+  });
+
+  it("places each label at its module's centre, centred on x and depth like the model", () => {
+    const [left, right] = moduleLabels(spec, {}, 0);
+    expect(left!.position).toEqual([-0.3, 0.36, 0]);
+    expect(right!.position).toEqual([0.3, 0.36, 0]);
+  });
+
+  it("moves each label with its module as the slider moves", () => {
+    const offsets = customBuildExplode(spec);
+    const [half] = moduleLabels(spec, offsets, 0.5);
+    const [full] = moduleLabels(spec, offsets, 1);
+    expect(half!.position[0]).toBeCloseTo(-0.3 - 0.225);
+    expect(full!.position[0]).toBeCloseTo(-0.3 - 0.45);
+  });
+
+  it("centres on the envelope when the build has one", () => {
+    const enveloped = { ...spec, modules: { left: { x: 100, y: 0, z: 0, w: 600, h: 720, d: 560 } }, input: { envelope: { w: 1200 } } };
+    expect(moduleLabels(enveloped, {}, 0)[0]!.position[0]).toBeCloseTo(-0.2);
+  });
+
+  it("gives nothing when spec.json has no modules", () => {
+    expect(moduleLabels({ overall: spec.overall }, {}, 1)).toEqual([]);
+  });
+});
+
+describe("dimensionOverlays", () => {
+  it("shows module labels instead of the overall lines only in Exploded mode", () => {
+    expect(dimensionOverlays({}, "exploded")).toEqual({ overall: false, modules: true });
+    expect(dimensionOverlays({}, "workshop")).toEqual({ overall: true, modules: false });
+  });
+
+  it("follows the dimensions switch", () => {
+    expect(dimensionOverlays({ dimensions: false }, "exploded")).toEqual({ overall: false, modules: false });
   });
 });
