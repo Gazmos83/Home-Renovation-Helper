@@ -120,7 +120,13 @@ def ingest_guidelines(
     root: Path = DEFAULT_GUIDELINE_ROOT,
 ) -> GuidelineReport:
     report = GuidelineReport()
-    for source in sources if sources is not None else load_sources(root=root):
+    if sources is None:
+        # Uploaded PDFs are file sources beside the checked-in list (dev-panel-insights); `uploads`
+        # imports this module, so it is read here rather than at the top.
+        from app.guidelines.uploads import uploaded_sources
+
+        sources = [*load_sources(root=root), *uploaded_sources(session)]
+    for source in sources:
         try:
             if source.path is not None:
                 text = _local_text(source, root)

@@ -346,9 +346,17 @@ class CompositionVersion(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         CheckConstraint("version >= 1", name="ck_composition_versions_version_positive"),
+        # At most one approved version per composition.
+        Index(
+            "uq_composition_versions_one_approved",
+            "composition_id",
+            unique=True,
+            postgresql_where=text("approved_at IS NOT NULL"),
+        ),
     )
 
 
@@ -1138,4 +1146,54 @@ class HardwareDataSheet(Base):
         CheckConstraint("kind IN ('hinge', 'shelf_pin')", name="ck_hardware_data_sheets_kind_known"),
         CheckConstraint("source_kind IN ('toom', 'manual')", name="ck_hardware_data_sheets_source_known"),
         CheckConstraint("btrim(citation) <> ''", name="ck_hardware_data_sheets_citation_not_blank"),
+    )
+
+
+class ModelPrice(Base):
+    """One registry slug's price per million tokens, as OpenRouter's model list last stated it (dev-panel-insights).
+
+    A slug the list does not price has no row and shows "no price". Prices only drive estimated
+    costs on developer routes; the OpenRouter spend cap stays the real limit.
+    """
+
+    __tablename__ = "model_prices"
+
+    slug: Mapped[str] = mapped_column(String(256), primary_key=True)
+    input_per_million: Mapped[Decimal] = mapped_column(Numeric(14, 6), nullable=False)
+    output_per_million: Mapped[Decimal] = mapped_column(Numeric(14, 6), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("input_per_million >= 0", name="ck_model_prices_input_non_negative"),
+        CheckConstraint("output_per_million >= 0", name="ck_model_prices_output_non_negative"),
+    )
+
+
+class GuidelineUpload(Base):
+    """A guideline PDF uploaded from the developer panel, ingested beside the checked-in sources (dev-panel-insights).
+
+    The file lives under the gitignored guidelines PDF folder as `pdf/upload-<sha12>.pdf`;
+    `ingested_at` is set when its passages are in the corpus, `error` when ingestion failed.
+    """
+
+    __tablename__ = "guideline_uploads"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    jurisdiction: Mapped[str] = mapped_column(String(200), nullable=False)
+    published_on: Mapped[date] = mapped_column(Date, nullable=False)
+    licence: Mapped[str] = mapped_column(Text, nullable=False)
+    file_name: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("btrim(title) <> ''", name="ck_guideline_uploads_title_not_blank"),
+        CheckConstraint("btrim(licence) <> ''", name="ck_guideline_uploads_licence_not_blank"),
+        CheckConstraint("size_bytes > 0", name="ck_guideline_uploads_size_positive"),
     )

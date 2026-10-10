@@ -81,10 +81,14 @@ def load_rules(path: Path = DEFAULT_RULES_PATH, *, known_sources: frozenset[str]
         raise DesignRulesError(f"design rules file is not valid YAML: {path}: {error}") from None
     if not isinstance(raw, dict) or not isinstance(raw.get("rules"), list):
         raise DesignRulesError(f"{path.name}: needs a 'rules' list")
-    sources = source_ids() if known_sources is None else known_sources
+    return parse_rules(raw["rules"], source_ids() if known_sources is None else known_sources)
+
+
+def parse_rules(items: list[Any], sources: frozenset[str]) -> tuple[Rule, ...]:
+    """Validate a rules table exactly as startup does; the first problem raises naming the rule."""
     rules: list[Rule] = []
     seen: set[str] = set()
-    for index, item in enumerate(raw["rules"]):
+    for index, item in enumerate(items):
         name = item.get("id") if isinstance(item, dict) else None
         label = name or f"#{index}"
         try:

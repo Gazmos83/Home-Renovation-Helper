@@ -16,10 +16,13 @@ import Rooms from "./routes/Rooms";
 import Snapshots from "./routes/Snapshots";
 import ConversationCalls from "./routes/admin/ConversationCalls";
 import Feedback from "./routes/admin/Feedback";
+import AdminGuidelines from "./routes/admin/Guidelines";
 import Models from "./routes/admin/Models";
 import Offload from "./routes/admin/Offload";
 import Plugins from "./routes/admin/Plugins";
+import Rules from "./routes/admin/Rules";
 import Usage from "./routes/admin/Usage";
+import Workflow from "./routes/admin/Workflow";
 
 const links = [
   ["/conversations", "Conversations"],
@@ -38,6 +41,9 @@ const adminLinks = [
   ["/admin/feedback", "Feedback"],
   ["/admin/offload", "Offload"],
   ["/admin/conversations", "Calls"],
+  ["/admin/workflow", "Workflow"],
+  ["/admin/guidelines", "Guidelines"],
+  ["/admin/rules", "Rules"],
 ] as const;
 
 function NavItem({ to, label }: { to: string; label: string }) {
@@ -148,6 +154,18 @@ export default function App() {
         <Route
           path="/admin/conversations"
           element={signedIn && dev ? <ConversationCalls /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
+        />
+        <Route
+          path="/admin/workflow"
+          element={signedIn && dev ? <Workflow /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
+        />
+        <Route
+          path="/admin/guidelines"
+          element={signedIn && dev ? <AdminGuidelines /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
+        />
+        <Route
+          path="/admin/rules"
+          element={signedIn && dev ? <Rules /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
         />
         <Route path="*" element={<Navigate to={signedIn ? "/conversations" : "/login"} replace />} />
       </Routes>

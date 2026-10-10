@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Page } from "@/components/Page";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { ROLE_LABELS } from "@/components/chat/roles";
+import { UsageCharts } from "@/components/UsageCharts";
 
 /** One conversation's model calls, newest first (dev-panel; studio-chat-polish). */
 export default function ConversationCalls() {
@@ -20,7 +21,9 @@ export default function ConversationCalls() {
 
   return (
     <Page>
-      <h1>Conversation calls</h1>
+      <h1>Calls</h1>
+      <UsageCharts />
+      <h2>Conversation calls</h2>
       {threads.data?.length === 0 && <p>No conversations yet.</p>}
       {threads.data && threads.data.length > 0 && (
         <Label className="flex flex-wrap items-center gap-2">
@@ -50,6 +53,7 @@ export default function ConversationCalls() {
               <TableHead>Model</TableHead>
               <TableHead>Input</TableHead>
               <TableHead>Output</TableHead>
+              <TableHead>Trace</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -64,6 +68,15 @@ export default function ConversationCalls() {
                   {call.estimated && <span className="text-muted-foreground"> (estimate)</span>}
                 </TableCell>
                 <TableCell>{call.output_tokens ?? "—"}</TableCell>
+                <TableCell>
+                  {call.trace_url ? (
+                    <a href={call.trace_url} target="_blank" rel="noreferrer" className="underline">
+                      Langfuse
+                    </a>
+                  ) : (
+                    "—"
+                  )}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

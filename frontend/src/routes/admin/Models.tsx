@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { cardClass } from "@/components/ui/card";
 import { Page } from "@/components/Page";
+import { ModelPrices } from "@/components/ModelPrices";
 
 export default function Models() {
   const queryClient = useQueryClient();
@@ -71,6 +72,7 @@ export default function Models() {
           {errors[`route-${slot.slot}`] && <p className="text-sm text-destructive">{errors[`route-${slot.slot}`]}</p>}
         </section>
       ))}
+      <ModelPrices />
       <h1>Generation and budgets</h1>
       {models.data.models.map((model) => (
         <section key={model.slug} className={cardClass}>

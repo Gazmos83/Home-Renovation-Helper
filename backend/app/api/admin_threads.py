@@ -7,6 +7,7 @@ figures. It sits behind the developer gate and no homeowner route links to it.
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -33,6 +34,8 @@ class CallOut(BaseModel):
     output_tokens: int | None
     # True when the gateway reported no figures and `input_tokens` is the counted estimate.
     estimated: bool
+    # The call's Langfuse trace page; `None` when tracing is off or the call has no trace (dev-panel-insights).
+    trace_url: str | None = None
 
 
 def slot_of(operation: str) -> str:
@@ -42,7 +45,7 @@ def slot_of(operation: str) -> str:
     return operation.removeprefix("chat.")
 
 
-def _call(row: ModelUsage) -> CallOut:
+def _call(row: ModelUsage, tracing: Any = None) -> CallOut:
     estimated = row.input_tokens is None and row.output_tokens is None
     return CallOut(
         time=row.created_at.isoformat(),
@@ -52,6 +55,7 @@ def _call(row: ModelUsage) -> CallOut:
         input_tokens=row.estimated_tokens if estimated else row.input_tokens,
         output_tokens=None if estimated else row.output_tokens,
         estimated=estimated,
+        trace_url=tracing.trace_url(row.trace_id) if tracing is not None else None,
     )
 
 
@@ -65,4 +69,5 @@ def thread_calls(thread_id: UUID, request: Request) -> list[CallOut]:
             .where(ModelUsage.thread_id == thread_id)
             .order_by(ModelUsage.created_at.desc(), ModelUsage.id)
         ).all()
-        return [_call(row) for row in rows]
+        tracing = getattr(request.app.state, "tracing", None)
+        return [_call(row, tracing) for row in rows]

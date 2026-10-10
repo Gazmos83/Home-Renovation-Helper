@@ -27,12 +27,16 @@ from app.agent.models.profiles import Profiles
 from app.agent.models.routing import load_routing, read_routing_overrides
 from app.agent.models.slots import build_slot_models
 from app.agent.tools.base import ToolDeps
+from app.api.admin_guidelines import router as admin_guidelines_router
 from app.api.admin_models import router as admin_models_router
 from app.api.admin_offload import router as admin_offload_router
 from app.api.admin_plugins import router as admin_plugins_router
+from app.api.admin_prices import router as admin_prices_router
 from app.api.admin_render import router as admin_render_router
+from app.api.admin_rules import router as admin_rules_router
 from app.api.admin_threads import router as admin_threads_router
 from app.api.admin_usage import router as admin_usage_router
+from app.api.admin_workflow import router as admin_workflow_router
 from app.api.apartments import router as apartments_router
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
@@ -59,6 +63,7 @@ from app.blender import storage
 from app.config import Settings, get_settings
 from app.db.migrate import current_revision, upgrade_to_head
 from app.db.session import make_engine
+from app.guidelines.rule_overrides import effective_rules
 from app.guidelines.rules import load_rules
 from app.ingestion.live_fetcher import make_live_fetcher
 from app.observability.langfuse import Tracing
@@ -132,6 +137,19 @@ async def _lifespan(app: FastAPI):
         app_logging.logger.warning(
             "owner account not ensured at startup: %s", type(error).__name__
         )
+
+    # Design rules edited on the developer panel apply over the checked-in table
+    # (dev-panel-insights). A stored rule that no longer validates is skipped by
+    # name; an unreachable database leaves the file's table in force.
+    try:
+        app.state.design_rules, rule_states = effective_rules(app.state.engine)
+        for state in rule_states:
+            if not state.valid:
+                app_logging.logger.warning(
+                    "design rule override skipped", extra={"context": {"rule": state.id, "problem": state.problem}}
+                )
+    except Exception as error:  # noqa: BLE001 - reported, not fatal when the DB is down
+        app_logging.logger.warning("design rule overrides not read at startup: %s", type(error).__name__)
 
     # No job queue survives a restart: a build or render still `queued` or
     # `running` from a previous process is not running any more. Fail it here,
@@ -306,6 +324,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_models_router)
     app.include_router(admin_plugins_router)
     app.include_router(admin_usage_router)
+    app.include_router(admin_prices_router)
+    app.include_router(admin_workflow_router)
+    app.include_router(admin_guidelines_router)
+    app.include_router(admin_rules_router)
     app.include_router(admin_threads_router)
     app.include_router(admin_feedback_router)
     app.include_router(admin_offload_router)

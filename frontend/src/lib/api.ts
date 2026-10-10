@@ -76,7 +76,94 @@ export type ThreadCall = {
   input_tokens: number | null;
   output_tokens: number | null;
   estimated: boolean;
+  /** The call's Langfuse trace page, when tracing is on and the call has one (dev-panel-insights). */
+  trace_url?: string | null;
 };
+
+/** Call totals for a range of days, grouped per model, day and agent slot (dev-panel-insights). */
+export type UsageGroup = {
+  key: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_calls: number;
+  cost_usd: number;
+  cost_complete: boolean;
+};
+
+export type UsageSummary = {
+  days: 7 | 30 | 90;
+  cost_incomplete: boolean;
+  label: string;
+  tracing: boolean;
+  model: UsageGroup[];
+  day: UsageGroup[];
+  slot: UsageGroup[];
+};
+
+export type ModelPriceRow = {
+  slug: string;
+  input_per_million_usd: number | null;
+  output_per_million_usd: number | null;
+  fetched_at: string | null;
+};
+
+export type WorkflowTool = {
+  name: string;
+  plugin: string;
+  enabled: boolean;
+  confirmation: boolean;
+  render_guard: boolean;
+};
+
+export type WorkflowMap = {
+  homeowner: string;
+  entry: string;
+  nodes: { name: string; model: string; tools: WorkflowTool[] }[];
+  handoffs: { from: string; to: string }[];
+};
+
+export type GuidelineSourceRow = {
+  id: string;
+  origin: "list" | "upload";
+  title: string;
+  jurisdiction: string;
+  published_on: string;
+  licence: string;
+  format: string;
+  passages: number;
+  deletable: boolean;
+  size_bytes?: number;
+  ingested_at?: string | null;
+  error?: string | null;
+};
+
+export type NewGuidelineUpload = {
+  file: File;
+  title: string;
+  jurisdiction: string;
+  published_on: string;
+  licence: string;
+};
+
+export type DesignRule = {
+  id: string;
+  origin: "file" | "edited" | "panel";
+  valid: boolean;
+  problem: string | null;
+  applies_to: string;
+  check: string;
+  params: Record<string, unknown>;
+  severity: "warn" | "refuse";
+  source?: { publication: string; section: string; quote: string };
+};
+
+export type DesignRulesPayload = {
+  rules: DesignRule[];
+  checks: { name: string; applies_to: string }[];
+};
+
+export type OpenItem = { file: string; line: number; text: string };
 
 export type Upload = { upload_id: string; kind: string; size_bytes: number; original_name: string };
 
@@ -767,6 +854,32 @@ export const api = {
   setOffloadRate: (hourly_rate_eur: number) =>
     request<OffloadSummary>("/admin/offload/rate", { method: "PUT", body: JSON.stringify({ hourly_rate_eur }) }),
   usage: (days = 1) => request<UsageRow[]>(`/admin/usage?days=${days}`),
+  usageSummary: (days: 7 | 30 | 90) => request<UsageSummary>(`/admin/usage/summary?days=${days}`),
+  modelPrices: () => request<ModelPriceRow[]>("/admin/model-prices"),
+  refreshModelPrices: () => request<ModelPriceRow[]>("/admin/model-prices/refresh", { method: "POST" }),
+  workflow: () => request<WorkflowMap>("/admin/workflow"),
+  guidelineSources: () => request<GuidelineSourceRow[]>("/admin/guidelines"),
+  uploadGuideline: (upload: NewGuidelineUpload) => {
+    const form = new FormData();
+    form.append("file", upload.file);
+    form.append("title", upload.title);
+    form.append("jurisdiction", upload.jurisdiction);
+    form.append("published_on", upload.published_on);
+    form.append("licence", upload.licence);
+    return request<GuidelineSourceRow>("/admin/guidelines", { method: "POST", body: form });
+  },
+  reingestGuideline: (id: string) =>
+    request<GuidelineSourceRow>(`/admin/guidelines/${encodeURIComponent(id)}/ingest`, { method: "POST" }),
+  deleteGuideline: (id: string) => request<void>(`/admin/guidelines/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  designRules: () => request<DesignRulesPayload>("/admin/rules"),
+  saveDesignRule: (rule: Omit<DesignRule, "origin" | "valid" | "problem">) =>
+    request<DesignRulesPayload>(`/admin/rules/${encodeURIComponent(rule.id)}`, {
+      method: "PUT",
+      body: JSON.stringify(rule),
+    }),
+  resetDesignRule: (id: string) =>
+    request<DesignRulesPayload>(`/admin/rules/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  openItems: () => request<OpenItem[]>("/admin/open-items"),
   priceList: (category?: string) =>
     request<PriceEntry[]>(category ? `/price-list?category=${encodeURIComponent(category)}` : "/price-list"),
   createEntry: (entry: NewEntry) => request<PriceEntry>("/price-list", { method: "POST", body: JSON.stringify(entry) }),

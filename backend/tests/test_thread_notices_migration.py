@@ -115,7 +115,7 @@ def test_0017_adds_the_kind_and_frees_the_tier(migrated_database: str, monkeypat
                 )
             session.rollback()
 
-        command.downgrade(config, "-1")
+        command.downgrade(config, "0016_hardware_data_sheets")
         try:
             columns = {c["name"]: c for c in inspect(engine).get_columns("thread_notices")}
             assert "kind" not in columns and columns["tier"]["nullable"] is False
