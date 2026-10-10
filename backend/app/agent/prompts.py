@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import Any, Final
 
 from app.agent.revise import describe_fronts, describe_hardware
-from app.blender.custom_build.derive import DeriveError, overall
+from app.blender.custom_build.derive import DeriveError, overall, span_words
 
 # Both delimiters start with this, so neutralising it neutralises both.
 SENTINEL: Final = "[[["
@@ -66,6 +66,17 @@ one step per line, for example:
 ```calc
 430 + 430 + 400 + 100 + 100 = 1460
 ```"""
+
+# Composed by code on every Designer turn so a revision cannot miss `side_folds`
+# (owner test 5.2: the model refused a panel bend as having no field).
+DESIGNER_SIDE_FOLDS_NOTE: Final = """\
+A bend, kink or fold in a carcass side panel is the module field `side_folds` \
+(side left or right, from_mm, along height or depth, angle_deg 1 to 89, towards \
+inside or outside). Apply it to the module the owner named, using that module's \
+id from the piece summary. A 26 degree bend from 1100 mm on the left is \
+`{"side": "left", "from_mm": 1100, "along": "height", "angle_deg": 26, \
+"towards": "inside"}`. Never tell the owner there is no field for a bend angle. \
+An edge bevel is a different request and has no field."""
 
 HOUSE_CONTEXT_PREAMBLE: Final = """\
 The following is the owner's own saved house file: their rooms, preferences, \
@@ -343,11 +354,24 @@ def piece_note(package_id: str, version: int | None, document: Mapping[str, Any]
             shelves += f", {count} {noun} " + (
                 f"at {places} mm from the left side's inner face" if places else "(equal bays)"
             )
+            spans = span_words(module)
+            if len(spans) == 1:
+                shelves += f" {spans[0]}"
+            elif spans:
+                shelves += " (" + "; ".join(f"divider {n} {words}" for n, words in enumerate(spans, start=1)) + ")"
+        if module.get("shelf_kinds"):
+            shelves += f", shelf kinds (lowest first): {', '.join(module['shelf_kinds'])}"
+        folds = module.get("side_folds") or []
+        fold_note = "".join(
+            f", {fold['side']} side fold from {fold['from_mm']} mm along {fold['along']}, "
+            f"{fold['angle_deg']}°, {fold['towards']}"
+            for fold in folds
+        )
         back = f", back {module['back']}" if module.get("back") else ""
         lines.append(
             f'- {module["id"]} "{module.get("name", "")}": '
             f"{module['width']}×{module['height']}×{module['depth']} mm "
-            f"at x{module['x']} y{module['y']} z{module['z']}, carcass {module['carcass']}{back}, {shelves}, "
+            f"at x{module['x']} y{module['y']} z{module['z']}, carcass {module['carcass']}{back}, {shelves}{fold_note}, "
             f"fronts: {describe_fronts(module.get('fronts'))}, hardware: {describe_hardware(module.get('hardware'))}"
         )
     for shelf in document.get("wall_shelves") or []:

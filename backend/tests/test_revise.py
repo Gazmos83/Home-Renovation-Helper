@@ -247,6 +247,21 @@ def test_zero_or_an_empty_list_clears_back_to_even_spacing_and_equal_bays(desk: 
     assert _revise(cleared, modules={"cabinet": {"shelf_spacing_mm": 0, "dividers": 1}})[1] == []
 
 
+def test_side_folds_are_set_and_cleared_with_each_fold_named(desk: dict) -> None:
+    desk["modules"][0]["fronts"] = []
+    desk["modules"][0]["z"] = 0
+    desk["modules"][0]["height"] = 2000
+    desk["envelope"] = {"width": 2000, "height": 2200, "depth": 400}
+    fold = {"side": "left", "from_mm": 1100, "along": "height", "angle_deg": 26, "towards": "inside"}
+    folded, lines = _revise(desk, modules={"cabinet": {"side_folds": [fold]}})
+    assert folded["modules"][0]["side_folds"] == [fold]
+    assert "left from 1100 mm along height, 26°, inside" in lines[0]
+    cleared, lines = _revise(folded, modules={"cabinet": {"side_folds": []}})
+    assert "side_folds" not in cleared["modules"][0]
+    assert "left from 1100 mm along height, 26°, inside" in lines[0] and "not set" in lines[0]
+    CustomBuildSpec.model_validate(cleared)
+
+
 def test_removing_the_dividers_drops_their_positions(desk: dict) -> None:
     divided, _ = _revise(desk, modules={"cabinet": {"dividers": 1, "divider_positions_mm": [400]}})
     plain, lines = _revise(divided, modules={"cabinet": {"dividers": 0}})

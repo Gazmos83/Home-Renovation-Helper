@@ -183,6 +183,33 @@ def test_each_listed_position_needs_its_own_entry() -> None:
     assert check([entry, second], [said], CURRENT, revised(shelf_positions_mm=[300, 700])) == []
 
 
+def test_a_bend_datum_on_a_module_that_had_no_fold_passes() -> None:
+    said = "The left side of the carcass should have a 26 degree bend from 1100 mm"
+    entry = Requested("1100 mm", "cabinet", "side_folds", 1100)
+    revised_doc = revised(side_folds=[{"side": "left", "from_mm": 1100, "along": "height", "angle_deg": 26, "towards": "inside"}])
+    assert check([entry], [said], CURRENT, revised_doc) == []
+
+
+def test_an_invented_fold_datum_is_refused() -> None:
+    said = "from 1100 mm"
+    entry = Requested("1100 mm", "cabinet", "side_folds", 1100)
+    revised_doc = revised(side_folds=[{"side": "left", "from_mm": 1000, "along": "height", "angle_deg": 26, "towards": "inside"}])
+    [refusal] = check([entry], [said], CURRENT, revised_doc)
+    assert "1100 mm expected" in refusal and "1000 mm" in refusal
+
+
+def test_a_relative_fold_datum_is_refused_when_unset() -> None:
+    entry = Requested("5 cm more", "cabinet", "side_folds", 50)
+    refusal, uncovered = check(
+        [entry],
+        ["5 cm more"],
+        CURRENT,
+        revised(side_folds=[{"side": "left", "from_mm": 50, "along": "height", "angle_deg": 26, "towards": "inside"}]),
+    )
+    assert "not set in the latest version" in refusal
+    assert "'5 cm'" in uncovered
+
+
 def test_an_unknown_field_on_an_unset_module_value_is_still_refused() -> None:
     entry = Requested(SAID, "cabinet", "shelf_gap", 355)
     assert "has no length field 'shelf_gap'" in check([entry], [SAID], CURRENT, revised())[0]

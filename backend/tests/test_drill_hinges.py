@@ -98,3 +98,33 @@ def test_borings_are_counted_even_with_no_data() -> None:
     result = _run(None, height=700, doors=4)
     assert result["counts"]["hinge_cup_borings"] == 8
     assert not result["complete"] and "no data sheet for hinge-concealed-110" in result["warnings"][0]
+
+
+def test_hinge_plates_on_a_folded_left_side_sit_on_the_sloped_board() -> None:
+    spec = build(
+        modules=[
+            module(
+                width=800,
+                height=2000,
+                depth=400,
+                fronts=[{"type": "door", "count": 2, "opening": "hinge"}],
+                side_folds=[
+                    {"side": "left", "from_mm": 1100, "along": "height", "angle_deg": 26, "towards": "inside"}
+                ],
+            )
+        ]
+    )
+    result = drilling(spec, inputs({"hinge-concealed-110": sheet("hinge", HINGE)}))
+    plates = [e for e in result["entries"] if e["what"].startswith("mounting plates")]
+    parts = {e["part"] for e in plates}
+    assert "m-side" not in parts
+    assert "m-side-left-upper" in parts
+    upper = next(e for e in plates if e["part"] == "m-side-left-upper")
+    assert "sloped board" in upper["text"]
+    assert any(p["position"].get("mm", 0) > 0 for p in upper["positions"])
+
+
+def test_an_unfolder_module_still_names_the_side_row() -> None:
+    result = _run(HINGE, height=1200, doors=1)
+    assert _plates(result)["part"] == "m-side"
+    assert _door(result)["part"] == "m-door-1"

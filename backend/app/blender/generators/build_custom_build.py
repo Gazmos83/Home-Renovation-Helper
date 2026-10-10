@@ -99,6 +99,17 @@ PAPER = (0.93, 0.9, 0.84)
 Box = tuple[tuple[float, float, float], tuple[float, float, float]]  # (size, centre), mm
 
 
+@dataclass(frozen=True)
+class Placement:
+    """One cut-list piece in build millimetres: a box, a rotated box, or an n-gon prism."""
+
+    size: tuple[float, float, float]
+    centre: tuple[float, float, float]
+    rotation_deg: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    verts: tuple[tuple[float, float, float], ...] | None = None
+    faces: tuple[tuple[int, ...], ...] | None = None
+
+
 @dataclass
 class BuildState:
     spec: Mapping[str, Any]
@@ -144,11 +155,16 @@ def _module_boxes(module: Mapping[str, Any], materials: Mapping[str, Any]) -> di
             "backs",
             [((width, b, height), (x + width / 2, y + depth - b / 2, z + height / 2))],
         )
+    if rules.uses_divider_layout(module):
+        pieces.update(_divider_layout_pieces(module, t, b))
+        _add_front_boxes(pieces, module, materials, t, b)
+        return pieces
     shelves = module["shelves"]
     adjustable = module.get("adjustable_shelves", 0)
-    # Fixed shelves take the lowest heights, adjustable ones the rest: evenly spaced unless the
-    # module states a spacing or positions (custom_build.derive.shelf_centres).
-    centres = [z + centre for centre in rules.shelf_centres(module, t)]
+    # Each shelf sits at its level by its kind: the fixed shelves lowest unless `shelf_kinds` says
+    # otherwise; evenly spaced unless the module states a spacing or positions (custom_build.derive).
+    fixed_centres = [z + centre for centre in rules.kind_centres(module, t, "fixed")]
+    adjustable_centres = [z + centre for centre in rules.kind_centres(module, t, "adjustable")]
     found = rules.bays(module, t)
     if len(found) > 1:
         pieces[f"{mid}-divider"] = (
@@ -160,8 +176,8 @@ def _module_boxes(module: Mapping[str, Any], materials: Mapping[str, Any]) -> di
         )
     widths = rules.bay_cut_widths(module, t)
     for prefix, name, count, heights, clearance in (
-        (f"{mid}-shelf", "Fixed shelf", shelves, centres[:shelves], 0),
-        (f"{mid}-adjustable-shelf", "Adjustable shelf", adjustable, centres[shelves:], rules.ADJUSTABLE_SHELF_CLEARANCE_MM),
+        (f"{mid}-shelf", "Fixed shelf", shelves, fixed_centres, 0),
+        (f"{mid}-adjustable-shelf", "Adjustable shelf", adjustable, adjustable_centres, rules.ADJUSTABLE_SHELF_CLEARANCE_MM),
     ):
         if not count:
             continue
@@ -186,7 +202,44 @@ def _module_boxes(module: Mapping[str, Any], materials: Mapping[str, Any]) -> di
                 ],
             )
 
-    rects = rules.front_layout(module)
+    _add_front_boxes(pieces, module, materials, t, b)
+    return pieces
+
+
+def _divider_layout_pieces(module: Mapping[str, Any], t: int, b: int) -> dict[str, tuple[str, list[Box]]]:
+    """Dividers between named boards and the shelf boards they split, from the cut list's own rows."""
+    x, y, z = module["x"], module["y"], module["z"]
+    inner_d = module["depth"] - b
+    pieces: dict[str, tuple[str, list[Box]]] = {}
+    for row_id, length, places in rules.divider_rows(module, t, b):
+        pieces[row_id] = (
+            "carcass",
+            [
+                ((t, inner_d, length), (x + place.left + t / 2, y + inner_d / 2, z + place.bottom + length / 2))
+                for place in places
+            ],
+        )
+    for row_id, _name, _kind, width, boards in rules.shelf_rows(module, t, b):
+        pieces[row_id] = (
+            "shelves",
+            [
+                ((width, inner_d, t), (x + board.x0 + board.width / 2, y + inner_d / 2, z + board.centre))
+                for board in boards
+            ],
+        )
+    return pieces
+
+
+def _add_front_boxes(
+    pieces: dict[str, tuple[str, list[Box]]], module: Mapping[str, Any], materials: Mapping[str, Any], t: int, b: int
+) -> None:
+    """A rectangular module's fronts and drawer boxes, by cut-list row id."""
+    back = module.get("back")
+    x, y, z = module["x"], module["y"], module["z"]
+    width = module["width"]
+    inner_w, inner_d = width - 2 * t, module["depth"] - b
+    mid = module["id"]
+    rects = rules.front_layout(module, t, b)
     bottom_t = materials[back]["thickness_mm"] if back is not None else t
     for index, front in enumerate(module["fronts"]):
         entry = [rect for rect in rects if rect["entry"] == index]
@@ -219,7 +272,248 @@ def _module_boxes(module: Mapping[str, Any], materials: Mapping[str, Any]) -> di
         pieces[f"{prefix}-side"] = ("fronts", sides)
         pieces[f"{prefix}-back"] = ("fronts", backs)
         pieces[f"{prefix}-bottom"] = ("fronts", bottoms)
+
+
+def _rotate_y(x: float, z: float, deg: float) -> tuple[float, float]:
+    angle = math.radians(deg)
+    cos, sin = math.cos(angle), math.sin(angle)
+    return x * cos + z * sin, -x * sin + z * cos
+
+
+def _rotate_z(x: float, y: float, deg: float) -> tuple[float, float]:
+    angle = math.radians(deg)
+    cos, sin = math.cos(angle), math.sin(angle)
+    return x * cos - y * sin, x * sin + y * cos
+
+
+def _fold_sign(fold: rules.SideFold) -> int:
+    return 1 if (fold.side == "left") == (fold.towards == "inside") else -1
+
+
+def _horizontal_board(module: Mapping[str, Any], profile: rules.FoldProfile, z0: float, z1: float) -> Placement:
+    """A rectangle cut to the smallest inner width along `z0`–`z1`, centred on that slice."""
+    t = profile.t
+    inner_d = profile.inner_d
+    width = rules.min_inner_width(profile, 0, inner_d, z0, z1)
+    samples = [(0.0, z0), (0.0, z1), (inner_d, z0), (inner_d, z1)]
+    for fold in profile.folds:
+        if fold.along == "height" and z0 < fold.from_mm < z1:
+            samples.extend([(0.0, float(fold.from_mm)), (inner_d, float(fold.from_mm))])
+        if fold.along == "depth":
+            samples.extend([(float(fold.from_mm), z0), (float(fold.from_mm), z1)])
+    y_at, z_at = min(samples, key=lambda p: rules.inner_width_at(profile, p[0], p[1]))
+    left = rules.inner_left_x(profile, y_at, z_at)
+    right = left + width
+    x, y, z = module["x"], module["y"], module["z"]
+    return Placement(
+        (width, inner_d, t),
+        (x + (left + right) / 2, y + inner_d / 2, z + (z0 + z1) / 2),
+    )
+
+
+def _folded_side_placements(
+    module: Mapping[str, Any], profile: rules.FoldProfile, fold: rules.SideFold
+) -> tuple[Placement, Placement]:
+    """The two rectangular boards of a folded side, the second rotated by `angle_deg`."""
+    t = profile.t
+    x, y, z = module["x"], module["y"], module["z"]
+    inner_d = profile.inner_d
+    sign = _fold_sign(fold)
+    if fold.side == "left":
+        join_x, rel_x, lower_x = x, t / 2, x + t / 2
+    else:
+        join_x, rel_x, lower_x = x + profile.width, -t / 2, x + profile.width - t / 2
+    if fold.along == "height":
+        lower = Placement((t, inner_d, fold.from_mm), (lower_x, y + inner_d / 2, z + fold.from_mm / 2))
+        ry = sign * fold.angle_deg
+        dx, dz = _rotate_y(rel_x, fold.slope_mm / 2, ry)
+        upper = Placement(
+            (t, inner_d, fold.slope_mm),
+            (join_x + dx, y + inner_d / 2, z + fold.from_mm + dz),
+            rotation_deg=(0.0, ry, 0.0),
+        )
+        return lower, upper
+    lower = Placement((t, fold.from_mm, profile.height), (lower_x, y + fold.from_mm / 2, z + profile.height / 2))
+    rz = -sign * fold.angle_deg
+    dx, dy = _rotate_z(rel_x, fold.slope_mm / 2, rz)
+    upper = Placement(
+        (t, fold.slope_mm, profile.height),
+        (join_x + dx, y + fold.from_mm + dy, z + profile.height / 2),
+        rotation_deg=(0.0, 0.0, rz),
+    )
+    return lower, upper
+
+
+def _back_prism(module: Mapping[str, Any], profile: rules.FoldProfile) -> Placement:
+    outline = rules.back_outline(profile)
+    x, y, z = module["x"], module["y"], module["z"]
+    y0 = y + profile.inner_d
+    y1 = y + profile.depth
+    verts = tuple((x + ox, y0, z + oz) for ox, oz in outline) + tuple((x + ox, y1, z + oz) for ox, oz in outline)
+    n = len(outline)
+    faces = (tuple(range(n)), tuple(range(2 * n - 1, n - 1, -1)))
+    sides = tuple((i, (i + 1) % n, n + (i + 1) % n, n + i) for i in range(n))
+    xs = [v[0] for v in verts]
+    ys = [v[1] for v in verts]
+    zs = [v[2] for v in verts]
+    return Placement(
+        (max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs)),
+        ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, (min(zs) + max(zs)) / 2),
+        verts=verts,
+        faces=faces + sides,
+    )
+
+
+def _folded_module_pieces(
+    module: Mapping[str, Any], materials: Mapping[str, Any]
+) -> dict[str, tuple[str, list[Placement]]]:
+    """Every piece of a folded module, by cut-list row id."""
+    t = materials[module["carcass"]]["thickness_mm"]
+    back = module.get("back")
+    b = materials[back]["thickness_mm"] if back is not None else 0
+    profile = rules.fold_profile(module, t, b)
+    x, y, z = module["x"], module["y"], module["z"]
+    inner_d = profile.inner_d
+    mid = module["id"]
+    pieces: dict[str, tuple[str, list[Placement]]] = {}
+
+    for side in ("left", "right"):
+        fold = profile.fold_on(side)
+        if fold is None:
+            cx = x + t / 2 if side == "left" else x + profile.width - t / 2
+            pieces[f"{mid}-side-{side}"] = (
+                "carcass",
+                [Placement((t, inner_d, profile.height), (cx, y + inner_d / 2, z + profile.height / 2))],
+            )
+            continue
+        first, second = _folded_side_placements(module, profile, fold)
+        if fold.along == "height":
+            pieces[f"{mid}-side-{side}-lower"] = ("carcass", [first])
+            pieces[f"{mid}-side-{side}-upper"] = ("carcass", [second])
+        else:
+            pieces[f"{mid}-side-{side}-front"] = ("carcass", [first])
+            pieces[f"{mid}-side-{side}-back"] = ("carcass", [second])
+
+    bottom = _horizontal_board(module, profile, 0, t)
+    top = _horizontal_board(module, profile, profile.height - t, profile.height)
+    if bottom.size[0] == top.size[0]:
+        pieces[f"{mid}-top-bottom"] = ("carcass", [bottom, top])
+    else:
+        pieces[f"{mid}-bottom"] = ("carcass", [bottom])
+        pieces[f"{mid}-top"] = ("carcass", [top])
+
+    if back is not None:
+        pieces[f"{mid}-back"] = ("backs", [_back_prism(module, profile)])
+
+    if module.get("dividers"):
+        for row_id, (layer, boxes) in _divider_layout_pieces(module, t, b).items():
+            pieces[row_id] = (layer, [Placement(size, centre) for size, centre in boxes])
+        _add_folded_fronts(pieces, module, materials, profile, t, b)
+        return pieces
+
+    centres = [z + centre for centre in rules.kind_centres(module, t, "fixed")]
+    shelves: list[Placement] = []
+    for centre in centres:
+        shelves.append(_horizontal_board(module, profile, centre - t / 2, centre + t / 2))
+    if shelves:
+        widths = [board.size[0] for board in shelves]
+        if len(set(widths)) == 1:
+            pieces[f"{mid}-shelf"] = ("shelves", shelves)
+        else:
+            for index, board in enumerate(shelves, start=1):
+                pieces[f"{mid}-shelf-{index}"] = ("shelves", [board])
+
+    adj_centres = [z + centre for centre in rules.kind_centres(module, t, "adjustable")]
+    adjustable: list[Placement] = []
+    for centre in adj_centres:
+        board = _horizontal_board(module, profile, centre - t / 2, centre + t / 2)
+        cut_w = math.floor(board.size[0] - rules.ADJUSTABLE_SHELF_CLEARANCE_MM)
+        adjustable.append(Placement((cut_w, board.size[1], board.size[2]), board.centre))
+    if adjustable:
+        widths = [board.size[0] for board in adjustable]
+        if len(set(widths)) == 1:
+            pieces[f"{mid}-adjustable-shelf"] = ("shelves", adjustable)
+        else:
+            for index, board in enumerate(adjustable, start=1):
+                pieces[f"{mid}-adjustable-shelf-{index}"] = ("shelves", [board])
+
+    _add_folded_fronts(pieces, module, materials, profile, t, b)
     return pieces
+
+
+def _add_folded_fronts(
+    pieces: dict[str, tuple[str, list[Placement]]],
+    module: Mapping[str, Any],
+    materials: Mapping[str, Any],
+    profile: rules.FoldProfile,
+    t: int,
+    b: int,
+) -> None:
+    """A folded module's fronts and drawer boxes, by cut-list row id."""
+    back = module.get("back")
+    y, z = module["y"], module["z"]
+    inner_d = profile.inner_d
+    mid = module["id"]
+    rects = rules.front_layout(module, t, b)
+    bottom_t = materials[back]["thickness_mm"] if back is not None else t
+    inner_w = profile.width - 2 * t
+    for index, front in enumerate(module["fronts"]):
+        entry = [rect for rect in rects if rect["entry"] == index]
+        prefix = f"{mid}-{front['type']}-{index + 1}"
+        if front["type"] != "drawer":
+            for part_id, leaves in rules._group_leaves(prefix, entry):
+                pieces[part_id] = ("fronts", [_front_placement(module, leaf, t) for leaf in leaves])
+            continue
+        for part_id, leaves in rules._group_leaves(f"{prefix}-front", entry):
+            pieces[part_id] = ("fronts", [_front_placement(module, leaf, t) for leaf in leaves])
+        runner = rules.runner_length(inner_d) or 0
+        box_groups: dict[tuple[int, int], list[dict[str, Any]]] = {}
+        for rect in entry:
+            box_w = rules._drawer_box_width(profile, inner_w, rect)
+            box_h = math.floor(rect["h"]) - rules.DRAWER_BOX_HEIGHT_REDUCTION_MM
+            box_groups.setdefault((box_w, box_h), []).append(rect)
+        split_box = len(box_groups) > 1
+        for box_index, ((box_w, box_h), group) in enumerate(box_groups.items(), start=1):
+            suffix = f"-{box_index}" if split_box else ""
+            sides: list[Placement] = []
+            backs: list[Placement] = []
+            bottoms: list[Placement] = []
+            for rect in group:
+                slice_board = _horizontal_board(module, profile, rect["z"], rect["z"] + rect["h"])
+                cx = slice_board.centre[0]
+                left = cx - box_w / 2
+                base = z + rect["z"] + rules.DRAWER_BOX_HEIGHT_REDUCTION_MM / 2
+                for side_x in (left + t / 2, left + box_w - t / 2):
+                    sides.append(Placement((t, runner, box_h), (side_x, y + runner / 2, base + box_h / 2)))
+                backs.append(Placement((box_w - 2 * t, t, box_h), (cx, y + runner - t / 2, base + box_h / 2)))
+                bottoms.append(Placement((box_w, runner, bottom_t), (cx, y + runner / 2, base - bottom_t / 2)))
+            pieces[f"{prefix}-side{suffix}"] = ("fronts", sides)
+            pieces[f"{prefix}-back{suffix}"] = ("fronts", backs)
+            pieces[f"{prefix}-bottom{suffix}"] = ("fronts", bottoms)
+
+
+def _front_placement(module: Mapping[str, Any], leaf: Mapping[str, Any], t: int) -> Placement:
+    x, y, z = module["x"], module["y"], module["z"]
+    if leaf.get("rectangular", True):
+        return Placement(
+            (leaf["w"], t, leaf["h"]),
+            (x + leaf["x"] + leaf["w"] / 2, y - t / 2, z + leaf["z"] + leaf["h"] / 2),
+        )
+    net = leaf["net"]
+    y0, y1 = y - t, y
+    verts = tuple((x + ox, y0, z + oz) for ox, oz in net) + tuple((x + ox, y1, z + oz) for ox, oz in net)
+    n = len(net)
+    faces = (tuple(range(n)), tuple(range(2 * n - 1, n - 1, -1)))
+    sides = tuple((i, (i + 1) % n, n + (i + 1) % n, n + i) for i in range(n))
+    xs = [v[0] for v in verts]
+    ys = [v[1] for v in verts]
+    zs = [v[2] for v in verts]
+    return Placement(
+        (max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs)),
+        ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, (min(zs) + max(zs)) / 2),
+        verts=verts,
+        faces=faces + sides,
+    )
 
 
 def _extra_boxes(spec: Mapping[str, Any], right_edge: float, front_edge: float) -> dict[str, tuple[str, list[Box]]]:
@@ -302,7 +596,7 @@ def _empty(name: str, location: tuple[float, float, float], collection: bpy.type
     return obj
 
 
-def _box(state: BuildState, name: str, box: Box, material: str, layer: str, collection: bpy.types.Collection, parent: bpy.types.Object) -> None:
+def _box(state: BuildState, name: str, box: Box, material: str, layer: str, collection: bpy.types.Collection, parent: bpy.types.Object, rotation_deg: tuple[float, float, float] = (0.0, 0.0, 0.0)) -> None:
     size, centre = box
     bpy.ops.mesh.primitive_cube_add(size=1, location=tuple(m(value) for value in centre))
     obj = bpy.context.active_object
@@ -310,6 +604,30 @@ def _box(state: BuildState, name: str, box: Box, material: str, layer: str, coll
     obj.data.name = name
     obj.scale = tuple(m(value) for value in size)
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    if rotation_deg != (0.0, 0.0, 0.0):
+        obj.rotation_euler = tuple(math.radians(value) for value in rotation_deg)
+    obj.data.materials.append(_material(state, material))
+    obj.parent = parent
+    obj.matrix_parent_inverse = parent.matrix_world.inverted()
+    _link(obj, collection)
+    obj["part_id"] = name.split("#", 1)[0]
+    state.layers.add(name, layer)
+
+
+def _prism(
+    state: BuildState,
+    name: str,
+    verts_mm: tuple[tuple[float, float, float], ...],
+    faces: tuple[tuple[int, ...], ...],
+    material: str,
+    layer: str,
+    collection: bpy.types.Collection,
+    parent: bpy.types.Object,
+) -> None:
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata([tuple(m(value) for value in vertex) for vertex in verts_mm], [], [list(face) for face in faces])
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
     obj.data.materials.append(_material(state, material))
     obj.parent = parent
     obj.matrix_parent_inverse = parent.matrix_world.inverted()
@@ -324,16 +642,25 @@ def _frame(spec: Mapping[str, Any]) -> tuple[float, float, float, dict[str, int]
     modules = spec["modules"]
     if spec.get("envelope") is not None or not modules:
         return 0.0, 0.0, 0.0, overall
-    placed = [*modules, *(spec.get("wall_shelves") or [])]
-    return (
-        float(min(item["x"] for item in placed)),
-        float(min(item["y"] for item in placed)),
-        float(min(item["z"] for item in placed)),
-        overall,
-    )
+    xs: list[float] = []
+    ys: list[float] = []
+    zs: list[float] = []
+    materials = spec["materials"]
+    for module in modules:
+        t = materials[module["carcass"]]["thickness_mm"]
+        b = materials[module["back"]]["thickness_mm"] if module.get("back") is not None else 0
+        x0, y0, z0, _w, _d, _h = rules.module_bounds(module, t, b)
+        xs.append(module["x"] + x0)
+        ys.append(module["y"] + y0)
+        zs.append(module["z"] + z0)
+    for shelf in spec.get("wall_shelves") or []:
+        xs.append(shelf["x"])
+        ys.append(shelf["y"])
+        zs.append(shelf["z"])
+    return float(min(xs)), float(min(ys)), float(min(zs)), overall
 
 
-def _override_count(boxes: list[Box], qty: int) -> list[Box]:
+def _override_count(boxes: list[Placement], qty: int) -> list[Placement]:
     """A part override may change a row's quantity: drop pieces, or add copies beside the last.
 
     Placed geometry keeps the rule sizes; only the count follows the override,
@@ -341,8 +668,17 @@ def _override_count(boxes: list[Box], qty: int) -> list[Box]:
     """
     if qty <= len(boxes):
         return boxes[:qty]
-    (size, (cx, cy, cz)) = boxes[-1]
-    extra = [(size, (cx + (n + 1) * (size[0] + 20), cy, cz)) for n in range(qty - len(boxes))]
+    last = boxes[-1]
+    extra = [
+        Placement(
+            last.size,
+            (last.centre[0] + (n + 1) * (last.size[0] + 20), last.centre[1], last.centre[2]),
+            last.rotation_deg,
+            last.verts,
+            last.faces,
+        )
+        for n in range(qty - len(boxes))
+    ]
     return boxes + extra
 
 
@@ -354,9 +690,16 @@ def _build_scene(state: BuildState, parts: list[dict[str, Any]]) -> None:
     # wall cabinet hangs where it will hang.
     shift = (x0 + overall["w"] / 2, y0 + overall["d"] / 2, 0.0)
 
-    def at(box: Box) -> Box:
-        size, (cx, cy, cz) = box
-        return size, (cx - shift[0], cy - shift[1], cz - shift[2])
+    def at_placement(placed: Placement) -> Placement:
+        cx, cy, cz = placed.centre
+        centre = (cx - shift[0], cy - shift[1], cz - shift[2])
+        verts = None
+        if placed.verts is not None:
+            verts = tuple((vx - shift[0], vy - shift[1], vz - shift[2]) for vx, vy, vz in placed.verts)
+        return Placement(placed.size, centre, placed.rotation_deg, verts, placed.faces)
+
+    def as_placements(boxes: list[Box]) -> list[Placement]:
+        return [Placement(size, centre) for size, centre in boxes]
 
     root_collection = _collection("CustomBuild")
     root = _empty("CustomBuild", (0, 0, 0), root_collection, None)
@@ -364,14 +707,19 @@ def _build_scene(state: BuildState, parts: list[dict[str, Any]]) -> None:
     root["overall_h_mm"] = overall["h"]
     root["overall_d_mm"] = overall["d"]
 
-    pieces: dict[str, tuple[str, str, list[Box]]] = {}
+    pieces: dict[str, tuple[str, str, list[Placement]]] = {}
     for module in spec["modules"]:
-        for row_id, (layer, boxes) in _module_boxes(module, spec["materials"]).items():
-            pieces[row_id] = (module["id"], layer, boxes)
+        laid = (
+            _folded_module_pieces(module, spec["materials"])
+            if module.get("side_folds")
+            else {row_id: (layer, as_placements(boxes)) for row_id, (layer, boxes) in _module_boxes(module, spec["materials"]).items()}
+        )
+        for row_id, (layer, placements) in laid.items():
+            pieces[row_id] = (module["id"], layer, placements)
     for row_id, (layer, boxes) in _extra_boxes(spec, x0 + overall["w"], y0).items():
-        pieces[row_id] = (rules.EXTRAS_MODULE, layer, boxes)
+        pieces[row_id] = (rules.EXTRAS_MODULE, layer, as_placements(boxes))
     for row_id, (layer, boxes) in _wall_shelf_boxes(spec).items():
-        pieces[row_id] = (row_id, layer, boxes)
+        pieces[row_id] = (row_id, layer, as_placements(boxes))
 
     empties: dict[str, bpy.types.Object] = {}
     collections: dict[str, bpy.types.Collection] = {}
@@ -404,9 +752,16 @@ def _build_scene(state: BuildState, parts: list[dict[str, Any]]) -> None:
             raise GeneratorError(
                 f"build: cut-list row {row['id']!r} has {row['qty']} pieces but {len(boxes)} were placed"
             )
-        for n, box in enumerate(boxes, start=1):
+        for n, placed in enumerate(boxes, start=1):
             name = row["id"] if n == 1 else f"{row['id']}#{n}"
-            _box(state, name, at(box), row["material"], layer, collections[owner], empties[owner])
+            shifted = at_placement(placed)
+            if shifted.verts is not None and shifted.faces is not None:
+                _prism(state, name, shifted.verts, shifted.faces, row["material"], layer, collections[owner], empties[owner])
+            else:
+                _box(
+                    state, name, (shifted.size, shifted.centre), row["material"], layer,
+                    collections[owner], empties[owner], shifted.rotation_deg,
+                )
 
     _build_dimensions(overall, z0, root_collection, root)
     _build_cameras_lights(overall, z0)

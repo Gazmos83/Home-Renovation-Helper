@@ -17,18 +17,37 @@ Coordinates: a module's `x`, `y`, `z` are its left, front and bottom faces
 The rule table, per module (`t` the carcass slot's thickness, `b` the back
 slot's, or 0 without a back):
 
-- sides: two, full height × (depth − b);
-- top and bottom: two, between the sides, (width − 2t) × (depth − b);
+- sides: two, full height × (depth − b); with `side_folds`, the folded side is
+  two rectangles (lower/upper along height, or front/back along depth) mitred
+  at `angle_deg`, the other side one full-height (or full-depth) rectangle,
+  ids `{id}-side-{left|right}` and `-lower`/`-upper` or `-front`/`-back`;
+- top and bottom: two, between the sides, (width − 2t) × (depth − b); with a
+  fold, each is cut to the smallest inner width along that board's thickness,
+  as separate rows when the sizes differ;
 - back: one, full width × full height in the back slot, fixed over the rear;
-- fixed shelves: between the sides, (width − 2t) × (depth − b);
+  with a fold, the net follows the side profile and the row is its
+  grain-aligned bounding rectangle;
+- fixed shelves: between the sides, (width − 2t) × (depth − b); with a fold,
+  each is cut to the smallest inner width along its thickness, one `{id}-shelf-{n}`
+  row when the widths differ, lowest first;
 - shelf heights: evenly spaced, fixed shelves lowest; or, when stated, each
   underside at `shelf_positions_mm`, or one `shelf_spacing_mm` clear gap above
   the board below, measured from the top face of the bottom panel;
+- shelf kinds: each shelf is fixed or adjustable by `shelf_kinds` (lowest
+  first), else the fixed shelves are the lowest; kinds never move a shelf;
 - dividers: `dividers` full-height boards between the top and bottom,
   (height − 2t) × (depth − b), splitting the inner width into bays (evenly,
   rounded down, or at `divider_positions_mm` from the left side's inner face);
   shelves then sit in every bay at the same heights, cut to the bay's width,
   one row while the bays share a width, else one `-bay-<n>` row per bay;
+- dividers between named boards (`divider_spans`: the bottom or a fixed shelf
+  up to a fixed shelf or the top, shelves counted from the lowest), or any
+  dividers on a folded module: each divider is the clear gap between its two
+  boards, floored; a shelf is split only by the dividers that cross its height;
+  boards of one kind are grouped by cut width (`{id}-shelf` while one width,
+  else `-<n>` from the lowest level, left to right) and dividers by length
+  (`{id}-divider`, else `-<n>` from the left); unpositioned dividers on a fold
+  split the narrowest opening along their spans into equal bays;
 - fronts, stacked top to bottom in list order over the module's front face
   (an entry without a `height` shares what the others leave), each overlay
   with a 3 mm gap (1.5 mm at every edge):
@@ -38,14 +57,22 @@ slot's, or 0 without a back):
   - drawers split the entry's height; each has a front, two sides, a back and a
     bottom, and one runner pair of the longest standard length that fits;
   - a flap covers the entry, with two flap hinges and a pair of stays;
+  - with a height fold, each leaf's outer edge follows the folded silhouette;
+    a rectangular net stays a rectangle; otherwise one n-gon whose cut-list
+    row is the grain-aligned bounding rectangle with notes naming the net;
+    two doors of one entry with different nets become `{id}-door-{entry}-1`
+    and `-2` left to right, each qty 1; a drawer box stays a rectangle cut to
+    the smallest inner width along that drawer's height, less runner clearance;
 - adjustable shelves: one row between the sides at the back-reduced depth, less
   `ADJUSTABLE_SHELF_CLEARANCE_MM` (rounded down to a whole millimetre); pins
   per shelf times shelves of the module's shelf-pin item, or no quantity when
-  its data sheet lacks the value;
+  its data sheet lacks the value; with a fold, each board is cut to the
+  smallest inner width along its thickness, then the clearance, floored;
 - hinges are keyed by the door's hinge item; the count per door is the item's
   own count table when its data sheet has one, else the height rule above; a
   data sheet that names a mounting-plate item adds one plate per hinge;
-- confirmat screws: 8 per carcass plus 4 per fixed shelf board plus 4 per divider;
+- confirmat screws: 8 per carcass plus 4 per fold joint plus 4 per fixed shelf
+  board plus 4 per divider;
 - wall shelves (outside any module): one board row each, and one bracket line
   per bracket item: the owner's positions, else the count the bracket rules give.
 
@@ -138,6 +165,24 @@ def shelf_undersides(module: Mapping[str, Any], t: int) -> list[float]:
     return [centre - t - t / 2 for centre in shelf_centres(module, t)]
 
 
+def shelf_kinds_of(module: Mapping[str, Any]) -> list[str]:
+    """Each shelf's kind, lowest first: `shelf_kinds` when stated, else the fixed shelves lowest."""
+    stated = module.get("shelf_kinds")
+    if stated:
+        return list(stated)
+    return ["fixed"] * module["shelves"] + ["adjustable"] * module.get("adjustable_shelves", 0)
+
+
+def shelf_levels(module: Mapping[str, Any], t: int) -> list[tuple[float, str]]:
+    """Each shelf's centre above the module's bottom face and its kind, lowest first."""
+    return list(zip(shelf_centres(module, t), shelf_kinds_of(module), strict=True))
+
+
+def kind_centres(module: Mapping[str, Any], t: int, kind: str) -> list[float]:
+    """The centres of the shelves of one kind, lowest first."""
+    return [centre for centre, found in shelf_levels(module, t) if found == kind]
+
+
 def bays(module: Mapping[str, Any], t: int) -> list[tuple[int, int]]:
     """Each bay's left edge and width, from the inner face of the left side, left to right.
 
@@ -168,14 +213,610 @@ def bay_cut_widths(module: Mapping[str, Any], t: int) -> list[int]:
     return [width for _, width in found]
 
 
+def round_half_away(value: float) -> int:
+    """Nearest integer, halves away from zero (the fold inset and along-slope length)."""
+    if value < 0:
+        return -round_half_away(-value)
+    return math.floor(value + 0.5)
+
+
+def inset_mm(run: float, angle_deg: int) -> int:
+    """Horizontal inset of a run past the kink, in whole millimetres."""
+    if run <= 0:
+        return 0
+    return round_half_away(run * math.tan(math.radians(angle_deg)))
+
+
+def slope_mm(run: float, angle_deg: int) -> int:
+    """Along-slope length of a run past the kink, in whole millimetres."""
+    if run <= 0:
+        return 0
+    return round_half_away(run / math.cos(math.radians(angle_deg)))
+
+
+class SideFold(NamedTuple):
+    side: str
+    from_mm: int
+    along: str
+    angle_deg: int
+    towards: str
+    run_mm: int
+    inset_mm: int
+    slope_mm: int
+
+
+class FoldProfile(NamedTuple):
+    """A module's side folds and the AABB of the folded solid, in its own millimetre frame."""
+
+    width: int
+    height: int
+    depth: int
+    t: int
+    b: int
+    inner_d: int
+    folds: tuple[SideFold, ...]
+    x0: int
+    y0: int
+    z0: int
+    w: int
+    d: int
+    h: int
+
+    def fold_on(self, side: str) -> SideFold | None:
+        return next((fold for fold in self.folds if fold.side == side), None)
+
+
+def _outer_x_at(profile: FoldProfile, side: str, y: float, z: float) -> int:
+    base = 0 if side == "left" else profile.width
+    fold = profile.fold_on(side)
+    if fold is None:
+        return base
+    position = z if fold.along == "height" else y
+    inset = inset_mm(position - fold.from_mm, fold.angle_deg)
+    toward_plus = (side == "left" and fold.towards == "inside") or (side == "right" and fold.towards == "outside")
+    return base + inset if toward_plus else base - inset
+
+
+def inner_left_x(profile: FoldProfile, y: float, z: float) -> int:
+    return _outer_x_at(profile, "left", y, z) + profile.t
+
+
+def inner_right_x(profile: FoldProfile, y: float, z: float) -> int:
+    return _outer_x_at(profile, "right", y, z) - profile.t
+
+
+def inner_width_at(profile: FoldProfile, y: float, z: float) -> int:
+    return inner_right_x(profile, y, z) - inner_left_x(profile, y, z)
+
+
+def min_inner_width(profile: FoldProfile, y0: float, y1: float, z0: float, z1: float) -> int:
+    """Smallest inner width over a board's y and z ranges, a whole millimetre."""
+    ys = {y0, y1}
+    zs = {z0, z1}
+    for fold in profile.folds:
+        if fold.along == "depth" and y0 < fold.from_mm < y1:
+            ys.add(float(fold.from_mm))
+        if fold.along == "height" and z0 < fold.from_mm < z1:
+            zs.add(float(fold.from_mm))
+    return min(inner_width_at(profile, y, z) for y in ys for z in zs)
+
+
+def back_outline(profile: FoldProfile) -> list[tuple[int, int]]:
+    """(x, z) vertices of the back net, counter-clockwise in the back plane."""
+    zs = [0, profile.height]
+    for fold in profile.folds:
+        if fold.along == "height":
+            zs.append(fold.from_mm)
+    zs = sorted(set(zs))
+    y = float(profile.inner_d)
+    left = [(_outer_x_at(profile, "left", y, z), z) for z in zs]
+    right = [(_outer_x_at(profile, "right", y, z), z) for z in reversed(zs)]
+    verts: list[tuple[int, int]] = []
+    for vertex in left + right:
+        if not verts or verts[-1] != vertex:
+            verts.append(vertex)
+    if len(verts) > 1 and verts[0] == verts[-1]:
+        verts.pop()
+    return verts
+
+
+def _height_folds(profile: FoldProfile) -> tuple[SideFold, ...]:
+    return tuple(fold for fold in profile.folds if fold.along == "height")
+
+
+def _dedupe_verts(verts: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    out: list[tuple[float, float]] = []
+    for vertex in verts:
+        if not out or out[-1] != vertex:
+            out.append(vertex)
+    if len(out) > 1 and out[0] == out[-1]:
+        out.pop()
+    return out
+
+
+def _is_axis_aligned_rectangle(net: list[tuple[float, float]]) -> bool:
+    if len(net) != 4:
+        return False
+    return len({p[0] for p in net}) == 2 and len({p[1] for p in net}) == 2
+
+
+def _leaf_edge_fns(
+    profile: FoldProfile, x0: float, x1: float, *, warp_left: bool, warp_right: bool
+) -> tuple[Callable[[float], float], Callable[[float], float]]:
+    half = GAP_MM / 2
+
+    def left_fn(z: float) -> float:
+        if warp_left:
+            return float(_outer_x_at(profile, "left", 0.0, z)) + half
+        return x0
+
+    def right_fn(z: float) -> float:
+        if warp_right:
+            return float(_outer_x_at(profile, "right", 0.0, z)) - half
+        return x1
+
+    return left_fn, right_fn
+
+
+def _last_open_z(
+    left_fn: Callable[[float], float],
+    right_fn: Callable[[float], float],
+    z0: float,
+    z1: float,
+) -> float | None:
+    """Highest z in [z0, z1] where the leaf still has a positive width."""
+    if left_fn(z0) >= right_fn(z0) - 1e-9:
+        return None
+    if left_fn(z1) < right_fn(z1) - 1e-9:
+        return z1
+    lo, hi = float(z0), float(z1)
+    for _ in range(50):
+        mid = (lo + hi) / 2
+        if left_fn(mid) < right_fn(mid) - 1e-9:
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+def _clip_samples(
+    profile: FoldProfile,
+    x0: float,
+    x1: float,
+    z0: float,
+    z1: float,
+    *,
+    warp_left: bool,
+    warp_right: bool,
+) -> list[float]:
+    """z samples for a leaf: unbent ends, kinks, and the last z with positive width."""
+    left_fn, right_fn = _leaf_edge_fns(
+        profile, x0, x1, warp_left=warp_left, warp_right=warp_right
+    )
+    zs = {z0, z1}
+    for fold in _height_folds(profile):
+        if z0 < fold.from_mm < z1:
+            zs.add(float(fold.from_mm))
+    open_z = _last_open_z(left_fn, right_fn, z0, z1)
+    if open_z is not None:
+        zs.add(open_z)
+    return sorted(zs)
+
+
+def _leaf_net(
+    profile: FoldProfile,
+    x0: float,
+    x1: float,
+    z0: float,
+    z1: float,
+    *,
+    warp_left: bool,
+    warp_right: bool,
+) -> list[tuple[float, float]]:
+    left_fn, right_fn = _leaf_edge_fns(
+        profile, x0, x1, warp_left=warp_left, warp_right=warp_right
+    )
+    left_chain: list[tuple[float, float]] = []
+    right_chain: list[tuple[float, float]] = []
+    for z in _clip_samples(
+        profile, x0, x1, z0, z1, warp_left=warp_left, warp_right=warp_right
+    ):
+        left, right = left_fn(z), right_fn(z)
+        if left < right - 1e-9:
+            left_chain.append((left, z))
+            right_chain.append((right, z))
+    return _dedupe_verts(left_chain + list(reversed(right_chain)))
+
+
+def _bound_of(net: list[tuple[float, float]]) -> tuple[float, float, float, float]:
+    xs = [point[0] for point in net]
+    zs = [point[1] for point in net]
+    x0, z0 = min(xs), min(zs)
+    return x0, z0, max(xs) - x0, max(zs) - z0
+
+
+def _refuse_pinched_front(
+    profile: FoldProfile,
+    x0: float,
+    x1: float,
+    z0: float,
+    z1: float,
+    *,
+    warp_left: bool,
+    warp_right: bool,
+) -> None:
+    left_fn, right_fn = _leaf_edge_fns(
+        profile, x0, x1, warp_left=warp_left, warp_right=warp_right
+    )
+    samples = {0.0, float(profile.height)}
+    for fold in _height_folds(profile):
+        samples.add(float(fold.from_mm))
+    for raw in samples:
+        z = min(max(raw, z0), z1)
+        width = right_fn(z) - left_fn(z)
+        if 1e-9 < width < MIN_FRONT_MM:
+            raise DeriveError(
+                f"remaining front width {math.floor(width)} mm is below the minimum "
+                f"front size of {MIN_FRONT_MM} mm"
+            )
+
+
+def _warp_front_layout(
+    module: Mapping[str, Any], profile: FoldProfile, rects: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    left_fold = profile.fold_on("left")
+    right_fold = profile.fold_on("right")
+    has_left = left_fold is not None and left_fold.along == "height"
+    has_right = right_fold is not None and right_fold.along == "height"
+    if not has_left and not has_right:
+        return rects
+    by_entry: dict[int, list[int]] = {}
+    for index, rect in enumerate(rects):
+        by_entry.setdefault(rect["entry"], []).append(index)
+    warped: list[dict[str, Any]] = []
+    for index, rect in enumerate(rects):
+        siblings = by_entry[rect["entry"]]
+        pos = siblings.index(index)
+        kind = rect["type"]
+        warp_left = has_left and (kind != "door" or pos == 0)
+        warp_right = has_right and (kind != "door" or pos == len(siblings) - 1)
+        x0, x1 = rect["x"], rect["x"] + rect["w"]
+        z0, z1 = rect["z"], rect["z"] + rect["h"]
+        if warp_left or warp_right:
+            _refuse_pinched_front(
+                profile, x0, x1, z0, z1, warp_left=warp_left, warp_right=warp_right
+            )
+        if not warp_left and not warp_right:
+            warped.append(rect)
+            continue
+        net = _leaf_net(
+            profile, x0, x1, z0, z1, warp_left=warp_left, warp_right=warp_right
+        )
+        if len(net) < 3:
+            raise DeriveError(
+                f"remaining front width 0 mm is below the minimum front size of {MIN_FRONT_MM} mm"
+            )
+        bx, bz, bw, bh = _bound_of(net)
+        if _is_axis_aligned_rectangle(net) and abs(bw - rect["w"]) < 1e-9 and abs(bh - rect["h"]) < 1e-9:
+            warped.append(rect)
+            continue
+        leaf = dict(rect)
+        leaf["net"] = tuple(net)
+        leaf["rectangular"] = _is_axis_aligned_rectangle(net)
+        leaf["x"], leaf["z"], leaf["w"], leaf["h"] = bx, bz, bw, bh
+        warped.append(leaf)
+    return warped
+
+
+def fold_profile(module: Mapping[str, Any], t: int, b: int) -> FoldProfile:
+    """The module's folds, or the unbent box when `side_folds` is empty.
+
+    Raises `DeriveError` when two folds name the same side, `from_mm` sits inside
+    a carcass panel, the far-end inset rounds to 0 mm, or the inner opening
+    pinches below 1 mm.
+    """
+    width, height, depth = module["width"], module["height"], module["depth"]
+    inner_d = depth - b
+    raw = list(module.get("side_folds") or [])
+    sides = [entry["side"] for entry in raw]
+    if len(sides) != len(set(sides)):
+        raise DeriveError("two folds name the same side")
+    folds: list[SideFold] = []
+    for entry in raw:
+        along = entry["along"]
+        from_mm = entry["from_mm"]
+        angle = entry["angle_deg"]
+        if along == "height":
+            if not t < from_mm < height - t:
+                raise DeriveError(
+                    f"from_mm {from_mm} must lie strictly between the carcass thickness ({t} mm) "
+                    f"and height minus that thickness ({height - t} mm)"
+                )
+            run = height - from_mm
+        else:
+            if not 1 < from_mm < inner_d:
+                raise DeriveError(
+                    f"from_mm {from_mm} must lie strictly between 1 mm and the back-reduced depth "
+                    f"({inner_d} mm)"
+                )
+            run = inner_d - from_mm
+        inset = inset_mm(run, angle)
+        if inset == 0:
+            raise DeriveError("inset at the far end rounds to 0 mm")
+        folds.append(
+            SideFold(
+                side=entry["side"],
+                from_mm=from_mm,
+                along=along,
+                angle_deg=angle,
+                towards=entry["towards"],
+                run_mm=run,
+                inset_mm=inset,
+                slope_mm=slope_mm(run, angle),
+            )
+        )
+    xs = [0, width]
+    ys = [0, depth]
+    profile = FoldProfile(
+        width=width, height=height, depth=depth, t=t, b=b, inner_d=inner_d,
+        folds=tuple(folds), x0=0, y0=0, z0=0, w=width, d=depth, h=height,
+    )
+    if folds:
+        remaining = min_inner_width(profile, 0, inner_d, 0, height)
+        if remaining < 1:
+            raise DeriveError(f"remaining inner width is {remaining} mm")
+        for fold in folds:
+            if fold.along == "height":
+                xs.append(_outer_x_at(profile, fold.side, 0, height))
+            else:
+                xs.append(_outer_x_at(profile, fold.side, inner_d, 0))
+        x0, x1 = min(xs), max(xs)
+        y0, y1 = min(ys), max(ys)
+        profile = profile._replace(x0=x0, y0=y0, w=x1 - x0, d=y1 - y0)
+    return profile
+
+
+def module_bounds(module: Mapping[str, Any], t: int, b: int) -> tuple[int, int, int, int, int, int]:
+    """The folded solid's AABB in the module's frame: (x0, y0, z0, w, d, h)."""
+    profile = fold_profile(module, t, b)
+    return profile.x0, profile.y0, profile.z0, profile.w, profile.d, profile.h
+
+
+# --- dividers between named boards and shelves split where they cross (partial-and-folded-dividers) ---
+
+
+class DividerPlace(NamedTuple):
+    """One divider in the module's own millimetre frame: its left face, bottom and top, and its cut length."""
+
+    left: float
+    bottom: float
+    top: float
+    length: int
+
+
+class ShelfBoard(NamedTuple):
+    """One shelf board: its shelf number (from 1, lowest), kind, bay when its level is split, and cut."""
+
+    level: int
+    kind: str
+    bay: int | None
+    x0: float
+    centre: float
+    width: int
+
+
+def uses_divider_layout(module: Mapping[str, Any]) -> bool:
+    """Whether the module's dividers need the span-aware layout: spans are stated, or the module is folded."""
+    return bool(module.get("dividers")) and bool(module.get("divider_spans") or module.get("side_folds"))
+
+
+def divider_ends(module: Mapping[str, Any], t: int) -> list[tuple[float, float]]:
+    """Each divider's bottom and top above the module's bottom face, left to right."""
+    centres = shelf_centres(module, t)
+    count = module.get("dividers", 0)
+    spans = module.get("divider_spans") or [{"from_board": "bottom", "to_board": "top"}] * count
+    ends = []
+    for span in spans:
+        low, high = span["from_board"], span["to_board"]
+        bottom = t if low == "bottom" else centres[low - 1] + t / 2
+        top = module["height"] - t if high == "top" else centres[high - 1] - t / 2
+        ends.append((bottom, top))
+    return ends
+
+
+def _board_samples(profile: FoldProfile, z0: float, z1: float) -> list[tuple[float, float]]:
+    """The (y, z) points where a board spanning `z0`–`z1` and the full depth meets its extremes."""
+    ys = {0.0, float(profile.inner_d)}
+    zs = {float(z0), float(z1)}
+    for fold in profile.folds:
+        if fold.along == "depth" and 0 < fold.from_mm < profile.inner_d:
+            ys.add(float(fold.from_mm))
+        if fold.along == "height" and z0 < fold.from_mm < z1:
+            zs.add(float(fold.from_mm))
+    return [(y, z) for y in sorted(ys) for z in sorted(zs)]
+
+
+def narrowest_opening(profile: FoldProfile, z0: float, z1: float) -> tuple[int, int]:
+    """The inner left x and inner width where the opening between `z0` and `z1` is narrowest."""
+    y_at, z_at = min(_board_samples(profile, z0, z1), key=lambda p: inner_width_at(profile, p[0], p[1]))
+    return inner_left_x(profile, y_at, z_at), inner_width_at(profile, y_at, z_at)
+
+
+def divider_places(module: Mapping[str, Any], t: int, b: int) -> list[DividerPlace]:
+    """Every divider, left to right. Stated positions are measured from the unbent left side's inner face.
+
+    Without positions the dividers split the inner width into equal bays, as `bays` does; on a folded
+    module they split the narrowest opening found along their spans and the full depth.
+    """
+    ends = divider_ends(module, t)
+    if not ends:
+        return []
+    count = len(ends)
+    positions = module.get("divider_positions_mm")
+    if positions:
+        lefts: list[float] = [t + position for position in positions]
+    elif module.get("side_folds"):
+        low = min(bottom for bottom, _top in ends)
+        high = max(top for _bottom, top in ends)
+        opening_left, opening = narrowest_opening(fold_profile(module, t, b), low, high)
+        bay = (opening - count * t) // (count + 1)
+        lefts = [opening_left + k * (bay + t) + bay for k in range(count)]
+    else:
+        lefts = [t + left + width for left, width in bays(module, t)[:-1]]
+    return [
+        DividerPlace(left, bottom, top, math.floor(top - bottom + 1e-9))
+        for left, (bottom, top) in zip(lefts, ends, strict=True)
+    ]
+
+
+def divider_fit_problem(module: Mapping[str, Any], t: int, b: int) -> str | None:
+    """On a folded module, why a divider does not fit inside the folded opening, or `None`."""
+    if not module.get("dividers") or not module.get("side_folds"):
+        return None
+    profile = fold_profile(module, t, b)
+    for number, place in enumerate(divider_places(module, t, b), start=1):
+        for y, z in _board_samples(profile, place.bottom, place.top):
+            left, right = inner_left_x(profile, y, z), inner_right_x(profile, y, z)
+            if place.left <= left:
+                return (
+                    f"divider {number} would cut into the folded left side at {_n(z)} mm "
+                    f"(the inner face is {left - t} mm from the unbent one there)"
+                )
+            if place.left + t >= right:
+                return (
+                    f"divider {number} would cut into the folded right side at {_n(z)} mm "
+                    f"(the inner face is {right - t} mm from the unbent left inner face there)"
+                )
+    return None
+
+
+def shelf_boards(module: Mapping[str, Any], t: int, b: int) -> list[ShelfBoard]:
+    """Every shelf board, lowest level first and left to right: a level is split only where a divider crosses it."""
+    places = divider_places(module, t, b)
+    profile = fold_profile(module, t, b) if module.get("side_folds") else None
+    found = []
+    for level, (centre, kind) in enumerate(shelf_levels(module, t), start=1):
+        z0, z1 = centre - t / 2, centre + t / 2
+        crossing = sorted((p for p in places if p.bottom < centre < p.top), key=lambda p: p.left)
+        if profile is None:
+            left_edge: float = t
+            right_edge: float = module["width"] - t
+        else:
+            samples = _board_samples(profile, z0, z1)
+            left_edge = max(inner_left_x(profile, y, z) for y, z in samples)
+            right_edge = min(inner_right_x(profile, y, z) for y, z in samples)
+        if not crossing:
+            if profile is None:
+                found.append(ShelfBoard(level, kind, None, left_edge, centre, math.floor(right_edge - left_edge)))
+            else:
+                opening_left, _opening = narrowest_opening(profile, z0, z1)
+                width = min_inner_width(profile, 0, profile.inner_d, z0, z1)
+                found.append(ShelfBoard(level, kind, None, opening_left, centre, width))
+            continue
+        edges = [left_edge]
+        for place in crossing:
+            edges += [place.left, place.left + t]
+        edges.append(right_edge)
+        for bay, (start, end) in enumerate(zip(edges[::2], edges[1::2], strict=True), start=1):
+            found.append(ShelfBoard(level, kind, bay, start, centre, math.floor(end - start + 1e-9)))
+    return found
+
+
+def board_cut_width(board: ShelfBoard) -> int:
+    """A board's cut length along the module's width: an adjustable board less the clearance, floored."""
+    if board.kind == "adjustable":
+        return math.floor(board.width - ADJUSTABLE_SHELF_CLEARANCE_MM)
+    return board.width
+
+
+def _where(boards: list[ShelfBoard]) -> str:
+    """The shelf levels and bays a group of boards covers, in words."""
+    by_level: dict[int, list[int]] = {}
+    for board in boards:
+        by_level.setdefault(board.level, [])
+        if board.bay is not None:
+            by_level[board.level].append(board.bay)
+    parts = []
+    for level, bays_of in by_level.items():
+        if not bays_of:
+            parts.append(f"shelf {level}")
+        else:
+            noun = "bay" if len(bays_of) == 1 else "bays"
+            parts.append(f"shelf {level} {noun} {', '.join(str(bay) for bay in bays_of)}")
+    return "; ".join(parts)
+
+
+def shelf_rows(module: Mapping[str, Any], t: int, b: int) -> list[tuple[str, str, str, int, list[ShelfBoard]]]:
+    """The span-aware layout's shelf rows: (id, name, kind, cut width, boards), grouped by cut width.
+
+    One width of a kind keeps `{id}-shelf` / `{id}-adjustable-shelf`; several become `-<n>`, numbered by
+    first appearance from the lowest level and, within a level, from the left.
+    """
+    mid = module["id"]
+    rows = []
+    for kind, prefix, name in (
+        ("fixed", f"{mid}-shelf", "Fixed shelf"),
+        ("adjustable", f"{mid}-adjustable-shelf", "Adjustable shelf"),
+    ):
+        groups: dict[int, list[ShelfBoard]] = {}
+        for board in shelf_boards(module, t, b):
+            if board.kind == kind:
+                groups.setdefault(board_cut_width(board), []).append(board)
+        if len(groups) == 1:
+            ((width, boards),) = groups.items()
+            rows.append((prefix, name, kind, width, boards))
+            continue
+        for number, (width, boards) in enumerate(groups.items(), start=1):
+            rows.append((f"{prefix}-{number}", f"{name} {number}", kind, width, boards))
+    return rows
+
+
+def divider_rows(module: Mapping[str, Any], t: int, b: int) -> list[tuple[str, int, list[DividerPlace]]]:
+    """The dividers as cut-list rows: (id, length, dividers), one row while they share a length."""
+    mid = module["id"]
+    groups: dict[int, list[DividerPlace]] = {}
+    for place in divider_places(module, t, b):
+        groups.setdefault(place.length, []).append(place)
+    if len(groups) <= 1:
+        return [(f"{mid}-divider", length, places) for length, places in groups.items()]
+    return [(f"{mid}-divider-{n}", length, places) for n, (length, places) in enumerate(groups.items(), start=1)]
+
+
+def span_words(module: Mapping[str, Any]) -> list[str]:
+    """Each divider's span in words, e.g. "from shelf 4 to the top", left to right; [] without spans."""
+    words = []
+    for span in module.get("divider_spans") or []:
+        low = "the bottom" if span["from_board"] == "bottom" else f"shelf {span['from_board']}"
+        high = "the top" if span["to_board"] == "top" else f"shelf {span['to_board']}"
+        words.append(f"from {low} to {high}")
+    return words
+
+
+def widest_shelf_board(module: Mapping[str, Any], t: int, b: int) -> ShelfBoard | None:
+    """The span-aware layout's widest shelf board (before the adjustable clearance), first found on a tie."""
+    boards = shelf_boards(module, t, b)
+    return max(boards, key=lambda board: board.width) if boards else None
+
+
+def _carcass_tb(module: Mapping[str, Any], materials: Mapping[str, Mapping[str, Any]]) -> tuple[int, int]:
+    t = materials[module["carcass"]]["thickness_mm"]
+    b = materials[module["back"]]["thickness_mm"] if module.get("back") is not None else 0
+    return t, b
+
+
 def overall(spec: Mapping[str, Any]) -> dict[str, int]:
     """The build's overall width, height and depth: its envelope, or its modules' bounds."""
     envelope = spec.get("envelope")
     if envelope is not None:
         return {"w": envelope["width"], "h": envelope["height"], "d": envelope["depth"]}
-    boxes = [(m["x"], m["y"], m["z"], m["width"], m["depth"], m["height"]) for m in spec["modules"]]
+    materials = spec.get("materials") or {}
+    boxes = []
+    for module in spec["modules"]:
+        t, b = _carcass_tb(module, materials)
+        x0, y0, z0, w, d, h = module_bounds(module, t, b)
+        boxes.append((module["x"] + x0, module["y"] + y0, module["z"] + z0, w, d, h))
     for shelf in spec.get("wall_shelves") or []:
-        thickness = spec["materials"][shelf["material"]]["thickness_mm"]
+        thickness = materials[shelf["material"]]["thickness_mm"]
         boxes.append((shelf["x"], shelf["y"], shelf["z"], shelf["length"], shelf["depth"], thickness))
     if not boxes:
         raise DeriveError("a build with no modules needs an envelope")
@@ -204,11 +845,16 @@ def entry_heights(module: Mapping[str, Any]) -> list[int]:
     return [front["height"] if front.get("height") is not None else share for front in fronts]
 
 
-def front_layout(module: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Every front rectangle of one module, in the module's own front-face frame.
+def front_layout(
+    module: Mapping[str, Any], t: int | None = None, b: int | None = None
+) -> list[dict[str, Any]]:
+    """Every front leaf of one module, in the module's own front-face frame.
 
     `x` runs from the module's left face and `z` from its bottom face; each
     entry is one front panel with its size, type and the entry it came from.
+    A folded height-fold leaf whose outline is not a rectangle also carries
+    `net` (front-plane vertices) and `rectangular` False; `x`/`z`/`w`/`h`
+    are then the axis-aligned bounds of that net.
     """
     width = module["width"]
     top = module["height"]
@@ -258,6 +904,10 @@ def front_layout(module: Mapping[str, Any]) -> list[dict[str, Any]]:
                 }
             )
         top = bottom
+    if module.get("side_folds"):
+        if t is None:
+            raise DeriveError("front_layout needs carcass thickness to fold a front")
+        rects = _warp_front_layout(module, fold_profile(module, t, b or 0), rects)
     return rects
 
 
@@ -320,6 +970,419 @@ def bay_rows(prefix: str, name: str, per_bay: int, widths: list[int]) -> list[tu
     return [(f"{prefix}-bay-{n}", f"{name}, bay {n}", per_bay, width) for n, width in enumerate(widths, start=1)]
 
 
+def _folded_shelf_widths(module: Mapping[str, Any], profile: FoldProfile) -> list[int]:
+    """Each fixed shelf's cut width, lowest first, on a folded module."""
+    t = profile.t
+    widths = []
+    for centre in kind_centres(module, t, "fixed"):
+        widths.append(min_inner_width(profile, 0, profile.inner_d, centre - t / 2, centre + t / 2))
+    return widths
+
+
+def _folded_adjustable_widths(module: Mapping[str, Any], profile: FoldProfile) -> list[int]:
+    """Each adjustable shelf's cut width, lowest first: min inner, then clearance, floored."""
+    t = profile.t
+    widths = []
+    for centre in kind_centres(module, t, "adjustable"):
+        inner = min_inner_width(profile, 0, profile.inner_d, centre - t / 2, centre + t / 2)
+        widths.append(math.floor(inner - ADJUSTABLE_SHELF_CLEARANCE_MM))
+    return widths
+
+
+def _leaf_key(leaf: Mapping[str, Any]) -> tuple[Any, ...]:
+    if leaf.get("rectangular", True) and "net" not in leaf:
+        return ("rect", leaf["w"], leaf["h"])
+    if leaf.get("rectangular", True):
+        return ("rect", math.floor(leaf["w"]), math.floor(leaf["h"]))
+    net = tuple((round(x, 3), round(z, 3)) for x, z in leaf["net"])
+    return ("net", net, math.floor(leaf["w"]), math.floor(leaf["h"]))
+
+
+def _group_leaves(prefix: str, leaves: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
+    """One row while nets match; otherwise `{prefix}-1` … left to right, qty 1 each."""
+    if len(leaves) <= 1 or all(_leaf_key(leaf) == _leaf_key(leaves[0]) for leaf in leaves):
+        return [(prefix, leaves)]
+    return [(f"{prefix}-{n}", [leaf]) for n, leaf in enumerate(leaves, start=1)]
+
+
+def _net_note(profile: FoldProfile, kind: str, extra: str) -> str:
+    folds = ", ".join(
+        f"{fold.side} {fold.angle_deg}° from {fold.from_mm} mm" for fold in profile.folds
+    )
+    return f"Rule: bounding rectangle of the {kind} net; outline follows the side profile {folds}{extra}"
+
+
+def _drawer_box_width(
+    profile: FoldProfile | None, inner_w: int, rect: Mapping[str, Any]
+) -> int:
+    if profile is None:
+        return inner_w - 2 * DRAWER_SIDE_CLEARANCE_MM
+    inner = min_inner_width(profile, 0, profile.inner_d, rect["z"], rect["z"] + rect["h"])
+    return inner - 2 * DRAWER_SIDE_CLEARANCE_MM
+
+
+def _cut_wh(leaf: Mapping[str, Any], *, vertical: bool) -> tuple[int, int]:
+    """Cut-list (l, w); grain-aligned bounding rectangle, sizes rounded down."""
+    if leaf.get("rectangular", True) and "net" not in leaf:
+        return (leaf["h"], leaf["w"]) if vertical else (leaf["w"], leaf["h"])
+    height, width = math.floor(leaf["h"]), math.floor(leaf["w"])
+    return (height, width) if vertical else (width, height)
+
+
+def _add_front_rows(
+    rows: list[dict[str, Any]],
+    module: Mapping[str, Any],
+    hardware: _Hardware,
+    t: int,
+    b: int,
+    material: str,
+    bottom_slot: Mapping[str, Any],
+    inner_w: int,
+    inner_d: int,
+    inputs: Mapping[str, Any] | None,
+    profile: FoldProfile | None,
+) -> None:
+    mid = module["id"]
+    rects = front_layout(module, t, b)
+    for index, front in enumerate(module["fronts"]):
+        entry = [rect for rect in rects if rect["entry"] == index]
+        prefix = f"{mid}-{front['type']}-{index + 1}"
+        if front["type"] == "door":
+            push = front["opening"] == "push_latch"
+            handle = (
+                "; push-latch, no handle" if push else "; handle as specified"
+            )
+            for part_id, leaves in _group_leaves(prefix, entry):
+                first = leaves[0]
+                qty = len(leaves)
+                length, width = _cut_wh(first, vertical=True)
+                if first.get("rectangular", True) and "net" not in first:
+                    notes = f"Rule: overlay door, 3 mm gap{handle}"
+                else:
+                    notes = _net_note(profile, "door", handle) if profile else f"Rule: overlay door, 3 mm gap{handle}"
+                rows.append(
+                    _part(
+                        part_id, "Door", qty=qty, l=length, w=width, t=t, material=material,
+                        grain="length (vertical)", banding="all edges", notes=notes, module=mid,
+                    )
+                )
+                _hinge_lines(front, length, qty, inputs, hardware)
+                if push:
+                    hardware.add(PUSH_LATCH_ID, "Push latch", qty, "Rule: one per push-latch door")
+        elif front["type"] == "drawer":
+            runner = runner_length(inner_d)
+            if runner is None:
+                raise DeriveError(f"module {mid!r} is too shallow for a drawer runner")
+            for part_id, leaves in _group_leaves(f"{prefix}-front", entry):
+                first = leaves[0]
+                qty = len(leaves)
+                length, width = _cut_wh(first, vertical=False)
+                if first.get("rectangular", True) and "net" not in first:
+                    notes = "Rule: overlay drawer front, 3 mm gap"
+                else:
+                    notes = _net_note(profile, "drawer front", "") if profile else "Rule: overlay drawer front, 3 mm gap"
+                rows.append(
+                    _part(
+                        part_id, "Drawer front", qty=qty, l=length, w=width, t=t,
+                        material=material, grain="length (left-right)", banding="all edges",
+                        notes=notes, module=mid,
+                    )
+                )
+            box_groups: dict[tuple[int, int], list[dict[str, Any]]] = {}
+            for rect in entry:
+                box_w = _drawer_box_width(profile, inner_w, rect)
+                box_h = math.floor(rect["h"]) - DRAWER_BOX_HEIGHT_REDUCTION_MM
+                box_groups.setdefault((box_w, box_h), []).append(rect)
+            split_box = len(box_groups) > 1
+            for box_index, ((box_w, box_h), group) in enumerate(box_groups.items(), start=1):
+                qty = len(group)
+                suffix = f"-{box_index}" if split_box else ""
+                rows.extend(
+                    [
+                        _part(
+                            f"{prefix}-side{suffix}", "Drawer side", qty=2 * qty, l=runner, w=box_h, t=t,
+                            material=material, grain="length (front-back)", banding="top edge",
+                            notes=f"Rule: runner length × front height less {DRAWER_BOX_HEIGHT_REDUCTION_MM} mm",
+                            module=mid,
+                        ),
+                        _part(
+                            f"{prefix}-back{suffix}", "Drawer back", qty=qty, l=box_w - 2 * t, w=box_h, t=t,
+                            material=material, grain="length (left-right)", banding="top edge",
+                            notes="Rule: between the drawer sides", module=mid,
+                        ),
+                        _part(
+                            f"{prefix}-bottom{suffix}", "Drawer bottom", qty=qty, l=runner, w=box_w,
+                            t=bottom_slot["thickness_mm"], material=bottom_slot["material"],
+                            grain="none", banding="none",
+                            notes="Rule: full box width × runner length, fixed under the sides", module=mid,
+                        ),
+                    ]
+                )
+            hardware.add(
+                f"drawer-runner-{runner}",
+                f"Drawer runner pair, {runner} mm",
+                len(entry),
+                "Rule: one pair per drawer, longest standard length that fits",
+            )
+        else:  # flap
+            first = entry[0]
+            length, width = _cut_wh(first, vertical=False)
+            hinged = f"{front['hinged']}-hinged overlay flap, 3 mm gap"
+            if first.get("rectangular", True) and "net" not in first:
+                notes = f"Rule: {hinged}"
+            elif profile is not None:
+                notes = _net_note(profile, "flap", f"; {hinged}")
+            else:
+                notes = f"Rule: {hinged}"
+            rows.append(
+                _part(
+                    prefix, "Flap", qty=1, l=length, w=width, t=t, material=material,
+                    grain="length (left-right)", banding="all edges", notes=notes, module=mid,
+                )
+            )
+            hardware.add(FLAP_HINGE_ID, "Flap hinge", 2, "Rule: two per flap")
+            hardware.add(FLAP_STAY_ID, "Flap stay", 2, "Rule: one pair per flap")
+
+
+def _divider_layout_rows(
+    module: Mapping[str, Any],
+    hardware: _Hardware,
+    t: int,
+    b: int,
+    material: str,
+    inner_d: int,
+    n_folds: int,
+    inputs: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Divider and shelf rows, confirmats and pins for dividers between named boards or on a folded module."""
+    mid = module["id"]
+    rows = []
+    spans = span_words(module)
+    for row_id, length, places in divider_rows(module, t, b):
+        where = "between the top and bottom" if not spans else "between the boards each divider names"
+        rows.append(
+            _part(
+                row_id, "Divider", qty=len(places), l=length, w=inner_d, t=t, material=material,
+                grain="length (vertical)", banding="front edge",
+                notes=f"Rule: dividers {where} at the back-reduced depth", module=mid,
+            )
+        )
+    fixed_boards = 0
+    adjustable_boards = 0
+    for row_id, name, kind, width, boards in shelf_rows(module, t, b):
+        if kind == "fixed":
+            fixed_boards += len(boards)
+            rule = "fixed shelf boards between the sides and the dividers that cross them"
+        else:
+            adjustable_boards += len(boards)
+            rule = (
+                f"adjustable shelf boards between the sides and the dividers that cross them, less "
+                f"{ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance (rounded down)"
+            )
+        rows.append(
+            _part(
+                row_id, name, qty=len(boards), l=width, w=inner_d, t=t, material=material,
+                grain="length (left-right)", banding="front edge",
+                notes=f"Rule: {rule}; {_where(boards)}", module=mid,
+            )
+        )
+    dividers = module.get("dividers", 0)
+    fold_words = " plus 4 per fold joint" if n_folds else ""
+    hardware.add(
+        CONFIRMAT_ID,
+        "Confirmat screw 7×50 mm",
+        8 + 4 * n_folds + 4 * fixed_boards + 4 * dividers,
+        f"Rule: 8 per carcass{fold_words} plus 4 per fixed shelf board plus 4 per divider",
+    )
+    if adjustable_boards:
+        _pin_line(module, adjustable_boards, inputs, hardware)
+    return rows
+
+
+def widest_shelf_span(module: Mapping[str, Any], t: int, b: int) -> int:
+    """The shelf-span check's width: widest bay, unbent inner, or the widest folded shelf cut."""
+    if uses_divider_layout(module):
+        board = widest_shelf_board(module, t, b)
+        return board.width if board is not None else module["width"] - 2 * t
+    if module.get("dividers"):
+        return max(bay_cut_widths(module, t))
+    inner = module["width"] - 2 * t
+    folds = module.get("side_folds") or []
+    if not folds or not any(entry.get("towards") == "outside" for entry in folds):
+        return inner
+    widths = _folded_shelf_widths(module, fold_profile(module, t, b))
+    return max(widths) if widths else inner
+
+
+def _folded_module_rows(
+    module: Mapping[str, Any],
+    materials: Mapping[str, Mapping[str, Any]],
+    hardware: _Hardware,
+    t: int,
+    b: int,
+    material: str,
+    back: Mapping[str, Any] | None,
+    inputs: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Cut-list rows for a module with `side_folds`."""
+    mid = module["id"]
+    profile = fold_profile(module, t, b)
+    inner_d = profile.inner_d
+    rows: list[dict[str, Any]] = []
+
+    def carcass_part(identifier: str, name: str, *, qty: int, l: int, w: int, notes: str) -> dict[str, Any]:
+        return _part(
+            identifier, name, qty=qty, l=l, w=w, t=t, material=material,
+            grain="length (vertical)" if "side" in identifier else "length (left-right)",
+            banding="front edge", notes=notes, module=mid,
+        )
+
+    for side in ("left", "right"):
+        fold = profile.fold_on(side)
+        if fold is None:
+            rows.append(
+                carcass_part(
+                    f"{mid}-side-{side}", f"Side, {side}", qty=1, l=profile.height, w=inner_d,
+                    notes="Rule: full height × depth less the back",
+                )
+            )
+            continue
+        mitre = f"joining edge mitred {fold.angle_deg}°"
+        if fold.along == "height":
+            rows.append(
+                carcass_part(
+                    f"{mid}-side-{side}-lower", f"Side, {side} lower", qty=1, l=fold.from_mm, w=inner_d,
+                    notes=f"Rule: {side} side to {fold.from_mm} mm; {mitre}",
+                )
+            )
+            rows.append(
+                carcass_part(
+                    f"{mid}-side-{side}-upper", f"Side, {side} upper", qty=1, l=fold.slope_mm, w=inner_d,
+                    notes=f"Rule: {side} side along the {fold.angle_deg}° slope from {fold.from_mm} mm; {mitre}",
+                )
+            )
+        else:
+            rows.append(
+                carcass_part(
+                    f"{mid}-side-{side}-front", f"Side, {side} front", qty=1, l=profile.height, w=fold.from_mm,
+                    notes=f"Rule: {side} side to {fold.from_mm} mm along depth; {mitre}",
+                )
+            )
+            rows.append(
+                carcass_part(
+                    f"{mid}-side-{side}-back", f"Side, {side} back", qty=1, l=profile.height, w=fold.slope_mm,
+                    notes=f"Rule: {side} side along the {fold.angle_deg}° slope from {fold.from_mm} mm; {mitre}",
+                )
+            )
+
+    bottom_w = min_inner_width(profile, 0, inner_d, 0, t)
+    top_w = min_inner_width(profile, 0, inner_d, profile.height - t, profile.height)
+    if bottom_w == top_w:
+        rows.append(
+            carcass_part(
+                f"{mid}-top-bottom", "Top/bottom", qty=2, l=bottom_w, w=inner_d,
+                notes="Rule: top and bottom between the sides",
+            )
+        )
+    else:
+        rows.append(
+            carcass_part(
+                f"{mid}-bottom", "Bottom", qty=1, l=bottom_w, w=inner_d,
+                notes="Rule: bottom between the sides at the unbent inner width",
+            )
+        )
+        rows.append(
+            carcass_part(
+                f"{mid}-top", "Top", qty=1, l=top_w, w=inner_d,
+                notes="Rule: top between the sides at the smallest inner width along its thickness",
+            )
+        )
+
+    if back is not None:
+        outline = back_outline(profile)
+        bound_w = max(x for x, _z in outline) - min(x for x, _z in outline)
+        rows.append(
+            _part(
+                f"{mid}-back", "Back", qty=1, l=profile.height, w=bound_w, t=b, material=back["material"],
+                grain="length (vertical)", banding="none",
+                notes=(
+                    "Rule: bounding rectangle of the back net; outline follows the side profile "
+                    + ", ".join(
+                        f"{fold.side} {fold.angle_deg}° from {fold.from_mm} mm" for fold in profile.folds
+                    )
+                ),
+                module=mid,
+            )
+        )
+
+    if module.get("dividers"):
+        rows += _divider_layout_rows(module, hardware, t, b, material, inner_d, len(profile.folds), inputs)
+        bottom_slot = back if back is not None else {"thickness_mm": t, "material": material}
+        _add_front_rows(
+            rows, module, hardware, t, b, material, bottom_slot, profile.width - 2 * t, inner_d, inputs, profile,
+        )
+        hardware.free(module.get("hardware") or [])
+        return rows
+
+    shelf_widths = _folded_shelf_widths(module, profile)
+    if shelf_widths:
+        if len(set(shelf_widths)) == 1:
+            rows.append(
+                carcass_part(
+                    f"{mid}-shelf", "Fixed shelf", qty=len(shelf_widths), l=shelf_widths[0], w=inner_d,
+                    notes="Rule: fixed shelves between the sides at the smallest inner width along each board",
+                )
+            )
+        else:
+            for index, width in enumerate(shelf_widths, start=1):
+                rows.append(
+                    carcass_part(
+                        f"{mid}-shelf-{index}", f"Fixed shelf {index}", qty=1, l=width, w=inner_d,
+                        notes="Rule: fixed shelf between the sides at the smallest inner width along its thickness",
+                    )
+                )
+
+    n_folds = len(profile.folds)
+    hardware.add(
+        CONFIRMAT_ID,
+        "Confirmat screw 7×50 mm",
+        8 + 4 * n_folds + 4 * len(shelf_widths),
+        "Rule: 8 per carcass plus 4 per fold joint plus 4 per fixed shelf board",
+    )
+    adjustable_widths = _folded_adjustable_widths(module, profile)
+    if adjustable_widths:
+        if len(set(adjustable_widths)) == 1:
+            rows.append(
+                carcass_part(
+                    f"{mid}-adjustable-shelf", "Adjustable shelf",
+                    qty=len(adjustable_widths), l=adjustable_widths[0], w=inner_d,
+                    notes=(
+                        f"Rule: between the sides at the smallest inner width along each board, "
+                        f"less {ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance (rounded down)"
+                    ),
+                )
+            )
+        else:
+            for index, width in enumerate(adjustable_widths, start=1):
+                rows.append(
+                    carcass_part(
+                        f"{mid}-adjustable-shelf-{index}", f"Adjustable shelf {index}",
+                        qty=1, l=width, w=inner_d,
+                        notes=(
+                            f"Rule: between the sides at the smallest inner width along its thickness, "
+                            f"less {ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance (rounded down)"
+                        ),
+                    )
+                )
+        _pin_line(module, len(adjustable_widths), inputs, hardware)
+    bottom_slot = back if back is not None else {"thickness_mm": t, "material": material}
+    _add_front_rows(
+        rows, module, hardware, t, b, material, bottom_slot, profile.width - 2 * t, inner_d, inputs, profile,
+    )
+    hardware.free(module.get("hardware") or [])
+    return rows
+
+
 def _module_rows(
     module: Mapping[str, Any],
     materials: Mapping[str, Mapping[str, Any]],
@@ -333,6 +1396,8 @@ def _module_rows(
     b = back["thickness_mm"] if back is not None else 0
     width, height, depth = module["width"], module["height"], module["depth"]
     inner_w, inner_d = width - 2 * t, depth - b
+    if module.get("side_folds"):
+        return _folded_module_rows(module, materials, hardware, t, b, material, back, inputs)
 
     rows = [
         _part(
@@ -354,6 +1419,12 @@ def _module_rows(
                 notes="Rule: full-size back fixed over the carcass rear", module=mid,
             )
         )
+    if uses_divider_layout(module):
+        rows += _divider_layout_rows(module, hardware, t, b, material, inner_d, 0, inputs)
+        bottom_slot = back if back is not None else carcass
+        _add_front_rows(rows, module, hardware, t, b, material, bottom_slot, inner_w, inner_d, inputs, None)
+        hardware.free(module.get("hardware") or [])
+        return rows
     dividers = module.get("dividers", 0)
     if dividers:
         rows.append(
@@ -427,79 +1498,10 @@ def _module_rows(
             "Rule: 8 per carcass plus 4 per fixed shelf",
         )
 
-    rects = front_layout(module)
     bottom_slot = back if back is not None else carcass
-    for index, front in enumerate(module["fronts"]):
-        entry = [rect for rect in rects if rect["entry"] == index]
-        count = len(entry)
-        first = entry[0]
-        prefix = f"{mid}-{front['type']}-{index + 1}"
-        if front["type"] == "door":
-            push = front["opening"] == "push_latch"
-            rows.append(
-                _part(
-                    prefix, "Door", qty=count, l=first["h"], w=first["w"], t=t, material=material,
-                    grain="length (vertical)", banding="all edges",
-                    notes=(
-                        "Rule: overlay door, 3 mm gap; push-latch, no handle"
-                        if push
-                        else "Rule: overlay door, 3 mm gap; handle as specified"
-                    ),
-                    module=mid,
-                )
-            )
-            _hinge_lines(front, first["h"], count, inputs, hardware)
-            if push:
-                hardware.add(PUSH_LATCH_ID, "Push latch", count, "Rule: one per push-latch door")
-        elif front["type"] == "drawer":
-            runner = runner_length(inner_d)
-            if runner is None:
-                raise DeriveError(f"module {mid!r} is too shallow for a drawer runner")
-            box_w = inner_w - 2 * DRAWER_SIDE_CLEARANCE_MM
-            box_h = first["h"] - DRAWER_BOX_HEIGHT_REDUCTION_MM
-            rows.extend(
-                [
-                    _part(
-                        f"{prefix}-front", "Drawer front", qty=count, l=first["w"], w=first["h"], t=t,
-                        material=material, grain="length (left-right)", banding="all edges",
-                        notes="Rule: overlay drawer front, 3 mm gap", module=mid,
-                    ),
-                    _part(
-                        f"{prefix}-side", "Drawer side", qty=2 * count, l=runner, w=box_h, t=t,
-                        material=material, grain="length (front-back)", banding="top edge",
-                        notes=f"Rule: runner length × front height less {DRAWER_BOX_HEIGHT_REDUCTION_MM} mm",
-                        module=mid,
-                    ),
-                    _part(
-                        f"{prefix}-back", "Drawer back", qty=count, l=box_w - 2 * t, w=box_h, t=t,
-                        material=material, grain="length (left-right)", banding="top edge",
-                        notes="Rule: between the drawer sides", module=mid,
-                    ),
-                    _part(
-                        f"{prefix}-bottom", "Drawer bottom", qty=count, l=runner, w=box_w,
-                        t=bottom_slot["thickness_mm"], material=bottom_slot["material"],
-                        grain="none", banding="none",
-                        notes="Rule: full box width × runner length, fixed under the sides", module=mid,
-                    ),
-                ]
-            )
-            hardware.add(
-                f"drawer-runner-{runner}",
-                f"Drawer runner pair, {runner} mm",
-                count,
-                "Rule: one pair per drawer, longest standard length that fits",
-            )
-        else:  # flap
-            rows.append(
-                _part(
-                    prefix, "Flap", qty=1, l=first["w"], w=first["h"], t=t, material=material,
-                    grain="length (left-right)", banding="all edges",
-                    notes=f"Rule: {front['hinged']}-hinged overlay flap, 3 mm gap", module=mid,
-                )
-            )
-            hardware.add(FLAP_HINGE_ID, "Flap hinge", 2, "Rule: two per flap")
-            hardware.add(FLAP_STAY_ID, "Flap stay", 2, "Rule: one pair per flap")
-
+    _add_front_rows(
+        rows, module, hardware, t, b, material, bottom_slot, inner_w, inner_d, inputs, None,
+    )
     hardware.free(module.get("hardware") or [])
     return rows
 
@@ -675,7 +1677,13 @@ def _assembly(spec: Mapping[str, Any]) -> list[dict[str, Any]]:
     for module in spec["modules"]:
         body = f"Fix the top and bottom between the sides of {module['id']} with confirmats and glue"
         if module.get("dividers"):
-            body += f", then the {module['dividers']} dividers between them"
+            spans = span_words(module)
+            if spans:
+                body += ", then the dividers (" + "; ".join(
+                    f"divider {n} {words}" for n, words in enumerate(spans, start=1)
+                ) + ")"
+            else:
+                body += f", then the {module['dividers']} dividers between them"
         if module["shelves"]:
             body += f", then the {module['shelves']} fixed shelves"
         body += "."
@@ -683,6 +1691,11 @@ def _assembly(spec: Mapping[str, Any]) -> list[dict[str, Any]]:
             body += f" Fit the {module['adjustable_shelves']} adjustable shelves on shelf pins in the drilled holes."
         if module.get("back") is not None:
             body += " Square the carcass and fix the back over its rear."
+        for fold in module.get("side_folds") or []:
+            body += (
+                f" Mitre the {fold['side']} side at {fold['angle_deg']}° from {fold['from_mm']} mm "
+                f"along {fold['along']}."
+            )
         bodies.append((f"Carcass: {module['name']}", body))
     for module in spec["modules"]:
         if not module["fronts"]:
@@ -918,24 +1931,77 @@ _PIN_FIELDS: Final = (
 )
 
 
+def _side_segments(module: Mapping[str, Any], spec: Mapping[str, Any]) -> list[tuple[str, str, SideFold | None]]:
+    """Unique (part_id, segment, fold) for a module's side boards, left then right.
+
+    `segment` is '' for an unfolder board, or lower/upper/front/back. A module
+    with no folds yields one `{id}-side` row covering both sides.
+    """
+    mid = module["id"]
+    folds = module.get("side_folds") or []
+    if not folds:
+        return [(f"{mid}-side", "", None)]
+    t, b = _carcass_tb(module, spec["materials"])
+    profile = fold_profile(module, t, b)
+    found: list[tuple[str, str, SideFold | None]] = []
+    seen: set[str] = set()
+    for side in ("left", "right"):
+        fold = profile.fold_on(side)
+        if fold is None:
+            parts = [(f"{mid}-side-{side}", "", None)]
+        elif fold.along == "height":
+            parts = [
+                (f"{mid}-side-{side}-lower", "lower", fold),
+                (f"{mid}-side-{side}-upper", "upper", fold),
+            ]
+        else:
+            parts = [
+                (f"{mid}-side-{side}-front", "front", fold),
+                (f"{mid}-side-{side}-back", "back", fold),
+            ]
+        for part, segment, owned in parts:
+            if part not in seen:
+                seen.add(part)
+                found.append((part, segment, owned))
+    return found
+
+
+def _holes_on_segment(
+    heights: list[float], fold: SideFold | None, segment: str
+) -> list[float]:
+    if not fold or not segment:
+        return heights
+    if fold.along == "height":
+        if segment == "lower":
+            return [h for h in heights if h < fold.from_mm]
+        return [
+            float(slope_mm(h - fold.from_mm, fold.angle_deg))
+            for h in heights
+            if h >= fold.from_mm
+        ]
+    return heights
+
+
 def _shelf_pin_entries(spec: Mapping[str, Any], inputs: Mapping[str, Any]) -> list[DrillEntry]:
     entries = []
     for module in spec["modules"]:
         if not module.get("adjustable_shelves"):
             continue
         key = module.get("shelf_pin") or SHELF_PIN_ID
-        part, what = f"{module['id']}-side", "shelf-pin holes"
+        side_parts = _side_segments(module, spec)
+        what = "shelf-pin holes"
         sheet = _sheet(inputs, key)
-        dividers = module.get("dividers", 0)
-        divider_part = f"{module['id']}-divider"
+        t = spec["materials"][module["carcass"]]["thickness_mm"]
+        targets = _pin_divider_rows(module, spec, t)
         if sheet is None:
-            entries.append(_entry(
-                "shelf_pins", part, what, positions=[], values=[], missing=_no_sheet(key),
-                counts={"shelf_pin_holes": None}, clauses=[], source_name=f"{key}: no data sheet",
-            ))
-            if dividers:
+            for part, _segment, _fold in side_parts:
                 entries.append(_entry(
-                    "shelf_pins", divider_part, what, positions=[], values=[], missing=_no_sheet(key),
+                    "shelf_pins", part, what, positions=[], values=[], missing=_no_sheet(key),
+                    counts={"shelf_pin_holes": None}, clauses=[], source_name=f"{key}: no data sheet",
+                ))
+            for part, _count, _bottom, _top in targets:
+                entries.append(_entry(
+                    "shelf_pins", part, what, positions=[], values=[], missing=_no_sheet(key),
                     counts={"shelf_pin_holes": None}, clauses=[], source_name=f"{key}: no data sheet",
                 ))
             continue
@@ -951,12 +2017,11 @@ def _shelf_pin_entries(spec: Mapping[str, Any], inputs: Mapping[str, Any]) -> li
                 label = name.split()[0] + " column"
                 positions.append({"label": label, "position": form, "from": edge})
                 clauses.append(f"{label} {_say(form)} from the {edge}")
-        # A divider stands on the bottom panel, so its holes sit one board lower from its own bottom end.
-        divider_positions, divider_clauses = list(positions), list(clauses)
-        t = spec["materials"][module["carcass"]]["thickness_mm"]
+        # A divider's holes are measured from its own bottom end, on the board it stands on.
+        divider_base, divider_clauses = list(positions), list(clauses)
+        holes_clause_at = len(divider_clauses)
         pitch, first, last = (by_name[n]["form"] for n in ("pitch", "first hole", "last hole"))
         holes: int | None = None
-        divider_holes: int | None = None
         if pitch and first and last:
             if all("mm" in f for f in (pitch, first, last)):
                 top = module["height"] - t - last["mm"]
@@ -965,15 +2030,15 @@ def _shelf_pin_entries(spec: Mapping[str, Any], inputs: Mapping[str, Any]) -> li
                     heights.append(_num(at))
                     at += pitch["mm"]
                 if heights:
-                    for found, clause_list, offset in ((positions, clauses, 0), (divider_positions, divider_clauses, t)):
-                        listed = [_num(h - offset) for h in heights]
-                        found += [{"label": f"hole {i + 1}", "position": {"mm": h}, "from": "bottom end"}
-                                  for i, h in enumerate(listed)]
-                        shown = listed if len(listed) <= 4 else [*listed[:2], "…", listed[-1]]
-                        clause_list.append("holes at " + ", ".join(h if h == "…" else _n(h) for h in shown) + " mm")
+                    listed = [_num(h) for h in heights]
+                    positions += [
+                        {"label": f"hole {i + 1}", "position": {"mm": h}, "from": "bottom end"}
+                        for i, h in enumerate(listed)
+                    ]
+                    shown = listed if len(listed) <= 4 else [*listed[:2], "…", listed[-1]]
+                    clauses.append("holes at " + ", ".join(h if h == "…" else _n(h) for h in shown) + " mm")
                     if all(columns.values()):
                         holes = 2 * 2 * len(heights)
-                        divider_holes = 2 * 2 * len(heights) * dividers
                 else:
                     problem = "no hole fits between the first and last hole heights"
             else:
@@ -981,7 +2046,7 @@ def _shelf_pin_entries(spec: Mapping[str, Any], inputs: Mapping[str, Any]) -> li
                     f"first hole {_say(first)} above the bottom shelf face, then every {_say(pitch)}, "
                     f"last hole at least {_say(last)} below the top"
                 )
-                for found, clause_list in ((positions, clauses), (divider_positions, divider_clauses)):
+                for found, clause_list in ((positions, clauses), (divider_base, divider_clauses)):
                     found.append({"label": "holes", "position": {"rule": words}, "from": "bottom end"})
                     clause_list.append(f"holes: {words}")
         for name in ("hole diameter", "hole depth", "pins per shelf"):
@@ -990,19 +2055,88 @@ def _shelf_pin_entries(spec: Mapping[str, Any], inputs: Mapping[str, Any]) -> li
                 said = f"{name} {_say(form)}" if name != "hole diameter" else f"hole Ø {_say(form)}"
                 clauses.append(said)
                 divider_clauses.append(said)
-        entries.append(_entry(
-            "shelf_pins", part, what, positions=positions, values=list(by_name.values()), missing=missing,
-            problem=problem, counts={"shelf_pin_holes": holes}, clauses=["both sides, inner face"] + clauses,
-            source_name=f"{key} data sheet",
-        ))
-        if dividers:
+        hole_rows = [p for p in positions if p["label"].startswith("hole ")]
+        column_rows = [p for p in positions if "column" in p["label"]]
+        other_rows = [p for p in positions if p not in hole_rows and p not in column_rows]
+        for part, segment, fold in side_parts:
+            board_columns = column_rows
+            if fold is not None and fold.along == "depth":
+                if segment == "front":
+                    board_columns = [p for p in column_rows if p["label"].startswith("front")]
+                elif segment == "back":
+                    board_columns = [p for p in column_rows if p["label"].startswith("rear")]
+            listed_heights = [p["position"]["mm"] for p in hole_rows]
+            remapped = _holes_on_segment(listed_heights, fold, segment)
+            origin = "board's lower end" if segment == "upper" else "bottom end"
+            board_holes = [
+                {"label": f"hole {i + 1}", "position": {"mm": _num(h)}, "from": origin}
+                for i, h in enumerate(remapped)
+            ]
+            board_positions = board_columns + other_rows + board_holes
+            board_clauses = list(clauses)
+            if segment == "upper":
+                board_clauses.append("heights along the slope from the board's lower end")
+            face = "both sides, inner face" if part.endswith("-side") and segment == "" else "inner face"
+            cols = 2 if fold is None or fold.along != "depth" else 1
+            board_count: int | None
+            if holes is None:
+                board_count = None
+            elif not listed_heights:
+                board_count = holes
+            else:
+                board_count = cols * len(remapped)
+                if part.endswith("-side") and segment == "":
+                    board_count = 2 * 2 * len(listed_heights)
             entries.append(_entry(
-                "shelf_pins", divider_part, what, positions=divider_positions, values=list(by_name.values()),
-                missing=list(missing), problem=problem, counts={"shelf_pin_holes": divider_holes},
-                clauses=[f"each of {dividers} dividers, both faces"] + divider_clauses,
+                "shelf_pins", part, what, positions=board_positions, values=list(by_name.values()),
+                missing=missing, problem=problem, counts={"shelf_pin_holes": board_count},
+                clauses=[face] + board_clauses, source_name=f"{key} data sheet",
+            ))
+        exact = bool(pitch and first and last and all("mm" in f for f in (pitch, first, last)))
+        for part, count, bottom, top in targets:
+            divider_positions, row_clauses = list(divider_base), list(divider_clauses)
+            row_problem, row_holes = problem, None
+            if exact:
+                listed, at = [], first["mm"]
+                while at <= top - bottom - last["mm"] + 1e-9:
+                    listed.append(_num(at))
+                    at += pitch["mm"]
+                if listed:
+                    divider_positions += [
+                        {"label": f"hole {i + 1}", "position": {"mm": h}, "from": "bottom end"}
+                        for i, h in enumerate(listed)
+                    ]
+                    shown = listed if len(listed) <= 4 else [*listed[:2], "…", listed[-1]]
+                    row_clauses.insert(
+                        holes_clause_at, "holes at " + ", ".join(h if h == "…" else _n(h) for h in shown) + " mm"
+                    )
+                    if all(columns.values()):
+                        row_holes = 2 * 2 * len(listed) * count
+                else:
+                    row_problem = "no hole fits between the first and last hole heights"
+            entries.append(_entry(
+                "shelf_pins", part, what, positions=divider_positions, values=list(by_name.values()),
+                missing=list(missing), problem=row_problem, counts={"shelf_pin_holes": row_holes},
+                clauses=[f"each of {count} dividers, both faces"] + row_clauses,
                 source_name=f"{key} data sheet",
             ))
     return entries
+
+
+def _pin_divider_rows(module: Mapping[str, Any], spec: Mapping[str, Any], t: int) -> list[tuple[str, int, float, float]]:
+    """(row id, dividers, bottom, top) for each divider row whose span holds an adjustable shelf."""
+    if not module.get("dividers"):
+        return []
+    if not uses_divider_layout(module):
+        return [(f"{module['id']}-divider", module["dividers"], float(t), float(module["height"] - t))]
+    _t, b = _carcass_tb(module, spec["materials"])
+    adjustable = kind_centres(module, t, "adjustable")
+    found = []
+    for row_id, _length, places in divider_rows(module, t, b):
+        holding = [p for p in places if any(p.bottom < centre < p.top for centre in adjustable)]
+        if holding:
+            found.append((row_id, len(places), holding[0].bottom, holding[0].top))
+    return found
 
 
 # Hinges.
@@ -1016,67 +2150,117 @@ def _cup_centre(edge: Form | None, diameter: Form | None) -> Form | None:
     return {"rule": f"cup edge distance {_say(edge)} plus half the cup Ø {_say(diameter)}"}
 
 
+def _door_height(leaf: Mapping[str, Any]) -> float:
+    if leaf.get("rectangular", True) and "net" not in leaf:
+        return leaf["h"]
+    return math.floor(leaf["h"])
+
+
+def _map_plate_board(
+    module: Mapping[str, Any], spec: Mapping[str, Any], side: str, z: float
+) -> tuple[str, bool, SideFold | None]:
+    mid = module["id"]
+    if not module.get("side_folds"):
+        return f"{mid}-side", False, None
+    t, b = _carcass_tb(module, spec["materials"])
+    profile = fold_profile(module, t, b)
+    fold = profile.fold_on(side)
+    if fold is None:
+        return f"{mid}-side-{side}", False, None
+    if fold.along == "height":
+        if z < fold.from_mm:
+            return f"{mid}-side-{side}-lower", False, fold
+        return f"{mid}-side-{side}-upper", True, fold
+    return f"{mid}-side-{side}-front", False, fold
+
+
+def _slope_form(form: Form, fold: SideFold, z_abs: float) -> Form:
+    if "mm" in form:
+        return {"mm": slope_mm(z_abs - fold.from_mm, fold.angle_deg)}
+    if "min_mm" in form:
+        return {
+            "min_mm": slope_mm(form["min_mm"] - fold.from_mm, fold.angle_deg),
+            "max_mm": slope_mm(form["max_mm"] - fold.from_mm, fold.angle_deg),
+        }
+    return form
+
+
 def _hinge_entries(spec: Mapping[str, Any], inputs: Mapping[str, Any]) -> list[DrillEntry]:
     entries = []
     for module in spec["modules"]:
-        rects = front_layout(module)
+        t, b = _carcass_tb(module, spec["materials"])
+        rects = front_layout(module, t, b)
         for index, front in enumerate(module["fronts"]):
             if front["type"] != "door":
                 continue
-            first = next(rect for rect in rects if rect["entry"] == index)
-            doors = len([rect for rect in rects if rect["entry"] == index])
+            leaves = [rect for rect in rects if rect["entry"] == index]
             key = front.get("hinge") or HINGE_ID
-            part = f"{module['id']}-door-{index + 1}"
+            prefix = f"{module['id']}-door-{index + 1}"
             sheet = _sheet(inputs, key)
-            per_door, _ = _hinge_count(sheet, first["h"])
-            borings = {"hinge_cup_borings": per_door * doors}
-            what = "hinges"
-            if sheet is None:
+            groups = _group_leaves(prefix, leaves)
+            for part_id, group in groups:
+                first = group[0]
+                doors = len(group)
+                height = _door_height(first)
+                per_door, _ = _hinge_count(sheet, int(height))
+                borings = {"hinge_cup_borings": per_door * doors}
+                what = "hinges"
+                if sheet is None:
+                    entries.append(_entry(
+                        "hinges", part_id, what, positions=[], values=[], missing=_no_sheet(key),
+                        counts=borings, clauses=[], source_name=f"{key}: no data sheet",
+                    ))
+                    continue
+                source, missing = sheet["source"], []
+                raw = sheet.get("values") or {}
+                by_name = {
+                    name: _value(raw, field, name, source, missing)
+                    for field, name in (
+                        ("cup_diameter_mm", "cup Ø"), ("cup_depth_mm", "cup depth"),
+                        ("cup_edge_distance_mm", "cup edge distance"), ("end_distance_mm", "end distance"),
+                    )
+                }
+                positions, clauses, problem = [], [], None
+                end = by_name["end distance"]["form"]
+                origins = ("door's bottom end", "door's top end")
+                if end is not None:
+                    if 2 * _shortest(end) >= height:
+                        problem = "door too short for the hinge end distance"
+                    else:
+                        positions = _along(height, per_door, end, origins)
+                        clauses.append(_along_text("hinge", positions, origins))
+                diameter, depth, edge = (by_name[n]["form"] for n in ("cup Ø", "cup depth", "cup edge distance"))
+                if diameter is not None:
+                    clauses.append(f"cup Ø {_say(diameter)}")
+                if depth is not None:
+                    clauses.append(f"{_say(depth)} deep")
+                centre = _cup_centre(edge, diameter)
+                if centre is not None:
+                    positions.append({"label": "cup centre", "position": centre, "from": "hinge edge"})
+                    clauses.append(f"centre {_say(centre)} from the hinge edge")
+                if len(leaves) > 1:
+                    clauses.append("hinge edge is the outer edge of each door")
                 entries.append(_entry(
-                    "hinges", part, what, positions=[], values=[], missing=_no_sheet(key), counts=borings,
-                    clauses=[], source_name=f"{key}: no data sheet",
+                    "hinges", part_id, what, positions=positions, values=list(by_name.values()),
+                    missing=missing, problem=problem, counts=borings, clauses=clauses,
+                    source_name=f"{key} data sheet",
                 ))
-                continue
-            source, missing = sheet["source"], []
-            raw = sheet.get("values") or {}
-            by_name = {
-                name: _value(raw, field, name, source, missing)
-                for field, name in (
-                    ("cup_diameter_mm", "cup Ø"), ("cup_depth_mm", "cup depth"),
-                    ("cup_edge_distance_mm", "cup edge distance"), ("end_distance_mm", "end distance"),
+                sides = []
+                for leaf in group:
+                    pos = leaves.index(leaf)
+                    if len(leaves) == 1 or pos == 0:
+                        sides.append("left")
+                    else:
+                        sides.append("right")
+                entries.extend(
+                    _plate_entries(module, spec, part_id, group, sides, per_door, end, sheet, key)
                 )
-            }
-            positions, clauses, problem = [], [], None
-            end = by_name["end distance"]["form"]
-            origins = ("door's bottom end", "door's top end")
-            if end is not None:
-                if 2 * _shortest(end) >= first["h"]:
-                    problem = "door too short for the hinge end distance"
-                else:
-                    positions = _along(first["h"], per_door, end, origins)
-                    clauses.append(_along_text("hinge", positions, origins))
-            diameter, depth, edge = (by_name[n]["form"] for n in ("cup Ø", "cup depth", "cup edge distance"))
-            if diameter is not None:
-                clauses.append(f"cup Ø {_say(diameter)}")
-            if depth is not None:
-                clauses.append(f"{_say(depth)} deep")
-            centre = _cup_centre(edge, diameter)
-            if centre is not None:
-                positions.append({"label": "cup centre", "position": centre, "from": "hinge edge"})
-                clauses.append(f"centre {_say(centre)} from the hinge edge")
-            if doors > 1:
-                clauses.append("hinge edge is the outer edge of each door")
-            entries.append(_entry(
-                "hinges", part, what, positions=positions, values=list(by_name.values()), missing=missing,
-                problem=problem, counts=borings, clauses=clauses, source_name=f"{key} data sheet",
-            ))
-            entries.extend(_plate_entries(module, part, first, per_door, end, sheet, key))
     return entries
 
 
 def _plate_entries(
-    module: Mapping[str, Any], door_part: str, door: Mapping[str, Any], per_door: int, end: Form | None,
-    sheet: Mapping[str, Any], key: str,
+    module: Mapping[str, Any], spec: Mapping[str, Any], door_part: str, doors: list[Mapping[str, Any]],
+    sides: list[str], per_door: int, end: Form | None, sheet: Mapping[str, Any], key: str,
 ) -> list[DrillEntry]:
     raw = sheet.get("values") or {}
     plate = raw.get("plate_item")
@@ -1089,33 +2273,73 @@ def _plate_entries(
     }
     if end is None:
         missing.append("end distance")
-    positions, clauses, problem = [], [], None
-    if end is not None and 2 * _shortest(end) < door["h"]:
-        z = door["z"]
-        hinges = _along(door["h"], per_door, end, ("bottom", "top"))
-        for hinge in hinges:
-            at = hinge["position"]
-            if "rule" in at:
-                level = {"rule": "level with its hinge"}
-            elif hinge["from"] == "top":
-                level = {"min_mm": _num(z + door["h"] - at["max_mm"]), "max_mm": _num(z + door["h"] - at["min_mm"])}
-            else:
-                level = _shift(at, z)
-            positions.append({"label": f"plate {hinge['label']}", "position": level, "from": "side's bottom end"})
-        clauses.append("plates at " + "; ".join(f"{p['label']} {_say(p['position'])}" for p in positions))
+    by_board: dict[str, list[dict[str, Any]]] = {}
+    sloped_boards: set[str] = set()
+    problem = None
+    first = doors[0]
+    height = _door_height(first)
+    if end is not None and 2 * _shortest(end) < height:
+        pairs = list(zip(doors, sides))
+        if not module.get("side_folds"):
+            pairs = pairs[:1]
+        for door, side in pairs:
+            z = door["z"]
+            door_h = _door_height(door)
+            hinges = _along(door_h, per_door, end, ("bottom", "top"))
+            for hinge in hinges:
+                at = hinge["position"]
+                if "rule" in at:
+                    level: Form = {"rule": "level with its hinge"}
+                    z_abs = z + door_h / 2
+                elif hinge["from"] == "top":
+                    level = {
+                        "min_mm": _num(z + door_h - at["max_mm"]),
+                        "max_mm": _num(z + door_h - at["min_mm"]),
+                    }
+                    z_abs = z + door_h - _shortest(at)
+                else:
+                    level = _shift(at, z)
+                    z_abs = z + (_shortest(at) if "mm" in at or "min_mm" in at else 0)
+                part, sloped, fold = _map_plate_board(module, spec, side, z_abs)
+                origin = "side's bottom end"
+                if sloped and fold is not None and "rule" not in level:
+                    level = _slope_form(level, fold, z_abs)
+                    origin = "board's lower end"
+                    sloped_boards.add(part)
+                elif sloped:
+                    sloped_boards.add(part)
+                by_board.setdefault(part, []).append(
+                    {"label": f"plate {hinge['label']}", "position": level, "from": origin}
+                )
     elif end is not None:
         problem = "door too short for the hinge end distance"
     setback = by_name["plate setback"]["form"]
     spacing = by_name["plate hole spacing"]["form"]
+    extra = []
     if setback is not None:
-        clauses.append(f"{_say(setback)} from the front edge")
+        extra.append(f"{_say(setback)} from the front edge")
     if spacing is not None:
-        clauses.append(f"holes {_say(spacing)} apart")
-    return [_entry(
-        "hinges", f"{module['id']}-side", f"mounting plates for {door_part}", positions=positions,
-        values=list(by_name.values()), missing=missing, problem=problem, counts={},
-        clauses=["at the door's hinge edge"] + clauses, source_name=f"{key} data sheet",
-    )]
+        extra.append(f"holes {_say(spacing)} apart")
+    if not by_board:
+        return [_entry(
+            "hinges", f"{module['id']}-side", f"mounting plates for {door_part}", positions=[],
+            values=list(by_name.values()), missing=missing, problem=problem, counts={},
+            clauses=["at the door's hinge edge"] + extra, source_name=f"{key} data sheet",
+        )]
+    out = []
+    for part, positions in by_board.items():
+        clauses = ["at the door's hinge edge"]
+        if positions:
+            clauses.append("plates at " + "; ".join(f"{p['label']} {_say(p['position'])}" for p in positions))
+        clauses.extend(extra)
+        if part in sloped_boards:
+            clauses.append("on the sloped board")
+        out.append(_entry(
+            "hinges", part, f"mounting plates for {door_part}", positions=positions,
+            values=list(by_name.values()), missing=missing, problem=problem, counts={},
+            clauses=clauses, source_name=f"{key} data sheet",
+        ))
+    return out
 
 
 # Wall-shelf brackets.
@@ -1235,9 +2459,11 @@ def emitted_spec(spec: Mapping[str, Any], inputs: Mapping[str, Any] | None = Non
     parts, hardware, assembly = derive(spec, inputs)
     fronts: list[dict[str, Any]] = []
     for module in spec["modules"]:
-        for rect in front_layout(module):
+        t, b = _carcass_tb(module, spec["materials"])
+        for rect in front_layout(module, t, b):
+            emitted = {k: v for k, v in rect.items() if k not in {"net", "rectangular"}}
             fronts.append(
-                {**rect, "module": module["id"], "x": module["x"] + rect["x"], "z": module["z"] + rect["z"]}
+                {**emitted, "module": module["id"], "x": module["x"] + rect["x"], "z": module["z"] + rect["z"]}
             )
     document = _emitted(spec, parts, hardware, assembly, fronts)
     if inputs is not None:

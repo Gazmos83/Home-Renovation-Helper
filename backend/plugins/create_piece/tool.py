@@ -14,6 +14,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.agent import house_file, notices
+from app.agent.divider_questions import fix_shelf_question, position_question
 from app.agent.tools.base import (
     AgentTool,
     Confirmation,
@@ -93,9 +94,15 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext) -> tuple[str | None, d
     package_id, problem = checked_new_id(ctx, args.package_id)
     if package_id is None:
         return None, None, problem
+    question = fix_shelf_question(args.spec)
+    if question:
+        return None, None, question
     spec, problem = validated_custom_build(ctx, args.spec, package_id)
     if spec is None:
         return None, None, problem
+    question = position_question(None, spec, ctx.deps.design_rules)
+    if question:
+        return None, None, question
     return package_id, spec, ""
 
 

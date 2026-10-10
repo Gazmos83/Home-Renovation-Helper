@@ -4,8 +4,10 @@
 """
 
 import json
+import math
 
 import bpy
+from mathutils import Vector
 
 scene = bpy.context.scene
 print(
@@ -21,6 +23,25 @@ print(
                     "parent": obj.parent.name if obj.parent else None,
                     "part_id": obj.get("part_id"),
                     "location": list(obj.matrix_world.translation),
+                    "rotation_deg": [round(math.degrees(angle), 4) for angle in obj.rotation_euler],
+                    "bound_box": [
+                        [round(coord, 6) for coord in obj.matrix_world @ Vector(corner)]
+                        for corner in obj.bound_box
+                    ],
+                    "vertices": (
+                        sorted(
+                            [list(point) for point in {
+                                (
+                                    round((obj.matrix_world @ vertex.co).x, 5),
+                                    round((obj.matrix_world @ vertex.co).y, 5),
+                                    round((obj.matrix_world @ vertex.co).z, 5),
+                                )
+                                for vertex in obj.data.vertices
+                            }]
+                        )
+                        if obj.type == "MESH"
+                        else []
+                    ),
                     "dimension": obj.get("dimension"),
                     "text": obj.data.body if obj.type == "FONT" else None,
                     "faces": next(

@@ -103,6 +103,14 @@ def test_the_designer_note_offers_the_custom_build_starter_first() -> None:
     assert note.index("Template custom-build:") < note.index("Template fold-down-desk:")
     assert note.index("Template fold-down-desk:") < note.index("Template blank-build:")
     assert "Start from the custom-build template" in note
+    assert "side_folds" in note
+
+
+def test_the_designer_is_told_a_panel_bend_is_side_folds() -> None:
+    from app.agent.prompts import DESIGNER_SIDE_FOLDS_NOTE
+
+    assert "`side_folds`" in DESIGNER_SIDE_FOLDS_NOTE
+    assert "Never tell the owner there is no field for a bend angle" in DESIGNER_SIDE_FOLDS_NOTE
 
 
 def test_the_facts_name_the_approved_version_of_the_bound_piece(tool_state) -> None:

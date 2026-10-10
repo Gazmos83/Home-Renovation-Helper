@@ -19,6 +19,9 @@ from app.blender.custom_build.derive import (
     BRACKET_COUNT_CHECK,
     BRACKET_SPACING_CHECK,
     bay_cut_widths,
+    uses_divider_layout,
+    widest_shelf_board,
+    widest_shelf_span,
 )
 from app.blender.room_contract import Point, RoomBuildContext
 
@@ -228,9 +231,19 @@ def shelf_span(spec: Mapping[str, Any], params: ShelfSpan) -> list[Measurement]:
         entry = max((e for e in table if e.thickness_mm <= thickness), key=lambda e: e.thickness_mm, default=None)
         if entry is None:
             continue
-        widths = bay_cut_widths(module, thickness)
-        span = max(widths)
-        where = f" bay {widths.index(span) + 1}" if len(widths) > 1 else ""
+        back = module.get("back")
+        b = spec["materials"][back]["thickness_mm"] if back is not None else 0
+        if uses_divider_layout(module):
+            board = widest_shelf_board(module, thickness, b)
+            span = board.width if board is not None else widest_shelf_span(module, thickness, b)
+            where = f" shelf {board.level} bay {board.bay}" if board is not None and board.bay is not None else ""
+        elif module.get("dividers"):
+            widths = bay_cut_widths(module, thickness)
+            span = max(widths)
+            where = f" bay {widths.index(span) + 1}" if len(widths) > 1 else ""
+        else:
+            span = widest_shelf_span(module, thickness, b)
+            where = ""
         found.append(Measurement(
             what=f"shelf span in module {module['id']!r}{where} ({thickness} mm board)", value=f"{span:g} mm",
             limit=f"at most {entry.max_span_mm:g} mm", breached=span > entry.max_span_mm,

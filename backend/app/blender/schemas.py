@@ -118,6 +118,57 @@ class FlapIn(BaseModel):
 
 FrontIn = Annotated[DoorIn | DrawerIn | FlapIn, Field(discriminator="type")]
 
+SIDE_FOLDS_DESCRIPTION = (
+    "carcass-side panel bends. Each: side left|right, from_mm, along height|depth, "
+    "angle_deg 1-89, towards inside|outside. [] clears. A 26° left height bend from "
+    '1100 mm is [{"side": "left", "from_mm": 1100, "along": "height", '
+    '"angle_deg": 26, "towards": "inside"}].'
+)
+
+
+class SideFoldIn(BaseModel):
+    """One kink on a carcass side: the named face runs straight to `from_mm`, then leaves its plane."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    side: Literal["left", "right"] = Field(description="which carcass side folds")
+    from_mm: Millimetres = Field(description="kink from the bottom face, or from the front face when along is depth")
+    along: Literal["height", "depth"] = Field(
+        description="height: from_mm from the bottom; depth: from_mm from the front"
+    )
+    angle_deg: Annotated[int, Field(ge=1, le=89, description="bend angle in degrees from the original axis")]
+    towards: Literal["inside", "outside"] = Field(
+        description="inside moves toward the opposite side after the kink"
+    )
+
+
+DIVIDER_SPANS_DESCRIPTION = (
+    "where each divider stands and reaches, one per divider, left to right: from_board \"bottom\" or a shelf "
+    "number, to_board \"top\" or a shelf number; shelves count from the lowest, fixed and adjustable together, "
+    "and only a fixed shelf can hold a divider. [] clears (full height). A divider from the top of 4 shelves to "
+    'the top is [{"from_board": 4, "to_board": "top"}].'
+)
+SHELF_KINDS_DESCRIPTION = (
+    "each shelf's kind, lowest first, \"fixed\" or \"adjustable\", agreeing with shelves and "
+    "adjustable_shelves; without it the fixed shelves are the lowest. [] clears."
+)
+
+ShelfNumber = Annotated[int, Field(ge=1, le=40)]
+ShelfKind = Literal["fixed", "adjustable"]
+
+
+class DividerSpanIn(BaseModel):
+    """The two boards one divider runs between: the bottom panel or a shelf, and a shelf or the top panel."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    from_board: Literal["bottom"] | ShelfNumber = Field(
+        description='"bottom", or the number of the fixed shelf the divider stands on, counted from the lowest'
+    )
+    to_board: Literal["top"] | ShelfNumber = Field(
+        description='"top", or the number of the fixed shelf the divider reaches, counted from the lowest'
+    )
+
 
 class ModuleIn(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -139,18 +190,27 @@ class ModuleIn(BaseModel):
     shelf_positions_mm: Annotated[list[Position], Field(min_length=1, max_length=40)] | None = None
     dividers: Annotated[int, Field(ge=0, le=MAX_DIVIDERS)] = 0
     divider_positions_mm: Annotated[list[Position], Field(min_length=1, max_length=MAX_DIVIDERS)] | None = None
+    divider_spans: Annotated[
+        list[DividerSpanIn], Field(min_length=1, max_length=MAX_DIVIDERS, description=DIVIDER_SPANS_DESCRIPTION)
+    ] | None = None
+    shelf_kinds: Annotated[
+        list[ShelfKind], Field(min_length=1, max_length=40, description=SHELF_KINDS_DESCRIPTION)
+    ] | None = None
+    side_folds: Annotated[list[SideFoldIn], Field(max_length=2, description=SIDE_FOLDS_DESCRIPTION)] = []
     fronts: Annotated[list[FrontIn], Field(max_length=10)] = []
     hardware: Annotated[list[HardwareLineIn], Field(max_length=50)] = []
 
     @model_serializer(mode="wrap")
     def _omit_unstated_interior(self, handler: Any) -> dict[str, Any]:
-        # A module without spacing, positions or dividers serialises exactly as before.
+        # A module without spacing, positions, dividers or folds serialises exactly as before.
         dumped = handler(self)
-        for field in ("shelf_spacing_mm", "shelf_positions_mm", "divider_positions_mm"):
+        for field in ("shelf_spacing_mm", "shelf_positions_mm", "divider_positions_mm", "divider_spans", "shelf_kinds"):
             if dumped.get(field) is None:
                 dumped.pop(field, None)
         if not dumped.get("dividers"):
             dumped.pop("dividers", None)
+        if not dumped.get("side_folds"):
+            dumped.pop("side_folds", None)
         return dumped
 
 
@@ -226,6 +286,10 @@ def _check_interior(where: str, module: ModuleIn, t: int) -> None:
             f"{where}: shelf_spacing_mm and shelf_positions_mm cannot both be given; state one"
         )
     field = "shelf_spacing_mm" if spacing is not None else "shelf_positions_mm"
+    if module.divider_spans is not None and not module.dividers:
+        raise SpecValidationError(f"{where}.divider_spans: module {module.id!r} has no dividers")
+    if module.shelf_kinds is not None and not count:
+        raise SpecValidationError(f"{where}.shelf_kinds: module {module.id!r} has no shelves")
     if (spacing is not None or positions is not None) and not count:
         raise SpecValidationError(f"{where}.{field}: module {module.id!r} has no shelves to place")
     if positions is not None:
@@ -268,17 +332,87 @@ def _check_interior(where: str, module: ModuleIn, t: int) -> None:
             f"{where}.dividers: {dividers} dividers leave no room for a bay in the inner width of {inner_w} mm"
         )
 
+    kinds = module.shelf_kinds
+    if kinds is not None:
+        fixed = sum(1 for kind in kinds if kind == "fixed")
+        if len(kinds) != count or fixed != module.shelves:
+            raise SpecValidationError(
+                f"{where}.shelf_kinds: {fixed} fixed and {len(kinds) - fixed} adjustable listed, but the module has "
+                f"{module.shelves} fixed and {module.adjustable_shelves} adjustable shelves"
+            )
 
-def _boxes_overlap(a: ModuleIn, b: ModuleIn) -> bool:
-    """True when two module boxes share volume; touching faces do not count."""
+    spans = module.divider_spans
+    if spans is None:
+        return
+    if len(spans) != dividers:
+        raise SpecValidationError(f"{where}.divider_spans: {len(spans)} spans given, {dividers} dividers expected")
+    kind_of = custom_derive.shelf_kinds_of(module.model_dump(mode="json"))
+    for number, span in enumerate(spans, start=1):
+        for board in (span.from_board, span.to_board):
+            if isinstance(board, str):
+                continue
+            if board > count:
+                raise SpecValidationError(
+                    f"{where}.divider_spans: divider {number} names shelf {board}, but the module has {count} shelves"
+                )
+            if kind_of[board - 1] != "fixed":
+                raise SpecValidationError(
+                    f"{where}.divider_spans: divider {number} names shelf {board}, which is adjustable; "
+                    "only a fixed shelf can hold a divider"
+                )
+        low = 0 if span.from_board == "bottom" else span.from_board
+        high = count + 1 if span.to_board == "top" else span.to_board
+        if low >= high:
+            raise SpecValidationError(
+                f"{where}.divider_spans: divider {number} must stand on a board below the one it reaches"
+            )
+
+
+def _module_aabb(module: ModuleIn, t: int, b: int) -> tuple[int, int, int, int, int, int]:
+    """The folded solid's AABB in build millimetres: (x, y, z, w, d, h)."""
+    x0, y0, z0, w, d, h = custom_derive.module_bounds(module.model_dump(mode="json"), t, b)
+    return module.x + x0, module.y + y0, module.z + z0, w, d, h
+
+
+def _aabbs_overlap(
+    a: tuple[int, int, int, int, int, int], b: tuple[int, int, int, int, int, int]
+) -> bool:
+    """True when two AABBs share volume; touching faces do not count."""
+    ax, ay, az, aw, ad, ah = a
+    bx, by, bz, bw, bd, bh = b
     return (
-        a.x < b.x + b.width
-        and b.x < a.x + a.width
-        and a.y < b.y + b.depth
-        and b.y < a.y + a.depth
-        and a.z < b.z + b.height
-        and b.z < a.z + a.height
+        ax < bx + bw
+        and bx < ax + aw
+        and ay < by + bd
+        and by < ay + ad
+        and az < bz + bh
+        and bz < az + ah
     )
+
+
+def _boxes_overlap(a: ModuleIn, b: ModuleIn, t_a: int, b_a: int, t_b: int, b_b: int) -> bool:
+    """True when two modules' folded bounding boxes share volume; touching faces do not count."""
+    return _aabbs_overlap(_module_aabb(a, t_a, b_a), _module_aabb(b, t_b, b_b))
+
+
+def _check_folds(where: str, module: ModuleIn, t: int, b: int) -> None:
+    """A folded module's geometry uses fold_profile; its dividers must fit inside the folded opening."""
+    if not module.side_folds:
+        return
+    try:
+        custom_derive.fold_profile(module.model_dump(mode="json"), t, b)
+    except custom_derive.DeriveError as error:
+        raise SpecValidationError(f"{where}.side_folds: {error}") from None
+
+
+def _check_folded_dividers(where: str, module: ModuleIn, t: int, b: int) -> None:
+    """Every divider on a folded module lies inside the folded opening along its whole span."""
+    if not module.side_folds or not module.dividers:
+        return
+    problem = custom_derive.divider_fit_problem(module.model_dump(mode="json"), t, b)
+    if problem:
+        field = "divider_positions_mm" if module.divider_positions_mm else "dividers"
+        raise SpecValidationError(f"{where}.{field}: {problem}")
 
 
 class CustomBuildSpec(BaseModel):
@@ -335,14 +469,21 @@ class CustomBuildSpec(BaseModel):
             b = self.materials[module.back].thickness_mm if module.back is not None else 0
             if module.depth <= b:
                 raise SpecValidationError(f"{where}.depth: must be larger than the back thickness ({b} mm)")
-            if self.envelope is not None and (
-                module.x + module.width > self.envelope.width
-                or module.z + module.height > self.envelope.height
-                or module.y + module.depth > self.envelope.depth
-            ):
-                raise SpecValidationError(f"{where}: module {module.id!r} lies outside the envelope")
-            self._check_fronts(where, module, t)
+            _check_folds(where, module, t, b)
+            if self.envelope is not None:
+                mx, my, mz, mw, md, mh = _module_aabb(module, t, b)
+                if (
+                    mx < 0
+                    or my < 0
+                    or mz < 0
+                    or mx + mw > self.envelope.width
+                    or mz + mh > self.envelope.height
+                    or my + md > self.envelope.depth
+                ):
+                    raise SpecValidationError(f"{where}: module {module.id!r} lies outside the envelope")
+            self._check_fronts(where, module, t, b)
             _check_interior(where, module, t)
+            _check_folded_dividers(where, module, t, b)
 
         for index, part in enumerate(self.extra_parts):
             if part.material not in self.materials:
@@ -352,9 +493,14 @@ class CustomBuildSpec(BaseModel):
 
         self._check_wall_shelves(seen)
 
-        for i, first in enumerate(self.modules):
-            for second in self.modules[i + 1 :]:
-                if _boxes_overlap(first, second):
+        boxes = []
+        for module in self.modules:
+            t = self.materials[module.carcass].thickness_mm
+            b = self.materials[module.back].thickness_mm if module.back is not None else 0
+            boxes.append((module, t, b))
+        for i, (first, t_a, b_a) in enumerate(boxes):
+            for second, t_b, b_b in boxes[i + 1 :]:
+                if _boxes_overlap(first, second, t_a, b_a, t_b, b_b):
                     raise SpecValidationError(
                         f"modules: {first.id!r} and {second.id!r} overlap"
                     )
@@ -410,13 +556,16 @@ class CustomBuildSpec(BaseModel):
             if any(later <= earlier for earlier, later in pairwise(positions)):
                 raise SpecValidationError(f"{where}.bracket_positions_mm: positions must be strictly increasing")
 
-    def _check_fronts(self, where: str, module: ModuleIn, t: int) -> None:
+    def _check_fronts(self, where: str, module: ModuleIn, t: int, b: int) -> None:
         document = module.model_dump(mode="json")
         try:
-            rects = custom_derive.front_layout(document)
+            rects = custom_derive.front_layout(document, t, b)
         except custom_derive.DeriveError as error:
             raise SpecValidationError(f"{where}.fronts: {error}") from None
         minimum = custom_derive.MIN_FRONT_MM
+        profile = (
+            custom_derive.fold_profile(document, t, b) if module.side_folds else None
+        )
         for index, front in enumerate(module.fronts):
             entry = [rect for rect in rects if rect["entry"] == index]
             if any(rect["w"] < minimum or rect["h"] < minimum for rect in entry):
@@ -426,16 +575,21 @@ class CustomBuildSpec(BaseModel):
                     f"{module.id!r} at the minimum front size of {minimum} mm"
                 )
             if front.type == "drawer":
-                b = self.materials[module.back].thickness_mm if module.back is not None else 0
                 if custom_derive.runner_length(module.depth - b) is None:
                     raise SpecValidationError(
                         f"{where}.fronts[{index}]: module {module.id!r} is too shallow for a drawer runner"
                     )
-                box_back = module.width - 2 * t - 2 * custom_derive.DRAWER_SIDE_CLEARANCE_MM - 2 * t
-                if box_back <= 0:
-                    raise SpecValidationError(
-                        f"{where}.fronts[{index}]: module {module.id!r} is too narrow for a drawer box"
-                    )
+                for rect in entry:
+                    inner = module.width - 2 * t
+                    if profile is not None:
+                        inner = custom_derive.min_inner_width(
+                            profile, 0, profile.inner_d, rect["z"], rect["z"] + rect["h"]
+                        )
+                    box_back = inner - 2 * custom_derive.DRAWER_SIDE_CLEARANCE_MM - 2 * t
+                    if box_back <= 0:
+                        raise SpecValidationError(
+                            f"{where}.fronts[{index}]: module {module.id!r} is too narrow for a drawer box"
+                        )
 
     @property
     def context(self) -> CustomBuildContext:
@@ -464,6 +618,11 @@ class ModuleChange(BaseModel):
     shelf_positions_mm: Annotated[list[Position], Field(max_length=40)] | None = None
     dividers: Annotated[int, Field(ge=0, le=MAX_DIVIDERS)] | None = None
     divider_positions_mm: Annotated[list[Position], Field(max_length=MAX_DIVIDERS)] | None = None
+    divider_spans: Annotated[
+        list[DividerSpanIn], Field(max_length=MAX_DIVIDERS, description=DIVIDER_SPANS_DESCRIPTION)
+    ] | None = None
+    shelf_kinds: Annotated[list[ShelfKind], Field(max_length=40, description=SHELF_KINDS_DESCRIPTION)] | None = None
+    side_folds: Annotated[list[SideFoldIn], Field(max_length=2, description=SIDE_FOLDS_DESCRIPTION)] | None = None
     hinge: Slug | None = None  # sets the hinge item of every hinged door in the module
     fronts: Annotated[list[FrontIn], Field(max_length=10)] | None = None
     hardware: Annotated[list[HardwareLineIn], Field(max_length=50)] | None = None

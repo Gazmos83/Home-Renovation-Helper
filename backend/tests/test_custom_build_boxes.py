@@ -66,6 +66,40 @@ def test_every_cut_list_row_of_the_new_boards_has_a_box(generator) -> None:
             assert len(placed[row["id"]][1]) == row["qty"]
 
 
+def test_a_folded_module_places_one_box_per_cut_list_row(generator) -> None:
+    from app.blender.custom_build.derive import derive
+    from app.blender.schemas import CustomBuildSpec
+    from tests.test_side_folds import folded_cabinet
+
+    spec = CustomBuildSpec.model_validate(folded_cabinet()).model_dump(mode="json")
+    parts, _hardware, _assembly = derive(spec)
+    placed = generator._folded_module_pieces(spec["modules"][0], spec["materials"])
+    for row in parts:
+        assert row["id"] in placed
+        assert len(placed[row["id"]][1]) == row["qty"]
+    upper = placed["cabinet-side-left-upper"][1][0]
+    assert upper.rotation_deg[1] == pytest.approx(26)
+
+
+def test_a_folded_cabinet_with_two_doors_places_an_n_gon_left_and_a_box_right(generator) -> None:
+    from app.blender.custom_build.derive import derive
+    from app.blender.schemas import CustomBuildSpec
+    from tests.test_side_folds import folded_cabinet
+
+    spec = CustomBuildSpec.model_validate(
+        folded_cabinet(shelves=4, fronts=[{"type": "door", "count": 2, "opening": "hinge"}])
+    ).model_dump(mode="json")
+    parts, _hardware, _assembly = derive(spec)
+    placed = generator._folded_module_pieces(spec["modules"][0], spec["materials"])
+    for row in parts:
+        assert row["id"] in placed
+        assert len(placed[row["id"]][1]) == row["qty"]
+    left = placed["cabinet-door-1-1"][1][0]
+    right = placed["cabinet-door-1-2"][1][0]
+    assert left.verts is not None and right.verts is None
+    assert placed["cabinet-door-1-1"][0] == placed["cabinet-door-1-2"][0] == "fronts"
+
+
 def test_shelves_355_mm_apart_and_two_dividers_are_laid_out_per_bay(generator) -> None:
     spec = build(modules=[module(width=1000, height=1600, shelves=4, shelf_spacing_mm=355, dividers=2)])
     pieces = generator._module_boxes(spec["modules"][0], spec["materials"])

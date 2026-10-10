@@ -34,7 +34,7 @@ _WORD = re.compile(r"[a-zäöüß]+")
 _ENVELOPE = {"width": "w", "height": "h", "depth": "d"}
 # Module length fields a module may leave unset, and those that hold a list of positions
 # (shelf-spacing-and-dividers): an absolute length sets one, and a list holds the value.
-LIST_FIELDS = frozenset({"shelf_positions_mm", "divider_positions_mm"})
+LIST_FIELDS = frozenset({"shelf_positions_mm", "divider_positions_mm", "side_folds"})
 OPTIONAL_FIELDS = LIST_FIELDS | {"shelf_spacing_mm"}
 
 
@@ -118,7 +118,14 @@ def _holds(document: Mapping[str, Any], target: str, field: str, value: float) -
     """Whether the document's field holds `value` (a list field: among its values), and what it holds."""
     if field in LIST_FIELDS:
         module = _module(document, target)
-        listed = [v for v in (module or {}).get(field) or [] if _number(v) is not None]
+        listed = []
+        for item in (module or {}).get(field) or []:
+            if isinstance(item, dict):
+                found = _number(item.get("from_mm"))
+                if found is not None:
+                    listed.append(found)
+            elif _number(item) is not None:
+                listed.append(float(item))
         shown = f"[{', '.join(_mm(float(v)) for v in listed)}]" if listed else "nothing"
         return any(abs(v - value) < 0.5 for v in listed), shown
     after = field_value(document, target, field)

@@ -304,3 +304,61 @@ def test_a_rebuild_after_the_highest_version_was_deleted_names_a_new_number(make
     storage.remove_version(tool_state.settings.render_root, "hall-bench", 3)
     shown = rebuild_preview({"package_id": "hall-bench"}, make_ctx())
     assert shown.summary.startswith("Rebuild hall-bench as version 4, unchanged from version 2")
+
+
+# partial-and-folded-dividers: the two questions and the derived lines in the preview.
+TOP_SPAN = [{"from_board": 2, "to_board": "top"}]
+
+
+def test_a_new_divider_without_a_position_is_asked_not_previewed(make_ctx, tool_state) -> None:
+    make_piece(make_ctx, tool_state)
+    change = {"package_id": "hall-bench", "changes": {"modules": {"cabinet": {"dividers": 1, "divider_spans": TOP_SPAN}}}}
+    answer = preview(change, make_ctx())
+    assert isinstance(answer, str) and answer.startswith("No version proposed: a new divider needs its position")
+    assert "[473] mm from the left side's inner face" in answer and "No shelf-span limit is configured" in answer
+    assert run(change, replace(make_ctx(), approved=True)) == answer
+    assert storage.versions(tool_state.settings.render_root, "hall-bench") == [1]
+
+
+def test_a_positioned_divider_is_previewed_with_its_cut_list_and_hardware_lines(make_ctx, tool_state) -> None:
+    make_piece(make_ctx, tool_state)
+    change = {
+        "package_id": "hall-bench",
+        "changes": {"modules": {"cabinet": {"dividers": 1, "divider_positions_mm": [473], "divider_spans": TOP_SPAN}}},
+    }
+    shown = preview(change, make_ctx())
+    assert isinstance(shown, Confirmation)
+    assert "Cut list: + cabinet-divider" in shown.summary
+    assert "Hardware: Confirmat screw 7×50 mm" in shown.summary
+    assert shown.proposal["changes"] == [
+        "cabinet: dividers None → 1",
+        "cabinet: divider_positions_mm not set → [473]",
+        "cabinet: divider_spans full height → divider 1 from shelf 2 to the top",
+    ]
+
+
+def test_a_divider_on_an_adjustable_shelf_asks_to_fix_it(make_ctx, tool_state) -> None:
+    make_piece(make_ctx, tool_state)
+    change = {
+        "package_id": "hall-bench",
+        "changes": {
+            "modules": {
+                "cabinet": {
+                    "shelves": 0, "adjustable_shelves": 2, "dividers": 1,
+                    "divider_positions_mm": [473], "divider_spans": TOP_SPAN,
+                }
+            }
+        },
+    }
+    answer = preview(change, make_ctx())
+    assert isinstance(answer, str) and "Only a fixed shelf can hold a divider" in answer
+    assert "ask whether to fix shelf 2" in answer and "Confirmat screw 7×50 mm" in answer
+
+
+def test_create_piece_asks_for_a_new_dividers_position(make_ctx) -> None:
+    from app.agent.tools.create_piece import preview as create_preview
+
+    document = desk()
+    document["modules"][0] |= {"dividers": 1}
+    answer = create_preview({"package_id": "divided-desk", "spec": document}, make_ctx())
+    assert isinstance(answer, str) and "[473] mm from the left side's inner face" in answer

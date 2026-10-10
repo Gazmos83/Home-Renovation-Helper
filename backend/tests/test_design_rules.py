@@ -158,6 +158,27 @@ def test_unequal_bays_measure_the_widest_and_name_it(tmp_path: Path) -> None:
     assert found.measurement.value == "546 mm" and "bay 2" in found.measurement.what
 
 
+def test_an_outside_fold_widens_the_shelf_span(tmp_path: Path) -> None:
+    spec = desk()
+    spec["envelope"] = {"width": 3000, "height": 2000, "depth": 400}
+    spec["modules"][0].update(
+        width=800, height=800, depth=400, shelves=1, shelf_positions_mm=[518], fronts=[],
+        side_folds=[{"side": "left", "from_mm": 100, "along": "height", "angle_deg": 45, "towards": "outside"}],
+    )
+    (found,) = evaluate(table(tmp_path, span(900)), "piece", spec)
+    assert found.measurement.value == "1200 mm"
+
+
+def test_an_inside_fold_keeps_the_unbent_inner_width_as_the_span(tmp_path: Path) -> None:
+    spec = desk()
+    spec["modules"][0].update(
+        width=800, height=2000, depth=400, shelves=1, fronts=[],
+        side_folds=[{"side": "left", "from_mm": 1100, "along": "height", "angle_deg": 26, "towards": "inside"}],
+    )
+    (found,) = evaluate(table(tmp_path, span(700)), "piece", spec)
+    assert found.measurement.value == "764 mm"
+
+
 def test_a_board_thinner_than_every_table_entry_is_not_judged(tmp_path: Path) -> None:
     thin = rule("span", "shelf_span_mm_for_thickness", {"table": [{"thickness_mm": 25, "max_span_mm": 100}]},
                 applies_to="piece")

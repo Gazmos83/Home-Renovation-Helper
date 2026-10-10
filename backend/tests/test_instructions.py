@@ -84,6 +84,47 @@ def test_the_designer_knows_shelf_spacing_and_dividers() -> None:
     assert '"shelf_spacing_mm": 355' in text and "Never compute shelf heights" in text
 
 
+def test_the_designer_knows_side_folds() -> None:
+    text = load_instructions()["designer"].text
+    for field in ("side_folds", "from_mm", "along", "angle_deg", "towards"):
+        assert f"`{field}`" in text
+    assert "26 degree bend from 1100 mm" in text
+    assert "`along: height`" in text and "`towards: inside`" in text
+    assert "may carry overlay fronts, adjustable shelves and dividers" in text
+    assert "Dividers on a folded module are not expressible" not in text
+    assert "Never tell the owner there is no field for a bend angle" in text
+    assert "piece summary" in text
+    assert "An edge bevel has no field" in text
+
+
+def test_the_designer_knows_divider_spans_and_shelf_kinds() -> None:
+    text = load_instructions()["designer"].text
+    for field in ("divider_spans", "from_board", "to_board", "shelf_kinds"):
+        assert f"`{field}`" in text
+    assert '"divider_spans": [{"from_board": 4, "to_board": "top"}]' in text
+    assert "Never tell the owner a partial-height divider cannot be made" in text
+    assert "Only a fixed shelf can hold a divider" in text
+    assert "Never change a shelf's kind without the owner's yes" in text
+    assert "`search_guidelines`" in text and "recommended position" in text
+
+
+def test_the_foreman_routes_a_side_fold_to_the_designer() -> None:
+    text = load_instructions()["foreman"].text
+    line = next(line for line in text.splitlines() if line.startswith("- `designer`:"))
+    assert "fold or bend in a carcass side" in line
+
+
+def test_revise_package_names_side_folds_as_a_panel_bend() -> None:
+    from app.agent.tools.revise_package import revise_package
+    from app.blender.schemas import ModuleChange
+
+    assert "side_folds" in revise_package.description
+    assert "bend" in revise_package.description.lower()
+    folded = ModuleChange.model_json_schema()["properties"]["side_folds"]
+    description = folded.get("description") or folded.get("anyOf", [{}])[0].get("description", "")
+    assert "carcass-side" in description
+
+
 def _break(tmp_path: Path, name: str, edit) -> str:
     directory = _copy(tmp_path)
     path = directory / f"{name}.md"

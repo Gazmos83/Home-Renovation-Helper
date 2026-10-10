@@ -95,3 +95,22 @@ def test_the_template_is_valid_as_shipped_and_its_build_is_the_starter() -> None
     guide = " ".join(shipped["guide"])
     for word in ("materials", "modules", "fronts", "extra_parts", "hardware", "part_overrides", "JSON", "survey"):
         assert word in guide, word
+
+
+def test_the_guide_names_side_folds() -> None:
+    guide = " ".join(load_template()["guide"])
+    for word in ("side_folds", "from_mm", "along", "angle_deg", "towards"):
+        assert word in guide, word
+
+
+def test_the_guide_allows_fronts_on_a_fold() -> None:
+    guide = " ".join(load_template()["guide"])
+    assert "Overlay fronts, adjustable shelves and dividers on a folded module follow the folded opening" in guide
+    assert "A folded module cannot carry dividers" not in guide
+
+
+def test_the_guide_names_divider_spans_and_shelf_kinds() -> None:
+    guide = " ".join(load_template()["guide"])
+    for field in ("divider_spans", "from_board", "to_board", "shelf_kinds"):
+        assert field in guide
+    assert "only a fixed shelf can anchor a divider" in guide

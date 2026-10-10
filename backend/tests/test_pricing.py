@@ -215,6 +215,32 @@ def test_a_missing_home_store_or_version_is_refused_by_name(session, settings) -
         price_cut_list(session, settings.render_root, "ghost", 1, settings)
 
 
+def test_derived_mitre_notes_are_marked_for_review(session, settings) -> None:
+    document = {
+        "kind": "custom_build", "schema_version": 1, "units": "mm", "name": "Folded cabinet",
+        "materials": {
+            "carcass": {"material": "18 mm oak-veneered birch", "thickness_mm": 18},
+            "back": {"material": "12 mm birch plywood", "thickness_mm": 12},
+        },
+        "modules": [{
+            "id": "cabinet", "name": "Cabinet", "x": 0, "y": 0, "z": 0,
+            "width": 800, "height": 2000, "depth": 400, "carcass": "carcass", "back": "back",
+            "side_folds": [{"side": "left", "from_mm": 1100, "along": "height", "angle_deg": 26, "towards": "inside"}],
+        }],
+    }
+    from app.blender.schemas import CustomBuildSpec
+
+    write_version(settings.render_root, CustomBuildSpec.model_validate(document).model_dump(mode="json"), package_id="folded-cab")
+    approve_version(session, "folded-cab", 1)
+    session.flush()
+    home_store(session)
+    price_the_desk(session)
+    row = price_cut_list(session, settings.render_root, "folded-cab", 1, settings)
+    reviewed = {item["part_id"]: item["note"] for item in row.result["review"]}
+    assert "cabinet-side-left-upper" in reviewed
+    assert "26" in reviewed["cabinet-side-left-upper"] and "mitre" in reviewed["cabinet-side-left-upper"].casefold()
+
+
 def test_a_pricing_describes_itself_as_plain_data(session, settings) -> None:
     write_version(settings.render_root)
     home_store(session)

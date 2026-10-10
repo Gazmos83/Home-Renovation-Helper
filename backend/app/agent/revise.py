@@ -12,7 +12,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.blender.schemas import PackageChanges
+from app.blender.custom_build.derive import derive
+from app.blender.schemas import CustomBuildSpec, PackageChanges
+from app.blender.spec_contract import SpecValidationError
 
 
 class ReviseError(ValueError):
@@ -20,8 +22,15 @@ class ReviseError(ValueError):
 
 
 DEFAULT_HINGE = "hinge-concealed-110"
-# The interior fields a change clears with 0 or an empty list (shelf-spacing-and-dividers).
-_CLEARED_BY = {"shelf_spacing_mm": 0, "shelf_positions_mm": [], "divider_positions_mm": []}
+# The interior fields a change clears with 0 or an empty list (shelf-spacing-and-dividers, carcass-side-folds).
+_CLEARED_BY = {
+    "shelf_spacing_mm": 0,
+    "shelf_positions_mm": [],
+    "divider_positions_mm": [],
+    "divider_spans": [],
+    "shelf_kinds": [],
+    "side_folds": [],
+}
 # Spacing and positions exclude each other: setting one drops the other.
 _REPLACES = {"shelf_spacing_mm": "shelf_positions_mm", "shelf_positions_mm": "shelf_spacing_mm"}
 
@@ -68,6 +77,28 @@ def describe_hardware(lines: list[dict[str, Any]] | None) -> str:
     return ", ".join(f'{line["id"]} "{line["item"]}" ×{line["qty"]}' for line in lines or []) or "none"
 
 
+def describe_folds(folds: list[dict[str, Any]] | None) -> str:
+    """A module's side folds in words, e.g. 'left from 1100 mm along height, 26°, inside'."""
+    if not folds:
+        return "none"
+    return "; ".join(
+        f"{fold['side']} from {fold['from_mm']} mm along {fold['along']}, {fold['angle_deg']}°, {fold['towards']}"
+        for fold in folds
+    )
+
+
+def describe_spans(spans: list[dict[str, Any]] | None) -> str:
+    """A module's divider spans in words, left to right, e.g. 'divider 1 from shelf 4 to the top'."""
+    if not spans:
+        return "full height"
+    words = []
+    for number, span in enumerate(spans, start=1):
+        low = "the bottom" if span["from_board"] == "bottom" else f"shelf {span['from_board']}"
+        high = "the top" if span["to_board"] == "top" else f"shelf {span['to_board']}"
+        words.append(f"divider {number} from {low} to {high}")
+    return "; ".join(words)
+
+
 def _unknown(kind: str, slug: str, present: set[str]) -> ReviseError:
     listed = ", ".join(sorted(present)) or "none"
     return ReviseError(f"{kind} {slug!r} is not in the package; its {kind}s are: {listed}")
@@ -84,6 +115,8 @@ def _apply_module_change(module: dict[str, Any], change: dict[str, Any], lines: 
             continue
         if field == "dividers" and not value and module.get("divider_positions_mm") and "divider_positions_mm" not in change:
             lines.append(f"{module_id}: divider_positions_mm {module.pop('divider_positions_mm')} → not set")
+        if field == "dividers" and not value and module.get("divider_spans") and "divider_spans" not in change:
+            lines.append(f"{module_id}: divider_spans {describe_spans(module.pop('divider_spans'))} → full height")
         before = module.get(field)
         if _same(before, value):
             continue  # a value the module already has changes nothing
@@ -102,6 +135,23 @@ def _set_interior(module: dict[str, Any], field: str, value: Any, change: dict[s
     cleared = value == _CLEARED_BY[field]
     if (cleared and not before) or _same(before, value):
         return  # a value the module already has changes nothing
+    if field == "divider_spans":
+        now = "full height" if cleared else describe_spans(value)
+        lines.append(f"{module_id}: divider_spans {describe_spans(before)} → {now}")
+        if cleared:
+            module.pop(field, None)
+        else:
+            module[field] = value
+        return
+    if field == "side_folds":
+        was = describe_folds(before) if before else "not set"
+        now = "not set" if cleared else describe_folds(value)
+        lines.append(f"{module_id}: side_folds {was} → {now}")
+        if cleared:
+            module.pop(field, None)
+        else:
+            module[field] = value
+        return
     was = before if before else "not set"
     if cleared:
         lines.append(f"{module_id}: {field} {was} → not set")
@@ -230,3 +280,45 @@ def revise_spec(
         spec["part_overrides"] = overrides
 
     return spec, lines
+
+
+def derived_changes(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+    """The cut-list rows and hardware lines a revision adds, removes or changes, derived from both documents.
+
+    Shown in the confirmation after the change lines (partial-and-folded-dividers); an unreadable
+    earlier document gives no lines rather than a guess.
+    """
+    try:
+        old = CustomBuildSpec.model_validate(before).model_dump(mode="json")
+        old_parts, old_hardware, _ = derive(old)
+        new_parts, new_hardware, _ = derive(after)
+    except (ValueError, SpecValidationError, KeyError, TypeError):
+        return []
+    lines = []
+    was = {part["id"]: part for part in old_parts}
+    now = {part["id"]: part for part in new_parts}
+    for part_id in dict.fromkeys([*was, *now]):
+        a, b = was.get(part_id), now.get(part_id)
+        if a is None and b is not None:
+            lines.append(f"Cut list: + {part_id} {b['l']} × {b['w']} mm ×{b['qty']}")
+        elif b is None and a is not None:
+            lines.append(f"Cut list: − {part_id} {a['l']} × {a['w']} mm ×{a['qty']}")
+        elif a is not None and b is not None and (a["l"], a["w"], a["qty"]) != (b["l"], b["w"], b["qty"]):
+            lines.append(
+                f"Cut list: {part_id} {a['l']} × {a['w']} mm ×{a['qty']} → {b['l']} × {b['w']} mm ×{b['qty']}"
+            )
+    old_hw = {line["id"]: line for line in old_hardware}
+    new_hw = {line["id"]: line for line in new_hardware}
+    for line_id in dict.fromkeys([*old_hw, *new_hw]):
+        a, b = old_hw.get(line_id), new_hw.get(line_id)
+        item = (b or a or {}).get("item", line_id)
+        old_qty = a["qty"] if a is not None else 0
+        new_qty = b["qty"] if b is not None else 0
+        if old_qty == new_qty:
+            continue
+        lines.append(f"Hardware: {item} {_quantity(old_qty)} → {_quantity(new_qty)}")
+    return lines
+
+
+def _quantity(qty: Any) -> str:
+    return "no quantity" if qty == "" else str(qty)

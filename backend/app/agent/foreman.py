@@ -46,6 +46,7 @@ from app.agent.models.budgets import Budgets
 from app.agent.models.openrouter_client import gateway_errors
 from app.agent.models.routing import IMAGE_SLOTS
 from app.agent.prompts import (
+    DESIGNER_SIDE_FOLDS_NOTE,
     EMPTY_ANSWER_NOTE,
     FORMATTING_NOTE,
     TOOL_ROUND_CAP_NOTE,
@@ -379,7 +380,8 @@ def _designer_note() -> str:
         templates.append(f"Template {name}:\n{json.dumps(document, separators=(',', ':'))}")
     return (
         "A custom_build document is positioned modules (boxes, in whole millimetres) with "
-        "shelves and fronts (door, drawer, flap), drawing materials from named slots. "
+        "shelves, fronts (door, drawer, flap) and optional side_folds (a carcass-side bend: "
+        "side, from_mm, along, angle_deg, towards), drawing materials from named slots. "
         "Start from the custom-build template unless another one fits the brief better, and "
         "change only what the brief supports.\n\n"
         + "\n\n".join(templates)
@@ -819,6 +821,7 @@ def build_graph(
                 notes.append(state.get("house_note", ""))
             if name == "designer":
                 notes.append(state.get("piece_note", ""))
+                notes.append(DESIGNER_SIDE_FOLDS_NOTE)
             if name in ("designer", "builder"):
                 notes.append(state.get("composition_note", ""))
             if name in ("designer", "lighting"):

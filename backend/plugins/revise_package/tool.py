@@ -16,7 +16,8 @@ from typing import Any
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agent import house_file, measurements, notices
-from app.agent.revise import ReviseError, revise_spec
+from app.agent.divider_questions import fix_shelf_question, position_question
+from app.agent.revise import ReviseError, derived_changes, revise_spec
 from app.agent.tools.base import (
     AgentTool,
     Confirmation,
@@ -52,7 +53,9 @@ class RequestedMeasure(BaseModel):
     target: str = Field(
         description="the module id, 'envelope', a wall shelf id, or 'none' for a length not about the piece"
     )
-    field: str = Field(description="the field the length sets, e.g. width, height, depth, length; empty for 'none'")
+    field: str = Field(
+        description="the field the length sets, e.g. width, height, depth, length, side_folds; empty for 'none'"
+    )
     value_mm: float = Field(description="the field's new value in mm; a relative length is added to the latest version's value")
 
 
@@ -84,18 +87,26 @@ class RevisePackageSchema(BaseModel):
 def _revised(
     arguments: dict[str, Any], ctx: ToolContext
 ) -> tuple[str | None, int | None, dict[str, Any] | None, list[str], str]:
+    package_id, latest, spec, lines, _effects, problem = _revised_with_effects(arguments, ctx)
+    return package_id, latest, spec, lines, problem
+
+
+def _revised_with_effects(
+    arguments: dict[str, Any], ctx: ToolContext
+) -> tuple[str | None, int | None, dict[str, Any] | None, list[str], list[str], str]:
+    """`_revised` plus the cut-list and hardware lines the revision changes."""
     args, problem = parse_args(ReviseArgs, arguments)
     if args is None:
-        return None, None, None, [], problem
+        return None, None, None, [], [], problem
     package_id, problem = checked_package_id(args.package_id)
     if package_id is None:
-        return None, None, None, [], problem
+        return None, None, None, [], [], problem
     latest = latest_version(ctx.deps, package_id)
     if latest is None:
-        return None, None, None, [], f"there is no piece {package_id!r}"
+        return None, None, None, [], [], f"there is no piece {package_id!r}"
     document = read_input(storage.version_dir(ctx.deps.render_root, package_id, latest))
     if document is None:
-        return None, None, None, [], f"version {latest} of {package_id!r} has no readable document"
+        return None, None, None, [], [], f"version {latest} of {package_id!r} has no readable document"
     try:
         changes = PackageChanges.model_validate(args.changes)
     except ValidationError as error:
@@ -103,14 +114,14 @@ def _revised(
         fields = unknown_fields(error)
         if fields:
             record_unknown_fields(ctx, fields, package_id)
-            return None, None, None, [], extension_refusal(message, fields)
-        return None, None, None, [], f"invalid changes: {message}"
+            return None, None, None, [], [], extension_refusal(message, fields)
+        return None, None, None, [], [], f"invalid changes: {message}"
     try:
         revised, lines = revise_spec(document, changes)
     except ReviseError as error:
-        return None, None, None, [], str(error)
+        return None, None, None, [], [], str(error)
     if not lines:
-        return None, None, None, [], (
+        return None, None, None, [], [], (
             f"nothing would change: every requested value equals version {latest}; "
             "to build the same design again as a new version, use rebuild_piece"
         )
@@ -122,15 +133,21 @@ def _revised(
         revised,
     )
     if refusals:
-        return None, None, None, [], "the requested measurements do not hold: " + "; ".join(refusals)
+        return None, None, None, [], [], "the requested measurements do not hold: " + "; ".join(refusals)
+    question = fix_shelf_question(revised)
+    if question:
+        return None, None, None, [], [], question
     spec, problem = validated_custom_build(ctx, revised, package_id)
     if spec is None:
-        return None, None, None, [], problem
-    return package_id, latest, spec, lines, ""
+        return None, None, None, [], [], problem
+    question = position_question(document, spec, ctx.deps.design_rules)
+    if question:
+        return None, None, None, [], [], question
+    return package_id, latest, spec, lines, derived_changes(document, spec), ""
 
 
 def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
-    package_id, latest, spec, lines, problem = _revised(arguments, ctx)
+    package_id, latest, spec, lines, effects, problem = _revised_with_effects(arguments, ctx)
     if package_id is None or spec is None or latest is None:
         return problem
     unavailable = builds_unavailable(ctx.deps)
@@ -143,6 +160,8 @@ def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
     if refusal:
         return refusal
     summary = f"Revise {package_id} (from version {latest}):\n" + "\n".join(lines)
+    if effects:
+        summary += "\n" + "\n".join(effects)
     if warnings:
         summary += f"\nDesign-rule warnings: {warnings}"
     heads_up = version_limit_line(ctx.deps, package_id)
@@ -289,9 +308,11 @@ revise_package = AgentTool(
     name="revise_package",
     description=(
         "Revise a piece that exists: give its package id and only the changes (name, envelope, "
-        "material slots, per-module fields by module id, modules and extra parts to add or "
-        "remove, part overrides). The owner is shown the change lines and answers yes or no; "
-        "the next version is created only on yes."
+        "material slots, per-module fields by module id including side_folds for a carcass-side "
+        "bend, modules and extra parts to add or remove, part overrides). A 26° bend from 1100 mm "
+        "on a named module is changes.modules.<id>.side_folds = [{side: left, from_mm: 1100, "
+        "along: height, angle_deg: 26, towards: inside}]. The owner is shown the change lines "
+        "and answers yes or no; the next version is created only on yes."
     ),
     schema=RevisePackageSchema,
     run=run,

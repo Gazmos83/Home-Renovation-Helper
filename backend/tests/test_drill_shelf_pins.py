@@ -100,3 +100,37 @@ def test_no_data_sheet_blanks_the_divider_entry_too() -> None:
     result = _run(None, dividers=2)
     assert [entry["part"] for entry in result["entries"]] == ["m-side", "m-divider"]
     assert result["counts"]["shelf_pin_holes"] is None
+
+
+def test_pin_holes_on_a_folded_left_side_name_the_split_boards() -> None:
+    from app.blender.custom_build.derive import slope_mm
+
+    spec = build(
+        modules=[
+            module(
+                width=800,
+                height=2000,
+                depth=400,
+                adjustable_shelves=1,
+                shelf_positions_mm=[1100],
+                side_folds=[
+                    {"side": "left", "from_mm": 1100, "along": "height", "angle_deg": 26, "towards": "inside"}
+                ],
+            )
+        ]
+    )
+    result = drilling(spec, inputs({"shelf-pin": sheet("shelf_pin", PIN)}))
+    parts = [entry["part"] for entry in result["entries"]]
+    assert parts == ["m-side-left-lower", "m-side-left-upper", "m-side-right"]
+    assert "m-side" not in parts
+    by_part = {entry["part"]: entry for entry in result["entries"]}
+    lower_h = [p["position"]["mm"] for p in by_part["m-side-left-lower"]["positions"] if p["label"].startswith("hole")]
+    upper_h = [p["position"]["mm"] for p in by_part["m-side-left-upper"]["positions"] if p["label"].startswith("hole")]
+    right_h = [p["position"]["mm"] for p in by_part["m-side-right"]["positions"] if p["label"].startswith("hole")]
+    assert lower_h and all(h < 1100 for h in lower_h)
+    assert upper_h and all(h == slope_mm(orig - 1100, 26) for orig, h in zip(
+        [p["position"]["mm"] for p in by_part["m-side-right"]["positions"] if p["label"].startswith("hole") and p["position"]["mm"] >= 1100],
+        upper_h,
+    ))
+    assert right_h[0] == 68
+    assert all(p["from"] == "board's lower end" for p in by_part["m-side-left-upper"]["positions"] if p["label"].startswith("hole"))
