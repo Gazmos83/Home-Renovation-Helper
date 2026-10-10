@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -1170,4 +1170,159 @@ test("sending jumps to the bottom even when the owner had scrolled up", async ()
   } finally {
     restore();
   }
+});
+
+// --- the conversation's room beside the chat (project-room-inspection) ----------------------
+
+const HALL = {
+  name: "Hall", scope: "room", slug: "room-hall",
+  model: "/compositions/room-hall/versions/1/files/model.glb",
+  surfaces: "/compositions/room-hall/versions/1/files/report.json",
+};
+
+function serveRoom() {
+  extra = (call) =>
+    call === "GET /compositions/room-hall/versions/1/files/report.json"
+      ? { body: { surfaces: { "wall 1": ["Wall_0_0"], ceiling: ["Ceiling"] }, extent_mm: { min: [0, 0, 0], max: [3000, 2000, 2500] } } }
+      : undefined;
+}
+
+test("the Project panel opens the conversation's room beside the chat and closes it", async () => {
+  const user = userEvent.setup();
+  progressNow = progress(["brief", "piece", "built"], { room: HALL });
+  serveRoom();
+  messages = [reply("Hello")];
+  show();
+  const panel = within(await openProject());
+  await user.click(await panel.findByRole("button", { name: "Inspect Hall" }));
+  const pane = within(await screen.findByRole("complementary", { name: "Room view" }));
+  expect(pane.getByRole("heading", { name: "Hall" })).toBeInTheDocument();
+  const switches = within(await pane.findByRole("group", { name: "Surfaces" }));
+  expect(switches.getByRole("button", { name: "ceiling" })).toHaveAttribute("aria-pressed", "false");
+  await user.type(screen.getByRole("textbox"), "lower the shelf");
+  expect(screen.getByRole("textbox")).toHaveValue("lower the shelf");
+
+  await user.click(pane.getByRole("button", { name: "Close room view" }));
+  expect(screen.queryByRole("complementary", { name: "Room view" })).not.toBeInTheDocument();
+});
+
+test("the room view opens again from the address", async () => {
+  progressNow = progress(["brief", "piece", "built"], { room: HALL });
+  serveRoom();
+  messages = [reply("Hello")];
+  show("/conversations/t1?room=room-hall");
+  expect(await screen.findByRole("complementary", { name: "Room view" })).toBeInTheDocument();
+});
+
+test("a room address that is not the conversation's room shows no pane", async () => {
+  progressNow = progress(["brief", "piece", "built"], { room: HALL });
+  messages = [reply("Hello")];
+  show("/conversations/t1?room=room-kitchen");
+  await screen.findByText("Hello");
+  await openProject();
+  expect(screen.queryByRole("complementary", { name: "Room view" })).not.toBeInTheDocument();
+});
+
+test("only one side pane is shown: the room and the piece inspector replace each other", async () => {
+  const user = userEvent.setup();
+  progressNow = progress(["brief", "piece", "built"], { room: HALL });
+  serveRoom();
+  messages = [reply("Hello")];
+  show("/conversations/t1?room=room-hall");
+  await screen.findByRole("complementary", { name: "Room view" });
+  const panel = within(await openProject());
+  await user.click(await panel.findByRole("button", { name: "Inspect version 1" }));
+  expect(await screen.findByRole("complementary", { name: "Inspector" })).toBeInTheDocument();
+  expect(screen.queryByRole("complementary", { name: "Room view" })).not.toBeInTheDocument();
+
+  await user.click(panel.getByRole("button", { name: "Inspect Hall" }));
+  expect(await screen.findByRole("complementary", { name: "Room view" })).toBeInTheDocument();
+  expect(screen.queryByRole("complementary", { name: "Inspector" })).not.toBeInTheDocument();
+});
+
+test("a room without a 3D view says why, and no room confirmed shows no room section", async () => {
+  progressNow = progress(["brief", "piece", "built"], { room: { ...HALL, slug: null, model: null, surfaces: null } });
+  show();
+  let panel = within(await openProject());
+  expect(await panel.findByText("Hall has no 3D view yet. Ask the Designer to compose the room.")).toBeInTheDocument();
+  expect(panel.queryByRole("button", { name: "Inspect Hall" })).not.toBeInTheDocument();
+  cleanup();
+
+  progressNow = progress(["brief", "piece", "built"], { room: { ...HALL, model: null, surfaces: null } });
+  show();
+  panel = within(await openProject());
+  expect(await panel.findByText("Composing Hall again adds the 3D view.")).toBeInTheDocument();
+  cleanup();
+
+  progressNow = progress(["brief", "piece", "built"], { room: null });
+  show();
+  panel = within(await openProject());
+  await panel.findByText("Built");
+  expect(panel.queryByRole("group", { name: "Room" })).not.toBeInTheDocument();
+});
+
+// --- room versions and the panel heading (project-room-inspection, after the owner's check) ---
+
+const hallView = (version: number, extra: Record<string, unknown> = {}) => ({
+  version, status: "succeeded", picture: null, viewer: null, items: [],
+  model: `/compositions/room-hall/versions/${version}/files/model.glb`,
+  surfaces: `/compositions/room-hall/versions/${version}/files/report.json`,
+  dimensions: `/compositions/room-hall/versions/${version}/dimensions`,
+  ...extra,
+});
+const VERSIONED_HALL = {
+  ...HALL,
+  model: "/compositions/room-hall/versions/3/files/model.glb",
+  surfaces: "/compositions/room-hall/versions/3/files/report.json",
+  versions: [hallView(3), hallView(2), hallView(1, { model: null, surfaces: null, dimensions: null })],
+};
+
+function serveHallVersions() {
+  extra = (call) =>
+    /^GET \/compositions\/room-hall\/versions\/\d\/files\/report\.json$/.test(call)
+      ? { body: { surfaces: { "wall 1": ["Wall_0_0"], ceiling: ["Ceiling"] }, extent_mm: { min: [0, 0, 0], max: [3000, 2000, 2500] } } }
+      : undefined;
+}
+
+test("the room section is headed Selected room above the room's name", async () => {
+  progressNow = progress(["brief", "piece", "built"], { room: HALL });
+  show();
+  const group = within(await within(await openProject()).findByRole("group", { name: "Room" }));
+  const [heading] = group.getAllByRole("heading");
+  expect(heading).toHaveTextContent("Selected room");
+  expect(group.getByText("Hall")).toBeInTheDocument();
+});
+
+test("the room pane offers its versions, keeps the chosen one in the address, and names one without 3D", async () => {
+  const user = userEvent.setup();
+  progressNow = progress(["brief", "piece", "built"], { room: VERSIONED_HALL });
+  serveHallVersions();
+  messages = [reply("Hello")];
+  show("/conversations/t1?room=room-hall");
+  const pane = within(await screen.findByRole("complementary", { name: "Room view" }));
+  const select = pane.getByRole("combobox", { name: "Version of Hall" });
+  expect(select).toHaveValue("3");
+  expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Version 3", "Version 2", "Version 1"]);
+  await pane.findByRole("group", { name: "Surfaces" });
+  expect(pane.getByRole("button", { name: "dimensions" })).toHaveAttribute("aria-pressed", "false");
+
+  await user.selectOptions(select, "1");
+  expect(await pane.findByText("Version 1 of Hall has no 3D view. Composing Hall again adds it.")).toBeInTheDocument();
+  await user.selectOptions(select, "2");
+  await pane.findByRole("group", { name: "Surfaces" });
+  expect(calls.some(([, url]) => url === "/compositions/room-hall/versions/2/files/report.json")).toBe(true);
+});
+
+test("a room address with a version shows it after a reload, and an unlisted one shows the latest", async () => {
+  progressNow = progress(["brief", "piece", "built"], { room: VERSIONED_HALL });
+  serveHallVersions();
+  messages = [reply("Hello")];
+  show("/conversations/t1?room=room-hall/2");
+  let pane = within(await screen.findByRole("complementary", { name: "Room view" }));
+  expect(pane.getByRole("combobox", { name: "Version of Hall" })).toHaveValue("2");
+  cleanup();
+
+  show("/conversations/t1?room=room-hall/9");
+  pane = within(await screen.findByRole("complementary", { name: "Room view" }));
+  expect(pane.getByRole("combobox", { name: "Version of Hall" })).toHaveValue("3");
 });

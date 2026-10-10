@@ -430,6 +430,44 @@ def test_a_built_and_reviewed_piece_shows_in_the_progress(client: TestClient, re
     assert body["viewer"] == "/packages/hall-bench/versions/1/files/viewer.html"
 
 
+def test_progress_names_the_threads_own_room_and_its_3d_view(client: TestClient, render_root: Path) -> None:
+    from app.blender import storage
+
+    install(client, fake_models())
+    thread = start(client, room="Hall")
+    other = start(client, room=None)
+    with Session(client.app.state.engine) as session:
+        house_file.record_piece(session, "hall-bench", "Hall bench")
+        house_file.set_piece_room(session, "hall-bench", house_file.room_by_name(session, "Hall"))
+        composition = house_file.record_composition(session, "room", "Hall")
+        house_file.record_composition_version(session, composition, 1, None, [])
+        session.commit()
+        slug = composition.slug
+    folder = storage.composition_version_dir(render_root, slug, 1)
+    folder.mkdir(parents=True)
+    (folder / "model.glb").write_bytes(b"glb")
+    (folder / "report.json").write_text("{}", encoding="utf-8")
+
+    body = client.get(f"/chat/threads/{thread}/progress").json()
+    room = body["room"]
+    assert {key: room[key] for key in ("name", "scope", "slug", "model", "surfaces")} == {
+        "name": "Hall",
+        "scope": "room",
+        "slug": slug,
+        "model": f"/compositions/{slug}/versions/1/files/model.glb",
+        "surfaces": f"/compositions/{slug}/versions/1/files/report.json",
+    }
+    [only] = room["versions"]
+    assert (only["version"], only["dimensions"]) == (1, f"/compositions/{slug}/versions/1/dimensions")
+    assert str(render_root) not in json.dumps(body)
+
+    # Another conversation sees neither this one's room nor the room its piece is in.
+    with Session(client.app.state.engine) as session:
+        house_file.set_active_build(session, UUID(other), "hall-bench")
+        session.commit()
+    assert client.get(f"/chat/threads/{other}/progress").json()["room"] is None
+
+
 # --- history (foreman-routing-fixes) ----------------------------------------------
 
 

@@ -14,7 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.agent import house_file
+from app import compositions
+from app.agent import house_file, progress
 from app.api.gate import require_owner
 from app.api.packages import _file_for
 from app.blender import storage
@@ -26,35 +27,35 @@ def _not_found() -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, detail="Not Found")
 
 
-def _route(slug: str, version: int, name: str) -> str:
-    return f"/compositions/{slug}/versions/{version}/files/{name}"
-
-
 @router.get("")
 def list_compositions(request: Request) -> list[dict[str, Any]]:
     root = request.app.state.settings.render_root
     with Session(request.app.state.engine) as session:
         listed = house_file.compositions(session, root)
-    for composition in listed:
-        latest = composition["latest_version"]
-        picture = viewer = model = surfaces = None
-        if latest is not None:
-            folder = storage.composition_version_dir(root, composition["slug"], latest)
-            for name in ("still.png", "screenshot.png"):
-                if (folder / name).is_file():
-                    picture = _route(composition["slug"], latest, name)
-                    break
-            if (folder / "viewer.html").is_file():
-                viewer = _route(composition["slug"], latest, "viewer.html")
-            # The 3D view: a version built before the model was published has none.
-            if (folder / "model.glb").is_file():
-                model = _route(composition["slug"], latest, "model.glb")
-                surfaces = _route(composition["slug"], latest, "report.json")
-        composition["picture"] = picture
-        composition["viewer"] = viewer
-        composition["model"] = model
-        composition["surfaces"] = surfaces
+        for composition in listed:
+            # The newest versions for the dropdown, newest first (project-room-inspection).
+            views = progress.composition_version_views(session, root, composition["slug"], composition["versions"])
+            composition["version_views"] = views
+            # The latest version's files; a version built before the model was published has no 3D view.
+            latest = views[0] if views else {}
+            for key in ("picture", "viewer", "model", "surfaces"):
+                composition[key] = latest.get(key)
     return listed
+
+
+@router.get("/{slug}/versions/{version}/dimensions")
+def read_composition_dimensions(slug: str, version: int, request: Request) -> dict[str, Any]:
+    """The version's wall lengths and ceiling heights (project-room-inspection)."""
+    root = request.app.state.settings.render_root
+    try:
+        folder = storage.composition_version_dir(root, slug, version)
+    except (storage.InvalidPackageId, ValueError):
+        raise _not_found() from None
+    document = compositions.read_document(folder) if folder.is_dir() else None
+    found = compositions.room_dimensions(document) if document is not None else None
+    if found is None:
+        raise _not_found()
+    return found
 
 
 @router.get("/{slug}/versions/{version}/files/{name:path}", response_class=FileResponse)

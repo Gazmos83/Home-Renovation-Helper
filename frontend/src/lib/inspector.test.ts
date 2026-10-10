@@ -1,4 +1,4 @@
-import { baseOf, cameraPresets, customBuildExplode, dimensionOverlays, layerOf, layerVisible, moduleLabels } from "./inspector";
+import { baseOf, cameraPresets, customBuildExplode, dimensionOverlays, layerOf, layerVisible, moduleLabels, planToStage } from "./inspector";
 
 describe("customBuildExplode", () => {
   it("moves two side-by-side modules apart along x and leaves the extras alone", () => {
@@ -110,5 +110,12 @@ describe("dimensionOverlays", () => {
 
   it("follows the dimensions switch", () => {
     expect(dimensionOverlays({ dimensions: false }, "exploded")).toEqual({ overall: false, modules: false });
+  });
+});
+
+describe("planToStage (project-room-inspection)", () => {
+  test("a plan point in mm lands where the Y-up model puts it, in metres", () => {
+    expect(planToStage(6200, 0)).toEqual([6.2, 0, -0]);
+    expect(planToStage(1289, 6064, 2500)).toEqual([1.289, 2.5, -6.064]);
   });
 });

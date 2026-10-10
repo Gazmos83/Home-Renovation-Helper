@@ -176,6 +176,28 @@ class RequestOut(BaseModel):
     request: str
 
 
+class CompositionVersionOut(BaseModel):
+    # One of the composition's newest versions, for the room pane's dropdown (project-room-inspection).
+    version: int
+    status: str | None
+    picture: str | None
+    viewer: str | None
+    items: list[dict[str, Any]]
+    model: str | None
+    surfaces: str | None
+    dimensions: str | None
+
+
+class RoomOut(BaseModel):
+    # The conversation's room or apartment and its composition's 3D view (project-room-inspection).
+    name: str
+    scope: Literal["room", "apartment"]
+    slug: str | None
+    model: str | None
+    surfaces: str | None
+    versions: list[CompositionVersionOut] = []
+
+
 class ProgressOut(BaseModel):
     package_id: str | None
     name: str | None
@@ -194,6 +216,7 @@ class ProgressOut(BaseModel):
     viewer: str | None
     # True while a render of the latest version is queued or running (studio-layout).
     rendering: bool = False
+    room: RoomOut | None = None
 
 
 def _refusal(code: int, failure_class: str, reason: str) -> HTTPException:
@@ -490,7 +513,8 @@ def read_progress(
             thread.package_id,
             brief_confirmed=confirmed,
         )
-    return ProgressOut(**found)
+        room = progress.room_progress(session, request.app.state.settings.render_root, thread_id)
+    return ProgressOut(**found, room=room)
 
 
 def _turn_factory(request: Request, thread_id: UUID, body: TurnIn, owner: UUID) -> tuple[Any, EventsFactory]:

@@ -96,3 +96,71 @@ def test_the_latest_version_with_a_model_offers_it_and_its_surface_map(client: T
     model = client.get(listed["model"])
     assert model.status_code == 200 and model.headers["content-type"] == "model/gltf-binary"
     assert client.get(listed["surfaces"]).json()["surfaces"] == COMPOSITION_SURFACES
+
+
+def test_the_newest_five_versions_are_offered_for_the_dropdown(client: TestClient, render_root: Path) -> None:
+    sign_in(client)
+    seed(client, render_root, approved=True)
+    with Session(client.app.state.engine) as session:
+        composition = house_file.composition_by_scope(session, "room", "Wohnen")
+        for number in range(2, 8):
+            house_file.record_composition_version(session, composition, number, number - 1, [])
+            folder = storage.composition_version_dir(render_root, "wohnen", number)
+            folder.mkdir(parents=True)
+            storage.write_status(folder, status="succeeded")
+            if number == 7:
+                (folder / "model.glb").write_bytes(b"glb")
+        session.commit()
+    [listed] = client.get("/compositions").json()
+    assert [v["version"] for v in listed["version_views"]] == [7, 6, 5, 4, 3]
+    assert listed["versions"] == [1, 2, 3, 4, 5, 6, 7]
+    newest = listed["version_views"][0]
+    assert newest["model"] == listed["model"] == "/compositions/wohnen/versions/7/files/model.glb"
+    assert newest["dimensions"] == "/compositions/wohnen/versions/7/dimensions"
+    assert listed["version_views"][1]["model"] is None
+
+
+# --- room dimensions (project-room-inspection) ---------------------------------------------
+
+WOHNEN_PLAN = [[0.0, 0.0], [6200.0, 0.0], [6200.0, 5700.0], [3500.0, 5700.0], [1289.0, 6064.0]]
+
+
+def test_a_room_versions_walls_and_ceiling_are_read_from_its_document(client: TestClient, render_root: Path) -> None:
+    sign_in(client)
+    folder = seed(client, render_root, approved=True)
+    document = json.loads((folder / storage.INPUT_FILE).read_text(encoding="utf-8"))
+    document["resolved"] = {
+        "rooms": [{"name": "Wohnen", "corners": WOHNEN_PLAN, "height_mm": 2500.0, "wall_thickness_mm": 100.0, "openings": []}],
+        "items": [],
+    }
+    (folder / storage.INPUT_FILE).write_text(json.dumps(document), encoding="utf-8")
+    body = client.get("/compositions/wohnen/versions/1/dimensions").json()
+    assert [(w["label"], w["length_mm"]) for w in body["walls"]] == [
+        ("wall 1", 6200), ("wall 2", 5700), ("wall 3", 2700), ("wall 4", 2241), ("wall 5", 6199),
+    ]
+    assert body["walls"][0]["from"] == [0.0, 0.0] and body["walls"][0]["to"] == [6200.0, 0.0]
+    [ceiling] = body["ceilings"]
+    assert (ceiling["room"], ceiling["height_mm"]) == ("Wohnen", 2500)
+    assert str(render_root) not in json.dumps(body)
+
+
+def test_an_apartment_lists_a_shared_wall_once_and_each_rooms_height() -> None:
+    from app.compositions import room_dimensions
+
+    shell = json.loads((Path(__file__).resolve().parents[1] / "fixtures" / "packages" / "apartment-two-room.json").read_text())
+    shell["rooms"][1]["height_mm"] = 2400
+    found = room_dimensions({"scope": {"apartment": "Example one-bed"}, "resolved": {"shell": shell, "items": []}})
+    assert found is not None
+    lengths = [(w["label"], w["length_mm"]) for w in found["walls"]]
+    assert len(lengths) == 7  # eight room edges, the shared one once
+    assert ("Living room: wall 2", 3800) in lengths
+    assert {(c["room"], c["height_mm"]) for c in found["ceilings"]} == {("Living room", 2550), ("Bedroom", 2400)}
+
+
+def test_dimensions_of_an_unknown_or_unreadable_version_are_not_found(client: TestClient, render_root: Path) -> None:
+    sign_in(client)
+    seed(client, render_root, approved=True)  # its document has no resolved room plan
+    assert client.get("/compositions/wohnen/versions/1/dimensions").status_code == 404
+    assert client.get("/compositions/wohnen/versions/9/dimensions").status_code == 404
+    assert client.get("/compositions/Bad/versions/1/dimensions").status_code == 404
+    assert TestClient(client.app).get("/compositions/wohnen/versions/1/dimensions").status_code == 401

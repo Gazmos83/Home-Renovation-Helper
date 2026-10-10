@@ -19,6 +19,11 @@ export type LayerMap = Record<string, string[]>;
 /** Which layers are switched off; a name absent here is visible. */
 export type Layers = Record<string, boolean>;
 
+/** A room plan point (x, y in mm) at a height in mm, on the stage: the model is exported Y-up. */
+export function planToStage(x: number, y: number, height = 0): Vec3 {
+  return [x / 1000, height / 1000, -y / 1000];
+}
+
 export function layerVisible(layers: Layers, name: string): boolean {
   return layers[name] !== false;
 }

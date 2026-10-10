@@ -100,6 +100,19 @@ export type Progress = {
   viewer: string | null;
   /** True while a render of the latest version is queued or running. */
   rendering: boolean;
+  /**
+   * The conversation's confirmed room or apartment, or `null` (project-room-inspection).
+   * `slug` once a composition exists; `model` and `surfaces` when its latest version has a 3D model.
+   */
+  room?: {
+    name: string;
+    scope: "room" | "apartment";
+    slug: string | null;
+    model: string | null;
+    surfaces: string | null;
+    /** The composition's newest five versions, newest first. */
+    versions?: CompositionVersion[];
+  } | null;
 };
 
 export type ModelsPayload = {
@@ -261,6 +274,26 @@ export type Composition = {
   /** The latest version's `model.glb` and its build report (the surface map); absent on older versions. */
   model?: string | null;
   surfaces?: string | null;
+  /** The newest five versions, newest first, for the version dropdown (project-room-inspection). */
+  version_views?: CompositionVersion[];
+};
+
+/** One listed composition version; the 3D routes are set only when it has `model.glb`. */
+export type CompositionVersion = {
+  version: number;
+  status: string | null;
+  picture: string | null;
+  viewer: string | null;
+  items: CompositionItem[];
+  model: string | null;
+  surfaces: string | null;
+  dimensions: string | null;
+};
+
+/** A composition version's unique walls and each room's ceiling height, in plan mm. */
+export type RoomDimensions = {
+  walls: { label: string; from: [number, number]; to: [number, number]; length_mm: number }[];
+  ceilings: { room: string; height_mm: number; at: [number, number] }[];
 };
 
 /** What the Rooms page's 3D view reads from a composition's build report. */
@@ -676,6 +709,7 @@ export const api = {
     }),
   compositions: () => request<Composition[]>("/compositions"),
   compositionReport: (url: string) => request<CompositionReport>(url),
+  compositionDimensions: (url: string) => request<RoomDimensions>(url),
   modelLibrary: () => request<ModelAsset[]>("/models"),
   uploadModel: (file: File, name: string, width: string, depth: string, height: string) => {
     const form = new FormData();

@@ -187,3 +187,95 @@ def test_the_version_count_and_limit_are_reported(db_session: Session, render_ro
         storage.version_dir(render_root, "hall-bench", number).mkdir()
     result = _read(db_session, render_root)
     assert (result["version_count"], result["max_versions"]) == (3, 15)
+
+
+# --- the conversation's room (project-room-inspection) ---------------------------------
+
+SQUARE = [[0, 0], [3000, 0], [3000, 2000], [0, 2000]]
+
+
+def _thread_in(session: Session, room: str | None = None):
+    thread = house_file.create_thread(session, "Bench")
+    if room:
+        house_file.set_thread_room(session, thread.id, house_file.upsert_room(session, room, SQUARE, 2500))
+    return thread.id
+
+
+def _compose(session: Session, root: Path, scope: str, name: str, *, model: bool) -> Path:
+    composition = house_file.record_composition(session, scope, name)
+    house_file.record_composition_version(session, composition, 1, None, [])
+    folder = storage.composition_version_dir(root, composition.slug, 1)
+    folder.mkdir(parents=True)
+    if model:
+        (folder / "model.glb").write_bytes(b"glb")
+        (folder / "report.json").write_text("{}", encoding="utf-8")
+    return folder
+
+
+def test_a_thread_without_a_room_reports_none(db_session: Session, render_root: Path) -> None:
+    assert progress.room_progress(db_session, render_root, _thread_in(db_session)) is None
+
+
+def test_a_room_without_a_composition_has_no_3d_view(db_session: Session, render_root: Path) -> None:
+    thread = _thread_in(db_session, "Hall")
+    assert progress.room_progress(db_session, render_root, thread) == {
+        "name": "Hall", "scope": "room", "slug": None, "model": None, "surfaces": None, "versions": [],
+    }
+
+
+def test_a_composed_room_names_its_model_and_surfaces_by_route(db_session: Session, render_root: Path) -> None:
+    thread = _thread_in(db_session, "Hall")
+    _compose(db_session, render_root, "room", "Hall", model=True)
+    result = progress.room_progress(db_session, render_root, thread)
+    assert result is not None
+    slug = result["slug"]
+    assert slug
+    assert result["model"] == f"/compositions/{slug}/versions/1/files/model.glb"
+    assert result["surfaces"] == f"/compositions/{slug}/versions/1/files/report.json"
+    assert str(render_root) not in repr(result)
+
+
+def test_a_latest_version_without_a_model_has_no_3d_view(db_session: Session, render_root: Path) -> None:
+    thread = _thread_in(db_session, "Hall")
+    _compose(db_session, render_root, "room", "Hall", model=False)
+    result = progress.room_progress(db_session, render_root, thread)
+    assert result is not None
+    assert result["slug"] and result["model"] is None and result["surfaces"] is None
+
+
+def test_an_apartment_scope_reports_the_apartment(db_session: Session, render_root: Path) -> None:
+    thread = _thread_in(db_session)
+    flat = house_file.upsert_apartment(
+        db_session, "Flat", 2550, 120,
+        [{"name": "Living", "corners_mm": SQUARE, "height_mm": None, "openings": []}],
+    )
+    house_file.set_thread_apartment(db_session, thread, flat)
+    _compose(db_session, render_root, "apartment", "Flat", model=True)
+    result = progress.room_progress(db_session, render_root, thread)
+    assert result is not None
+    assert (result["name"], result["scope"]) == ("Flat", "apartment")
+    assert result["model"] == f"/compositions/{result['slug']}/versions/1/files/model.glb"
+
+
+def test_the_newest_five_versions_are_listed_newest_first(db_session: Session, render_root: Path) -> None:
+    thread = _thread_in(db_session, "Hall")
+    composition = house_file.record_composition(db_session, "room", "Hall")
+    for number in range(1, 7):
+        house_file.record_composition_version(db_session, composition, number, number - 1 or None, [])
+        folder = storage.composition_version_dir(render_root, composition.slug, number)
+        folder.mkdir(parents=True)
+        storage.write_status(folder, status="succeeded")
+        (folder / "screenshot.png").write_bytes(b"png")
+        if number != 2:
+            (folder / "model.glb").write_bytes(b"glb")
+    result = progress.room_progress(db_session, render_root, thread)
+    assert result is not None
+    versions = result["versions"]
+    assert [v["version"] for v in versions] == [6, 5, 4, 3, 2]
+    slug = composition.slug
+    assert versions[0]["model"] == f"/compositions/{slug}/versions/6/files/model.glb"
+    assert versions[0]["dimensions"] == f"/compositions/{slug}/versions/6/dimensions"
+    assert versions[0]["picture"] == f"/compositions/{slug}/versions/6/files/screenshot.png"
+    assert versions[0]["status"] == "succeeded" and versions[0]["items"] == []
+    assert versions[-1]["model"] is None and versions[-1]["surfaces"] is None and versions[-1]["dimensions"] is None
+    assert result["model"] == versions[0]["model"]

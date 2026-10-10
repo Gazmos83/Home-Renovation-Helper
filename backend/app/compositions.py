@@ -7,6 +7,7 @@ it is the source of truth for that version and never changes after it is made.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,11 +24,13 @@ from app.blender.composition_contract import (
     SCHEMA_VERSION,
     UNITS,
     ItemSubject,
+    apartment_wall_labels,
     parse_composition,
     place_items,
     room_geometry,
 )
 from app.blender.custom_build import derive as custom_derive
+from app.blender.shell_contract import normalise_shell
 from app.blender.spec_contract import SpecValidationError
 from app.guidelines.rules import Rule, evaluate, partition, refusal_text
 
@@ -42,6 +45,54 @@ def read_document(folder: Path) -> dict[str, Any] | None:
 def scope_name(document: dict[str, Any]) -> str:
     scope = document.get("scope") or {}
     return str(scope.get("room") or scope.get("apartment") or "")
+
+
+def _point(p: Any) -> list[float]:
+    return [round(float(p[0]), 1), round(float(p[1]), 1)]
+
+
+def _centre(corners: Any) -> list[float]:
+    return [round(sum(float(c[0]) for c in corners) / len(corners), 1),
+            round(sum(float(c[1]) for c in corners) / len(corners), 1)]
+
+
+def room_dimensions(document: dict[str, Any]) -> dict[str, Any] | None:
+    """A version's wall lengths and ceiling heights, from its stored document only
+    (project-room-inspection), or `None` when the document holds no room plan.
+
+    Each unique wall once, labelled as in the surface map, with its plan end points and
+    length; each room's ceiling height with a plan point inside it (the corners' mean).
+    """
+    resolved = document.get("resolved") or {}
+    try:
+        if "apartment" in (document.get("scope") or {}):
+            shell = normalise_shell(resolved["shell"])
+            labels = apartment_wall_labels(shell.walls)
+            walls = [
+                {"label": labels[w.id], "from": _point(w.a), "to": _point(w.b), "length_mm": round(w.length_mm)}
+                for w in shell.walls
+            ]
+            ceilings = [
+                {"room": r.name, "height_mm": round(r.height_mm), "at": _centre(r.corners)} for r in shell.rooms
+            ]
+        else:
+            wanted = scope_name(document)
+            rooms = resolved.get("rooms") or []
+            room = next((r for r in rooms if r.get("name") == wanted), None)
+            if room is None:
+                return None
+            corners = room["corners"]
+            walls = []
+            for index, a in enumerate(corners):
+                b = corners[(index + 1) % len(corners)]
+                walls.append({
+                    "label": f"wall {index + 1}", "from": _point(a), "to": _point(b),
+                    "length_mm": round(math.dist((float(a[0]), float(a[1])), (float(b[0]), float(b[1])))),
+                })
+            ceilings = [{"room": room["name"], "height_mm": round(float(room["height_mm"])), "at": _centre(corners)}]
+    except (KeyError, TypeError, ValueError, IndexError, ZeroDivisionError, SpecValidationError):
+        return None
+    return {"walls": walls, "ceilings": ceilings}
 
 
 def placing_model(session: Session, root: Path, model_id: UUID) -> list[str]:

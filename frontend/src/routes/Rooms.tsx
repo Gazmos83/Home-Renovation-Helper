@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cardClass } from "@/components/ui/card";
 import { Page } from "@/components/Page";
-import { RoomView } from "@/components/inspector/RoomView";
+import { RoomView, VersionSelect } from "@/components/inspector/RoomView";
 
 function message(error: unknown): string | null {
   return error instanceof Error ? error.message : null;
@@ -17,36 +17,61 @@ function message(error: unknown): string | null {
 function CompositionCard({ composition }: { composition: Composition }) {
   const scope = composition.scope === "room" ? "Room" : "Apartment";
   const [open3d, setOpen3d] = useState(false);
+  // The newest five versions, the latest chosen at first (project-room-inspection).
+  const views = composition.version_views ?? [];
+  const [chosen, setChosen] = useState<number | null>(null);
+  const view = views.find((v) => v.version === chosen) ?? views[0];
+  const shown = view ?? {
+    version: composition.latest_version,
+    status: composition.status,
+    items: composition.items,
+    picture: composition.picture,
+    viewer: composition.viewer,
+    model: composition.model ?? null,
+    surfaces: composition.surfaces ?? null,
+    dimensions: null,
+  };
   return (
     <section className={cardClass} aria-label={composition.name}>
       <div className="flex flex-wrap items-center gap-2">
         <h2>{composition.name}</h2>
         <Badge variant="secondary">{scope}</Badge>
-        {composition.latest_version !== null && <span>version {composition.latest_version}</span>}
-        {composition.status && <Badge variant="outline">{composition.status}</Badge>}
+        {views.length > 0 ? (
+          <VersionSelect name={composition.name} versions={views} value={shown.version as number} onChange={setChosen} />
+        ) : (
+          shown.version !== null && <span>version {shown.version}</span>
+        )}
+        {shown.status && <Badge variant="outline">{shown.status}</Badge>}
       </div>
-      {composition.items.length === 0 && <p>The room only, no furniture.</p>}
+      {shown.items.length === 0 && <p>The room only, no furniture.</p>}
       <ul className="space-y-1">
-        {composition.items.map((item) => (
+        {shown.items.map((item) => (
           <li key={item.id}>
             <strong>{item.name}</strong> <span className="text-muted-foreground">({item.type})</span>
             {item.no_longer_approved && <Badge variant="destructive" className="ml-2">no longer approved</Badge>}
           </li>
         ))}
       </ul>
-      {composition.picture && (
-        <img src={composition.picture} alt={`Latest picture of ${composition.name}`} className="max-h-72 rounded-md border" />
+      {shown.picture && (
+        <img src={shown.picture} alt={`Picture of ${composition.name}, version ${shown.version}`} className="max-h-72 rounded-md border" />
       )}
-      {composition.viewer && (
+      {shown.viewer && (
         <p>
-          <a href={composition.viewer} target="_blank" rel="noreferrer" className="underline">
+          <a href={shown.viewer} target="_blank" rel="noreferrer" className="underline">
             Open the turntable viewer of {composition.name}
           </a>
         </p>
       )}
-      {composition.model && composition.surfaces ? (
+      {shown.model && shown.surfaces ? (
         open3d ? (
-          <RoomView name={composition.name} model={composition.model} report={composition.surfaces} />
+          <RoomView
+            key={shown.model}
+            name={composition.name}
+            model={shown.model}
+            report={shown.surfaces}
+            dimensions={shown.dimensions}
+            apartment={composition.scope === "apartment"}
+          />
         ) : (
           <p>
             <Button type="button" variant="outline" onClick={() => setOpen3d(true)}>
@@ -55,7 +80,7 @@ function CompositionCard({ composition }: { composition: Composition }) {
           </p>
         )
       ) : (
-        composition.status === "succeeded" && (
+        shown.status === "succeeded" && (
           <p className="text-sm text-muted-foreground">
             Composing {composition.name} again adds the 3D view.
           </p>

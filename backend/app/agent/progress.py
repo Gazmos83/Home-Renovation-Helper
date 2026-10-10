@@ -7,8 +7,10 @@ count or a host path: images are package routes (CLAUDE.md §1).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Final
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -50,6 +52,72 @@ def detail_ready(root: Path, package_id: str | None, version: int | None) -> boo
 
 def _route(package_id: str, version: int, name: str) -> str:
     return f"/packages/{package_id}/versions/{version}/files/{name}"
+
+
+def _composition_route(slug: str, version: int, name: str) -> str:
+    return f"/compositions/{slug}/versions/{version}/files/{name}"
+
+
+# The version dropdown lists the newest versions only; older ones are kept (project-room-inspection).
+LISTED_COMPOSITION_VERSIONS: Final = 5
+
+
+def composition_version_views(
+    session: Session, root: Path, slug: str, numbers: list[int]
+) -> list[dict[str, Any]]:
+    """The newest listed versions of a composition, newest first, as the Studio shows them:
+    status, picture, viewer, items, and the 3D routes when the version has `model.glb`."""
+    views = []
+    for number in sorted(numbers, reverse=True)[:LISTED_COMPOSITION_VERSIONS]:
+        folder = storage.composition_version_dir(root, slug, number)
+        picture = next(
+            (_composition_route(slug, number, name) for name in ("still.png", "screenshot.png") if (folder / name).is_file()),
+            None,
+        )
+        try:
+            document = json.loads((folder / storage.INPUT_FILE).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            document = {}
+        modelled = (folder / "model.glb").is_file()
+        views.append(
+            {
+                "version": number,
+                "status": (storage.read_status(folder) or {}).get("status"),
+                "picture": picture,
+                "viewer": _composition_route(slug, number, "viewer.html") if (folder / "viewer.html").is_file() else None,
+                "items": house_file.placed_items(session, document),
+                "model": _composition_route(slug, number, "model.glb") if modelled else None,
+                "surfaces": _composition_route(slug, number, "report.json") if modelled else None,
+                "dimensions": f"/compositions/{slug}/versions/{number}/dimensions" if modelled else None,
+            }
+        )
+    return views
+
+
+def room_progress(session: Session, root: Path, thread_id: UUID) -> dict[str, Any] | None:
+    """The conversation's confirmed room or apartment and its composition's 3D view
+    (project-room-inspection), or `None` when neither is confirmed. `slug` is set once a
+    composition exists; `model` and `surfaces` only when its latest version has `model.glb`."""
+    room, apartment = house_file.thread_scope(session, thread_id)
+    if room is not None:
+        scope, name = "room", room.name
+    elif apartment is not None:
+        scope, name = "apartment", apartment.name
+    else:
+        return None
+    found: dict[str, Any] = {
+        "name": name, "scope": scope, "slug": None, "model": None, "surfaces": None, "versions": [],
+    }
+    composition = house_file.composition_by_scope(session, scope, name)
+    if composition is None:
+        return found
+    found["slug"] = composition.slug
+    numbers = [v.version for v in house_file.composition_version_rows(session, composition)]
+    found["versions"] = composition_version_views(session, root, composition.slug, numbers)
+    if found["versions"]:
+        found["model"] = found["versions"][0]["model"]
+        found["surfaces"] = found["versions"][0]["surfaces"]
+    return found
 
 
 def _step(step: str, done: bool, detail: str | None = None) -> dict[str, Any]:

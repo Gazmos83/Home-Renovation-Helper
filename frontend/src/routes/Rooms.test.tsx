@@ -6,8 +6,15 @@ import { stubFetch } from "../test/fetchStub";
 import Rooms from "./Rooms";
 
 // No WebGL in jsdom: the 3D stage is a stub that shows the props it is given.
+// The dimensions overlay is a React element: its own props are shown apart (project-room-inspection).
 vi.mock("@/components/inspector/InspectorCanvas", () => ({
-  default: (props: Record<string, unknown>) => <div data-testid="canvas" data-props={JSON.stringify(props)} />,
+  default: ({ overlay, ...props }: Record<string, unknown>) => (
+    <div
+      data-testid="canvas"
+      data-props={JSON.stringify(props)}
+      data-overlay={overlay ? JSON.stringify((overlay as { props: unknown }).props) : ""}
+    />
+  ),
 }));
 
 const wohnen = {
@@ -259,4 +266,83 @@ test("an older composition without a model shows its picture and says how to get
   expect(card.getByRole("img")).toHaveAttribute("src", wohnen.picture);
   expect(card.getByText("Composing Hall again adds the 3D view.")).toBeInTheDocument();
   expect(card.queryByRole("button", { name: /3D view/ })).not.toBeInTheDocument();
+});
+
+// --- versions and dimensions (project-room-inspection) --------------------------------------
+
+const view = (version: number, extra: Record<string, unknown> = {}) => ({
+  version, status: "succeeded", viewer: null, items: [],
+  picture: `/compositions/wohnen/versions/${version}/files/screenshot.png`,
+  model: `/compositions/wohnen/versions/${version}/files/model.glb`,
+  surfaces: `/compositions/wohnen/versions/${version}/files/report.json`,
+  dimensions: `/compositions/wohnen/versions/${version}/dimensions`,
+  ...extra,
+});
+const DIMENSIONS = {
+  walls: [
+    { label: "wall 1", from: [0, 0], to: [6200, 0], length_mm: 6200 },
+    { label: "wall 2", from: [6200, 0], to: [6200, 5700], length_mm: 5700 },
+  ],
+  ceilings: [{ room: "Wohnen", height_mm: 2500, at: [3100, 2850] }],
+};
+const versioned = {
+  ...modelled,
+  latest_version: 7,
+  version_views: [7, 6, 5, 4, 3].map((n) =>
+    view(n, n === 5 ? { items: [{ id: "sofa", type: "stand-in", name: "Sofa" }], status: "failed", model: null, surfaces: null, dimensions: null } : {}),
+  ),
+};
+
+function serveVersions() {
+  return stubFetch((call) => {
+    if (call === "GET /compositions") return { body: [versioned] };
+    if (call === "GET /models") return { body: [] };
+    if (/^GET \/compositions\/wohnen\/versions\/\d\/files\/report\.json$/.test(call))
+      return { body: { surfaces: SURFACES, extent_mm: { min: [0, 0, 0], max: [6200, 6064, 2500] } } };
+    if (/^GET \/compositions\/wohnen\/versions\/\d\/dimensions$/.test(call)) return { body: DIMENSIONS };
+  });
+}
+
+test("the version dropdown lists the newest five and the card follows the chosen one", async () => {
+  const user = userEvent.setup();
+  serveVersions();
+  show();
+  const card = within(await screen.findByRole("region", { name: "Wohnen" }));
+  const select = card.getByRole("combobox", { name: "Version of Wohnen" });
+  expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+    "Version 7", "Version 6", "Version 5", "Version 4", "Version 3",
+  ]);
+  expect(select).toHaveValue("7");
+  expect(card.getByRole("img")).toHaveAttribute("src", "/compositions/wohnen/versions/7/files/screenshot.png");
+  expect(card.getByText("The room only, no furniture.")).toBeInTheDocument();
+
+  await user.click(card.getByRole("button", { name: "Open the 3D view of Wohnen" }));
+  expect((await canvasProps()).url).toBe("/compositions/wohnen/versions/7/files/model.glb");
+  await user.selectOptions(select, "6");
+  await waitFor(async () => expect((await canvasProps()).url).toBe("/compositions/wohnen/versions/6/files/model.glb"));
+
+  await user.selectOptions(select, "5");
+  expect(card.getByText("failed")).toBeInTheDocument();
+  expect(card.getByText("Sofa")).toBeInTheDocument();
+  expect(card.getByRole("img")).toHaveAttribute("src", "/compositions/wohnen/versions/5/files/screenshot.png");
+  expect(card.queryByTestId("canvas")).not.toBeInTheDocument();
+});
+
+test("dimensions are read only when switched on and label the chosen version", async () => {
+  const user = userEvent.setup();
+  const calls = serveVersions();
+  show();
+  const card = within(await screen.findByRole("region", { name: "Wohnen" }));
+  await user.click(card.getByRole("button", { name: "Open the 3D view of Wohnen" }));
+  const toggle = await card.findByRole("button", { name: "dimensions" });
+  expect(toggle).toHaveAttribute("aria-pressed", "false");
+  expect((await screen.findByTestId("canvas")).dataset.overlay).toBe("");
+  expect(calls.some(([, url]) => url.endsWith("/dimensions"))).toBe(false);
+
+  await user.click(toggle);
+  expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await waitFor(() => expect(screen.getByTestId("canvas").dataset.overlay).not.toBe(""));
+  const overlay = JSON.parse(screen.getByTestId("canvas").dataset.overlay ?? "{}");
+  expect(overlay).toEqual({ dimensions: DIMENSIONS, apartment: false });
+  expect(calls.some(([, url]) => url === "/compositions/wohnen/versions/7/dimensions")).toBe(true);
 });

@@ -31,6 +31,7 @@ import { Reply } from "@/components/chat/Reply";
 import { ROLE_LABELS } from "@/components/chat/roles";
 import { WaitingBubble } from "@/components/chat/WaitingBubble";
 import { InspectorView } from "@/components/inspector/InspectorView";
+import { RoomView, VersionSelect } from "@/components/inspector/RoomView";
 import { DeleteVersion } from "@/components/DeleteVersion";
 
 const STEP_LABELS: Record<string, string> = {
@@ -82,15 +83,43 @@ function Tools({ threadId }: { threadId: string }) {
   );
 }
 
+/** The conversation's room or apartment, with its 3D view or why there is none (project-room-inspection). */
+function RoomSection({ room, onInspectRoom }: { room: NonNullable<Progress["room"]>; onInspectRoom: (slug: string) => void }) {
+  const what = room.scope === "apartment" ? "the apartment" : "the room";
+  return (
+    <div className="space-y-2" role="group" aria-label="Room">
+      <h3>Selected room</h3>
+      <p>
+        <strong>{room.name}</strong>
+      </p>
+      {room.slug && room.model && room.surfaces ? (
+        <p>
+          <Button type="button" variant="outline" onClick={() => onInspectRoom(room.slug as string)}>
+            Inspect {room.name}
+          </Button>
+        </p>
+      ) : room.slug ? (
+        <p className="text-sm text-muted-foreground">Composing {room.name} again adds the 3D view.</p>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          {room.name} has no 3D view yet. Ask the Designer to compose {what}.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function ProjectPanel({
   threadId,
   progress,
   onInspect,
+  onInspectRoom,
   onDeleted,
 }: {
   threadId: string;
   progress: UseQueryResult<Progress>;
   onInspect: (packageId: string, version: number) => void;
+  onInspectRoom: (slug: string) => void;
   /** A version of the piece was deleted. */
   onDeleted: (packageId: string, version: number) => void;
 }) {
@@ -195,6 +224,7 @@ function ProjectPanel({
           </Button>
         </p>
       )}
+      {p.room && <RoomSection room={p.room} onInspectRoom={onInspectRoom} />}
       <ol className="space-y-1">
         {p.steps.map((step) => (
           <li key={step.step} className="flex items-center gap-2" data-done={step.done}>
@@ -343,6 +373,17 @@ function OwnerMessage({ m, uploadById, onEdit }: {
   );
 }
 
+/** The side pane beside the chat: a piece version or the conversation's room. */
+const paneClass =
+  "min-w-0 space-y-2 lg:sticky lg:top-[calc(var(--header-h)+1rem)] lg:max-h-(--chat-h) lg:overflow-y-auto";
+
+/** `?room=<slug>` or `?room=<slug>/<n>`: the room shown beside the chat and its version, or `null`. */
+function parseRoom(value: string | null): { slug: string; version: number | null } | null {
+  const found = value?.match(/^([a-z0-9][a-z0-9-]*)(?:\/(\d+))?$/i);
+  if (!found) return null;
+  return { slug: found[1], version: found[2] ? Number(found[2]) : null };
+}
+
 /** `?inspect=<package-id>/<n>`: the version shown beside the chat, or `null`. */
 function parseInspect(value: string | null): { packageId: string; version: number } | null {
   const found = value?.match(/^([a-z0-9][a-z0-9-]*)\/(\d+)$/i);
@@ -436,12 +477,30 @@ export default function Conversation() {
     if (inspected?.packageId === packageId && inspected.version === version) inspect(null);
   }
 
+  // One side pane at a time: opening a piece version closes the room view (project-room-inspection).
   function inspect(packageId: string | null, version?: number) {
     setParams(
       (current) => {
         const next = new URLSearchParams(current);
-        if (packageId && version) next.set("inspect", `${packageId}/${version}`);
-        else next.delete("inspect");
+        if (packageId && version) {
+          next.set("inspect", `${packageId}/${version}`);
+          next.delete("room");
+        } else next.delete("inspect");
+        return next;
+      },
+      { replace: true },
+    );
+  }
+
+  // `?room=<slug>[/<n>]`: the conversation's room beside the chat; opening it closes the piece inspector.
+  function inspectRoom(slug: string | null, version?: number) {
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (slug) {
+          next.set("room", version ? `${slug}/${version}` : slug);
+          next.delete("inspect");
+        } else next.delete("room");
         return next;
       },
       { replace: true },
@@ -532,6 +591,17 @@ export default function Conversation() {
   const lastReply = messages.reduce((found, m, index) => (m.role === "assistant" && m.kind !== "answers" ? index : found), -1);
   const lastOwner = messages.reduce((found, m, index) => (m.role === "owner" && m.message_id ? index : found), -1);
   const canEdit = running === null && !pending && !optimistic;
+  // Shown only for the conversation's current room with a 3D model; a stale address shows nothing.
+  const room = progress.data?.room;
+  const roomAddress = parseRoom(params.get("room"));
+  const roomShown =
+    !inspected && room?.slug && room.model && room.surfaces && roomAddress?.slug === room.slug ? room : null;
+  // The chosen version, or the latest when the address names none or one no longer listed.
+  const roomVersions = roomShown?.versions ?? [];
+  const roomVersion = roomVersions.find((v) => v.version === roomAddress?.version) ?? roomVersions[0];
+  const roomModel = roomVersion
+    ? { model: roomVersion.model, surfaces: roomVersion.surfaces, dimensions: roomVersion.dimensions }
+    : { model: roomShown?.model ?? null, surfaces: roomShown?.surfaces ?? null, dimensions: null };
 
   return (
     <div className="flex">
@@ -544,7 +614,15 @@ export default function Conversation() {
             id: "project",
             label: "Project",
             icon: "project",
-            content: <ProjectPanel threadId={threadId} progress={progress} onInspect={inspect} onDeleted={deleted} />,
+            content: (
+              <ProjectPanel
+                threadId={threadId}
+                progress={progress}
+                onInspect={inspect}
+                onInspectRoom={inspectRoom}
+                onDeleted={deleted}
+              />
+            ),
           },
         ]}
       />
@@ -552,7 +630,7 @@ export default function Conversation() {
         <p><Link to="/conversations" className="underline">All conversations</Link></p>
         <Title key={thread.data.title} threadId={threadId} title={thread.data.title} />
         <div
-          className={inspected ? "grid gap-4 lg:grid-cols-2 lg:items-start" : "mx-auto max-w-5xl"}
+          className={inspected || roomShown ? "grid gap-4 lg:grid-cols-2 lg:items-start" : "mx-auto max-w-5xl"}
           // The window height left under the header and the title, less the page's bottom padding:
           // the chat column's height, and the inspector's at most beside it.
           style={{ "--chat-h": `calc(100vh - ${columnTop}px - 2rem)` } as CSSProperties}
@@ -649,10 +727,7 @@ export default function Conversation() {
             )}
           </div>
           {inspected && (
-            <aside
-              aria-label="Inspector"
-              className="min-w-0 space-y-2 lg:sticky lg:top-[calc(var(--header-h)+1rem)] lg:max-h-(--chat-h) lg:overflow-y-auto"
-            >
+            <aside aria-label="Inspector" className={paneClass}>
               <div className="flex items-center justify-between gap-2">
                 <h2>{inspectedSpec.data?.name || inspected.packageId}</h2>
                 <Button type="button" variant="ghost" size="sm" aria-label="Close inspector" onClick={() => inspect(null)}>
@@ -667,6 +742,39 @@ export default function Conversation() {
                 compact
                 onChoose={(next) => inspect(inspected.packageId, next)}
               />
+            </aside>
+          )}
+          {roomShown && (
+            <aside aria-label="Room view" className={paneClass}>
+              <div className="flex items-center justify-between gap-2">
+                <h2>{roomShown.name}</h2>
+                <Button type="button" variant="ghost" size="sm" aria-label="Close room view" onClick={() => inspectRoom(null)}>
+                  <X aria-hidden size={16} />
+                </Button>
+              </div>
+              {roomVersions.length > 0 && roomVersion && (
+                <VersionSelect
+                  name={roomShown.name}
+                  versions={roomVersions}
+                  value={roomVersion.version}
+                  onChange={(next) => inspectRoom(roomShown.slug, next)}
+                />
+              )}
+              {roomModel.model && roomModel.surfaces ? (
+                <RoomView
+                  key={roomModel.model}
+                  name={roomShown.name}
+                  model={roomModel.model}
+                  report={roomModel.surfaces}
+                  dimensions={roomModel.dimensions}
+                  apartment={roomShown.scope === "apartment"}
+                />
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Version {roomVersion?.version} of {roomShown.name} has no 3D view. Composing {roomShown.name} again
+                  adds it.
+                </p>
+              )}
             </aside>
           )}
         </div>

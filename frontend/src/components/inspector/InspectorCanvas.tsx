@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useRef } from "react";
+import { Suspense, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { ContactShadows, Grid, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
@@ -37,6 +37,8 @@ export type InspectorCanvasProps = {
   offset?: Vec3;
   /** Where the Iso camera looks from; a room is seen from higher than a piece. Keep it stable. */
   isoDirection?: Vec3;
+  /** Drawn in the model's own frame, e.g. a room's wall dimensions (project-room-inspection). */
+  overlay?: ReactNode;
 };
 
 function CameraRig({ preset, reach }: { preset: Preset; reach: number }) {
@@ -142,6 +144,7 @@ export default function InspectorCanvas({
   layers,
   offset = [0, 0, 0],
   isoDirection = PIECE_ISO,
+  overlay,
 }: InspectorCanvasProps) {
   const blueprint = mode === "blueprint";
   const base = baseOf(spec);
@@ -165,6 +168,7 @@ export default function InspectorCanvas({
         <group position={offset}>
           <PieceModel url={url} layerMap={spec.layers} layers={layers} mode={mode} explode={explode} offsets={offsets} />
           {showModuleLabels && <ModuleLabels spec={spec} offsets={offsets} explode={explode} />}
+          {overlay}
         </group>
         {showDimensions && <DimensionOverlay overall={spec.overall} base={base} />}
       </Suspense>
