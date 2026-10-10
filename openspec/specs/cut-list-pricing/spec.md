@@ -38,6 +38,10 @@ Each cut SHALL be classified as `covered`, `custom` or `undetermined` against th
 - **WHEN** the store's captured services include straight cuts but the owner records that this store does not cut panels thicker than 25 mm
 - **THEN** a 27 mm worktop cut is `custom`
 
+#### Scenario: Derived mitre notes marked for review
+- **WHEN** a version whose cut list includes a side-upper row with notes naming a 26° mitre is priced
+- **THEN** that row is marked for review
+
 ### Requirement: A pricing is an immutable record
 Each pricing SHALL be stored as a new record for its package version with the time, the home store, the cut-charge mode, every entry it used (at the price used) and its totals, and SHALL never change afterwards; repricing makes a new record.
 
