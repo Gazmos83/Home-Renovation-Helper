@@ -965,21 +965,45 @@ def write_summary(
     summary: str,
     through: str,
     package_id: str | None = None,
+    *,
+    owner_edited: bool = False,
 ) -> None:
-    """Store a refreshed summary; a deleted thread is left alone."""
+    """Store a refreshed summary; a deleted thread is left alone. `owner_edited` keeps it marked
+    as the owner's (conversation-memory-settings)."""
+    values = {"summary": summary, "summary_through": through[:64], "summary_owner_edited": owner_edited}
     if package_id:
         session.execute(
             update(ThreadPiece)
             .where(ThreadPiece.thread_id == thread_id, ThreadPiece.package_id == package_id)
-            .values(summary=summary, summary_through=through[:64])
+            .values(**values)
         )
     else:
-        session.execute(
-            update(Thread)
-            .where(Thread.id == thread_id)
-            .values(summary=summary, summary_through=through[:64])
-        )
+        session.execute(update(Thread).where(Thread.id == thread_id).values(**values))
     session.flush()
+
+
+def summary_owner_edited(session: Session, thread_id: UUID, package_id: str | None = None) -> bool:
+    """Whether the active note was last saved by the owner."""
+    if package_id:
+        build = session.get(ThreadPiece, (thread_id, package_id))
+        return bool(build is not None and build.summary_owner_edited)
+    thread = session.get(Thread, thread_id)
+    return bool(thread is not None and thread.summary_owner_edited)
+
+
+def write_owner_summary(session: Session, thread_id: UUID, summary: str, package_id: str | None = None) -> bool:
+    """Store the owner's own text as the active note, keeping what it covers; `False` when there is
+    no such thread or build."""
+    if package_id:
+        target = session.get(ThreadPiece, (thread_id, package_id))
+    else:
+        target = session.get(Thread, thread_id)
+    if target is None:
+        return False
+    target.summary = summary
+    target.summary_owner_edited = True
+    session.flush()
+    return True
 
 
 # --- a conversation's room and builds (conversation-projects) -----------------------

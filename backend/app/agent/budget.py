@@ -133,11 +133,19 @@ def fit(
     *,
     tools: Sequence[Any] | None = None,
     summarize: Summarize | None = None,
+    trigger_percent: int = 100,
+    keep_turns: int = 0,
+    covered_through: str | None = None,
 ) -> list[BaseMessage]:
     """The request to send. Raises `BudgetRefused` when the mandatory part does not fit.
 
     Pure given `summarize`: the dropped exchanges go to it once, and its answer is
     sent in their place when it fits in the note's space plus what the trim freed.
+    Compression starts once the earlier history passes `trigger_percent` of the usable
+    budget; the last `keep_turns` turns are sent in full while the whole request still
+    fits; exchanges up to `covered_through` (the stored note's last message) are always
+    replaced by the note (conversation-memory-settings). The defaults are the behaviour
+    before those settings.
     """
     earlier, current = _split_current(history)
     mandatory = count([*system, *current], tools)
@@ -147,14 +155,21 @@ def fit(
 
     if not earlier:
         return [*system, *current]
-    if mandatory + count(earlier) <= usable:
+    covered = _covered(earlier, covered_through)
+    threshold = usable * trigger_percent // 100
+    if not covered and mandatory + count(earlier) <= threshold:
         return [*system, *earlier, *current]
 
+    forced, rest = earlier[:covered], earlier[covered:]
     note_cost = count([SystemMessage(HISTORY_OMITTED_NOTE.format(count=len(earlier)))])
-    remaining = max(0, usable - mandatory - note_cost)
+    start = kept_turns_start(rest, keep_turns)
+    pool, protected = rest[:start], rest[start:]
+    if protected and mandatory + note_cost + count(protected) > usable:
+        pool, protected = rest, []
+    remaining = max(0, threshold - mandatory - note_cost - (count(protected) if protected else 0))
     kept = (
         trim_messages(
-            earlier,
+            pool,
             max_tokens=remaining,
             token_counter=lambda messages, **_kwargs: count(messages),
             strategy="last",
@@ -165,17 +180,36 @@ def fit(
         if remaining > 0
         else []
     )
-    dropped = earlier[: len(earlier) - len(kept)]
+    dropped = [*forced, *pool[: len(pool) - len(kept)]]
+    kept = [*kept, *protected]
     if summarize is not None and dropped:
         summary = summarize(list(dropped))
         if summary and summary.strip():
             summarised = SystemMessage(wrap_summary(summary.strip()))
-            freed = remaining - (count(kept) if kept else 0)
+            freed = remaining - (count(kept[: len(kept) - len(protected)]) if len(kept) > len(protected) else 0)
             if count([summarised]) <= note_cost + freed:
                 return [*system, summarised, *kept, *current]
     omitted = sum(1 for message in dropped if isinstance(message, HumanMessage))
     note = SystemMessage(HISTORY_OMITTED_NOTE.format(count=max(omitted, 1)))
     return [*system, note, *kept, *current]
+
+
+def _covered(earlier: Sequence[BaseMessage], through: str | None) -> int:
+    """How many leading messages a stored note covers: up to and including `through`, else none."""
+    if not through:
+        return 0
+    for index, message in enumerate(earlier):
+        if message.id == through:
+            return index + 1
+    return 0
+
+
+def kept_turns_start(messages: Sequence[BaseMessage], keep_turns: int) -> int:
+    """The index where the last `keep_turns` owner-started turns begin; `len(messages)` for none."""
+    if keep_turns <= 0:
+        return len(messages)
+    starts = [index for index, message in enumerate(messages) if isinstance(message, HumanMessage)]
+    return starts[-keep_turns] if len(starts) >= keep_turns else 0
 
 
 def check_daily(used_today: int, needed: int, ceiling: int) -> None:
@@ -192,12 +226,18 @@ def prepare(
     used_today: int = 0,
     daily_ceiling: int = DEFAULT_DAILY_CEILING,
     summarize: Summarize | None = None,
+    trigger_percent: int = 100,
+    keep_turns: int = 0,
+    covered_through: str | None = None,
 ) -> tuple[list[BaseMessage], int]:
     """Fit the request, then refuse if it would pass the day's ceiling.
 
     Returns the messages to send and the counted estimate (input + output reserve).
     """
-    fitted = fit(budget, [SystemMessage(system)], history, tools=tools, summarize=summarize)
+    fitted = fit(
+        budget, [SystemMessage(system)], history, tools=tools, summarize=summarize,
+        trigger_percent=trigger_percent, keep_turns=keep_turns, covered_through=covered_through,
+    )
     counted = count(fitted, tools)
     needed = counted + budget.output_reserve
     check_daily(used_today, needed, daily_ceiling)

@@ -28,6 +28,7 @@ from app.agent.models.routing import load_routing, read_routing_overrides
 from app.agent.models.slots import build_slot_models
 from app.agent.tools.base import ToolDeps
 from app.api.admin_guidelines import router as admin_guidelines_router
+from app.api.admin_memory import router as admin_memory_router
 from app.api.admin_models import router as admin_models_router
 from app.api.admin_offload import router as admin_offload_router
 from app.api.admin_plugins import router as admin_plugins_router
@@ -328,6 +329,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_workflow_router)
     app.include_router(admin_guidelines_router)
     app.include_router(admin_rules_router)
+    app.include_router(admin_memory_router)
     app.include_router(admin_threads_router)
     app.include_router(admin_feedback_router)
     app.include_router(admin_offload_router)

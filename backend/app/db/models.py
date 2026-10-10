@@ -403,6 +403,10 @@ class Thread(Base):
     # call, and the id of the last message it covers (studio-chat-polish).
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary_through: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The note was last saved by the owner (conversation-memory-settings).
+    summary_owner_edited: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     # The room or apartment the owner confirmed in this conversation
     # (conversation-projects). At most one is set; neither until confirmed.
     room_id: Mapped[UUID | None] = mapped_column(
@@ -467,6 +471,10 @@ class ThreadPiece(Base):
     package_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary_through: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The note was last saved by the owner (conversation-memory-settings).
+    summary_owner_edited: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     added_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

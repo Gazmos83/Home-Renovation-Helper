@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 from app.agent import house_file, progress, summaries, uploads
 from app.agent.budget import BudgetRefused, RequestBudget, prepare, refusal_message
 from app.agent.instructions import AgentInstruction, load_instructions
+from app.agent.memory_settings import read_memory_settings
 from app.agent.models.budgets import Budgets
 from app.agent.models.openrouter_client import gateway_errors
 from app.agent.models.routing import IMAGE_SLOTS
@@ -453,9 +454,12 @@ def build_graph(
     def load_house(state: ChatState, config: RunnableConfig) -> dict[str, Any]:
         configurable = config.get("configurable", {})
         messages = state.get("messages", [])
+        # What the conversation's slice includes (conversation-memory-settings); the room and
+        # conversation scoping below is not behind any setting.
+        memory = read_memory_settings(engine)
         with Session(engine) as session:
             stored_rooms = house_file.rooms(session)
-            preferences = house_file.preferences(session)
+            preferences = house_file.preferences(session) if memory.include_preferences else {}
             all_pieces = house_file.pieces(session, settings.render_root)
             piece_rooms = house_file.piece_room_names(session)
             thread = None
@@ -511,7 +515,7 @@ def build_graph(
                 for r in house_file.open_extension_requests(
                     session, package_ids=build_ids, thread_id=thread_id
                 )
-            ]
+            ] if memory.include_extension_requests else []
             tools_this_turn = {
                 name: bound_tool_names(
                     session,
@@ -551,8 +555,10 @@ def build_graph(
         recent_feedback: list[dict[str, Any]] = []
         if package_id:
             with Session(engine) as session:
-                open_review = house_file.latest_open_items(session, package_id)
-                recent_feedback = ratings.recent_for_piece(session, package_id)
+                if memory.include_review_items:
+                    open_review = house_file.latest_open_items(session, package_id)
+                if memory.render_ratings:
+                    recent_feedback = ratings.recent_for_piece(session, package_id, memory.render_ratings)
 
         def with_room(piece: dict[str, Any]) -> dict[str, Any]:
             return {**piece, "room": piece_rooms.get(piece["package_id"])}
@@ -606,7 +612,7 @@ def build_graph(
         bound_room = piece_rooms.get(package_id) if package_id else None
         other_builds = [
             with_room(p) for p in all_pieces if p["package_id"] in build_ids and p["package_id"] != package_id
-        ]
+        ] if memory.other_builds == "line" else []
         return {
             "house_note": house_note(
                 [house_file.describe_room(r) for r in scope_rooms],
@@ -679,15 +685,18 @@ def build_graph(
         # Dropped exchanges are summarised for the thread; the summary call itself is a
         # side call with no summarizer, so it cannot recurse.
         raw_thread = (config or {}).get("configurable", {}).get("chat_thread")
+        memory = read_memory_settings(engine)
         summarize = None
+        through = None
         if raw_thread:
 
             def call(summary_system: str, messages: list, max_output: int) -> str:
                 return side_call("chat.summary", summary_system, messages, max_output, config or {})
 
             summarize = summaries.summarizer(
-                engine, UUID(str(raw_thread)), call, state.get("package_id")
+                engine, UUID(str(raw_thread)), call, state.get("package_id"), memory
             )
+            through = summaries.covered_through(engine, UUID(str(raw_thread)), state.get("package_id"))
         return prepare(
             budget,
             system,
@@ -696,6 +705,9 @@ def build_graph(
             used_today=used,
             daily_ceiling=restrictions.daily_token_ceiling,
             summarize=summarize,
+            trigger_percent=memory.trigger_percent,
+            keep_turns=memory.keep_turns,
+            covered_through=through,
         )
 
     def side_call(
@@ -721,6 +733,8 @@ def build_graph(
                 prompt,
                 config=with_callbacks(config, recorder(slot, config, estimated_tokens=counted)),
                 max_tokens=max_output,
+                # A note or title is short text: reasoning would spend the whole cap and leave it empty.
+                extra_body={"reasoning": {"enabled": False}},
             )
         return _text_of(getattr(reply, "content", ""))
 

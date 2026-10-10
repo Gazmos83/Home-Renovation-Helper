@@ -27,6 +27,8 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.agent import chat, house_file, progress, uploads
+from app.agent.memory_settings import read_memory_settings
+from app.agent.prompts import neutralise
 from app.api.gate import require_owner
 from app.auth.sessions import AuthSessionRecord
 from app.blender import storage
@@ -662,3 +664,70 @@ def stream_answer(
 ) -> StreamingResponse:
     thread, make_events = _resume_factory(request, thread_id, body, login.user_id)
     return _stream(request, thread, login.user_id, body.said(), make_events)
+
+
+# --- the conversation's "decisions so far" note (conversation-memory-settings) -------------
+
+NOTE_MAX_CHARS = 8000
+
+
+class NoteOut(BaseModel):
+    package_id: str | None
+    note: str | None
+    owner_edited: bool
+
+
+class NoteIn(BaseModel):
+    note: str = Field(min_length=1, max_length=NOTE_MAX_CHARS)
+
+
+def _note_out(request: Request, thread: Any) -> NoteOut:
+    with Session(request.app.state.engine) as session:
+        note, _through = house_file.read_summary(session, thread.id, thread.package_id)
+        edited = house_file.summary_owner_edited(session, thread.id, thread.package_id)
+    return NoteOut(package_id=thread.package_id, note=note, owner_edited=edited)
+
+
+@router.get("/threads/{thread_id}/note")
+def read_note(thread_id: UUID, request: Request) -> NoteOut:
+    """The active build's note, or the conversation's own when no build is active. No tokens or models."""
+    return _note_out(request, _load_thread(request, thread_id))
+
+
+@router.put("/threads/{thread_id}/note")
+def save_note(thread_id: UUID, body: NoteIn, request: Request) -> NoteOut:
+    """Store the owner's correction as the note, marked as the owner's and sent as written."""
+    thread = _load_thread(request, thread_id)
+    with Session(request.app.state.engine) as session:
+        if not house_file.write_owner_summary(session, thread.id, neutralise(body.note.strip()), thread.package_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not Found")
+        session.commit()
+    return _note_out(request, thread)
+
+
+@router.post("/threads/{thread_id}/note/compress")
+def compress_note(
+    thread_id: UUID, request: Request, login: Annotated[AuthSessionRecord, Depends(require_owner)]
+) -> NoteOut:
+    """Write the note now over every exchange but the kept turns; refused while a turn runs."""
+    thread = _load_thread(request, thread_id)
+    graph = _graph(request)
+    with _running_lock:
+        if thread_id in _running:
+            raise _refusal(status.HTTP_409_CONFLICT, "turn_running", "a reply is still being written; wait for it")
+    settings = read_memory_settings(request.app.state.engine)
+    with _turn_running(request, thread.id):
+        try:
+            note = chat.compress(
+                graph, request.app.state.engine, thread_id=thread.id, owner_id=login.user_id,
+                package_id=thread.package_id, settings=settings,
+            )
+        except psycopg.OperationalError as error:
+            logger.error("chat memory unavailable", extra={"context": {"error_type": type(error).__name__}})
+            raise _refusal(status.HTTP_503_SERVICE_UNAVAILABLE, "unavailable", MEMORY_DOWN) from None
+    if note is None:
+        raise _refusal(
+            status.HTTP_409_CONFLICT, "not_compressed",
+            "the conversation could not be compressed now; there may be nothing to compress yet, or try again later",
+        )
+    return _note_out(request, thread)

@@ -165,6 +165,26 @@ export type DesignRulesPayload = {
 
 export type OpenItem = { file: string; line: number; text: string };
 
+/** The conversation's "decisions so far" note (conversation-memory-settings); no tokens or models. */
+export type ConversationNote = { package_id: string | null; note: string | null; owner_edited: boolean };
+
+export type MemorySettings = {
+  trigger_percent: number;
+  keep_turns: number;
+  note_tokens: number;
+  note_instructions: string;
+  tool_result_chars: number;
+  reviews: "auto" | "confirm";
+  save_preferences: boolean;
+  other_builds: "line" | "hidden";
+  include_preferences: boolean;
+  include_review_items: boolean;
+  render_ratings: number;
+  include_extension_requests: boolean;
+};
+
+export type MemoryPayload = { settings: MemorySettings; defaults: MemorySettings; fixed_rules: string[] };
+
 export type Upload = { upload_id: string; kind: string; size_bytes: number; original_name: string };
 
 export type ProgressStep = { step: string; done: boolean; detail: string | null };
@@ -880,6 +900,16 @@ export const api = {
   resetDesignRule: (id: string) =>
     request<DesignRulesPayload>(`/admin/rules/${encodeURIComponent(id)}`, { method: "DELETE" }),
   openItems: () => request<OpenItem[]>("/admin/open-items"),
+  conversationNote: (threadId: string) => request<ConversationNote>(`/chat/threads/${threadId}/note`),
+  saveConversationNote: (threadId: string, note: string) =>
+    request<ConversationNote>(`/chat/threads/${threadId}/note`, { method: "PUT", body: JSON.stringify({ note }) }),
+  compressConversation: (threadId: string) =>
+    request<ConversationNote>(`/chat/threads/${threadId}/note/compress`, { method: "POST" }),
+  memorySettings: () => request<MemoryPayload>("/admin/memory"),
+  saveMemorySettings: (changes: Partial<MemorySettings>) =>
+    request<MemoryPayload>("/admin/memory", { method: "PUT", body: JSON.stringify(changes) }),
+  resetMemorySetting: (field: keyof MemorySettings) =>
+    request<MemoryPayload>(`/admin/memory/${field}`, { method: "DELETE" }),
   priceList: (category?: string) =>
     request<PriceEntry[]>(category ? `/price-list?category=${encodeURIComponent(category)}` : "/price-list"),
   createEntry: (entry: NewEntry) => request<PriceEntry>("/price-list", { method: "POST", body: JSON.stringify(entry) }),

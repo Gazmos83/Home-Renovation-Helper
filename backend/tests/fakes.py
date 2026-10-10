@@ -45,6 +45,8 @@ class FakeChatModel(BaseChatModel):
     decision_prompts: list[list[BaseMessage]] = Field(default_factory=list)
     error: Exception | None = None
     calls: int = 0
+    # The extra keyword arguments of every call (for example `extra_body`).
+    call_kwargs: list[dict[str, Any]] = Field(default_factory=list)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -60,6 +62,7 @@ class FakeChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         self.prompts.append(list(messages))
+        self.call_kwargs.append(dict(kwargs))
         self.calls += 1
         if self.error is not None:
             raise self.error

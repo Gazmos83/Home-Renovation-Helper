@@ -1,11 +1,11 @@
-import { ChevronsLeft, ChevronsRight, Ruler, Wrench, X } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, NotebookPen, Ruler, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export type Panel = { id: string; label: string; icon: "tools" | "project"; content: ReactNode };
+export type Panel = { id: string; label: string; icon: "tools" | "project" | "notes"; content: ReactNode };
 
-const ICONS = { tools: Wrench, project: Ruler };
+const ICONS = { tools: Wrench, project: Ruler, notes: NotebookPen };
 const EXPANDED_KEY = "studio.rail.expanded";
 
 // Remembered per browser; a browser that cannot store it shows the rail collapsed.

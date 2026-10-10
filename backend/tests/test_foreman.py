@@ -1036,3 +1036,14 @@ def test_the_measurement_check_reads_only_the_owners_messages_after_the_last_ver
     [pending] = harness.snapshot().interrupts
     assert pending.value["subject"] == "revise"
     assert "cabinet: width 1050 → 900" in pending.value["summary"]
+
+
+def test_a_side_call_turns_reasoning_off_so_a_short_note_is_not_left_empty(tool_state) -> None:
+    models = fake_models()
+    models["foreman"].replies = ["a note"]
+    harness = make_harness(tool_state, models)
+
+    text = harness.graph.side_call("chat.summary", "Summarise.", [HumanMessage("hello")], 400, harness.config)
+
+    assert text == "a note"
+    assert models["foreman"].call_kwargs[-1]["extra_body"] == {"reasoning": {"enabled": False}}

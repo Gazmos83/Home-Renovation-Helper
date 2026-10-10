@@ -22,7 +22,7 @@ import psycopg
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from langgraph.types import Command
 
-from app.agent import titles
+from app.agent import summaries, titles
 from app.agent.models.openrouter_client import GatewayError
 
 logger = logging.getLogger("app")
@@ -464,6 +464,20 @@ def title_for(
         return graph.side_call("chat.title", system, prompt, max_output, config)
 
     return titles.title_for(call, _text(first.content))
+
+
+def compress(
+    graph: Any, engine: Any, *, thread_id: UUID, owner_id: UUID, package_id: str | None, settings: Any
+) -> str | None:
+    """Write the active note over every exchange but the kept turns now (conversation-memory-settings);
+    the note, or `None` when the call is refused or fails. Raises on an unreachable store."""
+    config = _config(thread_id, owner_id)
+    messages = list(graph.get_state(config).values.get("messages", []))
+
+    def call(system: str, prompt: list[Any], max_output: int) -> str:
+        return graph.side_call("chat.summary", system, prompt, max_output, config)
+
+    return summaries.compress_now(engine, thread_id, call, messages, package_id, settings)
 
 
 def pending(graph: Any, *, thread_id: UUID, owner_id: UUID) -> Pending | None:

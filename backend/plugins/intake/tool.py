@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.agent import house_file
 from app.agent.house_file import HouseFileError
+from app.agent.memory_settings import read_memory_settings
 from app.agent.tools.base import (
     AgentTool,
     Confirmation,
@@ -185,9 +186,12 @@ def run_brief(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
                 room["openings"],
                 room["wall_thickness_mm"],
             )
-        if args.style:
+        # Style and budget are kept only while the memory settings save preferences
+        # (conversation-memory-settings); the rest of the brief is saved either way.
+        save_preferences = read_memory_settings(ctx.deps.engine).save_preferences
+        if args.style and save_preferences:
             house_file.set_preference(session, "style", args.style)
-        if args.budget_eur is not None:
+        if args.budget_eur is not None and save_preferences:
             house_file.set_preference(session, "budget_eur", f"{args.budget_eur:g}")
         named = (args.room_name or "").strip()
         if named and ctx.thread_id is not None:

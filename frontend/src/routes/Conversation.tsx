@@ -32,6 +32,7 @@ import { ROLE_LABELS } from "@/components/chat/roles";
 import { WaitingBubble } from "@/components/chat/WaitingBubble";
 import { InspectorView } from "@/components/inspector/InspectorView";
 import { RoomView, VersionSelect } from "@/components/inspector/RoomView";
+import { DecisionsNote } from "@/components/chat/DecisionsNote";
 import { DeleteVersion } from "@/components/DeleteVersion";
 
 const STEP_LABELS: Record<string, string> = {
@@ -610,6 +611,7 @@ export default function Conversation() {
         onOpen={setPanel}
         panels={[
           { id: "tools", label: "Tools", icon: "tools", content: <Tools threadId={threadId} /> },
+          { id: "notes", label: "Decisions so far", icon: "notes", content: <DecisionsNote threadId={threadId} /> },
           {
             id: "project",
             label: "Project",
