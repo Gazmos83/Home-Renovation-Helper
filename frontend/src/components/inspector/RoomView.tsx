@@ -50,7 +50,7 @@ export function VersionSelect({
     >
       {versions.map((v) => (
         <option key={v.version} value={v.version}>
-          Version {v.version}
+          {v.approved_at ? `Version ${v.version} (approved)` : `Version ${v.version}`}
         </option>
       ))}
     </Select>

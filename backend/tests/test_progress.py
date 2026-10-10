@@ -220,6 +220,7 @@ def test_a_room_without_a_composition_has_no_3d_view(db_session: Session, render
     thread = _thread_in(db_session, "Hall")
     assert progress.room_progress(db_session, render_root, thread) == {
         "name": "Hall", "scope": "room", "slug": None, "model": None, "surfaces": None, "versions": [],
+        "approved_version": None,
     }
 
 
@@ -279,3 +280,24 @@ def test_the_newest_five_versions_are_listed_newest_first(db_session: Session, r
     assert versions[0]["status"] == "succeeded" and versions[0]["items"] == []
     assert versions[-1]["model"] is None and versions[-1]["surfaces"] is None and versions[-1]["dimensions"] is None
     assert result["model"] == versions[0]["model"]
+    assert result["approved_version"] is None
+    assert all(v["approved_at"] is None for v in versions)
+
+
+def test_an_approved_composition_version_is_named_on_progress(
+    db_session: Session, render_root: Path
+) -> None:
+    thread = _thread_in(db_session, "Hall")
+    composition = house_file.record_composition(db_session, "room", "Hall")
+    house_file.record_composition_version(db_session, composition, 1, None, [])
+    house_file.record_composition_version(db_session, composition, 2, 1, [])
+    for number in (1, 2):
+        folder = storage.composition_version_dir(render_root, composition.slug, number)
+        folder.mkdir(parents=True)
+        storage.write_status(folder, status="succeeded")
+    house_file.approve_composition_version(db_session, render_root, composition.slug, 1)
+    result = progress.room_progress(db_session, render_root, thread)
+    assert result is not None
+    assert result["approved_version"] == 1
+    by_number = {v["version"]: v["approved_at"] for v in result["versions"]}
+    assert by_number[1] is not None and by_number[2] is None

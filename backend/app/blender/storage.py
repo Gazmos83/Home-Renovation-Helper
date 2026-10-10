@@ -270,7 +270,37 @@ def composition_versions(root: Path, slug: str) -> list[int]:
 
 def next_composition_version(root: Path, slug: str) -> int:
     existing = composition_versions(root, slug)
-    return (existing[-1] + 1) if existing else 1
+    highest = max(existing[-1] if existing else 0, _last_version(composition_dir(root, slug)))
+    return highest + 1
+
+
+def move_composition_version_aside(root: Path, slug: str, version: int) -> Path:
+    """Record the composition's highest number in `.last_version`, then move the version's
+    folder to a hidden `.deleting-v<N>-<hex>` sibling that no listing matches."""
+    folder = composition_version_dir(root, slug, version)
+    if not folder.is_dir():
+        raise FileNotFoundError(f"{slug} version {version} has no folder")
+    parent = folder.parent
+    highest = max(max(_version_numbers(parent)), _last_version(parent))
+    temp = parent / f".{LAST_VERSION_FILE}.{uuid4().hex}.tmp"
+    temp.write_text(str(highest), encoding="utf-8")
+    os.replace(temp, parent / LAST_VERSION_FILE)
+    hidden = parent / f".deleting-v{version}-{uuid4().hex[:12]}"
+    os.replace(folder, hidden)
+    return hidden
+
+
+def move_composition_version_back(root: Path, slug: str, version: int, hidden: Path) -> None:
+    """Undo `move_composition_version_aside` (the high-water file stays)."""
+    os.replace(hidden, composition_version_dir(root, slug, version))
+
+
+def discard_composition_version(root: Path, slug: str, hidden: Path) -> None:
+    """Remove a folder moved aside; when the composition has no version left, remove its folder."""
+    shutil.rmtree(hidden, ignore_errors=True)
+    folder = composition_dir(root, slug)
+    if not _version_numbers(folder):
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def move_composition_aside(root: Path, slug: str) -> Path | None:

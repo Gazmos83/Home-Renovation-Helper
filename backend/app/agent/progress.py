@@ -63,10 +63,16 @@ LISTED_COMPOSITION_VERSIONS: Final = 5
 
 
 def composition_version_views(
-    session: Session, root: Path, slug: str, numbers: list[int]
+    session: Session,
+    root: Path,
+    slug: str,
+    numbers: list[int],
+    *,
+    approved_at: dict[int, str] | None = None,
 ) -> list[dict[str, Any]]:
     """The newest listed versions of a composition, newest first, as the Studio shows them:
     status, picture, viewer, items, and the 3D routes when the version has `model.glb`."""
+    when = approved_at or {}
     views = []
     for number in sorted(numbers, reverse=True)[:LISTED_COMPOSITION_VERSIONS]:
         folder = storage.composition_version_dir(root, slug, number)
@@ -89,6 +95,7 @@ def composition_version_views(
                 "model": _composition_route(slug, number, "model.glb") if modelled else None,
                 "surfaces": _composition_route(slug, number, "report.json") if modelled else None,
                 "dimensions": f"/compositions/{slug}/versions/{number}/dimensions" if modelled else None,
+                "approved_at": when.get(number),
             }
         )
     return views
@@ -106,14 +113,20 @@ def room_progress(session: Session, root: Path, thread_id: UUID) -> dict[str, An
     else:
         return None
     found: dict[str, Any] = {
-        "name": name, "scope": scope, "slug": None, "model": None, "surfaces": None, "versions": [],
+        "name": name, "scope": scope, "slug": None, "model": None, "surfaces": None,
+        "versions": [], "approved_version": None,
     }
     composition = house_file.composition_by_scope(session, scope, name)
     if composition is None:
         return found
     found["slug"] = composition.slug
-    numbers = [v.version for v in house_file.composition_version_rows(session, composition)]
-    found["versions"] = composition_version_views(session, root, composition.slug, numbers)
+    rows = house_file.composition_version_rows(session, composition)
+    numbers = [v.version for v in rows]
+    approved_at = {v.version: v.approved_at.isoformat() for v in rows if v.approved_at is not None}
+    found["approved_version"] = next((v.version for v in rows if v.approved_at is not None), None)
+    found["versions"] = composition_version_views(
+        session, root, composition.slug, numbers, approved_at=approved_at
+    )
     if found["versions"]:
         found["model"] = found["versions"][0]["model"]
         found["surfaces"] = found["versions"][0]["surfaces"]

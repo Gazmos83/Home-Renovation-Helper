@@ -461,12 +461,25 @@ def approve_version(session: Session, package_id: str, version: int) -> PieceVer
     return row
 
 
-def unapprove_version(session: Session, package_id: str, version: int) -> PieceVersion:
-    """Clear a version's approval; unapproving an unapproved version changes nothing."""
+def unapprove_version(
+    session: Session, package_id: str, version: int, *, root: Path | None = None
+) -> PieceVersion:
+    """Clear a version's approval; unapproving an unapproved version changes nothing.
+
+    Refused when the version is placed in an approved composition version (room-version-approval).
+    """
     row = version_row(session, package_id, version)
     if row is None:
         raise HouseFileError(f"version {version} of {package_id!r} is not recorded in the house file")
     if row.approved_at is not None:
+        if root is not None:
+            placed = _approved_rooms_placing(session, root, package_id, version)
+            if placed:
+                named = ", ".join(placed)
+                raise HouseFileError(
+                    f"{package_id} version {version} is placed in the approved room composition "
+                    f"{named}; unapprove {placed[0]} first"
+                )
         row.approved_at = None
         session.flush()
     return row
@@ -620,6 +633,194 @@ def composition_by_scope(session: Session, scope: str, name: str) -> Composition
     return session.scalar(select(Composition).where(Composition.scope == scope, Composition.name == name))
 
 
+def composition_by_slug(session: Session, slug: str) -> Composition | None:
+    return session.scalar(select(Composition).where(Composition.slug == slug))
+
+
+def composition_version_row(
+    session: Session, composition_id: UUID, version: int
+) -> CompositionVersion | None:
+    return session.get(CompositionVersion, (composition_id, version))
+
+
+def approved_composition_version_of(session: Session, composition_id: UUID) -> int | None:
+    """The composition's approved version number, or `None` when none is approved."""
+    return session.scalar(
+        select(CompositionVersion.version).where(
+            CompositionVersion.composition_id == composition_id,
+            CompositionVersion.approved_at.is_not(None),
+        )
+    )
+
+
+def _composition_document(root: Path, slug: str, version: int) -> dict[str, Any]:
+    folder = storage.composition_version_dir(root, slug, version)
+    try:
+        return json.loads((folder / storage.INPUT_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _unapproved_placed_pieces(session: Session, root: Path, slug: str, version: int) -> list[str]:
+    """Piece versions in that composition version that are not currently approved."""
+    found = []
+    for item in _composition_document(root, slug, version).get("items", []):
+        if item.get("type") != "piece":
+            continue
+        package_id, number = str(item.get("package_id")), item.get("version")
+        if approved_version_of(session, package_id) != number:
+            found.append(f"{package_id} v{number}")
+    return found
+
+
+def _approved_rooms_placing(session: Session, root: Path, package_id: str, version: int) -> list[str]:
+    """Approved composition versions that place this piece version, as '<name> version <n>'."""
+    found = []
+    for composition in session.scalars(select(Composition).order_by(Composition.name)):
+        approved = approved_composition_version_of(session, composition.id)
+        if approved is None:
+            continue
+        items = _composition_document(root, composition.slug, approved).get("items", [])
+        if any(
+            i.get("type") == "piece" and i.get("package_id") == package_id and i.get("version") == version
+            for i in items
+        ):
+            found.append(f"{composition.name} version {approved}")
+    return found
+
+
+def approve_composition_version(
+    session: Session, root: Path, slug: str, version: int
+) -> CompositionVersion:
+    """Approve one composition version, clearing any other approval of it.
+
+    Refused when the version is not recorded, or when a placed piece is not currently approved.
+    Approving an approved version changes nothing.
+    """
+    composition = composition_by_slug(session, slug)
+    if composition is None:
+        raise HouseFileError(f"composition {slug!r} is not recorded in the house file")
+    row = composition_version_row(session, composition.id, version)
+    if row is None:
+        raise HouseFileError(
+            f"version {version} of {composition.name!r} is not recorded in the house file"
+        )
+    if row.approved_at is not None:
+        return row
+    stale = _unapproved_placed_pieces(session, root, slug, version)
+    if stale:
+        named = ", ".join(stale)
+        verb = "is" if len(stale) == 1 else "are"
+        raise HouseFileError(
+            f"{composition.name} version {version} places {named}, which {verb} not approved; "
+            "approve those piece versions first"
+        )
+    session.execute(
+        update(CompositionVersion)
+        .where(
+            CompositionVersion.composition_id == composition.id,
+            CompositionVersion.approved_at.is_not(None),
+        )
+        .values(approved_at=None)
+    )
+    row.approved_at = _now()
+    session.flush()
+    return row
+
+
+def unapprove_composition_version(session: Session, slug: str, version: int) -> CompositionVersion:
+    """Clear a composition version's approval; unapproving an unapproved version changes nothing."""
+    composition = composition_by_slug(session, slug)
+    if composition is None:
+        raise HouseFileError(f"composition {slug!r} is not recorded in the house file")
+    row = composition_version_row(session, composition.id, version)
+    if row is None:
+        raise HouseFileError(
+            f"version {version} of {composition.name!r} is not recorded in the house file"
+        )
+    if row.approved_at is not None:
+        row.approved_at = None
+        session.flush()
+    return row
+
+
+def _composition_version_refusal(
+    session: Session, root: Path, composition: Composition, version: int
+) -> str | None:
+    """Why the composition version cannot be deleted now, in plain words, or `None`."""
+    row = composition_version_row(session, composition.id, version)
+    if row is not None and row.approved_at is not None:
+        return (
+            f"{composition.name} version {version} is approved; unapprove version {version} first"
+        )
+    folder = storage.composition_version_dir(root, composition.slug, version)
+    state = storage.read_status(folder) or {}
+    if state.get("status") in _BUSY:
+        return (
+            f"{composition.name} version {version} is still building; "
+            "delete it once the build has finished"
+        )
+    rendering = any(
+        (entry or {}).get("status") in _BUSY for entry in (state.get("renders") or {}).values()
+    )
+    if rendering:
+        return (
+            f"{composition.name} version {version} is still rendering; "
+            "delete it once the render has finished"
+        )
+    return None
+
+
+def delete_composition_version(session: Session, root: Path, slug: str, version: int) -> bool:
+    """Delete one composition version with its folder; whether the composition went too.
+
+    Refuses with `HouseFileError` when the version is approved or still building or
+    rendering, and with `VersionMissing` when it has neither a folder nor a record.
+    The last version also removes the composition; the measured room stays. Commits
+    like `delete_version`: the folder is moved aside first.
+    """
+    try:
+        folder = storage.composition_version_dir(root, slug, version)
+    except (storage.InvalidPackageId, ValueError) as error:
+        raise VersionMissing(f"{slug} has no version {version}") from error
+    composition = composition_by_slug(session, slug)
+    recorded = {
+        row.version
+        for row in (
+            composition_version_rows(session, composition) if composition is not None else []
+        )
+    }
+    on_disk = set(storage.composition_versions(root, slug))
+    if version not in recorded and version not in on_disk:
+        raise VersionMissing(f"{slug} has no version {version}")
+    if composition is not None:
+        reason = _composition_version_refusal(session, root, composition, version)
+        if reason is not None:
+            raise HouseFileError(reason)
+
+    last = not ((recorded | on_disk) - {version})
+    hidden = storage.move_composition_version_aside(root, slug, version) if folder.is_dir() else None
+    try:
+        if composition is not None:
+            session.execute(
+                delete(CompositionVersion).where(
+                    CompositionVersion.composition_id == composition.id,
+                    CompositionVersion.version == version,
+                )
+            )
+            if last:
+                session.execute(delete(Composition).where(Composition.id == composition.id))
+        session.commit()
+    except Exception:
+        session.rollback()
+        if hidden is not None:
+            storage.move_composition_version_back(root, slug, version, hidden)
+        raise
+    if hidden is not None:
+        storage.discard_composition_version(root, slug, hidden)
+    return last
+
+
 def record_composition(session: Session, scope: str, name: str) -> Composition:
     """The composition for a scope, created on first use. Flushes; the caller commits."""
     found = composition_by_scope(session, scope, name)
@@ -693,6 +894,7 @@ def compositions(session: Session, root: Path) -> list[dict[str, Any]]:
             {
                 "scope": row.scope, "name": row.name, "slug": row.slug, "latest_version": latest,
                 "status": status, "items": items, "versions": [v.version for v in versions],
+                "approved_version": next((v.version for v in versions if v.approved_at is not None), None),
             }
         )
     return listing

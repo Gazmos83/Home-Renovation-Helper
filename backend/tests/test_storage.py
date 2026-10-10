@@ -199,6 +199,28 @@ def test_composition_versions_live_under_rooms_and_count_on(tmp_path: Path) -> N
     assert storage.list_compositions(tmp_path) == [("wohnen", [1, 2])]
 
 
+def test_a_deleted_highest_composition_version_number_is_not_reused(tmp_path: Path) -> None:
+    for number in (1, 2, 3):
+        storage.composition_version_dir(tmp_path, "wohnen", number).mkdir(parents=True)
+    storage.discard_composition_version(
+        tmp_path, "wohnen", storage.move_composition_version_aside(tmp_path, "wohnen", 3)
+    )
+    assert storage.composition_versions(tmp_path, "wohnen") == [1, 2]
+    assert storage.next_composition_version(tmp_path, "wohnen") == 4
+
+
+def test_a_moved_aside_composition_folder_is_not_listed(tmp_path: Path) -> None:
+    for number in (1, 2):
+        storage.composition_version_dir(tmp_path, "wohnen", number).mkdir(parents=True)
+    hidden = storage.move_composition_version_aside(tmp_path, "wohnen", 2)
+    assert hidden.name.startswith(".deleting-v2-")
+    assert (tmp_path / "rooms" / "wohnen" / storage.LAST_VERSION_FILE).read_text(encoding="utf-8") == "2"
+    assert storage.composition_versions(tmp_path, "wohnen") == [1]
+    assert storage.list_compositions(tmp_path) == [("wohnen", [1])]
+    storage.move_composition_version_back(tmp_path, "wohnen", 2, hidden)
+    assert storage.composition_versions(tmp_path, "wohnen") == [1, 2]
+
+
 @pytest.mark.parametrize("version", [0, -1, True, "1"])
 def test_a_composition_version_must_be_a_positive_integer(tmp_path: Path, version) -> None:
     with pytest.raises(ValueError):

@@ -459,7 +459,15 @@ def test_progress_names_the_threads_own_room_and_its_3d_view(client: TestClient,
     }
     [only] = room["versions"]
     assert (only["version"], only["dimensions"]) == (1, f"/compositions/{slug}/versions/1/dimensions")
+    assert room["approved_version"] is None and only["approved_at"] is None
     assert str(render_root) not in json.dumps(body)
+
+    with Session(client.app.state.engine) as session:
+        house_file.approve_composition_version(session, render_root, slug, 1)
+        session.commit()
+    room = client.get(f"/chat/threads/{thread}/progress").json()["room"]
+    assert room["approved_version"] == 1
+    assert room["versions"][0]["approved_at"] is not None
 
     # Another conversation sees neither this one's room nor the room its piece is in.
     with Session(client.app.state.engine) as session:

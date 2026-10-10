@@ -23,8 +23,8 @@ const wohnen = {
     { id: "wall", type: "piece", name: "listening-wall v4", version: 4, approved: false, no_longer_approved: true },
     { id: "sofa", type: "stand-in", name: "Sofa" },
   ],
-  picture: "/compositions/wohnen/versions/2/files/screenshot.png",
-  viewer: "/compositions/wohnen/versions/2/files/viewer.html",
+  picture: "/compositions/wohnen/versions/2/files/screenshot.png" as string | null,
+  viewer: "/compositions/wohnen/versions/2/files/viewer.html" as string | null,
 };
 const armchair = {
   model_id: "m1", name: "Armchair", kind: "glb", width_mm: 800, depth_mm: 700, height_mm: 900,
@@ -271,11 +271,12 @@ test("an older composition without a model shows its picture and says how to get
 // --- versions and dimensions (project-room-inspection) --------------------------------------
 
 const view = (version: number, extra: Record<string, unknown> = {}) => ({
-  version, status: "succeeded", viewer: null, items: [],
-  picture: `/compositions/wohnen/versions/${version}/files/screenshot.png`,
-  model: `/compositions/wohnen/versions/${version}/files/model.glb`,
-  surfaces: `/compositions/wohnen/versions/${version}/files/report.json`,
-  dimensions: `/compositions/wohnen/versions/${version}/dimensions`,
+  version, status: "succeeded", viewer: null as string | null, items: [] as unknown[],
+  picture: `/compositions/wohnen/versions/${version}/files/screenshot.png` as string | null,
+  model: `/compositions/wohnen/versions/${version}/files/model.glb` as string | null,
+  surfaces: `/compositions/wohnen/versions/${version}/files/report.json` as string | null,
+  dimensions: `/compositions/wohnen/versions/${version}/dimensions` as string | null,
+  approved_at: null as string | null,
   ...extra,
 });
 const DIMENSIONS = {
@@ -345,4 +346,168 @@ test("dimensions are read only when switched on and label the chosen version", a
   const overlay = JSON.parse(screen.getByTestId("canvas").dataset.overlay ?? "{}");
   expect(overlay).toEqual({ dimensions: DIMENSIONS, apartment: false });
   expect(calls.some(([, url]) => url === "/compositions/wohnen/versions/7/dimensions")).toBe(true);
+});
+
+
+// --- room-version-approval ------------------------------------------------------------------
+
+function composed(extra: Record<string, unknown> = {}) {
+  return {
+    ...wohnen,
+    versions: [2, 1],
+    approved_version: null as number | null,
+    version_views: [
+      view(2, { items: wohnen.items, picture: wohnen.picture, viewer: wohnen.viewer, approved_at: null }),
+      view(1, {
+        items: [],
+        picture: null,
+        viewer: null,
+        model: null,
+        surfaces: null,
+        dimensions: null,
+        approved_at: null,
+      }),
+    ],
+    ...extra,
+  };
+}
+
+function serveComposed(
+  initial: ReturnType<typeof composed>,
+  extra: (call: string) => { status?: number; body?: unknown } | undefined = () => undefined,
+) {
+  let listed = initial;
+  const calls = stubFetch((call) => {
+    const mine = extra(call);
+    if (mine) return mine;
+    if (call === "GET /compositions") return { body: [listed] };
+    if (call === "GET /models" || call === "GET /rooms") return { body: [] };
+    const change = /^(PUT|DELETE) \/compositions\/wohnen\/versions\/(\d+)\/approval$/.exec(call);
+    if (change) {
+      const version = Number(change[2]);
+      const approved_at = change[1] === "PUT" ? "2026-10-10T00:00:00Z" : null;
+      listed = {
+        ...listed,
+        approved_version: change[1] === "PUT" ? version : null,
+        version_views: listed.version_views.map((v) => ({
+          ...v,
+          approved_at: v.version === version ? approved_at : change[1] === "PUT" ? null : v.approved_at,
+        })),
+      };
+      return { body: { slug: "wohnen", version, status: "succeeded", approved_at } };
+    }
+  });
+  return { calls, setListed: (next: typeof listed) => { listed = next; } };
+}
+
+test("a built room version is approved from the page and the badge shows without a reload", async () => {
+  const user = userEvent.setup();
+  const { calls } = serveComposed(composed());
+  show();
+  const card = within(await screen.findByRole("region", { name: "Wohnen" }));
+  await user.click(await card.findByRole("button", { name: "Approve version 2" }));
+  expect(await card.findByRole("button", { name: "Unapprove version 2" })).toBeInTheDocument();
+  expect(card.getByText("Approved")).toBeInTheDocument();
+  expect(card.queryByRole("button", { name: "Delete version 2" })).toBeNull();
+  expect(calls.some(([m, u]) => m === "PUT" && u === "/compositions/wohnen/versions/2/approval")).toBe(true);
+});
+
+test("an approved room version is unapproved and the page shows no approved version", async () => {
+  const user = userEvent.setup();
+  const { calls } = serveComposed(
+    composed({
+      approved_version: 2,
+      version_views: [
+        view(2, { items: wohnen.items, picture: wohnen.picture, viewer: wohnen.viewer, approved_at: "2026-10-10T00:00:00Z" }),
+        view(1, { items: [], picture: null, viewer: null, model: null, surfaces: null, dimensions: null, approved_at: null }),
+      ],
+    }),
+  );
+  show();
+  const card = within(await screen.findByRole("region", { name: "Wohnen" }));
+  expect(card.getByText("Approved")).toBeInTheDocument();
+  expect(card.queryByRole("button", { name: "Delete version 2" })).toBeNull();
+  await user.click(card.getByRole("button", { name: "Unapprove version 2" }));
+  expect(await card.findByRole("button", { name: "Approve version 2" })).toBeInTheDocument();
+  expect(card.queryByText("Approved")).toBeNull();
+  expect(calls.some(([m]) => m === "DELETE")).toBe(true);
+});
+
+test("delete asks first, and cancel sends nothing", async () => {
+  const user = userEvent.setup();
+  const { calls } = serveComposed(composed());
+  show();
+  const card = within(await screen.findByRole("region", { name: "Wohnen" }));
+  await user.click(await card.findByRole("button", { name: "Delete version 2" }));
+  expect(card.getByText("Are you sure? Version 2 and its model and renders will be deleted. This cannot be undone.")).toBeInTheDocument();
+  await user.click(card.getByRole("button", { name: "Cancel" }));
+  expect(card.getByRole("button", { name: "Delete version 2" })).toBeInTheDocument();
+  expect(card.queryByText(/Are you sure/)).not.toBeInTheDocument();
+  expect(calls.filter(([m]) => m === "DELETE")).toEqual([]);
+});
+
+test("a confirmed delete removes the version and the page shows another", async () => {
+  const user = userEvent.setup();
+  let listed = composed();
+  stubFetch((call) => {
+    if (call === "GET /compositions") return { body: listed.versions.length ? [listed] : [] };
+    if (call === "GET /models" || call === "GET /rooms") return { body: [] };
+    if (call === "DELETE /compositions/wohnen/versions/2") {
+      listed = {
+        ...listed,
+        latest_version: 1,
+        versions: [1],
+        version_views: [listed.version_views[1]],
+        picture: null,
+        viewer: null,
+      };
+      return { status: 204 };
+    }
+  });
+  show();
+  const card = within(await screen.findByRole("region", { name: "Wohnen" }));
+  await user.click(await card.findByRole("button", { name: "Delete version 2" }));
+  await user.click(card.getByRole("button", { name: "Yes, delete version 2" }));
+  await waitFor(() => expect(card.getByRole("combobox", { name: "Version of Wohnen" })).toHaveValue("1"));
+  expect(card.queryByRole("option", { name: "Version 2" })).toBeNull();
+});
+
+test("an approved version has no delete control", async () => {
+  serveComposed(
+    composed({
+      approved_version: 2,
+      version_views: [
+        view(2, { items: wohnen.items, picture: wohnen.picture, viewer: wohnen.viewer, approved_at: "2026-10-10T00:00:00Z" }),
+        view(1, { items: [], picture: null, viewer: null, model: null, surfaces: null, dimensions: null, approved_at: null }),
+      ],
+    }),
+  );
+  show();
+  const card = within(await screen.findByRole("region", { name: "Wohnen" }));
+  expect(await card.findByRole("button", { name: "Unapprove version 2" })).toBeInTheDocument();
+  expect(card.queryByRole("button", { name: "Delete version 2" })).toBeNull();
+});
+
+test("an approval refusal is shown next to the version it names", async () => {
+  const user = userEvent.setup();
+  serveComposed(composed(), (call) => {
+    if (call === "PUT /compositions/wohnen/versions/2/approval") {
+      return {
+        status: 409,
+        body: {
+          detail: {
+            failure_class: "unapproved_pieces",
+            reason: "Wohnen version 2 places listening-wall v4, which is not approved; approve those piece versions first",
+          },
+        },
+      };
+    }
+  });
+  show();
+  const card = within(await screen.findByRole("region", { name: "Wohnen" }));
+  await user.click(await card.findByRole("button", { name: "Approve version 2" }));
+  const refusal = await card.findByRole("alert");
+  expect(refusal).toHaveTextContent("listening-wall v4");
+  expect(refusal.closest("[role=group]")).toHaveAccessibleName("Approval of Wohnen version 2");
+  expect(card.getByRole("button", { name: "Approve version 2" })).toBeEnabled();
 });

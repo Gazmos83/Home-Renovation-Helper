@@ -1,0 +1,27 @@
+## 1. Store
+
+- [x] 1.1 Add `CompositionVersion.approved_at` and migration `0018_composition_approval` with the partial unique index `uq_composition_versions_one_approved`. Verify `tests/test_composition_version_approval_migration.py` covers: upgrade adds column and index; a second approved version of one composition is rejected by the database; downgrade removes both
+- [x] 1.2 `storage.next_composition_version` uses `.last_version` like piece versions; add `move_composition_version_aside` / `back` / `discard`. Verify `tests/test_storage.py` covers: deleting the highest version then asking for the next number skips the deleted one; a moved-aside folder is not listed
+
+## 2. House file and routes
+
+- [x] 2.1 `house_file.approve_composition_version` / `unapprove_composition_version` / `approved_composition_version_of`; listing and version views carry `approved_version` / `approved_at`; house note names it. Approving refuses when a placed piece is not currently approved. Verify `tests/test_house_file.py` covers: approve moves the approval; idempotent approve and unapprove; a new compose stays unapproved; approve refused naming an unapproved placed piece; the house note prints `approved: v2` or `approved: none`
+- [x] 2.2 `house_file.unapprove_version` (piece) refuses when that version is placed in an approved composition version, naming it. Verify a unit test that the piece stays approved and the composition is unchanged, and that unapprove still succeeds when the room version is not approved
+- [x] 2.3 `house_file.delete_composition_version`, with refusals: approved, build or render queued or running, missing. Last version removes the composition, not the measured room. Verify each refusal and the last-version case; version numbers are not reused on the next compose
+- [x] 2.4 `PUT` and `DELETE /compositions/{slug}/versions/{n}/approval`; `DELETE /compositions/{slug}/versions/{n}`. Verify `tests/test_compositions_api.py` covers: approve a succeeded version; unapprove; 409 `not_built`; 409 naming unapproved pieces; 404 unknown; 401 without the cookie; delete an older version; delete refused while approved; last version drops the composition
+- [x] 2.5 Piece `DELETE …/approval` answers 409 `placed_in_approved_room` when the version is in an approved room. Verify `tests/test_packages_api.py` covers that 409 and that unapprove still clears when the room is not approved
+- [x] 2.6 `Progress.room.approved_version` and each version view's `approved_at`. Verify `tests/test_progress.py` and `tests/test_chat_api.py` read it
+
+## 3. Studio
+
+- [x] 3.1 `api.ts`: `approveCompositionVersion`, `unapproveCompositionVersion`, `deleteCompositionVersion`; `Composition.approved_version`; `CompositionVersion.approved_at`; `Progress.room.approved_version`. Verify `pnpm lint` and the type check in `pnpm build`
+- [x] 3.2 Rooms page: approval badge and Approve/Unapprove for the chosen succeeded version, Delete with "Are you sure?" (hidden while approved), refusal shown next to the version. Verify `Rooms.test.tsx` covers approve, unapprove, cancel delete, confirmed delete, approved version has no delete, and a 409 shown
+- [x] 3.3 Project panel Selected room: latest vs approved, Approve latest, Unapprove, Delete latest. Verify `Conversation.test.tsx` covers latest v2 with approved v1, approve refreshing without a reload, unapprove, and a piece-unapprove 409 naming the room
+- [x] 3.4 Pieces page Unapprove shows the 409 naming the approved room. Verify `Pieces.test.tsx` covers that refusal next to the control
+
+## 4. Verification
+
+- [x] 4.1 Browser check against scratch API+Vite: compose or seed a room version, approve it from the Rooms page, see it in the Project panel, refuse unapproving a placed piece, unapprove the room, unapprove the piece, delete an older room version after "Are you sure?". No render is started. Record the check here
+  Browser pass 2026-10-10: headless Chromium through Python Playwright (`uv run --no-project --with playwright`), scratch database `home_renovation_rva_ui` (dropped afterwards), copies of composition `wohnen` v1 (places `listening-wall` v4) and v2 plus `listening-wall` v4 in `/tmp/room-version-approval/renders`, backend on 8100 and Vite on 5180 (`API_PROXY`); the owner's 8000 and 5173 were untouched. No build or render ran. All 10 checks passed: signed in; Rooms page Approve version 1 shows the Approved badge, hides Delete, labels "Version 1 (approved)", and a reload keeps it; Project panel shows latest v2 beside approved v1; Pieces Unapprove of listening-wall v4 is refused naming Wohnen version 1; Unapprove version 1 on Rooms then shows no approved version in the Project panel; piece Unapprove then succeeds; Delete version 1 Cancel sends nothing; Yes removes v1 and leaves v2; no `frames/` and no queued/running status.
+- [x] 4.2 Run `uv run ruff check .`, `uv run pytest -m "not slow"`, and `pnpm lint && pnpm test && pnpm build`. Verify all pass and record the counts here
+  2026-10-10: `uv run ruff check .` — all checks passed. `uv run pytest -m "not slow"` — 2126 passed, 36 skipped, 21 deselected; 3 failed in other in-flight changes (`test_design_import.py::test_the_guide_allows_fronts_on_a_fold`, `test_instructions.py::test_the_designer_knows_side_folds`, `test_side_folds.py::test_dividers_on_a_folded_module_are_refused`), none in this change. `pnpm lint` — 0 warnings, 0 errors; `pnpm test` — 220 passed / 24 files; `pnpm build` — tsc and Vite succeeded.

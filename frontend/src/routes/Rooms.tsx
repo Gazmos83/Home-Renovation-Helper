@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cardClass } from "@/components/ui/card";
 import { Page } from "@/components/Page";
+import { DeleteCompositionVersion } from "@/components/DeleteCompositionVersion";
 import { RoomView, VersionSelect } from "@/components/inspector/RoomView";
 
 function message(error: unknown): string | null {
@@ -15,6 +16,7 @@ function message(error: unknown): string | null {
 }
 
 function CompositionCard({ composition }: { composition: Composition }) {
+  const queryClient = useQueryClient();
   const scope = composition.scope === "room" ? "Room" : "Apartment";
   const [open3d, setOpen3d] = useState(false);
   // The newest five versions, the latest chosen at first (project-room-inspection).
@@ -30,7 +32,24 @@ function CompositionCard({ composition }: { composition: Composition }) {
     model: composition.model ?? null,
     surfaces: composition.surfaces ?? null,
     dimensions: null,
+    approved_at: null,
   };
+  const version = shown.version;
+  const approved =
+    Boolean(shown.approved_at) || (version !== null && composition.approved_version === version);
+  const succeeded = shown.status === "succeeded" && version !== null;
+  const only = (composition.versions?.length ?? views.length) === 1;
+  const reload = () => {
+    queryClient.invalidateQueries({ queryKey: ["compositions"] });
+    queryClient.invalidateQueries({ queryKey: ["progress"] });
+  };
+  const change = useMutation({
+    mutationFn: (approve: boolean) =>
+      approve
+        ? api.approveCompositionVersion(composition.slug, version as number)
+        : api.unapproveCompositionVersion(composition.slug, version as number),
+    onSuccess: reload,
+  });
   return (
     <section className={cardClass} aria-label={composition.name}>
       <div className="flex flex-wrap items-center gap-2">
@@ -42,7 +61,44 @@ function CompositionCard({ composition }: { composition: Composition }) {
           shown.version !== null && <span>version {shown.version}</span>
         )}
         {shown.status && <Badge variant="outline">{shown.status}</Badge>}
+        {approved && <Badge>Approved</Badge>}
       </div>
+      {succeeded && (
+        <div className="grid gap-2" role="group" aria-label={`Approval of ${composition.name} version ${version}`}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant={approved ? "outline" : "default"}
+              disabled={change.isPending}
+              onClick={() => change.mutate(!approved)}
+            >
+              {approved ? "Unapprove" : "Approve"} version {version}
+            </Button>
+          </div>
+          <FieldError message={message(change.error)} />
+          {!approved && (
+            <DeleteCompositionVersion
+              key={version}
+              slug={composition.slug}
+              name={composition.name}
+              version={version as number}
+              only={only}
+              onDeleted={reload}
+            />
+          )}
+        </div>
+      )}
+      {version !== null && !succeeded && !approved && (
+        <DeleteCompositionVersion
+          key={version}
+          slug={composition.slug}
+          name={composition.name}
+          version={version}
+          only={only}
+          onDeleted={reload}
+        />
+      )}
       {shown.items.length === 0 && <p>The room only, no furniture.</p>}
       <ul className="space-y-1">
         {shown.items.map((item) => (

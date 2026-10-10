@@ -188,6 +188,7 @@ class CompositionVersionOut(BaseModel):
     model: str | None
     surfaces: str | None
     dimensions: str | None
+    approved_at: str | None = None
 
 
 class RoomOut(BaseModel):
@@ -198,6 +199,7 @@ class RoomOut(BaseModel):
     model: str | None
     surfaces: str | None
     versions: list[CompositionVersionOut] = []
+    approved_version: int | None = None
 
 
 class ProgressOut(BaseModel):

@@ -278,6 +278,7 @@ def test_a_confirmed_composition_is_recorded_with_its_version(db_session, render
     assert listed == [{
         "scope": "room", "name": "Wohnen", "slug": "wohnen", "latest_version": 1, "status": "succeeded",
         "items": [{"id": "sofa", "type": "stand-in", "name": "Sofa"}], "versions": [1],
+        "approved_version": None,
     }]
 
 
@@ -297,6 +298,211 @@ def test_a_placed_piece_unapproved_later_is_kept_and_marked(db_session, render_r
     item = house_file.compositions(db_session, render_root)[0]["items"][0]
     assert item["name"] == "listening-wall v4"
     assert item["approved"] is False and item["no_longer_approved"] is True
+
+
+def _reset_house(db_session) -> None:
+    from tests.conftest import clean_house_file
+
+    clean_house_file(db_session.get_bind())
+    db_session.expire_all()
+
+
+@pytest.fixture
+def isolated_house(db_session):
+    """A house file that truncates around tests that commit (composition version delete)."""
+    db_session.rollback()
+    _reset_house(db_session)
+    yield db_session
+    db_session.rollback()
+    _reset_house(db_session)
+
+
+def _wohnen(
+    db_session,
+    render_root: Path,
+    *,
+    versions: tuple[int, ...] = (1,),
+    items: list[dict] | None = None,
+    piece_approved: bool = True,
+):
+    house_file.record_piece(db_session, "listening-wall", "Listening wall")
+    house_file.record_version(db_session, "listening-wall", 4)
+    if piece_approved:
+        house_file.approve_version(db_session, "listening-wall", 4)
+    composition = house_file.record_composition(db_session, "room", "Wohnen")
+    placed = items or [
+        {"id": "listening-wall", "type": "piece", "package_id": "listening-wall", "version": 4},
+    ]
+    for number in versions:
+        house_file.record_composition_version(
+            db_session, composition, number, number - 1 if number > 1 else None, []
+        )
+        _composition_folder(render_root, "wohnen", number, placed)
+    return composition
+
+
+def test_approving_a_composition_version_moves_the_approval(isolated_house, render_root: Path) -> None:
+    db_session = isolated_house
+    _wohnen(db_session, render_root, versions=(1, 2, 3))
+    composition = house_file.composition_by_slug(db_session, "wohnen")
+    house_file.approve_composition_version(db_session, render_root, "wohnen", 2)
+    assert house_file.approved_composition_version_of(db_session, composition.id) == 2
+    house_file.approve_composition_version(db_session, render_root, "wohnen", 3)
+    assert house_file.approved_composition_version_of(db_session, composition.id) == 3
+    listed = house_file.compositions(db_session, render_root)[0]
+    assert listed["approved_version"] == 3
+
+
+def test_approving_and_unapproving_a_composition_version_are_idempotent(
+    isolated_house, render_root: Path
+) -> None:
+    db_session = isolated_house
+    _wohnen(db_session, render_root, versions=(1, 2))
+    first = house_file.approve_composition_version(db_session, render_root, "wohnen", 1).approved_at
+    assert house_file.approve_composition_version(db_session, render_root, "wohnen", 1).approved_at == first
+    house_file.unapprove_composition_version(db_session, "wohnen", 1)
+    house_file.unapprove_composition_version(db_session, "wohnen", 1)
+    house_file.unapprove_composition_version(db_session, "wohnen", 2)
+    composition = house_file.composition_by_slug(db_session, "wohnen")
+    assert house_file.approved_composition_version_of(db_session, composition.id) is None
+
+
+def test_a_new_composition_version_stays_unapproved(isolated_house, render_root: Path) -> None:
+    db_session = isolated_house
+    composition = _wohnen(db_session, render_root, versions=(1,))
+    house_file.approve_composition_version(db_session, render_root, "wohnen", 1)
+    house_file.record_composition_version(db_session, composition, 2, 1, ["placed: sofa"])
+    _composition_folder(render_root, "wohnen", 2, [{"id": "sofa", "type": "stand-in", "name": "Sofa"}])
+    assert house_file.composition_version_row(db_session, composition.id, 2).approved_at is None
+    assert house_file.approved_composition_version_of(db_session, composition.id) == 1
+    listed = house_file.compositions(db_session, render_root)[0]
+    assert listed["approved_version"] == 1 and listed["latest_version"] == 2
+
+
+def test_approving_a_composition_version_with_an_unapproved_piece_is_refused(
+    isolated_house, render_root: Path
+) -> None:
+    db_session = isolated_house
+    _wohnen(db_session, render_root, piece_approved=False)
+    with pytest.raises(HouseFileError, match="listening-wall v4.*not approved"):
+        house_file.approve_composition_version(db_session, render_root, "wohnen", 1)
+    composition = house_file.composition_by_slug(db_session, "wohnen")
+    assert house_file.approved_composition_version_of(db_session, composition.id) is None
+
+
+def test_the_composition_note_names_the_approved_version_or_none(isolated_house, render_root: Path) -> None:
+    from app.agent.prompts import composition_note
+
+    db_session = isolated_house
+    _wohnen(db_session, render_root, versions=(1, 2))
+    note = composition_note(house_file.compositions(db_session, render_root))
+    assert "room Wohnen: v2, succeeded, approved: none" in note
+    house_file.approve_composition_version(db_session, render_root, "wohnen", 2)
+    note = composition_note(house_file.compositions(db_session, render_root))
+    assert "room Wohnen: v2, succeeded, approved: v2" in note
+
+
+def test_unapproving_a_piece_in_an_approved_room_is_refused(isolated_house, render_root: Path) -> None:
+    db_session = isolated_house
+    composition = _wohnen(db_session, render_root)
+    house_file.approve_composition_version(db_session, render_root, "wohnen", 1)
+    with pytest.raises(HouseFileError, match="Wohnen version 1"):
+        house_file.unapprove_version(db_session, "listening-wall", 4, root=render_root)
+    assert house_file.approved_version_of(db_session, "listening-wall") == 4
+    assert house_file.approved_composition_version_of(db_session, composition.id) == 1
+
+
+def test_unapproving_a_piece_in_an_unapproved_room_still_clears(isolated_house, render_root: Path) -> None:
+    db_session = isolated_house
+    composition = _wohnen(db_session, render_root)
+    house_file.unapprove_version(db_session, "listening-wall", 4, root=render_root)
+    assert house_file.approved_version_of(db_session, "listening-wall") is None
+    assert house_file.approved_composition_version_of(db_session, composition.id) is None
+
+
+def test_deleting_an_approved_composition_version_is_refused(isolated_house, render_root: Path) -> None:
+    from app.blender import storage as blender_storage
+
+    db_session = isolated_house
+    _wohnen(db_session, render_root, versions=(1, 2))
+    house_file.approve_composition_version(db_session, render_root, "wohnen", 2)
+    with pytest.raises(HouseFileError, match="unapprove version 2 first"):
+        house_file.delete_composition_version(db_session, render_root, "wohnen", 2)
+    assert blender_storage.composition_versions(render_root, "wohnen") == [1, 2]
+    assert house_file.composition_version_row(
+        db_session, house_file.composition_by_slug(db_session, "wohnen").id, 2
+    ) is not None
+
+
+@pytest.mark.parametrize("status", ["queued", "running"])
+def test_deleting_a_composition_version_still_building_is_refused(
+    isolated_house, render_root: Path, status: str
+) -> None:
+    from app.blender import storage as blender_storage
+
+    db_session = isolated_house
+    _wohnen(db_session, render_root, versions=(1, 2))
+    blender_storage.write_status(
+        blender_storage.composition_version_dir(render_root, "wohnen", 2), status=status
+    )
+    with pytest.raises(HouseFileError, match="still building"):
+        house_file.delete_composition_version(db_session, render_root, "wohnen", 2)
+    assert blender_storage.composition_versions(render_root, "wohnen") == [1, 2]
+
+
+def test_deleting_a_composition_version_still_rendering_is_refused(
+    isolated_house, render_root: Path
+) -> None:
+    from app.blender import storage as blender_storage
+
+    db_session = isolated_house
+    _wohnen(db_session, render_root, versions=(1, 2))
+    blender_storage.write_render_status(
+        blender_storage.composition_version_dir(render_root, "wohnen", 2), "still", status="queued"
+    )
+    with pytest.raises(HouseFileError, match="still rendering"):
+        house_file.delete_composition_version(db_session, render_root, "wohnen", 2)
+
+
+def test_deleting_a_missing_composition_version_is_refused(isolated_house, render_root: Path) -> None:
+    from app.agent.house_file import VersionMissing
+
+    db_session = isolated_house
+    _wohnen(db_session, render_root)
+    with pytest.raises(VersionMissing):
+        house_file.delete_composition_version(db_session, render_root, "wohnen", 9)
+    with pytest.raises(VersionMissing):
+        house_file.delete_composition_version(db_session, render_root, "nothing-here", 1)
+
+
+def test_deleting_an_older_composition_version_does_not_reuse_its_number(
+    isolated_house, render_root: Path
+) -> None:
+    from app.blender import storage as blender_storage
+
+    db_session = isolated_house
+    _wohnen(db_session, render_root, versions=(1, 2))
+    assert house_file.delete_composition_version(db_session, render_root, "wohnen", 2) is False
+    db_session.expire_all()
+    assert blender_storage.composition_versions(render_root, "wohnen") == [1]
+    assert house_file.composition_by_slug(db_session, "wohnen") is not None
+    assert blender_storage.next_composition_version(render_root, "wohnen") == 3
+
+
+def test_deleting_the_last_composition_version_keeps_the_measured_room(
+    isolated_house, render_root: Path
+) -> None:
+    from app.blender import storage as blender_storage
+
+    db_session = isolated_house
+    _wohnen(db_session, render_root)
+    house_file.upsert_room(db_session, "Wohnen", LIVING, 2600)
+    assert house_file.delete_composition_version(db_session, render_root, "wohnen", 1) is True
+    db_session.expire_all()
+    assert house_file.composition_by_slug(db_session, "wohnen") is None
+    assert house_file.room_by_name(db_session, "Wohnen") is not None
+    assert blender_storage.composition_versions(render_root, "wohnen") == []
+    assert blender_storage.next_composition_version(render_root, "wohnen") == 1
 
 
 def test_deleting_a_thread_takes_its_settings_and_upload_records_and_keeps_the_piece(db_session) -> None:

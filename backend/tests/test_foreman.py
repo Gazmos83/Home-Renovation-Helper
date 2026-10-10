@@ -347,7 +347,7 @@ def test_the_designers_note_marks_a_placed_piece_no_longer_approved(tool_state) 
     _bind_piece(tool_state, harness, screenshot=False)
     harness.turn("what is in Wohnen?")
     prompt = models["designer"].last_prompt_text()
-    assert "- room Wohnen: v1, succeeded; items: wall (piece: wall v2) no longer approved" in prompt
+    assert "- room Wohnen: v1, succeeded, approved: none; items: wall (piece: wall v2) no longer approved" in prompt
 
 
 def test_a_compose_request_in_a_new_thread_reaches_the_designer_once_a_piece_is_approved(tool_state) -> None:

@@ -302,6 +302,8 @@ def composition_note(compositions: Sequence[Mapping[str, Any]], models: Sequence
         latest = composition.get("latest_version")
         state = f", {composition['status']}" if composition.get("status") else ""
         version = f"v{latest}{state}" if latest else "no version yet"
+        approved = composition.get("approved_version")
+        approval = f", approved: v{approved}" if approved else ", approved: none"
         items = []
         for item in composition.get("items", []):
             label = f"{neutralise(str(item.get('id')))} ({item.get('type')}: {neutralise(str(item.get('name')))})"
@@ -309,7 +311,7 @@ def composition_note(compositions: Sequence[Mapping[str, Any]], models: Sequence
                 label += " no longer approved"
             items.append(label)
         lines.append(
-            f"- {composition['scope']} {neutralise(composition['name'])}: {version}; items: {', '.join(items) or 'none'}"
+            f"- {composition['scope']} {neutralise(composition['name'])}: {version}{approval}; items: {', '.join(items) or 'none'}"
         )
     return "\n".join(lines)
 

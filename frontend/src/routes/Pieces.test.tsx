@@ -213,6 +213,26 @@ test("an approval refusal is shown next to the version it names", async () => {
   expect(screen.getByRole("button", { name: "Approve version 2" })).toBeEnabled();
 });
 
+test("unapproving a piece placed in an approved room shows the refusal next to the control", async () => {
+  const user = userEvent.setup();
+  const reason =
+    "bench version 2 is placed in the approved room composition Wohnen version 2; unapprove Wohnen version 2 first";
+  serve(
+    [turntable],
+    (call) => {
+      if (call === "DELETE /packages/bench/versions/2/approval") {
+        return { status: 409, body: { detail: { failure_class: "placed_in_approved_room", reason } } };
+      }
+    },
+    { approved: 2 },
+  );
+  show();
+  await user.click(await screen.findByRole("button", { name: "Unapprove version 2" }));
+  const refusal = await screen.findByText(reason);
+  expect(refusal.closest("[role=group]")).toHaveAccessibleName("Approval of bench version 2");
+  expect(screen.getByText("Approved: version 2")).toBeInTheDocument();
+});
+
 test("the import template is offered with how to use it", async () => {
   serve([turntable]);
   show();

@@ -219,6 +219,8 @@ export type Progress = {
     surfaces: string | null;
     /** The composition's newest five versions, newest first. */
     versions?: CompositionVersion[];
+    /** The composition's approved version number, or null when none is approved. */
+    approved_version?: number | null;
   } | null;
 };
 
@@ -383,6 +385,8 @@ export type Composition = {
   surfaces?: string | null;
   /** The newest five versions, newest first, for the version dropdown (project-room-inspection). */
   version_views?: CompositionVersion[];
+  versions?: number[];
+  approved_version?: number | null;
 };
 
 /** One listed composition version; the 3D routes are set only when it has `model.glb`. */
@@ -395,6 +399,15 @@ export type CompositionVersion = {
   model: string | null;
   surfaces: string | null;
   dimensions: string | null;
+  approved_at?: string | null;
+};
+
+/** PUT/DELETE `/compositions/{slug}/versions/{n}/approval`. */
+export type CompositionVersionApproval = {
+  slug: string;
+  version: number;
+  status: string | null;
+  approved_at: string | null;
 };
 
 /** A composition version's unique walls and each room's ceiling height, in plan mm. */
@@ -817,6 +830,18 @@ export const api = {
   compositions: () => request<Composition[]>("/compositions"),
   compositionReport: (url: string) => request<CompositionReport>(url),
   compositionDimensions: (url: string) => request<RoomDimensions>(url),
+  approveCompositionVersion: (slug: string, version: number) =>
+    request<CompositionVersionApproval>(
+      `/compositions/${encodeURIComponent(slug)}/versions/${version}/approval`,
+      { method: "PUT" },
+    ),
+  unapproveCompositionVersion: (slug: string, version: number) =>
+    request<CompositionVersionApproval>(
+      `/compositions/${encodeURIComponent(slug)}/versions/${version}/approval`,
+      { method: "DELETE" },
+    ),
+  deleteCompositionVersion: (slug: string, version: number) =>
+    request<void>(`/compositions/${encodeURIComponent(slug)}/versions/${version}`, { method: "DELETE" }),
   modelLibrary: () => request<ModelAsset[]>("/models"),
   uploadModel: (file: File, name: string, width: string, depth: string, height: string) => {
     const form = new FormData();

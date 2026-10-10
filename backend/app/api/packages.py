@@ -304,7 +304,12 @@ def unapprove_version(package_id: str, version: int, request: Request):
     existing_version(request, package_id, version)
     with Session(request.app.state.engine) as session:
         if house_file.version_row(session, package_id, version) is not None:
-            house_file.unapprove_version(session, package_id, version)
+            try:
+                house_file.unapprove_version(
+                    session, package_id, version, root=render_root(request)
+                )
+            except house_file.HouseFileError as error:
+                raise refused(409, "placed_in_approved_room", str(error)) from None
             session.commit()
     return describe_version(render_root(request), package_id, version)
 

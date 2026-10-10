@@ -416,6 +416,55 @@ def test_approving_an_unknown_version_is_not_found(client: TestClient) -> None:
     assert client.delete("/packages/hall-bench/versions/9/approval").status_code == 404
 
 
+def _place_in_wohnen(client: TestClient, render_root: Path, *, approve_room: bool) -> None:
+    from sqlalchemy.orm import Session
+
+    from app.agent import house_file
+
+    with Session(client.app.state.engine) as session:
+        composition = house_file.record_composition(session, "room", "Wohnen")
+        house_file.record_composition_version(session, composition, 1, None, [])
+        session.commit()
+    folder = storage.composition_version_dir(render_root, "wohnen", 1)
+    folder.mkdir(parents=True)
+    (folder / storage.INPUT_FILE).write_text(
+        json.dumps({
+            "kind": "room_composition",
+            "scope": {"room": "Wohnen"},
+            "items": [{"id": "bench", "type": "piece", "package_id": "hall-bench", "version": 1}],
+        }),
+        encoding="utf-8",
+    )
+    storage.write_status(folder, status="succeeded")
+    if approve_room:
+        assert client.put("/compositions/wohnen/versions/1/approval").status_code == 200
+
+
+def test_unapproving_a_piece_placed_in_an_approved_room_is_refused(
+    client: TestClient, record, render_root: Path
+) -> None:
+    create(client)
+    record()
+    assert client.put("/packages/hall-bench/versions/1/approval").status_code == 200
+    _place_in_wohnen(client, render_root, approve_room=True)
+    response = client.delete("/packages/hall-bench/versions/1/approval")
+    assert response.status_code == 409
+    assert response.json()["detail"]["failure_class"] == "placed_in_approved_room"
+    assert "Wohnen version 1" in response.json()["detail"]["reason"]
+    assert client.get("/packages/hall-bench/versions/1").json()["approved_at"] is not None
+
+
+def test_unapproving_a_piece_in_an_unapproved_room_clears(
+    client: TestClient, record, render_root: Path
+) -> None:
+    create(client)
+    record()
+    assert client.put("/packages/hall-bench/versions/1/approval").status_code == 200
+    _place_in_wohnen(client, render_root, approve_room=False)
+    response = client.delete("/packages/hall-bench/versions/1/approval")
+    assert response.status_code == 200 and response.json()["approved_at"] is None
+
+
 # --- deleting a version (version-cleanup-and-inspection) ---------------------------------------
 
 

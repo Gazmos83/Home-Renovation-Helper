@@ -111,6 +111,35 @@ beforeEach(() => {
       const call = `${method} ${url}`;
       const added = extra(call);
       if (added) return json(added);
+      const roomApproval = /^(PUT|DELETE) \/compositions\/([^/]+)\/versions\/(\d+)\/approval$/.exec(call);
+      if (roomApproval) {
+        const version = Number(roomApproval[3]);
+        const current = progressNow as {
+          room?: { approved_version?: number | null; versions?: { version: number; approved_at?: string | null }[] };
+        };
+        if (current.room) {
+          const approved = roomApproval[1] === "PUT" ? version : null;
+          progressNow = {
+            ...current,
+            room: {
+              ...current.room,
+              approved_version: approved,
+              versions: (current.room.versions ?? []).map((v) => ({
+                ...v,
+                approved_at: v.version === approved ? "2026-10-10T00:00:00Z" : null,
+              })),
+            },
+          };
+        }
+        return json({
+          body: {
+            slug: roomApproval[2],
+            version,
+            status: "succeeded",
+            approved_at: roomApproval[1] === "PUT" ? "2026-10-10T00:00:00Z" : null,
+          },
+        });
+      }
       if (call === "GET /chat/threads/t1")
         return json({ body: { thread_id: "t1", title, package_id: null, created_at: "", last_turn_at: "", messages, pending } });
       if (call === "GET /chat/threads/t1/progress") return json({ body: progressNow });
@@ -1325,4 +1354,67 @@ test("a room address with a version shows it after a reload, and an unlisted one
   show("/conversations/t1?room=room-hall/9");
   pane = within(await screen.findByRole("complementary", { name: "Room view" }));
   expect(pane.getByRole("combobox", { name: "Version of Hall" })).toHaveValue("3");
+});
+
+test("the project panel shows latest v2 beside approved v1 and approving v2 refreshes without a reload", async () => {
+  const user = userEvent.setup();
+  progressNow = progress(["brief", "piece", "built"], {
+    room: {
+      ...HALL,
+      approved_version: 1,
+      versions: [hallView(2), hallView(1, { approved_at: "2026-10-10T00:00:00Z" })],
+    },
+  });
+  show();
+  const room = within(await within(await openProject()).findByRole("group", { name: "Approval of Hall" }));
+  expect(room.getByText(/Latest version 2/)).toBeInTheDocument();
+  expect(room.getByRole("button", { name: "Unapprove version 1" })).toBeInTheDocument();
+  expect(room.getByRole("button", { name: "Approve version 2" })).toBeInTheDocument();
+  await user.click(room.getByRole("button", { name: "Approve version 2" }));
+  await waitFor(() => expect(room.queryByRole("button", { name: "Approve version 2" })).toBeNull());
+  expect(room.getByRole("button", { name: "Unapprove version 2" })).toBeInTheDocument();
+  expect(calls.some(([m, u]) => m === "PUT" && u === "/compositions/room-hall/versions/2/approval")).toBe(true);
+});
+
+test("unapproving a room version from the panel clears the approved version", async () => {
+  const user = userEvent.setup();
+  progressNow = progress(["brief", "piece", "built"], {
+    room: {
+      ...HALL,
+      approved_version: 2,
+      versions: [hallView(2, { approved_at: "2026-10-10T00:00:00Z" }), hallView(1)],
+    },
+  });
+  show();
+  const room = within(await within(await openProject()).findByRole("group", { name: "Approval of Hall" }));
+  await user.click(room.getByRole("button", { name: "Unapprove version 2" }));
+  expect(await room.findByText("No version approved yet.")).toBeInTheDocument();
+  expect(calls.some(([m, u]) => m === "DELETE" && u === "/compositions/room-hall/versions/2/approval")).toBe(true);
+});
+
+test("unapproving a piece placed in an approved room shows the refusal in the project panel", async () => {
+  const user = userEvent.setup();
+  extra = (call) =>
+    call === "DELETE /packages/hall-bench/versions/1/approval"
+      ? {
+          status: 409,
+          body: {
+            detail: {
+              failure_class: "placed_in_approved_room",
+              reason:
+                "hall-bench version 1 is placed in the approved room composition Hall version 2; unapprove Hall version 2 first",
+            },
+          },
+        }
+      : undefined;
+  progressNow = progress(["brief", "piece", "built"], {
+    approved_version: 1,
+    room: { ...HALL, approved_version: 2, versions: [hallView(2), hallView(1)] },
+  });
+  show();
+  await openProject();
+  const panel = within(screen.getByRole("group", { name: "Approval" }));
+  await user.click(panel.getByRole("button", { name: "Unapprove version 1" }));
+  expect(await panel.findByText(/Hall version 2/)).toBeInTheDocument();
+  expect(panel.getByRole("button", { name: "Unapprove version 1" })).toBeInTheDocument();
 });

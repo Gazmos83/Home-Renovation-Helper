@@ -164,3 +164,123 @@ def test_dimensions_of_an_unknown_or_unreadable_version_are_not_found(client: Te
     assert client.get("/compositions/wohnen/versions/9/dimensions").status_code == 404
     assert client.get("/compositions/Bad/versions/1/dimensions").status_code == 404
     assert TestClient(client.app).get("/compositions/wohnen/versions/1/dimensions").status_code == 401
+
+
+# --- room-version-approval -------------------------------------------------------------------
+
+
+def _add_version(client: TestClient, render_root: Path, number: int) -> Path:
+    with Session(client.app.state.engine) as session:
+        composition = house_file.composition_by_slug(session, "wohnen")
+        house_file.record_composition_version(session, composition, number, number - 1, [])
+        session.commit()
+    folder = storage.composition_version_dir(render_root, "wohnen", number)
+    folder.mkdir(parents=True)
+    (folder / storage.INPUT_FILE).write_text(
+        (storage.composition_version_dir(render_root, "wohnen", 1) / storage.INPUT_FILE).read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
+    storage.write_status(folder, status="succeeded")
+    return folder
+
+
+def test_a_built_composition_version_is_approved_and_read_back(client: TestClient, render_root: Path) -> None:
+    sign_in(client)
+    seed(client, render_root, approved=True)
+    response = client.put("/compositions/wohnen/versions/1/approval")
+    assert response.status_code == 200
+    approved_at = response.json()["approved_at"]
+    assert approved_at
+    [listed] = client.get("/compositions").json()
+    assert listed["approved_version"] == 1
+    assert listed["version_views"][0]["approved_at"] == approved_at
+
+
+def test_unapproving_a_composition_version_clears_the_approval(
+    client: TestClient, render_root: Path
+) -> None:
+    sign_in(client)
+    seed(client, render_root, approved=True)
+    client.put("/compositions/wohnen/versions/1/approval")
+    for _ in range(2):
+        response = client.delete("/compositions/wohnen/versions/1/approval")
+        assert response.status_code == 200 and response.json()["approved_at"] is None
+    [listed] = client.get("/compositions").json()
+    assert listed["approved_version"] is None
+
+
+def test_a_composition_version_still_building_cannot_be_approved(
+    client: TestClient, render_root: Path
+) -> None:
+    sign_in(client)
+    folder = seed(client, render_root, approved=True)
+    storage.write_status(folder, status="running")
+    response = client.put("/compositions/wohnen/versions/1/approval")
+    assert response.status_code == 409
+    assert response.json()["detail"]["failure_class"] == "not_built"
+    [listed] = client.get("/compositions").json()
+    assert listed["approved_version"] is None
+
+
+def test_approving_a_version_that_places_an_unapproved_piece_is_refused(
+    client: TestClient, render_root: Path
+) -> None:
+    sign_in(client)
+    seed(client, render_root, approved=False)
+    response = client.put("/compositions/wohnen/versions/1/approval")
+    assert response.status_code == 409
+    assert response.json()["detail"]["failure_class"] == "unapproved_pieces"
+    assert "wall v4" in response.json()["detail"]["reason"]
+
+
+def test_approving_an_unknown_composition_version_is_not_found(client: TestClient, render_root: Path) -> None:
+    sign_in(client)
+    seed(client, render_root, approved=True)
+    assert client.put("/compositions/wohnen/versions/9/approval").status_code == 404
+    assert client.put("/compositions/nothing/versions/1/approval").status_code == 404
+    assert client.delete("/compositions/wohnen/versions/9/approval").status_code == 404
+
+
+def test_composition_approval_routes_need_the_owner(client: TestClient, render_root: Path) -> None:
+    sign_in(client)
+    seed(client, render_root, approved=True)
+    unsigned = TestClient(client.app)
+    assert unsigned.put("/compositions/wohnen/versions/1/approval").status_code == 401
+    assert unsigned.delete("/compositions/wohnen/versions/1/approval").status_code == 401
+    assert unsigned.delete("/compositions/wohnen/versions/1").status_code == 401
+
+
+def test_deleting_an_older_composition_version_leaves_the_rest(
+    client: TestClient, render_root: Path
+) -> None:
+    sign_in(client)
+    seed(client, render_root, approved=True)
+    _add_version(client, render_root, 2)
+    assert client.delete("/compositions/wohnen/versions/1").status_code == 204
+    assert not (render_root / "rooms" / "wohnen" / "v1").exists()
+    [listed] = client.get("/compositions").json()
+    assert listed["versions"] == [2] and listed["latest_version"] == 2
+
+
+def test_deleting_an_approved_composition_version_is_refused(
+    client: TestClient, render_root: Path
+) -> None:
+    sign_in(client)
+    seed(client, render_root, approved=True)
+    client.put("/compositions/wohnen/versions/1/approval")
+    response = client.delete("/compositions/wohnen/versions/1")
+    assert response.status_code == 409
+    assert "unapprove version 1 first" in response.json()["detail"]["reason"]
+    assert client.get("/compositions").json()[0]["latest_version"] == 1
+
+
+def test_deleting_the_last_composition_version_drops_the_composition(
+    client: TestClient, render_root: Path
+) -> None:
+    sign_in(client)
+    seed(client, render_root, approved=True)
+    assert client.delete("/compositions/wohnen/versions/1").status_code == 204
+    assert client.get("/compositions").json() == []
+    assert not (render_root / "rooms" / "wohnen").exists()

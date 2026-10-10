@@ -33,6 +33,7 @@ import { WaitingBubble } from "@/components/chat/WaitingBubble";
 import { InspectorView } from "@/components/inspector/InspectorView";
 import { RoomView, VersionSelect } from "@/components/inspector/RoomView";
 import { DecisionsNote } from "@/components/chat/DecisionsNote";
+import { DeleteCompositionVersion } from "@/components/DeleteCompositionVersion";
 import { DeleteVersion } from "@/components/DeleteVersion";
 
 const STEP_LABELS: Record<string, string> = {
@@ -85,14 +86,89 @@ function Tools({ threadId }: { threadId: string }) {
 }
 
 /** The conversation's room or apartment, with its 3D view or why there is none (project-room-inspection). */
-function RoomSection({ room, onInspectRoom }: { room: NonNullable<Progress["room"]>; onInspectRoom: (slug: string) => void }) {
+function RoomSection({
+  room,
+  threadId,
+  onInspectRoom,
+}: {
+  room: NonNullable<Progress["room"]>;
+  threadId: string;
+  onInspectRoom: (slug: string) => void;
+}) {
+  const queryClient = useQueryClient();
   const what = room.scope === "apartment" ? "the apartment" : "the room";
+  const latest = room.versions?.[0] ?? null;
+  const approved = room.approved_version ?? null;
+  const canApproveLatest =
+    room.slug !== null && latest !== null && latest.status === "succeeded" && approved !== latest.version;
+  const reload = () => {
+    queryClient.invalidateQueries({ queryKey: ["progress", threadId] });
+    queryClient.invalidateQueries({ queryKey: ["compositions"] });
+  };
+  const change = useMutation({
+    mutationFn: (approve: boolean) => {
+      const slug = room.slug as string;
+      const version = approve ? (latest as { version: number }).version : (approved as number);
+      return approve
+        ? api.approveCompositionVersion(slug, version)
+        : api.unapproveCompositionVersion(slug, version);
+    },
+    onSuccess: reload,
+  });
   return (
     <div className="space-y-2" role="group" aria-label="Room">
       <h3>Selected room</h3>
       <p>
         <strong>{room.name}</strong>
       </p>
+      {room.slug && latest && (
+        <div className="space-y-2" role="group" aria-label={`Approval of ${room.name}`}>
+          <p>
+            Latest version {latest.version}.{" "}
+            {approved !== null ? (
+              <>
+                <Badge>Approved</Badge> version {approved}
+              </>
+            ) : (
+              <span className="text-muted-foreground">No version approved yet.</span>
+            )}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {canApproveLatest && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={change.isPending}
+                onClick={() => change.mutate(true)}
+              >
+                Approve version {latest.version}
+              </Button>
+            )}
+            {approved !== null && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={change.isPending}
+                onClick={() => change.mutate(false)}
+              >
+                Unapprove version {approved}
+              </Button>
+            )}
+          </div>
+          <FieldError message={message(change.error)} />
+          {approved !== latest.version && (
+            <DeleteCompositionVersion
+              key={`${room.slug}/${latest.version}`}
+              slug={room.slug}
+              name={room.name}
+              version={latest.version}
+              only={(room.versions?.length ?? 1) === 1}
+              onDeleted={reload}
+            />
+          )}
+        </div>
+      )}
       {room.slug && room.model && room.surfaces ? (
         <p>
           <Button type="button" variant="outline" onClick={() => onInspectRoom(room.slug as string)}>
@@ -225,7 +301,7 @@ function ProjectPanel({
           </Button>
         </p>
       )}
-      {p.room && <RoomSection room={p.room} onInspectRoom={onInspectRoom} />}
+      {p.room && <RoomSection room={p.room} threadId={threadId} onInspectRoom={onInspectRoom} />}
       <ol className="space-y-1">
         {p.steps.map((step) => (
           <li key={step.step} className="flex items-center gap-2" data-done={step.done}>
