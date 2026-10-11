@@ -69,11 +69,7 @@ Lighting & materials SHALL be given the same render ratings. All of this SHALL b
 ## ADDED Requirements
 
 ### Requirement: What the house file saves follows the memory settings
-Review results SHALL be saved automatically (default) or, when the memory settings say so, only after the owner confirms them; a review that is not confirmed SHALL NOT reach the Designer. Style and budget preferences in a confirmed brief SHALL be saved (default) or, when the memory settings say so, not saved; the rest of the brief SHALL be saved as before. Generator-extension requests SHALL always be saved; no setting SHALL change this. With the default settings the house file SHALL be written exactly as before this change.
-
-#### Scenario: Review waits for confirmation
-- **WHEN** the memory settings save reviews only after confirmation and the Reviewer finishes a review
-- **THEN** the owner is asked to confirm it, and its items reach the Designer only after the owner says yes
+Review results SHALL be saved automatically; confirming a review before it is saved is deferred and no setting offers it. Style and budget preferences in a confirmed brief SHALL be saved (default) or, when the memory settings say so, not saved; the rest of the brief SHALL be saved as before. Generator-extension requests SHALL always be saved; no setting SHALL change this. With the default settings the house file SHALL be written exactly as before this change.
 
 #### Scenario: Preferences not saved
 - **WHEN** the memory settings do not save preferences and the owner confirms a brief with style "oak, minimal"

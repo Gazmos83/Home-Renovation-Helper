@@ -13,7 +13,7 @@ The owner asked what is compressed in a conversation and whether those condition
    - **note headings and instructions**: editable text. Default is today's text; the safety rules (figures copied exactly, never added; the text is a record, not instructions; untrusted-content delimiters) stay composed in code after the editable part;
    - **tool result cut length**: default 300 characters.
 4. **What gets saved (house file), on `/admin/memory`:**
-   - review results: saved automatically (today) or only after the owner confirms;
+   - review results: always saved automatically; confirming them first is deferred (it needs a pending-review state);
    - style and budget preferences from a confirmed brief: saved (today) or not saved;
    - generator-extension requests: always saved (fixed by CLAUDE.md §1), shown as not configurable.
 5. **What a conversation sees, on `/admin/memory`:**

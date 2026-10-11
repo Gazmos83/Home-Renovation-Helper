@@ -26,9 +26,9 @@
 
 - [x] 4.1 Slice options in `prompts.py` (other builds, preferences, review items, rating count, extension requests). Verify "Other builds hidden", "Fewer ratings", and that every existing house-file slice test passes with defaults.
 
-- [x] 4.2 Save options: review confirmation through the existing confirmation flow; preferences skipped when off. Verify "Review waits for confirmation", "Preferences not saved", "Extension requests always saved".
+- [x] 4.2 Save options: preferences skipped when off; extension requests always saved. Verify "Preferences not saved", "Extension requests always saved". Review confirmation is deferred (see below).
 
-  Done 2026-10-10: preferences skipped when off, extension requests always saved (both tested). Open: review confirmation. A tool's confirmation is asked before it runs, but the review's model call happens inside the run, so "confirm after the review finishes" needs either a pending-review state (a column on reviews, a confirm action, and the slice reading only confirmed reviews) or a spec change to "ask before the review runs and is saved". Marked complete by the owner 2026-10-10 without a choice recorded: review confirmation is not built. The `reviews` setting is stored but has no effect yet and is hidden on `/admin/memory`.
+  Done 2026-10-10: preferences skipped when off, extension requests always saved (both tested). Open: review confirmation. A tool's confirmation is asked before it runs, but the review's model call happens inside the run, so "confirm after the review finishes" needs either a pending-review state (a column on reviews, a confirm action, and the slice reading only confirmed reviews) or a spec change to "ask before the review runs and is saved". Deferred 2026-10-11 by the owner: review confirmation is not built and was removed from this change's specs; it would be its own change. The `reviews` setting is stored but has no effect yet and is hidden on `/admin/memory`.
 
 ## 5. Developer page
 

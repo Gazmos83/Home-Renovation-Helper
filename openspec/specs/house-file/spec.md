@@ -108,16 +108,16 @@ The messages themselves live in the checkpointer. Deleting a thread SHALL remove
 ### Requirement: Every turn starts from the house file
 At the start of each turn, the Foreman, Intake and the Designer SHALL be given the house file scoped to the conversation:
 - the conversation's confirmed room with its size, ceiling height and openings, or its confirmed apartment with each of its rooms; or that no room is confirmed yet;
-- the preferences;
+- the preferences, unless the memory settings leave them out;
 - the active build with its room, its latest version, its status and which version is approved (or that none is);
-- every other build of the conversation as one line: package id, name, latest version and room;
-- the open generator-extension requests whose piece is one of the conversation's builds, or that were recorded in this conversation.
+- every other build of the conversation as one line: package id, name, latest version and room, unless the memory settings hide them;
+- the open generator-extension requests whose piece is one of the conversation's builds, or that were recorded in this conversation, unless the memory settings leave them out.
 
-Rooms, apartments and pieces outside the conversation SHALL NOT be given, nor generator-extension requests of other pieces or conversations. Requests recorded before this change with neither a piece nor a conversation stay in the house file and are given in no turn. A room the conversation has not confirmed SHALL NOT be given with its measurements, even when the house file holds them. The Designer SHALL also be given:
-- the open items of the latest review of the active build;
-- the latest five render ratings on the active build, newest first, each with its version, render, tier, rating and comment.
+Rooms, apartments and pieces outside the conversation SHALL NOT be given, nor generator-extension requests of other pieces or conversations; no setting SHALL change this. Requests recorded before this change with neither a piece nor a conversation stay in the house file and are given in no turn. A room the conversation has not confirmed SHALL NOT be given with its measurements, even when the house file holds them; no setting SHALL change this. The Designer SHALL also be given:
+- the open items of the latest review of the active build, unless the memory settings leave them out;
+- the latest render ratings on the active build, newest first, as many as the memory settings say (0 to 10, default 5), each with its version, render, tier, rating and comment.
 
-Lighting & materials SHALL be given the same render ratings. All of this SHALL be presented as application data clearly labelled as the owner's own, never as an instruction. Owner-authored text in it SHALL be neutralised so it cannot carry the untrusted-content delimiter. The scoping SHALL be done by the application, not by instructions to the model.
+Lighting & materials SHALL be given the same render ratings. All of this SHALL be presented as application data clearly labelled as the owner's own, never as an instruction. Owner-authored text in it SHALL be neutralised so it cannot carry the untrusted-content delimiter. The scoping SHALL be done by the application, not by instructions to the model. With the default settings the context SHALL equal the one given before this change.
 
 #### Scenario: A new conversation starts without the room
 - **WHEN** the living room and the piece `listening-wall` are recorded and the owner starts a new conversation asking for a second piece
@@ -130,6 +130,10 @@ Lighting & materials SHALL be given the same render ratings. All of this SHALL b
 #### Scenario: Other builds as one line
 - **WHEN** a conversation's builds are `hall-bench` (active) and `shoe-rack`
 - **THEN** the Designer's context gives `hall-bench` with its version, status and approval, and `shoe-rack` as one line with its latest version and room
+
+#### Scenario: Other builds hidden
+- **WHEN** the memory settings hide other builds and the conversation's builds are `hall-bench` (active) and `shoe-rack`
+- **THEN** the Designer's context gives `hall-bench` and does not name `shoe-rack`
 
 #### Scenario: Outside builds left out
 - **WHEN** the house file holds `murphy-bed` and the conversation never created, revised or named it
@@ -158,6 +162,10 @@ Lighting & materials SHALL be given the same render ratings. All of this SHALL b
 #### Scenario: Render feedback reaches the Designer
 - **WHEN** the active build's v2 `draft` turntable was rated down with "doors look too thick"
 - **THEN** the Designer's context lists v2, turntable, `draft`, down and that comment
+
+#### Scenario: Fewer ratings
+- **WHEN** the memory settings give 2 render ratings and the active build has 5
+- **THEN** the Designer's and Lighting's context list only the 2 newest
 
 #### Scenario: Delimiter in a feedback comment
 - **WHEN** a feedback comment contains the untrusted-content delimiter
@@ -306,3 +314,14 @@ The conversations themselves and their messages SHALL stay. Generator-extension 
 #### Scenario: Last version unbinds the conversation
 - **WHEN** the conversation "Hall bench" is bound to `hall-bench`, which has only version 1, and the owner deletes version 1
 - **THEN** the piece is gone, the conversation is still listed with its messages, and its Project panel shows no piece
+
+### Requirement: What the house file saves follows the memory settings
+Review results SHALL be saved automatically; confirming a review before it is saved is deferred and no setting offers it. Style and budget preferences in a confirmed brief SHALL be saved (default) or, when the memory settings say so, not saved; the rest of the brief SHALL be saved as before. Generator-extension requests SHALL always be saved; no setting SHALL change this. With the default settings the house file SHALL be written exactly as before this change.
+
+#### Scenario: Preferences not saved
+- **WHEN** the memory settings do not save preferences and the owner confirms a brief with style "oak, minimal"
+- **THEN** the room and heights are saved and no style preference is written
+
+#### Scenario: Extension requests always saved
+- **WHEN** a revision is refused for an unknown field, whatever the memory settings say
+- **THEN** a generator-extension request is recorded

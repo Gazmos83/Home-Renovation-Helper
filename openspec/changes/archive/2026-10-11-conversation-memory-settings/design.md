@@ -25,7 +25,7 @@ See proposal.md for the motivation. Compression lives in `agent/budget.py` (`fit
 
 5. **Compress-now is a route, not a tool.** `POST /chat/threads/{id}/note/compress` runs the summarizer over all exchanges except the kept turns through the same metered `side_call("chat.summary", …)`, so the budget and daily ceiling apply. It is refused while a turn is running on that thread, to avoid racing the checkpointer. The response holds the note text only, never token figures.
 
-6. **Save options at the write sites.** Reviews: when "after confirmation", the review tool returns a `Confirmation` (the existing `interrupt()` flow) before `record_review`. Preferences: `intake` skips `set_preference` for style and budget when off. Extension requests are not touched.
+6. **Save options at the write sites.** Reviews: confirmation before saving is deferred; the review's model call runs inside the tool, so it needs a pending-review state (a column on reviews, a confirm action, and a slice reading only confirmed reviews), which is its own change. Preferences: `intake` skips `set_preference` for style and budget when off. Extension requests are not touched.
 
 7. **Slice options where the slice is read.** The house-file slice is assembled in `foreman.load_house` (not `prompts.py`), so each option guards one existing read there; the room-confirmation rule and the outside-conversation filter are not behind any option.
 
@@ -34,7 +34,6 @@ See proposal.md for the motivation. Compression lives in `agent/budget.py` (`fit
 - [A lower trigger or many kept turns raises Foreman-slot spend] → Every note call is metered and capped as today; the settings page states that summary calls cost tokens.
 - [An owner edit introduces a wrong figure] → The spec rule stands: figures come from the spec and house file, never the note; the note is labelled a summary.
 - [Hiding preferences or reviews makes the Designer forget them] → Defaults keep them; the page shows each setting's default.
-- [Review confirmation adds a step to every review] → Off by default.
 
 ## Migration Plan
 
