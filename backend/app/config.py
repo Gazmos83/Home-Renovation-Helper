@@ -180,6 +180,9 @@ class Settings(BaseSettings):
     guideline_root: Path = DEFAULT_GUIDELINE_ROOT
     # A guideline PDF uploaded from the developer panel (dev-panel-insights).
     guideline_upload_max_bytes: int = 50 * 1024 * 1024
+    # Official-link ingestion from the developer panel (knowledge-source-onboarding);
+    # larger than a browser upload because the document is streamed server-side.
+    engineering_link_max_bytes: int = 150 * 1024 * 1024
     turn_max_images: int = 4
 
     # --- HTTPS plugins -------------------------------------------------------
@@ -342,6 +345,7 @@ class Settings(BaseSettings):
         "upload_max_design_bytes",
         "upload_max_note_bytes",
         "guideline_upload_max_bytes",
+        "engineering_link_max_bytes",
         "turn_max_images",
         "model_max_bytes",
         "model_zip_max_entries",

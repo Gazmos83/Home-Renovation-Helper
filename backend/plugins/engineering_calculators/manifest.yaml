@@ -1,0 +1,8 @@
+name: engineering_calculators
+description: Record owner-confirmed engineering facts and request immutable, reviewed-method reports.
+kind: builtin
+role: designer
+also_for: [researcher]
+tools: [record_assessment_inputs, calculate_engineering, get_engineering_report]
+enabled_by_default: false
+toggleable: true

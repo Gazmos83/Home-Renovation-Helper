@@ -11,7 +11,9 @@ from app.api.gate import require_dev
 from app.db.models import PluginInvocation
 from app.plugins.enablement import global_enabled, set_global_enabled
 
-router = APIRouter(prefix="/admin/plugins", tags=["admin"], dependencies=[Depends(require_dev)])
+router = APIRouter(
+    prefix="/admin/plugins", tags=["admin"], dependencies=[Depends(require_dev)]
+)
 
 
 class PluginEnabledIn(BaseModel):
@@ -43,6 +45,14 @@ def set_plugin(name: str, body: PluginEnabledIn, request: Request) -> dict:
     if name not in plugins.by_name:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not Found")
     with Session(request.app.state.engine) as session:
+        if name == "engineering_knowledge" and body.enabled:
+            from app.engineering.release import release_ready
+
+            if not release_ready():
+                raise HTTPException(
+                    422,
+                    detail="Engineering foundation acceptance checks have not all been recorded as passed.",
+                )
         set_global_enabled(session, name, body.enabled)
         session.commit()
         enabled = global_enabled(session, plugins, name)

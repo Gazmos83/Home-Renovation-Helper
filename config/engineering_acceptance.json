@@ -1,0 +1,11 @@
+{
+  "change": "furniture-engineering-rag-foundation",
+  "backend_checks": "passed",
+  "backend_evidence": "Broad serial pytest -m not slow: 2303 passed, 39 skipped, 21 deselected; after final conflict/unit/reviewer refinements: 183 focused engineering/Foreman/instruction/summary tests passed; ruff check passed. Designated test database only; no real model call or render.",
+  "frontend_checks": "passed",
+  "frontend_evidence": "237 tests; pnpm lint; pnpm build",
+  "browser_checks": "pending_connection",
+  "retrieval_checks": "passed",
+  "retrieval_evidence": "26 synthetic bilingual cases; real BGE-M3; hybrid held-out Recall@5 0.9259; citation/conditions 1.0; zero denied returns and false verified claims",
+  "real_document_review": "Required per actual source/version; no real source content approved by this receipt"
+}

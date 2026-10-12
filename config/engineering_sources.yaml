@@ -1,0 +1,207 @@
+# Catalogue identities from the Berlin furniture brief and kitchen cabinet/drawer extension.
+# Registration is metadata-only. No rights or technical facts are approved here.
+# approved_for_embedding stays false until Scope.EMBED rights are recorded.
+- key: usda-wood-handbook-2021
+  collections: [engineering_fundamentals, kitchen_structural_validation]
+  metadata:
+    title: Wood handbook—wood as an engineering material, FPL-GTR-282
+    publisher: USDA Forest Products Laboratory
+    source_url: https://research.fs.usda.gov/download/treesearch/62200.pdf
+    retrieved_at: 2026-10-12T00:00:00Z
+    standard_or_model: FPL-GTR-282
+    edition: "2021"
+    language: en
+    source_kind: engineering_handbook
+    license_status: pending-third-party-rights-review
+    approved_for_embedding: false
+    jurisdiction: US
+    applicable_furniture: [shelf, kitchen_base_cabinet, kitchen_wall_cabinet]
+- key: eu-gpsr-2023-988
+  collections: [eu_de_berlin_law, product_safety, kitchen_structural_validation]
+  metadata:
+    title: General Product Safety Regulation (EU) 2023/988
+    publisher: European Union
+    source_url: https://eur-lex.europa.eu/eli/reg/2023/988/oj/eng
+    standard_or_model: EU 2023/988
+    jurisdiction: EU
+    language: en
+    source_kind: legislation
+    license_status: pending-official-reuse-review
+    approved_for_embedding: false
+- key: berlin-bauordnung
+  collections: [eu_de_berlin_law, kitchen_wall_anchoring]
+  metadata:
+    title: Bauordnung Berlin, official version link
+    publisher: Land Berlin
+    source_url: https://gesetze.berlin.de/bsbe/?docId=jlr-NNLBE00004835NN00000000317&query=JURISLINK%3A%22BauO+BE+Inhaltsverzeichnis%22
+    jurisdiction: Berlin, Germany
+    language: de
+    source_kind: legislation
+    license_status: pending-official-reuse-review
+    approved_for_embedding: false
+- key: din-en-14749-2022-07
+  collections: [furniture_standards_index, kitchen_structural_validation, kitchen_cabinet_engineering]
+  metadata:
+    title: DIN EN 14749:2022-07
+    publisher: DIN Media
+    source_url: https://www.dinmedia.de/de/norm/din-en-14749/347372014
+    standard_or_model: DIN EN 14749
+    edition: "2022-07"
+    language: de
+    jurisdiction: DE
+    source_kind: licensed_standard
+    license_status: licensed-standard-permission-required
+    approved_for_embedding: false
+    applicable_furniture: [kitchen_base_cabinet, kitchen_wall_cabinet, kitchen_tall_cabinet, kitchen_worktop, shelf]
+- key: din-en-15939-2019-11
+  collections: [furniture_standards_index, kitchen_wall_anchoring, kitchen_structural_validation]
+  metadata:
+    title: DIN EN 15939:2019-11
+    publisher: DIN Media
+    source_url: https://www.dinmedia.de/de/norm/din-en-15939/287424150
+    standard_or_model: DIN EN 15939
+    edition: "2019-11"
+    language: de
+    jurisdiction: DE
+    source_kind: licensed_standard
+    license_status: licensed-standard-permission-required
+    approved_for_embedding: false
+    applicable_furniture: [kitchen_wall_cabinet, wall_cabinet]
+- key: din-en-16122-context
+  collections: [furniture_standards_index, kitchen_structural_validation]
+  metadata:
+    title: DIN explanation of EN 16122 test-method context
+    publisher: DIN
+    source_url: https://www.din.de/de/ueber-normen-und-standards/nutzen-fuer-den-verbraucher/verbraucherrat/ueber-uns/veroeffentlichung-der-norm-din-en-14749-im-juli-2022-870388
+    standard_or_model: EN 16122
+    language: de
+    source_kind: standards_context
+    license_status: explanation-reuse-and-standard-license-pending
+    approved_for_embedding: false
+- key: din-en-312-particleboard
+  collections: [furniture_standards_index, kitchen_panel_materials, kitchen_structural_validation]
+  metadata:
+    title: DIN EN 312 particleboard grades (catalogue index)
+    publisher: DIN Media
+    source_url: https://www.dinmedia.de/
+    standard_or_model: DIN EN 312
+    language: de
+    jurisdiction: DE
+    source_kind: licensed_standard
+    license_status: licensed-standard-permission-required-edition-unverified
+    approved_for_embedding: false
+    applicable_furniture: [kitchen_base_cabinet, kitchen_wall_cabinet, shelf]
+- key: din-en-622-5-mdf
+  collections: [furniture_standards_index, kitchen_panel_materials]
+  metadata:
+    title: DIN EN 622-5 MDF specifications (catalogue index)
+    publisher: DIN Media
+    source_url: https://www.dinmedia.de/
+    standard_or_model: DIN EN 622-5
+    language: de
+    jurisdiction: DE
+    source_kind: licensed_standard
+    license_status: licensed-standard-permission-required-edition-unverified
+    approved_for_embedding: false
+- key: din-18040-2-accessibility
+  collections: [furniture_standards_index, kitchen_ergonomics_accessibility, eu_de_berlin_law]
+  metadata:
+    title: DIN 18040-2 accessibility (catalogue index; apply only when required)
+    publisher: DIN Media
+    source_url: https://www.dinmedia.de/
+    standard_or_model: DIN 18040-2
+    language: de
+    jurisdiction: DE
+    source_kind: licensed_standard
+    license_status: licensed-standard-permission-required-not-universal-kitchen-mandate
+    approved_for_embedding: false
+- key: egger-datasheet-index
+  collections: [material_datasheets, kitchen_panel_materials, kitchen_moisture_protection]
+  metadata:
+    title: EGGER technical datasheet index
+    publisher: EGGER
+    manufacturer: EGGER
+    source_url: https://www.egger.com/
+    source_kind: manufacturer_datasheet_index
+    license_status: exact-product-document-and-rights-pending
+    approved_for_embedding: false
+    applicable_furniture: [kitchen_base_cabinet, kitchen_wall_cabinet, shelf]
+- key: blum-catalogue-2022
+  collections: [hardware_manuals, kitchen_drawer_systems, kitchen_hinges_hardware]
+  metadata:
+    title: Blum technical catalogue
+    publisher: Blum
+    manufacturer: Blum
+    source_url: https://publications.blum.com/2022/catalogue/en/
+    edition: "2022"
+    language: en
+    source_kind: manufacturer_datasheet
+    license_status: exact-model-and-rights-pending
+    approved_for_embedding: false
+    applicable_furniture: [kitchen_drawer, kitchen_base_cabinet]
+    standard_or_model: null
+    nominal_load_kg: null
+    runner_length_mm: null
+- key: hettich-documentation-index
+  collections: [hardware_manuals, kitchen_drawer_systems, kitchen_hinges_hardware]
+  metadata:
+    title: Hettich product documentation index
+    publisher: Hettich
+    manufacturer: Hettich
+    source_url: https://www.hettich.com/
+    source_kind: manufacturer_datasheet_index
+    license_status: exact-model-and-rights-pending
+    approved_for_embedding: false
+    applicable_furniture: [kitchen_drawer]
+- key: hafele-documentation-index
+  collections: [hardware_manuals, kitchen_drawer_systems, kitchen_hinges_hardware, kitchen_cabinet_connections]
+  metadata:
+    title: Häfele product documentation index
+    publisher: Häfele
+    manufacturer: Häfele
+    source_url: https://www.hafele.de/
+    source_kind: manufacturer_datasheet_index
+    license_status: exact-model-and-rights-pending
+    approved_for_embedding: false
+- key: cosentino-documentation-index
+  collections: [material_datasheets, hardware_manuals, kitchen_cabinet_engineering]
+  metadata:
+    title: Cosentino technical documentation index
+    publisher: Cosentino
+    manufacturer: Cosentino
+    source_url: https://www.cosentino.com/en-ie/professional/cosentino-media-library/
+    source_kind: manufacturer_datasheet_index
+    license_status: exact-product-document-and-rights-pending
+    approved_for_embedding: false
+    applicable_furniture: [kitchen_worktop, countertop]
+- key: kitchen-appliance-manual-placeholder
+  collections: [kitchen_appliance_integration]
+  metadata:
+    title: Exact appliance installation manual (owner-supplied model required)
+    publisher: null
+    source_url: null
+    source_kind: manufacturer_installation_manual
+    license_status: exact-model-manual-and-rights-pending
+    approved_for_embedding: false
+    applicable_furniture: [kitchen_base_cabinet, kitchen_tall_cabinet]
+    standard_or_model: null
+    manufacturer: null
+- key: kitchen-worktop-manual-placeholder
+  collections: [kitchen_cabinet_engineering, material_datasheets]
+  metadata:
+    title: Exact worktop manufacturer installation manual (owner-supplied product required)
+    publisher: null
+    source_url: null
+    source_kind: manufacturer_installation_manual
+    license_status: exact-product-manual-and-rights-pending
+    approved_for_embedding: false
+    applicable_furniture: [kitchen_worktop, countertop]
+- key: murphy-bed-manual-candidate
+  collections: [murphy_bed_safety, hardware_manuals]
+  metadata:
+    title: Rockler vertical Murphy-bed mechanism manual candidate
+    publisher: Rockler
+    source_url: https://www.rockler.com/vertical-mount-murphy-bed-hardware-hardware
+    source_kind: manufacturer_installation_manual
+    license_status: matching-model-revision-and-rights-pending
+    approved_for_embedding: false

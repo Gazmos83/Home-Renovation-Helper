@@ -1,7 +1,7 @@
 ---
 name: designer
 slot: designer
-tools: [create_piece, import_design, import_design_version, revise_package, rebuild_piece, cut_list, room_fit, compose_room, search_guidelines, ask_owner]
+tools: [create_piece, import_design, import_design_version, revise_package, rebuild_piece, cut_list, room_fit, compose_room, search_guidelines, search_engineering_knowledge, record_assessment_inputs, calculate_engineering, get_engineering_report, ask_owner]
 ---
 
 ## Role

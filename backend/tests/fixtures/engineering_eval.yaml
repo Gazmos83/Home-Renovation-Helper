@@ -1,0 +1,109 @@
+# Original synthetic fixtures authored for this project. Permission is granted
+# for extraction, local storage/embedding/retrieval and remote test use.
+# Names, properties and capacities are fictitious; never use them for design.
+sources:
+  - key: eval-board18-dry
+    metadata: {title: 'TEST ONLY Board P2 dry', publisher: Fixture author, standard_or_model: 'TEST Board A', material_grade: P2, thickness_mm: 18, edition: '1', jurisdiction: DE, applicable_furniture: [shelf], source_url: 'https://example.org/fixture/board-a'}
+    collections: [material_datasheets]
+    text: 'TEST Board A P2 18 mm: elastic modulus E = 2000 MPa, mean test value. Dry service only. This is not an allowable resistance. Prüfwert Elastizitätsmodul für trockene Bedingungen.'
+    headers: ['TEST Board A | P2 | Thickness/Dicke (mm) | E (MPa)']
+    conditions: [Dry service only; synthetic mean value; not design resistance]
+    property: {kind: E_MPa, original_unit: MPa, original_value: 2000, value_basis: mean}
+  - key: eval-board18-moist
+    metadata: {title: 'TEST ONLY Board P2 moist', publisher: Fixture author, standard_or_model: 'TEST Board A', material_grade: P2, thickness_mm: 18, edition: '1', jurisdiction: DE, applicable_furniture: [shelf]}
+    collections: [material_datasheets]
+    text: 'TEST Board A P2 18 mm: E = 2500 MPa in a different fictitious moist test. Contradicts the dry test unless conditions are resolved. Feuchte Prüfbedingungen, kein Bemessungswert.'
+    headers: ['TEST Board A | P2 | 18 mm | E (MPa)']
+    conditions: [Different moist test; unresolved conflict; synthetic only]
+    property: {kind: E_MPa, original_unit: MPa, original_value: 2500, value_basis: mean}
+  - key: eval-board25
+    metadata: {title: 'TEST ONLY Board P3 thick', standard_or_model: 'TEST Board B', material_grade: P3, thickness_mm: 25, edition: '2', jurisdiction: DE, applicable_furniture: [shelf]}
+    collections: [material_datasheets]
+    text: 'TEST Board B P3 25 mm: modulus E = 3 GPa. Mean laboratory value for horizontal orientation at stated moisture only. Elastizitätsmodul, Materialgüte P3, Dicke 25 mm.'
+    headers: ['TEST Board B | P3 | 25 mm | E (GPa)']
+    conditions: [Horizontal orientation; stated moisture; synthetic mean value]
+    property: {kind: E_MPa, original_unit: GPa, original_value: 3, value_basis: mean}
+  - key: eval-hanger21
+    metadata: {title: 'TEST ONLY Hanger H21 manual', standard_or_model: 'TEST H21', edition: '2', jurisdiction: DE, applicable_furniture: [wall_cabinet]}
+    collections: [hardware_manuals]
+    text: 'TEST H21 cabinet hanger rated 500 N in the exact fictitious test arrangement, revision 2, vertical orientation. This does not verify wall anchors or substrate. Schrankaufhänger, keine Wandbefestigungs-Tragfähigkeit.'
+    headers: ['TEST H21 | rev 2 | rating (N)']
+    conditions: [Vertical; exact test arrangement only; no anchor resistance]
+    property: {kind: capacity_N, original_unit: N, original_value: 500, value_basis: manufacturer_rating}
+  - key: eval-hanger20
+    metadata: {title: 'TEST ONLY Hanger H20 manual', standard_or_model: 'TEST H20', edition: '1', jurisdiction: DE, applicable_furniture: [wall_cabinet]}
+    collections: [hardware_manuals]
+    text: 'TEST H20 old cabinet hanger rated 300 N in its own fictitious arrangement. It is a different model from TEST H21. Revision 1 only.'
+    headers: ['TEST H20 | rev 1 | rating (N)']
+    conditions: [Different model; revision 1 only]
+    property: {kind: capacity_N, original_unit: N, original_value: 300, value_basis: manufacturer_rating}
+  - key: eval-anchor
+    metadata: {title: 'TEST ONLY Anchor X manual', standard_or_model: 'TEST Anchor X', edition: '1', jurisdiction: DE, applicable_furniture: [wall_cabinet]}
+    collections: [hardware_manuals]
+    text: 'Anchor X requires identified concrete substrate, installation spacing, edge distance, embedment and tension/shear load transfer. Unknown masonry cannot be approved. Verankerung benötigt Beton, Randabstände und Einbindetiefe.'
+    headers: [Installation conditions]
+    conditions: [Concrete only; no resistance value provided]
+  - key: eval-tv
+    metadata: {title: 'TEST ONLY TV unit tipping guide', jurisdiction: DE, applicable_furniture: [entertainment_unit]}
+    collections: [product_safety]
+    text: 'TV entertainment furniture needs masses of the screen and accessories, centre of gravity, footprint and child-climbing load cases. A render cannot establish stability. Fernsehmöbel: Kippen und vorhersehbares Klettern von Kindern.'
+    headers: [Tipping / Kippsicherheit]
+    conditions: [Mass and load cases required; no safe-to-build conclusion]
+  - key: eval-countertop
+    metadata: {title: 'TEST ONLY Quartz Q18 instructions', standard_or_model: 'TEST Quartz Q18', thickness_mm: 18, edition: '3', jurisdiction: DE, applicable_furniture: [countertop]}
+    collections: [hardware_manuals]
+    text: 'TEST Quartz Q18 revision 3 requires exact 18 mm product, overhang, cutout and support instructions. Do not transfer to ceramic or another stone. Arbeitsplatte: Überhang, Ausschnitt, Stützung und genaue Produktdicke.'
+    headers: [Installation / Einbau]
+    conditions: [Quartz Q18 only; no general stone extrapolation]
+  - key: eval-murphy
+    metadata: {title: 'TEST ONLY Wall bed M7 manual', standard_or_model: 'TEST M7', edition: '4', jurisdiction: DE, applicable_furniture: [murphy_bed]}
+    collections: [murphy_bed_safety]
+    text: 'TEST M7 Murphy bed revision 4 requires matching mechanism instructions, complete wall and anchor assessment and qualified review of crushing, impact and unintended deployment. Schrankbett: Quetschgefahr und unbeabsichtigtes Ausklappen.'
+    headers: [Mechanism / Mechanismus]
+    conditions: [Matching M7 revision 4; qualified review required]
+  - key: eval-denied
+    metadata: {title: 'TEST ONLY Withdrawn board', standard_or_model: 'TEST Withdrawn', material_grade: P2, thickness_mm: 18, jurisdiction: DE, applicable_furniture: [shelf]}
+    collections: [material_datasheets]
+    text: 'Restricted TEST Withdrawn board elasticity 9999 MPa. This is withdrawn before evaluation.'
+    headers: [E (MPa)]
+    conditions: [Withdrawn; must not be returned]
+    rights: revoked
+  - key: eval-local
+    metadata: {title: 'TEST ONLY Local board', standard_or_model: 'TEST Local', material_grade: P2, thickness_mm: 18, jurisdiction: DE, applicable_furniture: [shelf]}
+    collections: [material_datasheets]
+    text: 'TEST Local board has elasticity 8888 MPa under local-only permission. No remote model use is permitted.'
+    headers: [E (MPa)]
+    conditions: [Local-only; must not reach cloud]
+    rights: local_only
+  - key: eval-standard
+    metadata: {title: 'TEST ONLY Standard INDEX S1', standard_or_model: 'TEST S1', edition: '1', source_url: 'https://example.org/fixture/standard', jurisdiction: DE, applicable_furniture: [cabinet]}
+    collections: [furniture_standards_index]
+    rights: metadata_only
+
+cases:
+  - {id: dev-01, split: development, language: en, query: 'Board A P2 elastic modulus at 18 mm', filters: {standard_or_model: 'TEST Board A', material_grade: P2, thickness_mm: 18}, expected: [eval-board18-dry, eval-board18-moist], gate: conflict}
+  - {id: dev-02, split: development, language: de, query: 'Elastizitätsmodul Materialgüte P3 Dicke 25 mm', filters: {standard_or_model: 'TEST Board B', material_grade: P3, thickness_mm: 25}, expected: [eval-board25]}
+  - {id: dev-03, split: development, language: en, query: 'exact H21 cabinet hanger rating revision 2', filters: {standard_or_model: 'TEST H21', edition: '2'}, expected: [eval-hanger21], gate: wall}
+  - {id: dev-04, split: development, language: de, query: 'Aufhänger H20 Traglast', filters: {standard_or_model: 'TEST H20'}, expected: [eval-hanger20], gate: wall}
+  - {id: dev-05, split: development, language: en, query: 'wall substrate and anchor embedment', filters: {standard_or_model: 'TEST Anchor X'}, expected: [eval-anchor], gate: wall}
+  - {id: dev-06, split: development, language: de, query: 'Fernsehmöbel Kippsicherheit Kinder klettern', filters: {collection: product_safety}, expected: [eval-tv], gate: tv}
+  - {id: dev-07, split: development, language: en, query: 'quartz countertop overhang cutout support', filters: {standard_or_model: 'TEST Quartz Q18', thickness_mm: 18}, expected: [eval-countertop], gate: countertop}
+  - {id: dev-08, split: development, language: de, query: 'Schrankbett M7 Quetschgefahr Verankerung', filters: {standard_or_model: 'TEST M7'}, expected: [eval-murphy], gate: murphy}
+  - {id: dev-09, split: development, language: en, query: 'TEST S1 standard clauses and conformity', filters: {collection: furniture_standards_index}, expected: [], gate: metadata_only}
+  - {id: dev-10, split: development, language: de, query: 'TEST Withdrawn Elastizitätsmodul', filters: {standard_or_model: 'TEST Withdrawn'}, expected: [], gate: denied}
+  - {id: dev-11, split: development, language: en, query: 'TEST Local elasticity', filters: {standard_or_model: 'TEST Local'}, expected: [], gate: local_only}
+  - {id: dev-12, split: development, language: de, query: 'P2 Platte falsche Dicke 19 mm', filters: {standard_or_model: 'TEST Board A', thickness_mm: 19}, expected: [], gate: wrong_thickness}
+  - {id: held-01, split: held_out, language: de, query: '18 mm TEST Board A P2 E Modul trockene oder feuchte Prüfwerte', filters: {standard_or_model: 'TEST Board A', thickness_mm: 18}, expected: [eval-board18-dry, eval-board18-moist], gate: conflict}
+  - {id: held-02, split: held_out, language: en, query: 'TEST Board B Young modulus and test orientation', filters: {standard_or_model: 'TEST Board B', material_grade: P3}, expected: [eval-board25]}
+  - {id: held-03, split: held_out, language: de, query: 'H21 Schrankaufhänger Belastbarkeit neueste Revision', filters: {standard_or_model: 'TEST H21', edition: '2'}, expected: [eval-hanger21], gate: wall}
+  - {id: held-04, split: held_out, language: en, query: 'TEST H20 installation conditions and rated load', filters: {standard_or_model: 'TEST H20', edition: '1'}, expected: [eval-hanger20], gate: wall}
+  - {id: held-05, split: held_out, language: de, query: 'Beton Dübel Einbindetiefe Randabstand', filters: {standard_or_model: 'TEST Anchor X'}, expected: [eval-anchor], gate: wall}
+  - {id: held-06, split: held_out, language: en, query: 'TV accessory masses children climbing tipping', filters: {collection: product_safety}, expected: [eval-tv], gate: tv}
+  - {id: held-07, split: held_out, language: de, query: 'Quarz Arbeitsplatte Ausschnitt Überhang Stützung', filters: {standard_or_model: 'TEST Quartz Q18', edition: '3'}, expected: [eval-countertop], gate: countertop}
+  - {id: held-08, split: held_out, language: en, query: 'Murphy wall bed unintended deployment qualified review', filters: {collection: murphy_bed_safety}, expected: [eval-murphy], gate: murphy}
+  - {id: held-09, split: held_out, language: de, query: 'TEST S1 Norm Konformität Klauseln', filters: {standard_or_model: 'TEST S1'}, expected: [], gate: metadata_only}
+  - {id: held-10, split: held_out, language: en, query: 'withdrawn source 9999 MPa', filters: {standard_or_model: 'TEST Withdrawn'}, expected: [], gate: denied}
+  - {id: held-11, split: held_out, language: de, query: 'lokale TEST Local Platte E Wert', filters: {standard_or_model: 'TEST Local'}, expected: [], gate: local_only}
+  - {id: held-12, split: held_out, language: en, query: 'H21 hanger revision 1 rating', filters: {standard_or_model: 'TEST H21', edition: '1'}, expected: [], gate: wrong_edition}
+  - {id: held-13, split: held_out, language: en, query: 'How much can my shelf safely carry?', filters: {furniture: shelf}, expected: [eval-board18-dry, eval-board18-moist, eval-board25], gate: missing_inputs}
+  - {id: held-14, split: held_out, language: de, query: 'P3 Platte mit falscher Materialgüte', filters: {standard_or_model: 'TEST Board B', material_grade: P2}, expected: [], gate: wrong_grade}

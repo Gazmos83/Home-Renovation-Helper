@@ -28,6 +28,7 @@ from app.agent.models.routing import load_routing, read_routing_overrides
 from app.agent.models.slots import build_slot_models
 from app.agent.tools.base import ToolDeps
 from app.api.admin_guidelines import router as admin_guidelines_router
+from app.api.admin_knowledge import router as admin_knowledge_router
 from app.api.admin_memory import router as admin_memory_router
 from app.api.admin_models import router as admin_models_router
 from app.api.admin_offload import router as admin_offload_router
@@ -43,6 +44,8 @@ from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.compositions import router as compositions_router
 from app.api.design_import import router as design_import_router
+from app.api.engineering import admin_router as engineering_methods_router
+from app.api.engineering import router as engineering_router
 from app.api.feedback import admin_router as admin_feedback_router
 from app.api.feedback import router as feedback_router
 from app.api.guideline_notes import router as guideline_notes_router
@@ -138,6 +141,16 @@ async def _lifespan(app: FastAPI):
         app_logging.logger.warning(
             "owner account not ensured at startup: %s", type(error).__name__
         )
+
+    # Catalogue seeding is metadata registration without content requests.
+    try:
+        from app.engineering.__main__ import seed_catalogue
+
+        with Session(app.state.engine) as session:
+            seed_catalogue(session)
+            session.commit()
+    except Exception as error:  # noqa: BLE001 - database unavailability is reported
+        app_logging.logger.warning("engineering catalogue not registered: %s", type(error).__name__)
 
     # Design rules edited on the developer panel apply over the checked-in table
     # (dev-panel-insights). A stored rule that no longer validates is skipped by
@@ -328,6 +341,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_prices_router)
     app.include_router(admin_workflow_router)
     app.include_router(admin_guidelines_router)
+    app.include_router(admin_knowledge_router)
+    app.include_router(engineering_router)
+    app.include_router(engineering_methods_router)
     app.include_router(admin_rules_router)
     app.include_router(admin_memory_router)
     app.include_router(admin_threads_router)

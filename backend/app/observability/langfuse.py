@@ -52,9 +52,25 @@ _EMAIL: Final = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 EMAIL_MASK: Final = "[email]"
 
 
+def _engineering_content(data: Any) -> bool:
+    if callable(getattr(data, "model_dump", None)):
+        return _engineering_content(data.model_dump())
+    if dataclasses.is_dataclass(data) and not isinstance(data, type):
+        return _engineering_content({field.name: getattr(data, field.name) for field in dataclasses.fields(data)})
+    if isinstance(data, dict):
+        if data.get("engineering") is True or data.get("engineering_turn") is True:
+            return True
+        return any(_engineering_content(value) for value in data.values())
+    if isinstance(data, list | tuple):
+        return any(_engineering_content(value) for value in data)
+    return False
+
+
 def mask_personal_data(*, data: Any, **_kwargs: Any) -> Any:
     """The Langfuse client's `mask` hook: replace e-mail addresses anywhere in
     exported data, recursively, leaving every other value as it was."""
+    if _engineering_content(data):
+        return "[engineering content omitted]"
     if isinstance(data, str):
         return _EMAIL.sub(EMAIL_MASK, data)
     if isinstance(data, dict):
@@ -219,6 +235,7 @@ class Tracing:
         tags: Sequence[str] = DEFAULT_TAGS,
         name: str = TURN_SPAN_NAME,
         input: Any = None,
+        suppress_content: bool = False,
     ) -> Iterator[tuple[dict[str, Any] | None, str | None]]:
         """Run one turn inside its trace, yielding `(run_config, trace_id)`.
 
@@ -232,6 +249,10 @@ class Tracing:
         config = self._run_config(
             owner_id=owner_id, session_id=session_id, project_id=project_id, tags=tags
         )
+        if suppress_content:
+            # Graph callbacks export whole states as well as generation content.
+            config["callbacks"] = []
+            input = None
         with ExitStack() as stack:
             trace_id = self._open_trace(
                 stack, owner_id=owner_id, session_id=session_id, tags=tags, name=name, input=input
@@ -246,12 +267,24 @@ class Tracing:
         reply = getattr(result, "reply", None)
         failure = getattr(result, "failure_class", None)
         output: Any = reply if reply is not None else ({"failure_class": failure} if failure else None)
+        if getattr(result, "trace_content_suppressed", False):
+            output = {"outcome": failure or "answered"}
         if output is None:
             return
         try:
             self._client.update_current_span(output=output)
         except Exception as error:  # noqa: BLE001 - a turn must answer without tracing
             self._warn_once("tracing could not record this turn's output", error)
+
+    def record_engineering_usage(self, **fields: Any) -> None:
+        """Only selected numeric/identifier metrics, never call text."""
+        if not self.enabled:
+            return
+        allowed = {key: value for key, value in fields.items() if key in {"model_id", "trace_id", "input_tokens", "output_tokens", "duration_ms"}}
+        try:
+            self._client.create_event(name="engineering-model-usage", metadata=allowed)
+        except Exception as error:  # noqa: BLE001 - tracing cannot block a turn
+            self._warn_once("engineering usage trace unavailable", error)
 
     def record_render(self, **fields: Any) -> None:
         """Record a render's tier, estimate and actual as a Langfuse event.

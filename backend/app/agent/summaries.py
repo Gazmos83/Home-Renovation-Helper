@@ -71,6 +71,10 @@ def transcript(messages: list[BaseMessage], tool_result_chars: int = TOOL_RESULT
     lines = []
     for message in messages:
         text = _content(message).strip()
+        if message.additional_kwargs.get("engineering"):
+            identifiers = [*(message.additional_kwargs.get("engineering_evidence_ids") or []), *(message.additional_kwargs.get("engineering_report_ids") or [])]
+            lines.append(f"(Engineering evidence IDs: {identifiers}; re-fetch current evidence. NOT VERIFIED.)")
+            continue
         if isinstance(message, HumanMessage) and text:
             lines.append(f"Owner: {text}")
         elif isinstance(message, AIMessage) and text:
@@ -97,6 +101,10 @@ def summary_for(
     with Session(engine) as session:
         stored, through = house_file.read_summary(session, thread_id, package_id)
         edited = house_file.summary_owner_edited(session, thread_id, package_id)
+        from app.engineering.chat import has_engineering_history
+
+        if has_engineering_history(session, thread_id):
+            stored = None
     ids = [message.id for message in dropped]
     if stored and through in ids:
         covered = ids.index(through) + 1

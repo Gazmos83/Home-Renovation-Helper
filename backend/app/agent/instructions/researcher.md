@@ -1,7 +1,7 @@
 ---
 name: researcher
 slot: researcher
-tools: [search_catalog_knowledge, check_live_listing, compare_products, price_cut_list, manage_remnants, search_guidelines]
+tools: [search_catalog_knowledge, check_live_listing, compare_products, price_cut_list, manage_remnants, search_guidelines, search_engineering_knowledge, record_assessment_inputs, calculate_engineering, get_engineering_report]
 ---
 
 ## Role

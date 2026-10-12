@@ -173,6 +173,9 @@ class ToolContext:
     answer: dict[str, Any] | None = None
     # The thread's messages, composed by code, for `revise_package`'s measurement check.
     history: tuple[Any, ...] = ()
+    engineering_turn: bool = False
+    engineering_enabled: bool = False
+    calculators_enabled: bool = False
 
 
 @dataclass(frozen=True)

@@ -12,7 +12,7 @@ from typing import Any, Final
 from pydantic import BaseModel, Field
 
 from app.agent.prompts import Passage, wrap_passages
-from app.agent.tools.base import AgentTool, ToolContext, parse_args
+from app.agent.tools.base import AgentTool, ToolContext, ToolOutput, parse_args
 from app.retrieval import search_knowledge
 
 logger = logging.getLogger("app")
@@ -32,10 +32,16 @@ class SearchGuidelinesArgs(BaseModel):
     query: str = Field(min_length=1, max_length=400, description="the rule, room or piece to look up")
 
 
-def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
+def run(arguments: dict[str, Any], ctx: ToolContext) -> str | ToolOutput:
     args, problem = parse_args(SearchGuidelinesArgs, arguments)
     if args is None:
         return problem
+    if ctx.engineering_turn:
+        # The engineering adapter applies the same rights and remote-use gates.
+        from app.agent.tools import loaded_plugins
+
+        tool = loaded_plugins().builtin_tools()["search_engineering_knowledge"]
+        return tool.run({"query": args.query}, ctx)
     try:
         with ctx.deps.session() as session:
             hits = search_knowledge(session, args.query.strip(), limit=5, categories=["guideline"])

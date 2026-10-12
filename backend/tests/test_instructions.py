@@ -45,7 +45,7 @@ def test_each_agent_names_exactly_its_tools() -> None:
     assert loaded["intake"].tools == ("record_brief", "record_plan", "confirm_room", "ask_owner")
     assert set(loaded["designer"].tools) == {
         "create_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit", "compose_room", "search_guidelines",
-        "ask_owner",
+        "ask_owner", "search_engineering_knowledge", "record_assessment_inputs", "calculate_engineering", "get_engineering_report",
     }
     assert set(loaded["builder"].tools) == {
         "blender_build", "build_shell", "render_turntable", "record_render_feedback",
@@ -53,7 +53,7 @@ def test_each_agent_names_exactly_its_tools() -> None:
     assert loaded["reviewer"].tools == ("revision_review",)
     assert set(loaded["researcher"].tools) == {
         "search_catalog_knowledge", "check_live_listing", "compare_products", "price_cut_list", "manage_remnants",
-        "search_guidelines",
+        "search_guidelines", "search_engineering_knowledge", "record_assessment_inputs", "calculate_engineering", "get_engineering_report",
     }
 
 

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -107,6 +108,7 @@ class UsageRecorder(BaseCallbackHandler):
         trace_id: str | None = None,
         estimated_tokens: int | None = None,
         thread_id: UUID | None = None,
+        private_tracing: Any = None,
     ) -> None:
         self._engine = engine
         self._thread_id = thread_id
@@ -115,9 +117,13 @@ class UsageRecorder(BaseCallbackHandler):
         self._project_id = project_id
         self._trace_id = trace_id
         self._estimated_tokens = estimated_tokens
+        self._private_tracing = private_tracing
+        self._started = time.monotonic()
 
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
         input_tokens, output_tokens = _token_counts(response)
+        if self._private_tracing is not None:
+            self._private_tracing.record_engineering_usage(model_id=self._model_id, trace_id=self._trace_id, input_tokens=input_tokens, output_tokens=output_tokens, duration_ms=max(0, int((time.monotonic() - self._started) * 1000)))
         try:
             with Session(self._engine) as session:
                 session.add(

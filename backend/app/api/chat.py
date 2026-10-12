@@ -321,18 +321,27 @@ def _events(request: Request, thread: Any, owner: UUID, message: str, make_event
     """The turn's events inside its trace; the thread is touched once the turn has answered."""
     tracing = request.app.state.tracing
     result: chat.TurnResult | None = None
+    from dataclasses import replace
+
+    from app.engineering.chat import engineering_intent, has_engineering_history
+    from app.plugins.enablement import enabled_plugin_names
+
+    with Session(request.app.state.engine) as session:
+        private = engineering_intent(message) or has_engineering_history(session, thread.id)
+        private = private or bool({"engineering_knowledge", "engineering_calculators"} & enabled_plugin_names(session, request.app.state.plugins, thread.id))
     with tracing.turn(
         owner_id=str(owner),
         session_id=str(thread.id),
         project_id=thread.package_id,
         input=message,
+        suppress_content=private,
     ) as (config, trace_id):
         run_config = dict(config or {})
-        run_config["configurable"] = {"trace_id": trace_id, "package_id": thread.package_id}
+        run_config["configurable"] = {"trace_id": trace_id, "package_id": thread.package_id, "engineering_trace": private}
         for event in make_events(run_config):
             if event.result is not None:
                 result = event.result
-                tracing.record_output(result)
+                tracing.record_output(replace(result, trace_content_suppressed=private))
             yield event
         if result is not None and result.failure_class is None and not thread.title:
             title = _write_title(request, thread, owner, run_config)

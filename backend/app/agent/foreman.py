@@ -72,6 +72,7 @@ from app.agent.tools.shared import read_input
 from app.assets import models as model_library
 from app.blender import storage
 from app.config import Settings
+from app.engineering import chat as engineering_chat
 from app.feedback import ratings
 from app.observability.usage import UsageRecorder, tokens_today
 from app.plugins.binding import bound_tool_names
@@ -162,6 +163,11 @@ class ChatState(TypedDict, total=False):
     ambiguous_pieces: list[str]
     brief: dict[str, Any]
     bound_tools: dict[str, list[str]]
+    engineering_turn: bool
+    engineering_evidence_ids: list[str]
+    engineering_metadata_ids: list[str]
+    engineering_report_ids: list[str]
+    engineering_assessment_ids: list[str]
 
 
 class Decision(BaseModel):
@@ -173,6 +179,8 @@ class Decision(BaseModel):
         default=False,
         description="true when the owner wants a room furnished or composed, not a piece designed",
     )
+    engineering_question: bool = Field(default=False, description="asks for engineering evidence, strength, load capacity, deflection, anchorage or safety")
+    requests_revision: bool = Field(default=False, description="asks to revise an existing piece, rather than only ask an engineering question")
 
 
 def _image_blocks(
@@ -236,7 +244,7 @@ def _note_text(name: str, path: Path) -> str:
 
 
 def with_attachments(
-    messages: list[AnyMessage], *, capable: bool, engine: Engine, settings: Settings
+    messages: list[AnyMessage], *, capable: bool, engine: Engine, settings: Settings, engineering: bool = False
 ) -> list[AnyMessage]:
     """Expand attached upload ids for the model call; the stored messages are untouched.
 
@@ -260,7 +268,10 @@ def with_attachments(
                 "import it with import_design.)"
             )
         for name, thread_id, upload_id in notes:
-            text += _note_text(name, uploads.upload_path(settings.upload_root, thread_id, upload_id, "text"))
+            if engineering:
+                text += "\nAttached note content is unavailable as engineering evidence until registered with documented source rights."
+            else:
+                text += _note_text(name, uploads.upload_path(settings.upload_root, thread_id, upload_id, "text"))
         if not image_ids:
             content: Any = text
         elif capable:
@@ -551,6 +562,11 @@ def build_graph(
             except ValueError:
                 document = None
             piece_text = piece_note(package_id, bound["latest_version"], document)
+            from app.engineering.reports import active_report_statuses
+            with Session(engine) as session:
+                report_statuses = active_report_statuses(session, settings.render_root, package_id)
+            if report_statuses:
+                piece_text += "\nEngineering report IDs/status (fetch complete current evidence; visual approval does not verify engineering): " + json.dumps(report_statuses)
         open_review = []
         recent_feedback: list[dict[str, Any]] = []
         if package_id:
@@ -647,6 +663,11 @@ def build_graph(
             "round_count": 0,
             "specialist": "",
             "bound_tools": tools_this_turn,
+            "engineering_turn": engineering_chat.engineering_intent(_last_human_text(state)),
+            "engineering_evidence_ids": [],
+            "engineering_metadata_ids": [],
+            "engineering_report_ids": [],
+            "engineering_assessment_ids": [],
         }
 
     # --- the Foreman ----------------------------------------------------------
@@ -661,6 +682,7 @@ def build_graph(
             estimated_tokens=estimated_tokens,
             # The conversation the call is made for (studio-chat-polish).
             thread_id=UUID(str(configurable["chat_thread"])) if configurable.get("chat_thread") else None,
+            private_tracing=deps.tracing if configurable.get("engineering_trace") else None,
         )
 
     def prompt_for(
@@ -675,11 +697,16 @@ def build_graph(
             context_budget_tokens=restrictions.context_budget_tokens,
             max_output_tokens=max_tokens if isinstance(max_tokens, int) else None,
         )
+        engineering = bool(state.get("engineering_turn"))
+        engineering_enabled = any("search_engineering_knowledge" in names for names in (state.get("bound_tools") or {}).values())
+        with Session(engine) as session:
+            safe_history = engineering_chat.request_history(session, list(state.get("messages", [])), engineering=engineering, enabled=engineering_enabled, routing=slot == "foreman", render_root=settings.render_root)
         history = with_attachments(
-            list(state.get("messages", [])),
+            safe_history,
             capable=slot in IMAGE_SLOTS,
             engine=engine,
             settings=settings,
+            engineering=engineering or slot == "foreman",
         )
         used = tokens_today(engine, slug, settings.budget_timezone)
         # Dropped exchanges are summarised for the thread; the summary call itself is a
@@ -688,7 +715,7 @@ def build_graph(
         memory = read_memory_settings(engine)
         summarize = None
         through = None
-        if raw_thread:
+        if raw_thread and not engineering and slot != "foreman":
 
             def call(summary_system: str, messages: list, max_output: int) -> str:
                 return side_call("chat.summary", summary_system, messages, max_output, config or {})
@@ -697,7 +724,7 @@ def build_graph(
                 engine, UUID(str(raw_thread)), call, state.get("package_id"), memory
             )
             through = summaries.covered_through(engine, UUID(str(raw_thread)), state.get("package_id"))
-        return prepare(
+        fitted, _counted = prepare(
             budget,
             system,
             history,
@@ -709,6 +736,11 @@ def build_graph(
             keep_turns=memory.keep_turns,
             covered_through=through,
         )
+        # Recheck after fitting/summary work, immediately before dispatch. Refit
+        # whole packets if current rights or reviewed properties changed.
+        with Session(engine) as session:
+            final_copy = engineering_chat.request_history(session, fitted, engineering=engineering, enabled=engineering_enabled, routing=slot == "foreman", render_root=settings.render_root)
+        return prepare(budget, system, final_copy[1:], tools=tools or None, used_today=used, daily_ceiling=restrictions.daily_token_ceiling)
 
     def side_call(
         operation: str, system: str, messages: list[AnyMessage], max_output: int, config: RunnableConfig
@@ -721,6 +753,15 @@ def build_graph(
         budget = RequestBudget.for_model(
             slug, context_budget_tokens=restrictions.context_budget_tokens, max_output_tokens=max_output
         )
+        raw_thread = config.get("configurable", {}).get("chat_thread")
+        if raw_thread:
+            with Session(engine) as session:
+                if engineering_chat.has_engineering_history(session, UUID(str(raw_thread))):
+                    # Summaries have no reliable per-sentence source mapping. Keep
+                    # stored notes locally, but do not re-export them as evidence.
+                    if operation == "chat.summary":
+                        return "Engineering evidence is stored by source ID and must be fetched again; capacity is NOT VERIFIED."
+                    messages = engineering_chat.request_history(session, messages, engineering=True, enabled=False, render_root=settings.render_root)
         prompt, counted = prepare(
             budget,
             system,
@@ -767,6 +808,10 @@ def build_graph(
         if chosen not in SPECIALISTS:
             chosen = "intake"
         reason = getattr(decision, "reason", "") or ""
+        engineering = bool(state.get("engineering_turn")) or bool(getattr(decision, "engineering_question", False))
+        if engineering:
+            changing = bool(state.get("package_id")) and (engineering_chat.revision_intent(_last_human_text(state)) or bool(getattr(decision, "requests_revision", False)))
+            chosen = "designer" if changing else "researcher"
 
         # Application rules bound the model's choice (design-agents spec). A price or product
         # question is the Researcher's whatever else holds; then the two fixed questions.
@@ -815,7 +860,7 @@ def build_graph(
         # A build with no room, or in a room outside the conversation's, is placed first.
         if chosen in ("designer", "builder", "reviewer", "lighting") and not state.get("build_room_ok", True):
             chosen = "intake"
-        return Command(update={"specialist": chosen, "reason": reason}, goto=chosen)
+        return Command(update={"specialist": chosen, "reason": reason, "engineering_turn": engineering}, goto=chosen)
 
     # --- a specialist ------------------------------------------------------------
 
@@ -826,7 +871,7 @@ def build_graph(
             names = (state.get("bound_tools") or {}).get(name)
             if names is None:
                 names = list(instruction.tools)
-            return {tool: tools_by_name[tool] for tool in names if tool in tools_by_name}
+            return {tool: tools_by_name[tool] for tool in names if tool in tools_by_name and (tool not in {"search_engineering_knowledge", "record_assessment_inputs", "calculate_engineering", "get_engineering_report"} or state.get("engineering_turn")) and (not state.get("engineering_turn") or tool not in {"search_catalog_knowledge", "check_live_listing", "compare_products"})}
 
         def agent(state: ChatState, config: RunnableConfig) -> Command[Literal["tools", "__end__"]]:
             round_count = state.get("round_count", 0)
@@ -844,6 +889,8 @@ def build_graph(
             if name == "designer" and not state.get("package_id"):
                 notes.append(designer_note)
             notes.append(FORMATTING_NOTE)
+            if state.get("engineering_turn"):
+                notes.append(engineering_chat.ANSWER_NOTE)
             capped = round_count >= MAX_TOOL_ROUNDS
             if capped:
                 notes.append(TOOL_ROUND_CAP_NOTE)
@@ -880,6 +927,17 @@ def build_graph(
                     goto=END,
                 )
             goto: Literal["tools", "__end__"] = "tools" if getattr(reply, "tool_calls", None) else END
+            if state.get("engineering_turn"):
+                if goto == END:
+                    with Session(engine) as session:
+                        rendered = engineering_chat.render_answer(_text_of(reply.content), session, state.get("engineering_evidence_ids", []), _last_human_text(state), enabled="search_engineering_knowledge" in bound_tools, metadata_ids=state.get("engineering_metadata_ids", []), report_ids=state.get("engineering_report_ids", []), calculators_enabled="calculate_engineering" in bound_tools, render_root=settings.render_root)
+                    reply = reply.model_copy(update={"content": rendered})
+                else:
+                    # Early prose beside tool calls is not a validated claim.
+                    reply = reply.model_copy(update={"content": ""})
+                reply.additional_kwargs["engineering"] = True
+                reply.additional_kwargs["engineering_evidence_ids"] = list(state.get("engineering_evidence_ids", []))
+                reply.additional_kwargs["engineering_report_ids"] = list(state.get("engineering_report_ids", []))
             return Command(
                 update={"messages": [reply], "round_count": round_count + 1}, goto=goto
             )
@@ -897,6 +955,9 @@ def build_graph(
                 trace_id=configurable.get("trace_id"),
                 slot=instruction.slot,
                 model=model_ids(instruction.slot),
+                engineering_turn=bool(state.get("engineering_turn")),
+                engineering_enabled="search_engineering_knowledge" in (state.get("bound_tools") or {}).get(name, []),
+                calculators_enabled="calculate_engineering" in (state.get("bound_tools") or {}).get(name, []),
             )
             calls = _last_ai_tool_calls(state)
             bound_tools = bound_for(state)
@@ -975,6 +1036,10 @@ def build_graph(
                         package_id=update.get("package_id", ctx.package_id),
                     )
                     messages.append(ToolMessage(result.text, tool_call_id=call_id))
+                    if "engineering_evidence_ids" in result.update:
+                        messages[-1].additional_kwargs.update({"engineering_source": True, "engineering_evidence_ids": result.update["engineering_evidence_ids"], "engineering_metadata_ids": result.update.get("engineering_metadata_ids", [])})
+                    if "engineering_report_ids" in result.update:
+                        messages[-1].additional_kwargs["engineering_report_ids"] = list(result.update["engineering_report_ids"])
                 else:
                     messages.append(ToolMessage(result, tool_call_id=call_id))
             # An answered confirmation stays in the history as one line (homeowner-chat); the
@@ -993,6 +1058,13 @@ def build_graph(
                 for message in messages:
                     if message.tool_call_id == (first_gated.get("id") or ""):
                         message.additional_kwargs["answers"] = _answered_rows(outcome, answer)
+            if state.get("engineering_turn"):
+                for message in messages:
+                    message.additional_kwargs["engineering"] = True
+                update["engineering_evidence_ids"] = list(dict.fromkeys([*state.get("engineering_evidence_ids", []), *update.get("engineering_evidence_ids", [])]))
+                update["engineering_metadata_ids"] = list(dict.fromkeys([*state.get("engineering_metadata_ids", []), *update.get("engineering_metadata_ids", [])]))
+                update["engineering_report_ids"] = list(dict.fromkeys([*state.get("engineering_report_ids", []), *update.get("engineering_report_ids", [])]))
+            update.pop("engineering_turn", None)
             return Command(update={"messages": messages, **update}, goto="agent")
 
         builder = StateGraph(ChatState)

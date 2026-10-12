@@ -749,7 +749,37 @@ export const downloads = {
   bundle: (packageId: string, version: number) => `${versionPath(packageId, version)}/bundle`,
 };
 
+export type KnowledgeProperty = Record<string, unknown> & { id: string; verification_status: string; reviewed_by: string | null };
+export type KnowledgeVersion = {
+  id: string; key: string; metadata: Record<string, unknown> & { title: string; source_url: string | null; edition: string | null };
+  collections: string[]; state: string; verification_status: string; reviewed_by: string | null;
+  rights_status: string; grants: Record<string, unknown>; rights: Record<string, unknown>[];
+  passages: number; properties: KnowledgeProperty[]; local_path: string | null; content_hash: string | null; superseded_by: string | null;
+};
+export type CatalogueEntry = { key: string; metadata: Record<string, unknown> & { title: string; edition?: string | null; source_url?: string | null } };
+export type KnowledgeSearch = { evidence: Record<string, unknown>[]; metadata_only: Record<string, unknown>[]; limitation: string | null };
+export type EngineeringMethod = { id: string; version: string; domain: string; units: string[]; required_inputs: string[]; citation_evidence_ids: string[]; criteria: { id: string; limit: number; unit: string; source_evidence_id: string }[]; independent_reference_cases: Record<string, unknown>[]; definition_hash: string; implemented: boolean; qualified_review_state: string; enabled: boolean; releasable: boolean; limitation: string | null };
+
 export const api = {
+  engineeringMethods: () => request<EngineeringMethod[]>("/admin/engineering-methods"),
+  reviewEngineeringMethod: (id: string, data: unknown) => request<unknown>(`/admin/engineering-methods/${encodeURIComponent(id)}/review`, { method: "POST", body: JSON.stringify(data) }),
+  knowledgeSources: () => request<KnowledgeVersion[]>("/admin/knowledge"),
+  knowledgeCatalogue: () => request<CatalogueEntry[]>("/admin/knowledge/catalogue"),
+  registerCatalogueEntry: (key: string) => request<KnowledgeVersion>(`/admin/knowledge/catalogue/${encodeURIComponent(key)}/register`, { method: "POST" }),
+  ingestKnowledgeLink: (id: string) => request<{state: string; blocks: number; reason: string | null}>(`/admin/knowledge/${encodeURIComponent(id)}/ingest-link`, { method: "POST" }),
+  registerKnowledge: (data: unknown) => request<KnowledgeVersion>("/admin/knowledge", { method: "POST", body: JSON.stringify(data) }),
+  knowledgeRights: (id: string, data: unknown) => request<KnowledgeVersion>(`/admin/knowledge/${encodeURIComponent(id)}/rights`, { method: "POST", body: JSON.stringify(data) }),
+  reviewKnowledge: (id: string, data: unknown) => request<KnowledgeVersion>(`/admin/knowledge/${encodeURIComponent(id)}/review`, { method: "POST", body: JSON.stringify(data) }),
+  stageKnowledge: (id: string, file: File) => {
+    const form = new FormData(); form.append("file", file);
+    return request<KnowledgeVersion>(`/admin/knowledge/${encodeURIComponent(id)}/file`, { method: "POST", body: form });
+  },
+  ingestKnowledge: (id: string, blocks: unknown) => request<{state: string; blocks: number; reason: string | null}>(`/admin/knowledge/${encodeURIComponent(id)}/ingest`, { method: "POST", body: JSON.stringify(blocks) }),
+  addKnowledgeProperty: (id: string, data: unknown) => request<KnowledgeVersion>(`/admin/knowledge/${encodeURIComponent(id)}/properties`, { method: "POST", body: JSON.stringify(data) }),
+  editKnowledgeProperty: (id: string, data: unknown) => request<KnowledgeVersion>(`/admin/knowledge/properties/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(data) }),
+  reviewKnowledgeProperty: (id: string, data: unknown) => request<KnowledgeVersion>(`/admin/knowledge/properties/${encodeURIComponent(id)}/review`, { method: "POST", body: JSON.stringify(data) }),
+  supersedeKnowledge: (id: string, replacement: string) => request<KnowledgeVersion>(`/admin/knowledge/${encodeURIComponent(id)}/supersede/${encodeURIComponent(replacement)}`, { method: "POST" }),
+  previewKnowledge: (data: unknown) => request<KnowledgeSearch>("/admin/knowledge/search", { method: "POST", body: JSON.stringify(data) }),
   login: (email: string, password: string) =>
     request("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
   me: () => request<{ email: string }>("/auth/me"),

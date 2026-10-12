@@ -1,0 +1,937 @@
+{
+  "embedding_model": "BAAI/bge-m3",
+  "embedding_dimensions": 1024,
+  "fixture_sha256": "21d673b552300bcf134bcb4a83c1591a747467daa8b3ef12b0a1fd610c5405c1",
+  "fixture_rights": "Original synthetic project fixtures only; fictitious products/values, not design evidence",
+  "case_count": 26,
+  "cold_model_initialization_ms": 13314.4,
+  "warm_retrieval_ms": {
+    "median": 211.1,
+    "max": 320.6
+  },
+  "modes": [
+    {
+      "mode": "hybrid",
+      "development_threshold": 0.3,
+      "development_recall_at_5": 1.0,
+      "held_out_recall_at_5": 0.9259259259259259,
+      "citation_condition_completeness": 1,
+      "ineligible_returns": 0,
+      "false_verified": 0,
+      "cases": [
+        {
+          "id": "dev-01",
+          "split": "development",
+          "language": "en",
+          "retrieved": [
+            "eval-board18-dry",
+            "eval-board18-moist"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-02",
+          "split": "development",
+          "language": "de",
+          "retrieved": [
+            "eval-board25"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-03",
+          "split": "development",
+          "language": "en",
+          "retrieved": [
+            "eval-hanger21"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-04",
+          "split": "development",
+          "language": "de",
+          "retrieved": [
+            "eval-hanger20"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-05",
+          "split": "development",
+          "language": "en",
+          "retrieved": [
+            "eval-anchor"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-06",
+          "split": "development",
+          "language": "de",
+          "retrieved": [
+            "eval-tv"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-07",
+          "split": "development",
+          "language": "en",
+          "retrieved": [
+            "eval-countertop"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-08",
+          "split": "development",
+          "language": "de",
+          "retrieved": [
+            "eval-murphy"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-09",
+          "split": "development",
+          "language": "en",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-10",
+          "split": "development",
+          "language": "de",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-11",
+          "split": "development",
+          "language": "en",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-12",
+          "split": "development",
+          "language": "de",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-01",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [
+            "eval-board18-dry",
+            "eval-board18-moist"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-02",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [
+            "eval-board25"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-03",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [
+            "eval-hanger21"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-04",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [
+            "eval-hanger20"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-05",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [
+            "eval-anchor"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-06",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [
+            "eval-tv"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-07",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [
+            "eval-countertop"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-08",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [
+            "eval-murphy"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-09",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-10",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-11",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-12",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-13",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [
+            "eval-board18-dry"
+          ],
+          "recall_at_5": 0.3333333333333333,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-14",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        }
+      ]
+    },
+    {
+      "mode": "vector",
+      "development_threshold": 0.5,
+      "development_recall_at_5": 1.0,
+      "held_out_recall_at_5": 0.8888888888888888,
+      "citation_condition_completeness": 1,
+      "ineligible_returns": 0,
+      "false_verified": 0,
+      "cases": [
+        {
+          "id": "dev-01",
+          "split": "development",
+          "language": "en",
+          "retrieved": [
+            "eval-board18-dry",
+            "eval-board18-moist"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-02",
+          "split": "development",
+          "language": "de",
+          "retrieved": [
+            "eval-board25"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-03",
+          "split": "development",
+          "language": "en",
+          "retrieved": [
+            "eval-hanger21"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-04",
+          "split": "development",
+          "language": "de",
+          "retrieved": [
+            "eval-hanger20"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-05",
+          "split": "development",
+          "language": "en",
+          "retrieved": [
+            "eval-anchor"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-06",
+          "split": "development",
+          "language": "de",
+          "retrieved": [
+            "eval-tv"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-07",
+          "split": "development",
+          "language": "en",
+          "retrieved": [
+            "eval-countertop"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-08",
+          "split": "development",
+          "language": "de",
+          "retrieved": [
+            "eval-murphy"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-09",
+          "split": "development",
+          "language": "en",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-10",
+          "split": "development",
+          "language": "de",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-11",
+          "split": "development",
+          "language": "en",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-12",
+          "split": "development",
+          "language": "de",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-01",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [
+            "eval-board18-dry",
+            "eval-board18-moist"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-02",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [
+            "eval-board25"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-03",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [
+            "eval-hanger21"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-04",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [
+            "eval-hanger20"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-05",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [
+            "eval-anchor"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-06",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [
+            "eval-tv"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-07",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [
+            "eval-countertop"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-08",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [
+            "eval-murphy"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-09",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-10",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-11",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-12",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-13",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [],
+          "recall_at_5": 0.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-14",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        }
+      ]
+    },
+    {
+      "mode": "keyword",
+      "development_threshold": 0,
+      "development_recall_at_5": 1.0,
+      "held_out_recall_at_5": 0.8888888888888888,
+      "citation_condition_completeness": 1,
+      "ineligible_returns": 0,
+      "false_verified": 0,
+      "cases": [
+        {
+          "id": "dev-01",
+          "split": "development",
+          "language": "en",
+          "retrieved": [
+            "eval-board18-dry",
+            "eval-board18-moist"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-02",
+          "split": "development",
+          "language": "de",
+          "retrieved": [
+            "eval-board25"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-03",
+          "split": "development",
+          "language": "en",
+          "retrieved": [
+            "eval-hanger21"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-04",
+          "split": "development",
+          "language": "de",
+          "retrieved": [
+            "eval-hanger20"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-05",
+          "split": "development",
+          "language": "en",
+          "retrieved": [
+            "eval-anchor"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-06",
+          "split": "development",
+          "language": "de",
+          "retrieved": [
+            "eval-tv"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-07",
+          "split": "development",
+          "language": "en",
+          "retrieved": [
+            "eval-countertop"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-08",
+          "split": "development",
+          "language": "de",
+          "retrieved": [
+            "eval-murphy"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-09",
+          "split": "development",
+          "language": "en",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-10",
+          "split": "development",
+          "language": "de",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-11",
+          "split": "development",
+          "language": "en",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "dev-12",
+          "split": "development",
+          "language": "de",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-01",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [
+            "eval-board18-dry",
+            "eval-board18-moist"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-02",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [
+            "eval-board25"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-03",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [
+            "eval-hanger21"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-04",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [
+            "eval-hanger20"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-05",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [
+            "eval-anchor"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-06",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [
+            "eval-tv"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-07",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [
+            "eval-countertop"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-08",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [
+            "eval-murphy"
+          ],
+          "recall_at_5": 1.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-09",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-10",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-11",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-12",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-13",
+          "split": "held_out",
+          "language": "en",
+          "retrieved": [],
+          "recall_at_5": 0.0,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        },
+        {
+          "id": "held-14",
+          "split": "held_out",
+          "language": "de",
+          "retrieved": [],
+          "recall_at_5": null,
+          "citation_condition_complete": true,
+          "ineligible_returns": 0,
+          "false_verified": false
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Small synthetic corpus, no real manufacturer/PDF validation or certified engineering methods",
+    "Exact filters often leave one applicable block; this is not a broad-corpus quality guarantee",
+    "Keyword recall can be lower across languages with no common tokens",
+    "No real OpenRouter call; answer validation uses deliberately selected fixture IDs"
+  ]
+}

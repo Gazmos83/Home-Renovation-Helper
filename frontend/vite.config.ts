@@ -17,7 +17,7 @@ export default defineConfig({
     proxy: {
       "/chat": API,
       "/auth": API,
-      "/admin": API,
+      "/admin": page,
       "/health": API,
       // API-only: the Studio route is /pieces; without this proxy GET /packages
       // is the SPA HTML and the Pieces page never leaves Loading.

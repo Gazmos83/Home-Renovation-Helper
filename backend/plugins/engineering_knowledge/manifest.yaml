@@ -1,0 +1,8 @@
+name: engineering_knowledge
+description: Retrieve authorised, attributable engineering evidence and its verification limits.
+kind: builtin
+role: designer
+also_for: [researcher]
+tools: [search_engineering_knowledge]
+enabled_by_default: false
+toggleable: true

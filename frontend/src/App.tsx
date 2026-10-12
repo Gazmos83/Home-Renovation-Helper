@@ -18,6 +18,7 @@ import ConversationCalls from "./routes/admin/ConversationCalls";
 import Feedback from "./routes/admin/Feedback";
 import AdminGuidelines from "./routes/admin/Guidelines";
 import Memory from "./routes/admin/Memory";
+import Knowledge from "./routes/admin/Knowledge";
 import Models from "./routes/admin/Models";
 import Offload from "./routes/admin/Offload";
 import Plugins from "./routes/admin/Plugins";
@@ -44,6 +45,7 @@ const adminLinks = [
   ["/admin/conversations", "Calls"],
   ["/admin/workflow", "Workflow"],
   ["/admin/guidelines", "Guidelines"],
+  ["/admin/knowledge", "Knowledge"],
   ["/admin/rules", "Rules"],
   ["/admin/memory", "Memory"],
 ] as const;
@@ -169,6 +171,7 @@ export default function App() {
           path="/admin/rules"
           element={signedIn && dev ? <Rules /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
         />
+        <Route path="/admin/knowledge" element={signedIn && dev ? <Knowledge /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />} />
         <Route
           path="/admin/memory"
           element={signedIn && dev ? <Memory /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}

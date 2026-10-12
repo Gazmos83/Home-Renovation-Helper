@@ -28,6 +28,8 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
+    Identity,
     Index,
     Integer,
     Numeric,
@@ -50,6 +52,111 @@ FTS_CONFIG: Final = "german"
 
 class Base(DeclarativeBase):
     pass
+
+
+class KnowledgeSource(Base):
+    """Catalogue identity; registering a link performs no content request."""
+
+    __tablename__ = "knowledge_sources"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    key: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    publisher: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class KnowledgeSourceVersion(Base):
+    __tablename__ = "knowledge_source_versions"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    source_id: Mapped[UUID] = mapped_column(ForeignKey("knowledge_sources.id"), nullable=False)
+    edition: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Fully typed by the engineering schema; nulls are kept in JSON.
+    attributes: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    collections: Mapped[list] = mapped_column(JSONB, nullable=False)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    local_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    verification_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unverified")
+    reviewed_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    superseded_by: Mapped[UUID | None] = mapped_column(ForeignKey("knowledge_source_versions.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class KnowledgeRightsDecision(Base):
+    """A complete, append-only decision; the latest never falls back on expiry."""
+
+    __tablename__ = "knowledge_rights_decisions"
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[UUID] = mapped_column(Uuid, nullable=False, unique=True, default=uuid4)
+    version_id: Mapped[UUID] = mapped_column(ForeignKey("knowledge_source_versions.id"), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    grants: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    evidence: Mapped[str] = mapped_column(Text, nullable=False)
+    reviewer: Mapped[str] = mapped_column(String(200), nullable=False)
+    use_context: Mapped[str] = mapped_column(String(32), nullable=False, default="personal_home")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (CheckConstraint("action IN ('approve', 'revoke')", name="ck_knowledge_rights_action"),)
+
+
+class EngineeringChunk(Base):
+    __tablename__ = "engineering_chunks"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    version_id: Mapped[UUID] = mapped_column(ForeignKey("knowledge_source_versions.id"), nullable=False, index=True)
+    block_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    provenance: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    verification_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIMENSIONS), nullable=False)
+    search_vector: Mapped[Any] = mapped_column(TSVECTOR, Computed(
+        "to_tsvector('german', content) || to_tsvector('english', content) || to_tsvector('simple', content)", persisted=True
+    ))
+    __table_args__ = (
+        UniqueConstraint("version_id", "block_id", name="uq_engineering_chunk_block"),
+        Index("ix_engineering_chunks_fts", "search_vector", postgresql_using="gin"),
+        Index("ix_engineering_chunks_vector", "embedding", postgresql_using="hnsw", postgresql_ops={"embedding": "vector_cosine_ops"}),
+    )
+
+
+class EngineeringProperty(Base):
+    __tablename__ = "engineering_properties"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    version_id: Mapped[UUID] = mapped_column(ForeignKey("knowledge_source_versions.id"), nullable=False, index=True)
+    block_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    record: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    verification_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unverified")
+    reviewed_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class KnowledgeIngestionRun(Base):
+    __tablename__ = "knowledge_ingestion_runs"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    version_id: Mapped[UUID] = mapped_column(ForeignKey("knowledge_source_versions.id"), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    blocks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reused_vectors: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EngineeringEvidenceUse(Base):
+    """Source associations survive prose-history compression."""
+
+    __tablename__ = "engineering_evidence_uses"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    thread_id: Mapped[UUID] = mapped_column(ForeignKey("threads.id", ondelete="CASCADE"), nullable=False, index=True)
+    version_id: Mapped[UUID] = mapped_column(ForeignKey("knowledge_source_versions.id"), nullable=False)
+    block_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    qualifications: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class User(Base):
@@ -1204,4 +1311,53 @@ class GuidelineUpload(Base):
         CheckConstraint("btrim(title) <> ''", name="ck_guideline_uploads_title_not_blank"),
         CheckConstraint("btrim(licence) <> ''", name="ck_guideline_uploads_licence_not_blank"),
         CheckConstraint("size_bytes > 0", name="ck_guideline_uploads_size_positive"),
+    )
+
+
+class EngineeringMethodReview(Base):
+    __tablename__ = "engineering_method_reviews"
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[UUID] = mapped_column(default=uuid4, nullable=False, unique=True)
+    method_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    definition_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    action: Mapped[str] = mapped_column(String(24), nullable=False)
+    reviewer: Mapped[str] = mapped_column(String(200), nullable=False)
+    qualification_evidence: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    __table_args__ = (CheckConstraint("action IN ('pending', 'accept', 'disable')", name="ck_engineering_method_review_action"),)
+
+
+class EngineeringAssessment(Base):
+    __tablename__ = "engineering_assessments"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    sequence: Mapped[int] = mapped_column(Integer, Identity(), nullable=False, unique=True)
+    package_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    owner_id: Mapped[UUID] = mapped_column(nullable=False)
+    thread_id: Mapped[UUID | None] = mapped_column(ForeignKey("threads.id", ondelete="SET NULL"), nullable=True)
+    snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    spec_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    __table_args__ = (
+        ForeignKeyConstraint(["package_id", "version"], ["piece_versions.package_id", "piece_versions.version"], ondelete="CASCADE"),
+        UniqueConstraint("id", "package_id", "version", name="uq_engineering_assessment_scope"),
+    )
+
+
+class EngineeringCalculationReport(Base):
+    __tablename__ = "engineering_calculation_reports"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    assessment_id: Mapped[UUID] = mapped_column(nullable=False)
+    package_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    thread_id: Mapped[UUID | None] = mapped_column(ForeignKey("threads.id", ondelete="SET NULL"), nullable=True)
+    report: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    spec_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    __table_args__ = (
+        ForeignKeyConstraint(["assessment_id", "package_id", "version"], ["engineering_assessments.id", "engineering_assessments.package_id", "engineering_assessments.version"], ondelete="CASCADE"),
     )

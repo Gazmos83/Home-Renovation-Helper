@@ -52,6 +52,7 @@ class TurnResult:
     # The specialists that ran in this turn, by role (studio-chat-polish). Reporting
     # detail, so it is left out of comparing two results.
     specialists: tuple[str, ...] = field(default=(), compare=False)
+    trace_content_suppressed: bool = field(default=False, compare=False)
 
 
 @dataclass(frozen=True)
