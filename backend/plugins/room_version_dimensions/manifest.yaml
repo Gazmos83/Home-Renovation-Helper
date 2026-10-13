@@ -1,0 +1,8 @@
+name: room_version_dimensions
+description: Read a room composition version's wall lengths and ceiling heights (inspector dimensions).
+kind: builtin
+role: designer
+also_for: [researcher]
+tools: [read_room_version_dimensions]
+enabled_by_default: true
+toggleable: true

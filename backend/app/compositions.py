@@ -95,6 +95,87 @@ def room_dimensions(document: dict[str, Any]) -> dict[str, Any] | None:
     return {"walls": walls, "ceilings": ceilings}
 
 
+def _scope_document(
+    session: Session, root: Path, *, scope: str, name: str, version: int | None = None
+) -> tuple[dict[str, Any], int, bool] | None:
+    """The stored document for a composition version, its number, and whether it is approved.
+
+    With `version` omitted, uses the approved version when one is approved, else the latest.
+    """
+    composition = house_file.composition_by_scope(session, scope, name)
+    if composition is None:
+        return None
+    versions = house_file.composition_version_rows(session, composition)
+    if not versions:
+        return None
+    approved = house_file.approved_composition_version_of(session, composition.id)
+    if version is None:
+        number = approved if approved is not None else versions[-1].version
+    else:
+        if house_file.composition_version_row(session, composition.id, version) is None:
+            return None
+        number = version
+    document = read_document(storage.composition_version_dir(root, composition.slug, number))
+    if document is None:
+        return None
+    return document, number, approved is not None and approved == number
+
+
+def dimensions_of_scope(
+    session: Session, root: Path, *, scope: str, name: str, version: int | None = None
+) -> dict[str, Any] | None:
+    """Wall lengths and ceilings for a composition version of this scope, or `None`.
+
+    With `version` omitted, uses the approved version when one is approved, else the latest.
+    The returned dict has `version`, `approved`, `walls` and `ceilings` (the same walls and
+    ceilings the inspector's dimensions route returns).
+    """
+    loaded = _scope_document(session, root, scope=scope, name=name, version=version)
+    if loaded is None:
+        return None
+    document, number, is_approved = loaded
+    found = room_dimensions(document)
+    if found is None:
+        return None
+    return {
+        "version": number,
+        "approved": is_approved,
+        "walls": found["walls"],
+        "ceilings": found["ceilings"],
+    }
+
+
+def placement_room(
+    session: Session, root: Path, room_name: str, *, version: int | None = None
+) -> dict[str, Any] | None:
+    """A house-file-shaped room plan from the room's composition version, or `None`.
+
+    Uses the approved version when one is approved, else the latest (or `version` when given).
+    Shape: `name`, `corners_mm`, `height_mm`, `wall_thickness_mm`, `openings` — what
+    `room_fit` and `room_geometry` expect. `None` when there is no composition or no room plan.
+    """
+    loaded = _scope_document(session, root, scope="room", name=room_name, version=version)
+    if loaded is None:
+        return None
+    document, _number, _approved = loaded
+    wanted = scope_name(document) or room_name
+    rooms = (document.get("resolved") or {}).get("rooms") or []
+    room = next((entry for entry in rooms if entry.get("name") == wanted), None)
+    if room is None:
+        return None
+    try:
+        corners = room["corners"]
+        return {
+            "name": str(room.get("name") or wanted),
+            "corners_mm": [[float(p[0]), float(p[1])] for p in corners],
+            "height_mm": float(room["height_mm"]),
+            "wall_thickness_mm": float(room.get("wall_thickness_mm") or 100),
+            "openings": list(room.get("openings") or []),
+        }
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+
+
 def placing_model(session: Session, root: Path, model_id: UUID) -> list[str]:
     """Every composition version that places the library model, as "<scope> v<N>"."""
     wanted = str(model_id)
@@ -172,8 +253,14 @@ def _refuse_spec(error: SpecValidationError) -> CompositionRefused:
     return CompositionRefused(message)
 
 
-def _rooms_in_scope(session, scope: str, name: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """The scope's rooms by name (house-file shape) and, for an apartment, its shell document."""
+def _rooms_in_scope(
+    session, scope: str, name: str, *, render_root: Path | None = None
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The scope's rooms by name (house-file shape) and, for an apartment, its shell document.
+
+    For a single room, prefers the approved (else latest) composition version's plan when
+    `render_root` is set and that document has a room plan.
+    """
     if scope == "room":
         room = house_file.room_by_name(session, name)
         if room is None:
@@ -182,7 +269,18 @@ def _rooms_in_scope(session, scope: str, name: str) -> tuple[dict[str, Any], dic
             raise CompositionRefused(
                 f"there is no room {name!r} in the house file; {listed}. Intake records a room from its measurements or a plan"
             )
-        return {room.name: house_file.describe_room(room)}, None
+        described = house_file.describe_room(room)
+        if render_root is not None:
+            plan = placement_room(session, render_root, room.name)
+            if plan is not None:
+                described = {
+                    **described,
+                    "corners_mm": plan["corners_mm"],
+                    "height_mm": plan["height_mm"],
+                    "wall_thickness_mm": plan["wall_thickness_mm"],
+                    "openings": plan["openings"],
+                }
+        return {room.name: described}, None
     apartment = house_file.find_apartment(session, name)
     if apartment is None:
         known = [a.name for a in house_file.apartments(session)]
@@ -270,7 +368,7 @@ def propose(
         parsed = parse_composition(document, max_items=max_items)
     except SpecValidationError as error:
         raise _refuse_spec(error) from None
-    rooms, shell = _rooms_in_scope(session, scope, name)
+    rooms, shell = _rooms_in_scope(session, scope, name, render_root=render_root)
     canonical = next(iter(rooms)) if scope == "room" else None
     if canonical is not None:
         parsed["scope"] = {"room": canonical}

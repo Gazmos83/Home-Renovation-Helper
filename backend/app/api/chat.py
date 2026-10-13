@@ -17,7 +17,7 @@ import shutil
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Final, Literal
 from uuid import UUID
 
 import psycopg
@@ -395,13 +395,20 @@ def _sse(kind: str, data: dict[str, Any]) -> str:
     return f"event: {kind}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+# Comment frames so proxies and browsers keep the SSE socket open during long model/tool gaps
+# (owner NetworkError on multi-minute turns with a large thread history, 2026-10-13).
+_SSE_KEEPALIVE: Final = ": keepalive\n\n"
+_SSE_KEEPALIVE_SECONDS: Final = 15.0
+
+
 def _stream(request: Request, thread: Any, owner: UUID, message: str, make_events: EventsFactory) -> StreamingResponse:
     """Follow the turn as Server-Sent Events.
 
     The thread is marked running before the response opens, so a thread deleted
     meanwhile is still a 404 with no stream. The turn runs on its own thread and
     feeds a queue: a client that goes away stops reading, and the turn still
-    finishes into the checkpointer.
+    finishes into the checkpointer. While the queue is idle, comment keepalives
+    are sent so the connection is not dropped as idle.
     """
     running = ExitStack()
     running.enter_context(_turn_running(request, thread.id))
@@ -422,13 +429,20 @@ def _stream(request: Request, thread: Any, owner: UUID, message: str, make_event
     threading.Thread(target=work, name=f"turn-{thread.id}", daemon=True).start()
 
     def body() -> Iterator[str]:
-        while (chunk := events.get()) is not None:
+        while True:
+            try:
+                chunk = events.get(timeout=_SSE_KEEPALIVE_SECONDS)
+            except queue.Empty:
+                yield _SSE_KEEPALIVE
+                continue
+            if chunk is None:
+                break
             yield chunk
 
     return StreamingResponse(
         body(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )
 
 

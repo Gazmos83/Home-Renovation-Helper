@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
+from app import compositions as composition_docs
 from app.agent import house_file, progress, summaries, uploads
 from app.agent.budget import BudgetRefused, RequestBudget, prepare, refusal_message
 from app.agent.instructions import AgentInstruction, load_instructions
@@ -629,9 +630,24 @@ def build_graph(
         other_builds = [
             with_room(p) for p in all_pieces if p["package_id"] in build_ids and p["package_id"] != package_id
         ] if memory.other_builds == "line" else []
+        described_rooms = [house_file.describe_room(r) for r in scope_rooms]
+        with Session(engine) as session:
+            if scope_apartment_name is not None:
+                apartment_dims = composition_docs.dimensions_of_scope(
+                    session, settings.render_root, scope="apartment", name=scope_apartment_name
+                )
+                if apartment_dims is not None and apartments:
+                    apartments = [{**apartments[0], "dimensions": apartment_dims}]
+            else:
+                for index, room in enumerate(described_rooms):
+                    room_dims = composition_docs.dimensions_of_scope(
+                        session, settings.render_root, scope="room", name=room["name"]
+                    )
+                    if room_dims is not None:
+                        described_rooms[index] = {**room, "dimensions": room_dims}
         return {
             "house_note": house_note(
-                [house_file.describe_room(r) for r in scope_rooms],
+                described_rooms,
                 preferences,
                 [with_room(bound)] if bound else [],
                 requests,

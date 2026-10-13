@@ -217,7 +217,7 @@ def test_the_confirmed_room_gives_its_size_and_the_active_build_in_full_and_othe
         session.commit()
     harness.turn("make the bench deeper")
     prompt = models["designer"].last_prompt_text()
-    assert "Hall: 3000 × 2000 mm, ceiling 2500 mm" in prompt
+    assert "Hall: bounding box 3000 × 2000 mm, ceiling 2500 mm" in prompt
     assert "- hall-bench (Hall bench): v1" in prompt and "approved: none, room: Hall" in prompt
     assert "Other pieces in this conversation:" in prompt
     assert "- shoe-rack (Shoe rack): v1, Hall" in prompt
@@ -274,7 +274,7 @@ def test_a_second_piece_starts_with_the_room_known_once_it_is_confirmed(tool_sta
     harness.answer("yes")
     harness.turn("a shoe bench")
     prompt = models["intake"].last_prompt_text()
-    assert "Hall: 3000 × 2000 mm, ceiling 2500 mm" in prompt
+    assert "Hall: bounding box 3000 × 2000 mm, ceiling 2500 mm" in prompt
     assert "murphy-bed" not in prompt and "No room is confirmed" not in prompt
 
 
@@ -290,4 +290,4 @@ def test_a_room_name_with_the_delimiter_is_neutralised(tool_state) -> None:
     harness.turn("hello")
     prompt = models["intake"].last_prompt_text()
     assert f"{name}:" not in prompt
-    assert f"{neutralise(name)}: 3000 × 2000 mm" in prompt
+    assert f"{neutralise(name)}: bounding box 3000 × 2000 mm" in prompt

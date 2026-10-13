@@ -45,12 +45,13 @@ def test_the_note_lists_rooms_preferences_pieces_and_open_requests() -> None:
         [{"package_id": "hall-bench", "name": "Hall bench", "latest_version": 2, "status": "succeeded"}],
         [{"field": "modules[0].bevel_mm", "request": "a bevelled edge"}],
     )
-    assert "Living room: 4000 × 3500 mm, ceiling 2600 mm, 1 opening(s)" in note
+    assert "Living room: bounding box 4000 × 3500 mm, ceiling 2600 mm, 1 opening(s)" in note
     assert "style: light oak" in note
     assert "budget_eur: 400" in note
     assert "hall-bench (Hall bench): v2, succeeded" in note
     assert "modules[0].bevel_mm: a bevelled edge" in note
     assert note.startswith("The following is the owner's own saved house file")
+    assert "Measurements in this block supersede earlier quotes and the conversation note." in note
 
 
 def test_an_empty_house_file_makes_no_note() -> None:

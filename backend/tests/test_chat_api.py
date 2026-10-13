@@ -679,14 +679,17 @@ def test_the_running_mark_is_cleared_after_a_turn_that_fails(client: TestClient)
 
 
 def events_of(response) -> list[tuple[str, dict]]:
-    """The Server-Sent Events of a streamed response, in order."""
+    """The Server-Sent Events of a streamed response, in order.
+
+    SSE comment keepalives (`: …`) are skipped; they are not named events.
+    """
     assert response.status_code == 200, response.text
     assert response.headers["content-type"].startswith("text/event-stream")
     events = []
     for block in response.text.split("\n\n"):
-        if not block.strip():
+        if not block.strip() or block.lstrip().startswith(":"):
             continue
-        lines = dict(line.split(": ", 1) for line in block.splitlines())
+        lines = dict(line.split(": ", 1) for line in block.splitlines() if ": " in line)
         events.append((lines["event"], json.loads(lines["data"])))
     return events
 
@@ -711,6 +714,36 @@ def _designer_revises():
             "Revised.",
         ]},
     )
+
+
+def test_a_quiet_stream_sends_keepalive_comments(client: TestClient, monkeypatch) -> None:
+    """Comment frames keep the SSE socket alive while the specialist is still thinking."""
+    import time
+
+    from app.api import chat as chat_api
+
+    monkeypatch.setattr(chat_api, "_SSE_KEEPALIVE_SECONDS", 0.05)
+    install(
+        client,
+        fake_models(
+            foreman={"decisions": [{"specialist": "intake", "reason": "t"}]},
+            intake={"replies": ["ok"], "delay": 0.2},
+        ),
+    )
+    # FakeChatModel may not honour delay; slow the work queue by patching _events.
+    real_events = chat_api._events
+
+    def slow_events(*args, **kwargs):
+        time.sleep(0.18)
+        yield from real_events(*args, **kwargs)
+
+    monkeypatch.setattr(chat_api, "_events", slow_events)
+    thread = start(client, title="Hall")
+    response = client.post(f"/chat/threads/{thread}/turns/stream", json={"message": "hello"})
+    assert response.status_code == 200
+    assert ": keepalive" in response.text
+    kinds = [kind for kind, _ in events_of(response)]
+    assert "done" in kinds
 
 
 def test_a_streamed_turn_reports_the_designer_its_tool_and_the_pause(client: TestClient, render_root: Path) -> None:

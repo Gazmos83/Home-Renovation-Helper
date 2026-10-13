@@ -499,7 +499,8 @@ def test_the_prompt_carries_the_guard_once_and_binds_only_the_headers_tools(tool
     assert system.count(UNTRUSTED_CONTENT_PREAMBLE) == 1
     assert system.endswith(UNTRUSTED_CONTENT_PREAMBLE)
     assert set(models["designer"].bound_tools) == {
-        "create_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit", "compose_room", "search_guidelines",
+        "create_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit",
+        "compose_room", "read_room_version_dimensions", "search_guidelines",
         "ask_owner",
     }
     assert models["intake"].bound_tools == ["record_brief", "record_plan", "confirm_room", "ask_owner"]
@@ -518,7 +519,7 @@ def test_the_house_file_reaches_intake_and_the_designer_but_not_as_an_instructio
     harness.turn("hall bench")
     harness.answer("yes")
     harness.turn("design it")
-    assert "Hall: 1200 × 3000 mm, ceiling 2400 mm" in models["designer"].last_prompt_text()
+    assert "Hall: bounding box 1200 × 3000 mm, ceiling 2400 mm" in models["designer"].last_prompt_text()
     assert "budget_eur: 400" in models["designer"].last_prompt_text()
 
 
@@ -642,7 +643,7 @@ def test_the_researcher_binds_exactly_its_six_tools(tool_state) -> None:
     make_harness(tool_state, models).turn("price it")
     assert set(models["researcher"].bound_tools) == {
         "search_catalog_knowledge", "check_live_listing", "compare_products", "price_cut_list", "manage_remnants",
-        "search_guidelines",
+        "search_guidelines", "read_room_version_dimensions",
     }
 
 

@@ -44,7 +44,8 @@ def test_each_agent_names_exactly_its_tools() -> None:
     )
     assert loaded["intake"].tools == ("record_brief", "record_plan", "confirm_room", "ask_owner")
     assert set(loaded["designer"].tools) == {
-        "create_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit", "compose_room", "search_guidelines",
+        "create_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit", "compose_room",
+        "read_room_version_dimensions", "search_guidelines",
         "ask_owner", "search_engineering_knowledge", "record_assessment_inputs", "calculate_engineering", "get_engineering_report",
     }
     assert set(loaded["builder"].tools) == {
@@ -53,7 +54,8 @@ def test_each_agent_names_exactly_its_tools() -> None:
     assert loaded["reviewer"].tools == ("revision_review",)
     assert set(loaded["researcher"].tools) == {
         "search_catalog_knowledge", "check_live_listing", "compare_products", "price_cut_list", "manage_remnants",
-        "search_guidelines", "search_engineering_knowledge", "record_assessment_inputs", "calculate_engineering", "get_engineering_report",
+        "search_guidelines", "read_room_version_dimensions", "search_engineering_knowledge",
+        "record_assessment_inputs", "calculate_engineering", "get_engineering_report",
     }
 
 
@@ -61,6 +63,12 @@ def test_guideline_search_is_shared_with_the_researcher() -> None:
     from app.agent.tools import tool_roles
 
     assert tool_roles()["search_guidelines"] == ("designer", "researcher")
+
+
+def test_room_version_dimensions_is_shared_with_the_researcher() -> None:
+    from app.agent.tools import tool_roles
+
+    assert tool_roles()["read_room_version_dimensions"] == ("designer", "researcher")
 
 
 def test_the_designer_and_builder_never_offer_blender_code() -> None:

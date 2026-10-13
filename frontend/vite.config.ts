@@ -15,7 +15,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/chat": API,
+      // Long Foreman turns stream for minutes; default proxy idle timeouts drop the SSE
+      // socket and the SPA shows "NetworkError when attempting to fetch resource."
+      "/chat": { target: API, timeout: 0, proxyTimeout: 0 },
       "/auth": API,
       "/admin": page,
       "/health": API,

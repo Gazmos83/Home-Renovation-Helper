@@ -1,18 +1,21 @@
-"""`room_fit` (Designer): a placement checked against a house-file room.
+"""`room_fit` (Designer): a placement checked against the room's plan.
 
-Builds a room-scene document from the stored room, the piece version's overall
-size, a wall and an offset, runs the room contract over it, and returns either
-the refusal (naming the wall and the excess) or the placement and the document
-a room render uses.
+Uses the approved (else latest) composition version's corners and openings when
+that document has a room plan — the same source as the inspector dimensions —
+and falls back to the house-file room otherwise. Builds a room-scene document,
+runs the room contract, and returns either the refusal or the placement and the
+document a room render uses.
 """
 
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app import compositions
 from app.agent import house_file
 from app.agent.tools.base import AgentTool, ToolContext, parse_args
 from app.agent.tools.shared import read_input, version_folder
@@ -26,7 +29,12 @@ class RoomFitArgs(BaseModel):
     room_name: str
     package_id: str
     version: int | None = Field(default=None, description="a version number; the latest when left out")
-    wall: int = Field(description="wall index, counted from 0 along the room's corners")
+    wall: int = Field(
+        description=(
+            "wall index along the room's corners, counted from 0. The house-note label "
+            "'wall 1' is index 0, 'wall 2' is index 1, and so on"
+        )
+    )
     offset_mm: float = Field(description="distance along the wall from its start, in mm")
 
 
@@ -55,7 +63,7 @@ def opening_in_the_way(room: Any, wall: int, offset_mm: float, overall: dict[str
     the footprint; this is the rule for openings.
     """
     start, end = offset_mm, offset_mm + overall["w"]
-    for index, opening in enumerate(room.openings):
+    for index, opening in enumerate(room.openings or []):
         if opening["wall"] != wall:
             continue
         o_start, o_end = opening["offset_mm"], opening["offset_mm"] + opening["width_mm"]
@@ -69,12 +77,26 @@ def opening_in_the_way(room: Any, wall: int, offset_mm: float, overall: dict[str
     return None
 
 
+def _room_for_fit(session, root, room_name: str) -> Any | None:
+    """Composition plan when present, else the house-file room, else `None`."""
+    plan = compositions.placement_room(session, root, room_name)
+    if plan is not None:
+        return SimpleNamespace(
+            name=plan["name"],
+            corners_mm=plan["corners_mm"],
+            height_mm=plan["height_mm"],
+            wall_thickness_mm=plan["wall_thickness_mm"],
+            openings=plan["openings"],
+        )
+    return house_file.room_by_name(session, room_name)
+
+
 def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
     args, problem = parse_args(RoomFitArgs, arguments)
     if args is None:
         return problem
     with ctx.deps.session() as session:
-        room = house_file.room_by_name(session, args.room_name)
+        room = _room_for_fit(session, ctx.deps.render_root, args.room_name)
         if room is None:
             names = [r.name for r in house_file.rooms(session)]
             known = f"its rooms are: {', '.join(names)}" if names else "no rooms are recorded yet"
@@ -83,6 +105,7 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
                 "Intake records a room from its measurements or a plan"
             )
         document = room_document(room, args.wall, args.offset_mm)
+        fit_room = room
 
     folder, number, problem = version_folder(ctx.deps, args.package_id, args.version)
     if folder is None:
@@ -91,9 +114,7 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
     if stored is None:
         return f"version {number} of {args.package_id!r} has no readable document"
     overall = custom_derive.overall(stored)
-    with ctx.deps.session() as session:
-        stored_room = house_file.room_by_name(session, args.room_name)
-        blocked = opening_in_the_way(stored_room, args.wall, args.offset_mm, overall)
+    blocked = opening_in_the_way(fit_room, args.wall, args.offset_mm, overall)
     if blocked:
         return blocked
     try:
@@ -123,9 +144,10 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
 room_fit = AgentTool(
     name="room_fit",
     description=(
-        "Check whether a piece fits a room from the house file: give the room's name, the piece "
-        "and version, a wall index and an offset along it. Returns the placement and the room "
-        "document, or says what is in the way."
+        "Check whether a piece fits a room: give the room's name, the piece and version, a wall "
+        "index and an offset along it. Uses the approved room composition's plan when one exists "
+        "(the same walls and openings as the inspector), otherwise the house-file room. Returns "
+        "the placement and the room document, or says what is in the way."
     ),
     schema=RoomFitArgs,
     run=run,
