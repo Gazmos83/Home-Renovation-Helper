@@ -187,6 +187,26 @@ export type MemoryPayload = { settings: MemorySettings; defaults: MemorySettings
 
 export type Upload = { upload_id: string; kind: string; size_bytes: number; original_name: string };
 
+/** The conversation's brief settings (split-project-panel). */
+export type Brief = {
+  confirmed: boolean;
+  room: string | null;
+  purpose: string | null;
+  max_piece_height_mm: number | null;
+  max_piece_height_from_version: number | null;
+  style: string | null;
+  budget_eur: number | null;
+  /** The stored rooms the room can be chosen from. */
+  rooms: string[];
+};
+export type BriefBody = {
+  room: string | null;
+  purpose: string;
+  max_piece_height_mm: number | null;
+  style: string | null;
+  budget_eur: number | null;
+};
+
 export type ProgressStep = { step: string; done: boolean; detail: string | null };
 
 export type Progress = {
@@ -221,6 +241,8 @@ export type Progress = {
     versions?: CompositionVersion[];
     /** The composition's approved version number, or null when none is approved. */
     approved_version?: number | null;
+    /** The approved version's picture, or null when none is approved or it has none. */
+    approved_picture?: string | null;
   } | null;
 };
 
@@ -858,6 +880,9 @@ export const api = {
   },
   uploads: (threadId: string) => request<Upload[]>(`/chat/threads/${threadId}/uploads`),
   progress: (threadId: string) => request<Progress>(`/chat/threads/${threadId}/progress`),
+  brief: (threadId: string) => request<Brief>(`/chat/threads/${threadId}/brief`),
+  saveBrief: (threadId: string, body: BriefBody) =>
+    request<Brief>(`/chat/threads/${threadId}/brief`, { method: "PUT", body: JSON.stringify(body) }),
   tools: (threadId: string) => request<ToolToggle[]>(`/chat/threads/${threadId}/tools`),
   setTool: (threadId: string, plugin: string, enabled: boolean) =>
     request<ToolToggle>(`/chat/threads/${threadId}/tools/${plugin}`, {

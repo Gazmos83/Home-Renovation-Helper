@@ -62,6 +62,15 @@ def _composition_route(slug: str, version: int, name: str) -> str:
 LISTED_COMPOSITION_VERSIONS: Final = 5
 
 
+def composition_picture(root: Path, slug: str, number: int) -> str | None:
+    """The route of a composition version's still, else its screenshot, else `None`."""
+    folder = storage.composition_version_dir(root, slug, number)
+    return next(
+        (_composition_route(slug, number, name) for name in ("still.png", "screenshot.png") if (folder / name).is_file()),
+        None,
+    )
+
+
 def composition_version_views(
     session: Session,
     root: Path,
@@ -76,10 +85,7 @@ def composition_version_views(
     views = []
     for number in sorted(numbers, reverse=True)[:LISTED_COMPOSITION_VERSIONS]:
         folder = storage.composition_version_dir(root, slug, number)
-        picture = next(
-            (_composition_route(slug, number, name) for name in ("still.png", "screenshot.png") if (folder / name).is_file()),
-            None,
-        )
+        picture = composition_picture(root, slug, number)
         try:
             document = json.loads((folder / storage.INPUT_FILE).read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -114,7 +120,7 @@ def room_progress(session: Session, root: Path, thread_id: UUID) -> dict[str, An
         return None
     found: dict[str, Any] = {
         "name": name, "scope": scope, "slug": None, "model": None, "surfaces": None,
-        "versions": [], "approved_version": None,
+        "versions": [], "approved_version": None, "approved_picture": None,
     }
     composition = house_file.composition_by_scope(session, scope, name)
     if composition is None:
@@ -124,6 +130,8 @@ def room_progress(session: Session, root: Path, thread_id: UUID) -> dict[str, An
     numbers = [v.version for v in rows]
     approved_at = {v.version: v.approved_at.isoformat() for v in rows if v.approved_at is not None}
     found["approved_version"] = next((v.version for v in rows if v.approved_at is not None), None)
+    if found["approved_version"] is not None:
+        found["approved_picture"] = composition_picture(root, composition.slug, found["approved_version"])
     found["versions"] = composition_version_views(
         session, root, composition.slug, numbers, approved_at=approved_at
     )

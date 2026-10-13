@@ -29,7 +29,7 @@ class VersionLimitReached(ValueError):
 def version_limit_message(package_id: str) -> str:
     return (
         f"{package_id} has {MAX_VERSIONS} versions, the most a piece can hold. Delete one on "
-        "the Pieces page or in the Project panel, then ask again."
+        "the Pieces page or in the Piece panel, then ask again."
     )
 
 

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import Conversation from "./Conversation";
+import type { Brief } from "../lib/api";
 
 // No WebGL in jsdom: the 3D stage is a stub that counts how often its module is loaded.
 const canvas = vi.hoisted(() => ({ loaded: 0 }));
@@ -96,6 +97,10 @@ beforeEach(() => {
   title = "Hall bench";
   pending = null;
   progressNow = progress([]);
+  briefNow = {
+    confirmed: true, room: "Hall", purpose: "a bench by the door", max_piece_height_mm: 900,
+    max_piece_height_from_version: null, style: "oak", budget_eur: 400, rooms: ["Hall", "Kitchen"],
+  };
   calls = [];
   extra = () => undefined;
   turn = () => ({ events: replied("ok", "intake") });
@@ -143,6 +148,11 @@ beforeEach(() => {
       if (call === "GET /chat/threads/t1")
         return json({ body: { thread_id: "t1", title, package_id: null, created_at: "", last_turn_at: "", messages, pending } });
       if (call === "GET /chat/threads/t1/progress") return json({ body: progressNow });
+      if (call === "GET /chat/threads/t1/brief") return json({ body: briefNow });
+      if (call === "PUT /chat/threads/t1/brief") {
+        briefNow = { ...briefNow, confirmed: true, ...body, rooms: briefNow.rooms };
+        return json({ body: briefNow });
+      }
       if (call === "GET /chat/threads/t1/tools") return json({ body: tools });
       if (call === "GET /packages/hall-bench/versions/1")
         return json({ body: { package_id: "hall-bench", version: 1, status: "succeeded", approved_at: null, files: ["model.glb", "spec.json"] } });
@@ -176,10 +186,19 @@ beforeEach(() => {
 
 afterEach(() => vi.useRealTimers());
 
-async function openProject() {
-  await userEvent.setup().click(await screen.findByRole("button", { name: "Project" }));
-  return screen.findByRole("region", { name: "Project" });
+let briefNow: Brief;
+
+async function openPanel(name: string) {
+  await userEvent.setup().click(await screen.findByRole("button", { name }));
+  return screen.findByRole("region", { name });
 }
+const openProject = () => openPanel("Project");
+const openPiece = () => openPanel("Piece");
+const openRoom = () => openPanel("Room");
+const openBrief = async () => {
+  await userEvent.setup().click(await screen.findByRole("button", { name: "Brief" }));
+  return screen.findByRole("form", { name: "Brief" });
+};
 
 async function openTools(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole("button", { name: "Tools" }));
@@ -352,13 +371,12 @@ test("a refused upload shows the service's reason and attaches nothing", async (
   expect(screen.queryByRole("img", { name: "huge.jpeg" })).not.toBeInTheDocument();
 });
 
-test("the panel follows a build to its end without a reload", async () => {
+test("the Piece panel follows a build to its end without a reload", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   progressNow = progress(["brief", "piece"], { build_status: "running", next_step: "Wait for the build to finish" });
   show();
-  const panel = within(await openProject());
+  const panel = within(await openPiece());
   expect(await panel.findByText("running")).toBeInTheDocument();
-  expect(panel.getByText(/Wait for the build to finish/)).toBeInTheDocument();
 
   progressNow = progress(["brief", "piece", "built"], { screenshot: "/packages/hall-bench/versions/1/files/screenshot.png" });
   await act(async () => {
@@ -366,9 +384,36 @@ test("the panel follows a build to its end without a reload", async () => {
   });
   expect(await panel.findByText("succeeded")).toBeInTheDocument();
   expect(panel.getByRole("img", { name: /hall-bench/ })).toHaveAttribute("src", "/packages/hall-bench/versions/1/files/screenshot.png");
-  expect(panel.getByText(/Ask for a draft render/)).toBeInTheDocument();
-  const built = panel.getByText("Built").closest("li");
-  expect(built).toHaveAttribute("data-done", "true");
+});
+
+test("the Project panel shows the progress steps and the next step, and nothing of the piece or room", async () => {
+  progressNow = progress(["brief", "piece", "built"], { room: HALL, next_step: "Ask for a draft render" });
+  show();
+  const panel = within(await openProject());
+  expect(await panel.findByText(/Ask for a draft render/)).toBeInTheDocument();
+  expect(panel.getByText("Built").closest("li")).toHaveAttribute("data-done", "true");
+  expect(panel.queryByRole("group", { name: "Approval" })).not.toBeInTheDocument();
+  expect(panel.queryByRole("group", { name: "Room" })).not.toBeInTheDocument();
+  expect(panel.queryByRole("button", { name: /Inspect/ })).not.toBeInTheDocument();
+});
+
+test("the Piece and Room panels keep the piece and the room apart", async () => {
+  progressNow = progress(["brief", "piece", "built"], { room: HALL });
+  show();
+  const piece = within(await openPiece());
+  expect(await piece.findByRole("button", { name: "Inspect version 1" })).toBeInTheDocument();
+  expect(piece.queryByRole("group", { name: "Room" })).not.toBeInTheDocument();
+  expect(piece.queryByRole("button", { name: "Inspect Hall" })).not.toBeInTheDocument();
+  const room = within(await openRoom());
+  expect(await room.findByRole("group", { name: "Room" })).toBeInTheDocument();
+  expect(room.queryByRole("group", { name: "Approval" })).not.toBeInTheDocument();
+  expect(room.queryByRole("button", { name: "Inspect version 1" })).not.toBeInTheDocument();
+});
+
+test("the Piece panel says so when there is no piece", async () => {
+  progressNow = { ...progress([]), package_id: null, name: null, latest_version: null, build_status: null, version_count: 0 };
+  show();
+  expect(await within(await openPiece()).findByText("No piece yet.")).toBeInTheDocument();
 });
 
 test("open review items are counted and link to the piece's page", async () => {
@@ -386,7 +431,7 @@ test("a finished turntable shows its still and offers no viewer link", async () 
     viewer: "/packages/hall-bench/versions/1/files/viewer.html",
   });
   show();
-  const panel = within(await openProject());
+  const panel = within(await openPiece());
   expect(await panel.findByRole("img", { name: /hall-bench/ })).toHaveAttribute("src", "/packages/hall-bench/versions/1/files/still.png");
   expect(panel.queryByRole("link", { name: /viewer/ })).not.toBeInTheDocument();
 });
@@ -394,18 +439,18 @@ test("a finished turntable shows its still and offers no viewer link", async () 
 test("no viewer link is offered before the turntable is published", async () => {
   progressNow = progress(["brief", "piece", "built"]);
   show();
-  const panel = within(await openProject());
-  await panel.findByText("Built");
+  const panel = within(await openPiece());
+  await panel.findByText("Hall bench");
   expect(panel.queryByRole("link", { name: /viewer/ })).not.toBeInTheDocument();
 });
 
 test("a built piece has an Inspect button that opens the split view, a building one does not", async () => {
   progressNow = progress(["brief", "piece", "built"]);
   show();
-  const panel = within(await openProject());
+  const panel = within(await openPiece());
   expect(panel.queryByRole("link", { name: /Inspect/ })).not.toBeInTheDocument();
   await userEvent.setup().click(await panel.findByRole("button", { name: "Inspect version 1" }));
-  expect(screen.queryByRole("region", { name: "Project" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Piece" })).not.toBeInTheDocument();
   const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
   expect(await inspector.findByText("Overall: W 1200 mm × H 450 mm × D 400 mm")).toBeInTheDocument();
   // The heading names the piece; the version is not part of it (version-cleanup-and-inspection).
@@ -415,8 +460,8 @@ test("a built piece has an Inspect button that opens the split view, a building 
 test("no inspector link while the build is running", async () => {
   progressNow = progress(["brief", "piece"], { build_status: "running" });
   show();
-  const panel = within(await openProject());
-  await panel.findByText("Built");
+  const panel = within(await openPiece());
+  await panel.findByText("Hall bench");
   expect(panel.queryByRole("button", { name: /Inspect/ })).not.toBeInTheDocument();
 });
 
@@ -474,7 +519,7 @@ test("the panel shows latest v5 beside approved v4 and approving v5 refreshes it
   const user = userEvent.setup();
   progressNow = progress(["brief", "piece", "built"], { latest_version: 5, approved_version: 4 });
   show();
-  await openProject();
+  await openPiece();
   const panel = await screen.findByRole("group", { name: "Approval" });
   expect(await within(panel).findByRole("button", { name: "Approve version 5" })).toBeInTheDocument();
   expect(within(panel).getByText("Approved")).toBeInTheDocument();
@@ -483,13 +528,13 @@ test("the panel shows latest v5 beside approved v4 and approving v5 refreshes it
   await waitFor(() => expect(within(panel).queryByRole("button", { name: "Approve version 5" })).toBeNull());
   expect(within(panel).getByRole("button", { name: "Unapprove version 5" })).toBeInTheDocument();
   expect(calls.some(([m, u]) => m === "PUT" && u === "/packages/hall-bench/versions/5/approval")).toBe(true);
-  expect(screen.getByRole("region", { name: "Project" })).toBeInTheDocument(); // approving leaves the flyout open
+  expect(screen.getByRole("region", { name: "Piece" })).toBeInTheDocument(); // approving leaves the flyout open
 });
 
 test("no approve control is offered while the latest version is still building", async () => {
   progressNow = progress(["brief", "piece"], { build_status: "running" });
   show();
-  await openProject();
+  await openPiece();
   const panel = await screen.findByRole("group", { name: "Approval" });
   expect(within(panel).getByText("No version approved yet.")).toBeInTheDocument();
   expect(within(panel).queryByRole("button")).toBeNull();
@@ -499,7 +544,7 @@ test("unapproving from the panel clears the approved version", async () => {
   const user = userEvent.setup();
   progressNow = progress(["brief", "piece", "built"], { approved_version: 1 });
   show();
-  await openProject();
+  await openPiece();
   const panel = await screen.findByRole("group", { name: "Approval" });
   await user.click(within(panel).getByRole("button", { name: "Unapprove version 1" }));
   expect(await within(panel).findByText("No version approved yet.")).toBeInTheDocument();
@@ -1041,7 +1086,7 @@ test("cancelling an edit sends nothing", async () => {
 test("the panel header names the piece without its version", async () => {
   progressNow = progress(["brief", "piece", "built"], { latest_version: 14, version_count: 14 });
   show();
-  const panel = await openProject();
+  const panel = await openPiece();
   const header = within(panel).getByText("Hall bench").closest("p") as HTMLElement;
   expect(header).toHaveTextContent("hall-bench");
   expect(header).not.toHaveTextContent("version 14");
@@ -1051,8 +1096,8 @@ test("the panel header names the piece without its version", async () => {
 test("no version count before the thirteenth version", async () => {
   progressNow = progress(["brief", "piece", "built"], { latest_version: 12, version_count: 12 });
   show();
-  const panel = within(await openProject());
-  await panel.findByText("Built");
+  const panel = within(await openPiece());
+  await panel.findByText("Hall bench");
   expect(panel.queryByText(/of 15 versions/)).not.toBeInTheDocument();
 });
 
@@ -1068,7 +1113,7 @@ test("the latest version is deleted from the panel after Are you sure, and its i
   };
   show("/conversations/t1?inspect=hall-bench/1");
   await screen.findByRole("complementary", { name: "Inspector" });
-  const panel = within(await openProject());
+  const panel = within(await openPiece());
   await user.click(await panel.findByRole("button", { name: "Delete version 1" }));
   expect(panel.getByText(/the whole piece will be deleted/)).toBeInTheDocument();
   expect(calls.some(([m, u]) => m === "DELETE" && u === "/packages/hall-bench/versions/1")).toBe(false);
@@ -1080,7 +1125,7 @@ test("the latest version is deleted from the panel after Are you sure, and its i
 test("no delete in the panel for an approved latest version or one still building", async () => {
   progressNow = progress(["brief", "piece", "built"], { approved_version: 1 });
   show();
-  const panel = within(await openProject());
+  const panel = within(await openPiece());
   await panel.findByRole("button", { name: "Unapprove version 1" });
   expect(panel.queryByRole("button", { name: /Delete version/ })).not.toBeInTheDocument();
 });
@@ -1284,10 +1329,10 @@ test("the Project panel opens the conversation's room beside the chat and closes
   serveRoom();
   messages = [reply("Hello")];
   show();
-  const panel = within(await openProject());
+  const panel = within(await openRoom());
   await user.click(await panel.findByRole("button", { name: "Inspect Hall" }));
   const pane = within(await screen.findByRole("complementary", { name: "Room view" }));
-  expect(screen.queryByRole("region", { name: "Project" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Room" })).not.toBeInTheDocument();
   expect(pane.getByRole("heading", { name: "Hall" })).toBeInTheDocument();
   const switches = within(await pane.findByRole("group", { name: "Surfaces" }));
   expect(switches.getByRole("button", { name: "ceiling" })).toHaveAttribute("aria-pressed", "false");
@@ -1311,7 +1356,7 @@ test("a room address that is not the conversation's room shows no pane", async (
   messages = [reply("Hello")];
   show("/conversations/t1?room=room-kitchen");
   await screen.findByText("Hello");
-  await openProject();
+  await openRoom();
   expect(screen.queryByRole("complementary", { name: "Room view" })).not.toBeInTheDocument();
 });
 
@@ -1322,12 +1367,12 @@ test("only one side pane is shown: the room and the piece inspector replace each
   messages = [reply("Hello")];
   show("/conversations/t1?room=room-hall");
   await screen.findByRole("complementary", { name: "Room view" });
-  const panel = within(await openProject());
+  const panel = within(await openPiece());
   await user.click(await panel.findByRole("button", { name: "Inspect version 1" }));
   expect(await screen.findByRole("complementary", { name: "Inspector" })).toBeInTheDocument();
   expect(screen.queryByRole("complementary", { name: "Room view" })).not.toBeInTheDocument();
 
-  await user.click(within(await openProject()).getByRole("button", { name: "Inspect Hall" }));
+  await user.click(within(await openRoom()).getByRole("button", { name: "Inspect Hall" }));
   expect(await screen.findByRole("complementary", { name: "Room view" })).toBeInTheDocument();
   expect(screen.queryByRole("complementary", { name: "Inspector" })).not.toBeInTheDocument();
 });
@@ -1335,21 +1380,21 @@ test("only one side pane is shown: the room and the piece inspector replace each
 test("a room without a 3D view says why, and no room confirmed shows no room section", async () => {
   progressNow = progress(["brief", "piece", "built"], { room: { ...HALL, slug: null, model: null, surfaces: null } });
   show();
-  let panel = within(await openProject());
+  let panel = within(await openRoom());
   expect(await panel.findByText("Hall has no 3D view yet. Ask the Designer to compose the room.")).toBeInTheDocument();
   expect(panel.queryByRole("button", { name: "Inspect Hall" })).not.toBeInTheDocument();
   cleanup();
 
   progressNow = progress(["brief", "piece", "built"], { room: { ...HALL, model: null, surfaces: null } });
   show();
-  panel = within(await openProject());
+  panel = within(await openRoom());
   expect(await panel.findByText("Composing Hall again adds the 3D view.")).toBeInTheDocument();
   cleanup();
 
   progressNow = progress(["brief", "piece", "built"], { room: null });
   show();
-  panel = within(await openProject());
-  await panel.findByText("Built");
+  panel = within(await openRoom());
+  await panel.findByText("No room selected yet.");
   expect(panel.queryByRole("group", { name: "Room" })).not.toBeInTheDocument();
 });
 
@@ -1379,7 +1424,7 @@ function serveHallVersions() {
 test("the room section is headed Selected room above the room's name", async () => {
   progressNow = progress(["brief", "piece", "built"], { room: HALL });
   show();
-  const group = within(await within(await openProject()).findByRole("group", { name: "Room" }));
+  const group = within(await within(await openRoom()).findByRole("group", { name: "Room" }));
   const [heading] = group.getAllByRole("heading");
   expect(heading).toHaveTextContent("Selected room");
   expect(group.getByText("Hall")).toBeInTheDocument();
@@ -1429,7 +1474,7 @@ test("the project panel shows latest v2 beside approved v1 and approving v2 refr
     },
   });
   show();
-  const room = within(await within(await openProject()).findByRole("group", { name: "Approval of Hall" }));
+  const room = within(await within(await openRoom()).findByRole("group", { name: "Approval of Hall" }));
   expect(room.getByText(/Latest version 2/)).toBeInTheDocument();
   expect(room.getByRole("button", { name: "Unapprove version 1" })).toBeInTheDocument();
   expect(room.getByRole("button", { name: "Approve version 2" })).toBeInTheDocument();
@@ -1449,7 +1494,7 @@ test("unapproving a room version from the panel clears the approved version", as
     },
   });
   show();
-  const room = within(await within(await openProject()).findByRole("group", { name: "Approval of Hall" }));
+  const room = within(await within(await openRoom()).findByRole("group", { name: "Approval of Hall" }));
   await user.click(room.getByRole("button", { name: "Unapprove version 2" }));
   expect(await room.findByText("No version approved yet.")).toBeInTheDocument();
   expect(calls.some(([m, u]) => m === "DELETE" && u === "/compositions/room-hall/versions/2/approval")).toBe(true);
@@ -1475,7 +1520,7 @@ test("unapproving a piece placed in an approved room shows the refusal in the pr
     room: { ...HALL, approved_version: 2, versions: [hallView(2), hallView(1)] },
   });
   show();
-  await openProject();
+  await openPiece();
   const panel = within(screen.getByRole("group", { name: "Approval" }));
   await user.click(panel.getByRole("button", { name: "Unapprove version 1" }));
   expect(await panel.findByText(/Hall version 2/)).toBeInTheDocument();
@@ -1553,4 +1598,77 @@ test("Add to decisions opens an empty row with a message when the message cannot
   await user.click(list.getAllByRole("button", { name: "Add to decisions" })[0]);
   expect(await screen.findByRole("textbox", { name: "New decision" })).toHaveValue("");
   expect(screen.getByText(/could not be compressed/)).toBeInTheDocument();
+});
+
+// --- the Brief panel (split-project-panel) ---
+
+test("the Brief panel lists every setting and saves an edit", async () => {
+  const user = userEvent.setup();
+  show();
+  const form = within(await openBrief());
+  expect(await form.findByLabelText("Purpose")).toHaveValue("a bench by the door");
+  expect(form.getByLabelText("Room")).toHaveValue("Hall");
+  expect(form.getByLabelText("Highest the piece may be (mm)")).toHaveValue("900");
+  expect(form.getByLabelText("Style")).toHaveValue("oak");
+  expect(form.getByLabelText("Budget (EUR)")).toHaveValue("400");
+  await user.clear(form.getByLabelText("Budget (EUR)"));
+  await user.type(form.getByLabelText("Budget (EUR)"), "900");
+  await user.selectOptions(form.getByLabelText("Room"), "Kitchen");
+  await user.click(form.getByRole("button", { name: "Save" }));
+  expect(await form.findByText("Saved.")).toBeInTheDocument();
+  expect(calls).toContainEqual([
+    "PUT",
+    "/chat/threads/t1/brief",
+    { room: "Kitchen", purpose: "a bench by the door", max_piece_height_mm: 900, style: "oak", budget_eur: 900 },
+  ]);
+  expect(form.getByLabelText("Budget (EUR)")).toHaveValue("900");
+});
+
+test("the Brief panel refuses an empty purpose in words and sends nothing", async () => {
+  const user = userEvent.setup();
+  show();
+  const form = within(await openBrief());
+  await user.clear(await form.findByLabelText("Purpose"));
+  await user.click(form.getByRole("button", { name: "Save" }));
+  expect(await form.findByText("The purpose is required.")).toBeInTheDocument();
+  expect(calls.some(([method, url]) => method === "PUT" && url === "/chat/threads/t1/brief")).toBe(false);
+});
+
+test("the Brief panel shows a refusal from the service next to the form", async () => {
+  const user = userEvent.setup();
+  extra = (call) =>
+    call === "PUT /chat/threads/t1/brief"
+      ? { status: 409, body: { detail: { failure_class: "turn_running", reason: "a reply is still being written" } } }
+      : undefined;
+  show();
+  const form = within(await openBrief());
+  await user.click(await form.findByRole("button", { name: "Save" }));
+  expect(await form.findByText(/a reply is still being written/)).toBeInTheDocument();
+});
+
+test("the Brief panel says so when there is no brief yet and shows no internals", async () => {
+  briefNow = { ...briefNow, confirmed: false, room: null, purpose: null, max_piece_height_mm: null, style: null, budget_eur: null };
+  show();
+  const form = await openBrief();
+  expect(await within(form).findByText(/No brief yet/)).toBeInTheDocument();
+  expect(form.textContent).not.toMatch(/model|token|prompt|cost/i);
+});
+
+test("the Room panel shows the approved version's picture, and none without an approved version", async () => {
+  const picture = "/compositions/room-hall/versions/2/files/screenshot.png";
+  progressNow = progress(["brief", "piece", "built"], {
+    room: { ...HALL, approved_version: 2, approved_picture: picture, versions: [hallView(3), hallView(2, { approved_at: "2026-10-10T00:00:00Z" })] },
+  });
+  show();
+  const panel = within(await openRoom());
+  expect(await panel.findByRole("img", { name: "Approved picture of Hall, version 2" })).toHaveAttribute("src", picture);
+  cleanup();
+
+  progressNow = progress(["brief", "piece", "built"], {
+    room: { ...HALL, approved_version: null, approved_picture: null, versions: [hallView(1)] },
+  });
+  show();
+  const none = within(await openRoom());
+  await none.findByRole("group", { name: "Approval of Hall" });
+  expect(none.queryByRole("img")).not.toBeInTheDocument();
 });

@@ -140,7 +140,7 @@ def test_a_render_notice_is_shown_in_history_but_never_sent_to_a_model(tool_stat
     )
     harness = make_harness(tool_state, models)
     run_turn(harness, "I want a bench for the hall")
-    words = "The draft turntable of hall-bench version 1 is ready. You can also check it in the Project panel."
+    words = "The draft turntable of hall-bench version 1 is ready. You can also check it in the Piece panel."
     with tool_state_session(tool_state) as session:
         house_file.add_notice(
             session, harness.thread, after_messages=2, outcome="succeeded", tier="draft", text=words,

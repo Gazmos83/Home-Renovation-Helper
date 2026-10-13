@@ -507,6 +507,16 @@ def brief_confirmed(graph: Any, *, thread_id: UUID, owner_id: UUID) -> bool:
     return bool(snapshot.values.get("brief"))
 
 
+def read_brief(graph: Any, *, thread_id: UUID, owner_id: UUID) -> dict[str, Any]:
+    """The thread's confirmed brief, empty when none. Raises on an unreachable store."""
+    return dict(graph.get_state(_config(thread_id, owner_id)).values.get("brief") or {})
+
+
+def write_brief(graph: Any, *, thread_id: UUID, owner_id: UUID, brief: dict[str, Any]) -> None:
+    """Replace the thread's brief (conversation-brief-panel). Raises on an unreachable store."""
+    graph.update_state(_config(thread_id, owner_id), {"brief": brief})
+
+
 def _confirmation_line(answered: dict[str, Any]) -> str:
     """One answered confirmation as the owner saw it: subject, summary and answer."""
     line = f"{answered.get('subject', '')}: {answered.get('summary', '')} — {answered.get('answer', '')}"

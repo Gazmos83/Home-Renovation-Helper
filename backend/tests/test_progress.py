@@ -180,7 +180,7 @@ def test_a_render_is_running_only_while_one_is_queued_or_running(db_session: Ses
 
 
 def test_the_version_count_and_limit_are_reported(db_session: Session, render_root: Path) -> None:
-    """version-cleanup-and-inspection: the Project panel's "N of 15 versions"."""
+    """version-cleanup-and-inspection: the Piece panel's "N of 15 versions"."""
     assert progress.piece_progress(db_session, render_root, None, brief_confirmed=False)["version_count"] == 0
     _piece(db_session, render_root)
     for number in (2, 3):
@@ -220,7 +220,7 @@ def test_a_room_without_a_composition_has_no_3d_view(db_session: Session, render
     thread = _thread_in(db_session, "Hall")
     assert progress.room_progress(db_session, render_root, thread) == {
         "name": "Hall", "scope": "room", "slug": None, "model": None, "surfaces": None, "versions": [],
-        "approved_version": None,
+        "approved_version": None, "approved_picture": None,
     }
 
 

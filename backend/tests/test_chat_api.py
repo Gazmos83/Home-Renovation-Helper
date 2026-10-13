@@ -491,6 +491,7 @@ def test_progress_names_the_threads_own_room_and_its_3d_view(client: TestClient,
     [only] = room["versions"]
     assert (only["version"], only["dimensions"]) == (1, f"/compositions/{slug}/versions/1/dimensions")
     assert room["approved_version"] is None and only["approved_at"] is None
+    assert room["approved_picture"] is None
     assert str(render_root) not in json.dumps(body)
 
     with Session(client.app.state.engine) as session:
@@ -499,6 +500,10 @@ def test_progress_names_the_threads_own_room_and_its_3d_view(client: TestClient,
     room = client.get(f"/chat/threads/{thread}/progress").json()["room"]
     assert room["approved_version"] == 1
     assert room["versions"][0]["approved_at"] is not None
+    assert room["approved_picture"] is None  # approved, but nothing was rendered yet
+    (folder / "screenshot.png").write_bytes(b"png")
+    room = client.get(f"/chat/threads/{thread}/progress").json()["room"]
+    assert room["approved_picture"] == f"/compositions/{slug}/versions/1/files/screenshot.png"
 
     # Another conversation sees neither this one's room nor the room its piece is in.
     with Session(client.app.state.engine) as session:
@@ -1067,7 +1072,7 @@ def test_a_render_notice_follows_the_reply_that_started_the_render(client: TestC
     with Session(client.app.state.engine) as session:
         house_file.add_notice(
             session, UUID(thread), after_messages=2, outcome="succeeded", tier="draft",
-            text="The draft turntable of hall-bench version 1 is ready. You can also check it in the Project panel.",
+            text="The draft turntable of hall-bench version 1 is ready. You can also check it in the Piece panel.",
             package_id="hall-bench", version=1,
         )
         house_file.add_notice(
@@ -1263,3 +1268,86 @@ def test_an_edited_message_keeps_the_files_sent_with_it(client: TestClient, tmp_
     ))
     first = client.get(f"/chat/threads/{thread}").json()["messages"][0]
     assert first["text"] == "my flat, ground floor" and first["upload_ids"] == [upload]
+
+
+# --- the Brief panel's routes (split-project-panel) ---------------------------------------------
+
+
+def test_brief_routes_need_the_session_and_a_known_thread(client: TestClient) -> None:
+    install(client, fake_models())
+    anonymous = TestClient(client.app)
+    assert anonymous.get(f"/chat/threads/{uuid4()}/brief").status_code == 401
+    assert anonymous.put(f"/chat/threads/{uuid4()}/brief", json={"purpose": "x"}).status_code == 401
+    assert client.get(f"/chat/threads/{uuid4()}/brief").status_code == 404
+    assert client.put(f"/chat/threads/{uuid4()}/brief", json={"purpose": "x"}).status_code == 404
+
+
+def test_brief_is_empty_until_saved_then_holds_the_edit_in_thread_and_piece(client: TestClient) -> None:
+    install(client, fake_models())
+    thread = start(client, room="Hall")
+    with Session(client.app.state.engine) as session:
+        house_file.record_piece(session, "hall-bench", "Hall bench", {"purpose": "old", "budget_eur": 400})
+        house_file.touch_thread(session, UUID(thread), package_id="hall-bench")
+        session.commit()
+    first = client.get(f"/chat/threads/{thread}/brief").json()
+    assert "Hall" in first["rooms"]
+    saved = client.put(
+        f"/chat/threads/{thread}/brief",
+        json={"room": "Hall", "purpose": "  a bench  ", "budget_eur": 900, "style": "oak", "max_piece_height_mm": 900},
+    )
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert (body["confirmed"], body["purpose"], body["budget_eur"], body["style"]) == (True, "a bench", 900, "oak")
+    assert client.get(f"/chat/threads/{thread}/brief").json()["budget_eur"] == 900
+    with Session(client.app.state.engine) as session:
+        piece = session.get(house_file.Piece, "hall-bench")
+        assert piece.brief["budget_eur"] == 900
+        assert house_file.preferences(session)["budget_eur"] == "900"
+
+
+def test_a_hand_edited_height_clears_the_raised_by_version_note(client: TestClient) -> None:
+    install(client, fake_models())
+    thread = start(client, room="Hall")
+    url = f"/chat/threads/{thread}/brief"
+    from app.agent import chat as chat_module
+
+    chat_module.write_brief(
+        client.app.state.graph,
+        thread_id=UUID(thread),
+        owner_id=uuid4(),
+        brief={"purpose": "p", "max_piece_height_mm": 2238, "max_piece_height_from_version": 17},
+    )
+    same = client.put(url, json={"purpose": "p", "max_piece_height_mm": 2238}).json()
+    assert same["max_piece_height_from_version"] == 17
+    changed = client.put(url, json={"purpose": "p", "max_piece_height_mm": 2000}).json()
+    assert changed["max_piece_height_from_version"] is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"purpose": "   "},
+        {"purpose": "x", "max_piece_height_mm": 0},
+        {"purpose": "x", "budget_eur": -1},
+        {"purpose": "x", "room": "Nowhere"},
+    ],
+)
+def test_an_invalid_brief_is_refused_and_changes_nothing(client: TestClient, body: dict) -> None:
+    install(client, fake_models())
+    thread = start(client, room="Hall")
+    assert client.put(f"/chat/threads/{thread}/brief", json=body).status_code == 422
+    assert client.get(f"/chat/threads/{thread}/brief").json()["confirmed"] is False
+
+
+def test_a_brief_is_not_saved_while_a_turn_runs(client: TestClient) -> None:
+    from app.api import chat as chat_api
+
+    install(client, fake_models())
+    thread = start(client, room="Hall")
+    chat_api._running.add(UUID(thread))
+    try:
+        refused = client.put(f"/chat/threads/{thread}/brief", json={"purpose": "x"})
+    finally:
+        chat_api._running.discard(UUID(thread))
+    assert refused.status_code == 409
+    assert client.get(f"/chat/threads/{thread}/brief").json()["confirmed"] is False

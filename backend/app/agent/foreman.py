@@ -142,6 +142,18 @@ ModelProvider = Callable[[str], Any]
 ModelIds = Callable[[str], str]
 
 
+def brief_line(brief: dict[str, Any]) -> str:
+    """The brief's settings in one line for the agents' facts, `""` when it holds none."""
+    parts = [
+        ("room", brief.get("room")),
+        ("purpose", brief.get("purpose")),
+        ("highest the piece may be", f"{brief['max_piece_height_mm']:g} mm" if brief.get("max_piece_height_mm") else None),
+        ("style", brief.get("style")),
+        ("budget", f"{brief['budget_eur']:g} EUR" if brief.get("budget_eur") is not None else None),
+    ]
+    return "; ".join(f"{label}: {value}" for label, value in parts if value)
+
+
 class ChatState(TypedDict, total=False):
     messages: Annotated[list[AnyMessage], add_messages]
     specialist: str
@@ -625,6 +637,10 @@ def build_graph(
             or any(piece_rooms.get(piece_id) in scope_room_names for piece_id in approved)
         )
         facts = f"This conversation: piece {piece_line}; confirmed brief: {confirmed}; {room_fact}."
+        # The owner's brief settings, as last saved in the chat or the Brief panel (split-project-panel).
+        brief_text = brief_line(state.get("brief") or (bound["brief"] if bound else None) or {})
+        if brief_text:
+            facts += f" Brief: {brief_text}."
         if apartments:
             listed = ", ".join(
                 f"{a['name']} ({a['rooms']} room(s), "

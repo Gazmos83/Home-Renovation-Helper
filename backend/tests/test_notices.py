@@ -40,7 +40,7 @@ def test_a_finished_draft_turntable_of_a_piece_is_noticed(tool_state) -> None:
     [(outcome, tier, text, package, version, after)] = stored(tool_state, harness.thread)
     assert (outcome, tier, package, version) == ("succeeded", "draft", "hall-bench", 1)
     assert text == (
-        "The draft turntable of hall-bench version 1 is ready. You can also check it in the Project panel."
+        "The draft turntable of hall-bench version 1 is ready. You can also check it in the Piece panel."
     )
     assert after == len(harness.snapshot().values["messages"]) > 0
 
@@ -55,7 +55,7 @@ def test_a_final_still_and_a_detail_pass_name_what_they_are(tool_state) -> None:
     assert first[2].startswith("The final still of hall-bench version 3 is ready.")
     assert (first[3], first[4]) == ("hall-bench", 3)
     assert second[2].startswith("The final detail turntable of hall-bench version 1 is ready.")
-    assert second[2].endswith("Project panel.")
+    assert second[2].endswith("Piece panel.")
 
 
 def test_a_shell_and_a_composition_notice_has_no_piece_and_no_panel_sentence(tool_state) -> None:

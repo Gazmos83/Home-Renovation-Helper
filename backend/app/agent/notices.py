@@ -20,7 +20,7 @@ from app.render.guard import RenderQuote
 
 logger = logging.getLogger("app")
 
-PANEL_SENTENCE = " You can also check it in the Project panel."
+PANEL_SENTENCE = " You can also check it in the Piece panel."
 
 
 def _what(quote: RenderQuote) -> str:

@@ -34,6 +34,7 @@ import { ROLE_LABELS } from "@/components/chat/roles";
 import { WaitingBubble } from "@/components/chat/WaitingBubble";
 import { InspectorView } from "@/components/inspector/InspectorView";
 import { RoomView, VersionSelect } from "@/components/inspector/RoomView";
+import { BriefPanel } from "@/components/chat/BriefPanel";
 import { DecisionsNote } from "@/components/chat/DecisionsNote";
 import { DeleteCompositionVersion } from "@/components/DeleteCompositionVersion";
 import { DeleteVersion } from "@/components/DeleteVersion";
@@ -171,6 +172,13 @@ function RoomSection({
           )}
         </div>
       )}
+      {room.approved_picture && approved !== null && (
+        <img
+          src={room.approved_picture}
+          alt={`Approved picture of ${room.name}, version ${approved}`}
+          className="max-h-56 rounded-md border"
+        />
+      )}
       {room.slug && latest && latest.status === "succeeded" && (
         <RoomVariants slug={room.slug} version={latest.version} />
       )}
@@ -191,11 +199,10 @@ function RoomSection({
   );
 }
 
-function ProjectPanel({
+function PiecePanel({
   threadId,
   progress,
   onInspect,
-  onInspectRoom,
   onDeleted,
   onUseLook,
 }: {
@@ -204,7 +211,6 @@ function ProjectPanel({
   /** Keep a restyle look: sends the owner's request to the conversation. */
   onUseLook: (text: string) => void;
   onInspect: (packageId: string, version: number) => void;
-  onInspectRoom: (slug: string) => void;
   /** A version of the piece was deleted. */
   onDeleted: (packageId: string, version: number) => void;
 }) {
@@ -221,7 +227,7 @@ function ProjectPanel({
   });
 
   if (progress.error) return <FieldError message={message(progress.error)} />;
-  if (!progress.data) return <p>Loading project…</p>;
+  if (!progress.data) return <p>Loading piece…</p>;
   const p: Progress = progress.data;
   // A render replaces the blockout screenshot once there is one.
   const picture = p.still ?? p.screenshot;
@@ -232,7 +238,7 @@ function ProjectPanel({
   const nearLimit = p.package_id !== null && p.version_count > p.max_versions - 3;
 
   return (
-    <section className="space-y-3" aria-label="Project">
+    <section className="space-y-3" aria-label="Piece">
       {p.package_id ? (
         <p>
           <strong>{p.name}</strong> <Badge variant="secondary">{p.package_id}</Badge>
@@ -316,7 +322,51 @@ function ProjectPanel({
           onUse={(variant) => onUseLook(keepLookRequest(p.package_id as string, p.latest_version as number, variant))}
         />
       )}
-      {p.room && <RoomSection room={p.room} threadId={threadId} onInspectRoom={onInspectRoom} />}
+      {p.open_requests.length > 0 && (
+        <div>
+          <h3>Waiting on a generator extension</h3>
+          <ul>
+            {p.open_requests.map((r) => (
+              <li key={r.field}>
+                <code>{r.field}</code>: {r.request}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RoomPanel({
+  threadId,
+  progress,
+  onInspectRoom,
+}: {
+  threadId: string;
+  progress: UseQueryResult<Progress>;
+  onInspectRoom: (slug: string) => void;
+}) {
+  if (progress.error) return <FieldError message={message(progress.error)} />;
+  if (!progress.data) return <p>Loading room…</p>;
+  const room = progress.data.room;
+  return (
+    <section className="space-y-3" aria-label="Room">
+      {room ? (
+        <RoomSection room={room} threadId={threadId} onInspectRoom={onInspectRoom} />
+      ) : (
+        <p className="text-muted-foreground">No room selected yet.</p>
+      )}
+    </section>
+  );
+}
+
+function ProjectPanel({ progress }: { progress: UseQueryResult<Progress> }) {
+  if (progress.error) return <FieldError message={message(progress.error)} />;
+  if (!progress.data) return <p>Loading project…</p>;
+  const p: Progress = progress.data;
+  return (
+    <section className="space-y-3" aria-label="Project">
       <ol className="space-y-1">
         {p.steps.map((step) => (
           <li key={step.step} className="flex items-center gap-2" data-done={step.done}>
@@ -337,18 +387,6 @@ function ProjectPanel({
           {p.open_review_items} open review {p.open_review_items === 1 ? "item" : "items"}.{" "}
           <Link to="/pieces" className="underline">Open the piece's page</Link>
         </p>
-      )}
-      {p.open_requests.length > 0 && (
-        <div>
-          <h3>Waiting on a generator extension</h3>
-          <ul>
-            {p.open_requests.map((r) => (
-              <li key={r.field}>
-                <code>{r.field}</code>: {r.request}
-              </li>
-            ))}
-          </ul>
-        </div>
       )}
     </section>
   );
@@ -669,6 +707,7 @@ export default function Conversation() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["thread", threadId] }),
       queryClient.invalidateQueries({ queryKey: ["progress", threadId] }),
+      queryClient.invalidateQueries({ queryKey: ["brief", threadId] }),
       queryClient.invalidateQueries({ queryKey: ["uploads", threadId] }),
       queryClient.invalidateQueries({ queryKey: ["threads"] }),
       // A chat edit of the decisions note shows in its panel when the turn ends.
@@ -795,24 +834,37 @@ export default function Conversation() {
               />
             ),
           },
+          { id: "brief", label: "Brief", icon: "brief", content: <BriefPanel threadId={threadId} /> },
+          { id: "project", label: "Project", icon: "project", content: <ProjectPanel progress={progress} /> },
           {
-            id: "project",
-            label: "Project",
-            icon: "project",
+            id: "piece",
+            label: "Piece",
+            icon: "piece",
             content: (
-              <ProjectPanel
+              <PiecePanel
                 threadId={threadId}
                 progress={progress}
                 onInspect={(packageId, version) => {
                   inspect(packageId, version);
                   setPanel(null);
                 }}
+                onDeleted={deleted}
+                onUseLook={(text) => void send(text, [])}
+              />
+            ),
+          },
+          {
+            id: "room",
+            label: "Room",
+            icon: "room",
+            content: (
+              <RoomPanel
+                threadId={threadId}
+                progress={progress}
                 onInspectRoom={(slug) => {
                   inspectRoom(slug);
                   setPanel(null);
                 }}
-                onDeleted={deleted}
-                onUseLook={(text) => void send(text, [])}
               />
             ),
           },

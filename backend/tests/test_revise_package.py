@@ -276,7 +276,7 @@ def test_a_revision_at_fifteen_versions_is_refused_before_any_confirmation(make_
     refused = preview(SHELVES, make_ctx())
     assert isinstance(refused, str)
     assert "hall-bench has 15 versions" in refused
-    assert "Pieces page" in refused and "Project panel" in refused
+    assert "Pieces page" in refused and "Piece panel" in refused
     assert run(SHELVES, replace(make_ctx(), approved=True)) == refused
     rebuilt = rebuild_preview({"package_id": "hall-bench"}, make_ctx())
     assert rebuilt == refused

@@ -81,7 +81,7 @@ def test_the_designer_relays_the_version_limit_and_never_deletes() -> None:
     text = load_instructions()["designer"].text
     line = next(line for line in text.splitlines() if "15 versions" in line)
     assert "pass the refusal on as it is" in line
-    assert "Pieces page or in the Project panel" in line
+    assert "Pieces page or in the Piece panel" in line
     assert "never offer to delete a version yourself" in line
 
 
@@ -277,7 +277,7 @@ def test_no_specialist_promises_to_report_back_after_the_turn() -> None:
     for name in ("designer", "builder", "lighting", "reviewer"):
         assert NO_LATER_PROMISE in loaded[name].text, name
     for name in ("designer", "builder"):
-        assert "status shows in the conversation's Project panel" in loaded[name].text, name
+        assert "status shows in the conversation's Piece panel" in loaded[name].text, name
     for name, instruction in loaded.items():
         lowered = instruction.text.lower()
         assert "i'll tell you" not in lowered and "let you know" not in lowered, name

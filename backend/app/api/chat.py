@@ -200,6 +200,8 @@ class RoomOut(BaseModel):
     surfaces: str | None
     versions: list[CompositionVersionOut] = []
     approved_version: int | None = None
+    # The approved version's picture, even when that version is not among the listed newest ones.
+    approved_picture: str | None = None
 
 
 class ProgressOut(BaseModel):
@@ -527,6 +529,129 @@ def delete_thread(thread_id: UUID, request: Request) -> Response:
             session.commit()
     shutil.rmtree(request.app.state.settings.upload_root / str(thread_id), ignore_errors=True)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class BriefIn(BaseModel):
+    """The brief's five settings as the owner edits them (split-project-panel)."""
+
+    room: str | None = Field(default=None, max_length=200)
+    purpose: str = Field(max_length=2000)
+    max_piece_height_mm: float | None = None
+    style: str | None = Field(default=None, max_length=500)
+    budget_eur: float | None = None
+
+    @field_validator("room", "style", mode="before")
+    @classmethod
+    def _blank_is_none(cls, value: Any) -> Any:
+        return value.strip() or None if isinstance(value, str) else value
+
+    @field_validator("purpose")
+    @classmethod
+    def _purpose(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("the purpose is required")
+        return trimmed
+
+    @field_validator("max_piece_height_mm")
+    @classmethod
+    def _height(cls, value: float | None) -> float | None:
+        if value is not None and value <= 0:
+            raise ValueError("the highest the piece may be must be above 0 mm")
+        return value
+
+    @field_validator("budget_eur")
+    @classmethod
+    def _budget(cls, value: float | None) -> float | None:
+        if value is not None and value < 0:
+            raise ValueError("the budget cannot be negative")
+        return value
+
+
+class BriefOut(BaseModel):
+    confirmed: bool
+    room: str | None = None
+    purpose: str | None = None
+    max_piece_height_mm: float | None = None
+    max_piece_height_from_version: int | None = None
+    style: str | None = None
+    budget_eur: float | None = None
+    rooms: list[str] = Field(default_factory=list)
+
+
+def _brief_out(request: Request, thread: Any, brief: dict[str, Any]) -> BriefOut:
+    with Session(request.app.state.engine) as session:
+        if not brief and thread.package_id:
+            piece = session.get(house_file.Piece, thread.package_id)
+            brief = dict(piece.brief or {}) if piece else {}
+        names = [room.name for room in house_file.rooms(session)]
+    return BriefOut(
+        confirmed=bool(brief),
+        rooms=names,
+        **{key: brief.get(key) for key in list(BriefOut.model_fields)[1:-1]},
+    )
+
+
+@router.get("/threads/{thread_id}/brief")
+def read_brief(
+    thread_id: UUID, request: Request, login: Annotated[AuthSessionRecord, Depends(require_owner)]
+) -> BriefOut:
+    """The conversation's brief settings. No model, prompt, tokens or cost."""
+    thread = _load_thread(request, thread_id)
+    try:
+        brief = chat.read_brief(_graph(request), thread_id=thread_id, owner_id=login.user_id)
+    except psycopg.OperationalError as error:
+        logger.error("chat memory unavailable", extra={"context": {"error_type": type(error).__name__}})
+        raise _refusal(status.HTTP_503_SERVICE_UNAVAILABLE, "unavailable", MEMORY_DOWN) from None
+    return _brief_out(request, thread, brief)
+
+
+@router.put("/threads/{thread_id}/brief")
+def save_brief(
+    thread_id: UUID, body: BriefIn, request: Request, login: Annotated[AuthSessionRecord, Depends(require_owner)]
+) -> BriefOut:
+    """Save the owner's edited brief to the conversation and its bound piece. The owner's
+    own edit is the confirmation; nothing is saved while a turn runs or when the room is unknown."""
+    thread = _load_thread(request, thread_id)
+    graph = _graph(request)
+    with _running_lock:
+        if thread_id in _running:
+            raise _refusal(status.HTTP_409_CONFLICT, "turn_running", "a reply is still being written; save the brief once it has ended")
+        try:
+            before = chat.read_brief(graph, thread_id=thread_id, owner_id=login.user_id)
+            with Session(request.app.state.engine) as session:
+                room = house_file.room_by_name(session, body.room) if body.room else None
+                if body.room and room is None:
+                    raise _refusal(422, "unknown_room", f"the room {body.room!r} is not in the house file")
+                piece = session.get(house_file.Piece, thread.package_id) if thread.package_id else None
+                if not before and piece is not None:
+                    before = dict(piece.brief or {})
+                brief: dict[str, Any] = {
+                    "room": body.room,
+                    "purpose": body.purpose,
+                    "max_piece_height_mm": body.max_piece_height_mm,
+                    "style": body.style,
+                    "budget_eur": body.budget_eur,
+                }
+                # The "raised by version" note stays only while the height is the one it describes.
+                if before.get("max_piece_height_mm") == body.max_piece_height_mm:
+                    brief["max_piece_height_from_version"] = before.get("max_piece_height_from_version")
+                brief = {key: value for key, value in brief.items() if value is not None}
+                if piece is not None:
+                    piece.brief = brief
+                if room is not None:
+                    house_file.set_thread_room(session, thread_id, room)
+                if read_memory_settings(request.app.state.engine).save_preferences:
+                    if body.style:
+                        house_file.set_preference(session, "style", body.style)
+                    if body.budget_eur is not None:
+                        house_file.set_preference(session, "budget_eur", f"{body.budget_eur:g}")
+                chat.write_brief(graph, thread_id=thread_id, owner_id=login.user_id, brief=brief)
+                session.commit()
+        except psycopg.OperationalError as error:
+            logger.error("chat memory unavailable", extra={"context": {"error_type": type(error).__name__}})
+            raise _refusal(status.HTTP_503_SERVICE_UNAVAILABLE, "unavailable", MEMORY_DOWN) from None
+    return _brief_out(request, thread, brief)
 
 
 @router.get("/threads/{thread_id}/progress")
