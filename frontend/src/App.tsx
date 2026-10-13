@@ -27,7 +27,6 @@ import Usage from "./routes/admin/Usage";
 import Workflow from "./routes/admin/Workflow";
 
 const links = [
-  ["/conversations", "Conversations"],
   ["/pieces", "Pieces"],
   ["/rooms", "Rooms"],
   ["/price-list", "Price list"],
@@ -137,46 +136,46 @@ export default function App() {
         <Route path="/help" element={signedIn ? <Help /> : <Navigate to="/login" replace />} />
         <Route
           path="/admin/models"
-          element={signedIn && dev ? <Models /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
+          element={signedIn && dev ? <Models /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/plugins"
-          element={signedIn && dev ? <Plugins /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
+          element={signedIn && dev ? <Plugins /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/usage"
-          element={signedIn && dev ? <Usage /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
+          element={signedIn && dev ? <Usage /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/feedback"
-          element={signedIn && dev ? <Feedback /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
+          element={signedIn && dev ? <Feedback /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/offload"
-          element={signedIn && dev ? <Offload /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
+          element={signedIn && dev ? <Offload /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/conversations"
-          element={signedIn && dev ? <ConversationCalls /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
+          element={signedIn && dev ? <ConversationCalls /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/workflow"
-          element={signedIn && dev ? <Workflow /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
+          element={signedIn && dev ? <Workflow /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/guidelines"
-          element={signedIn && dev ? <AdminGuidelines /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
+          element={signedIn && dev ? <AdminGuidelines /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/rules"
-          element={signedIn && dev ? <Rules /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
+          element={signedIn && dev ? <Rules /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
-        <Route path="/admin/knowledge" element={signedIn && dev ? <Knowledge /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />} />
+        <Route path="/admin/knowledge" element={signedIn && dev ? <Knowledge /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />} />
         <Route
           path="/admin/memory"
-          element={signedIn && dev ? <Memory /> : <Navigate to={signedIn ? "/conversations" : "/login"} replace />}
+          element={signedIn && dev ? <Memory /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
-        <Route path="*" element={<Navigate to={signedIn ? "/conversations" : "/login"} replace />} />
+        <Route path="*" element={<Navigate to={signedIn ? "/pieces" : "/login"} replace />} />
       </Routes>
     </>
   );

@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.blender.custom_build.derive import derive
+from app.blender.custom_build.derive import derive, module_bounds
 from app.blender.schemas import CustomBuildSpec, PackageChanges
 from app.blender.spec_contract import SpecValidationError
 
@@ -29,6 +29,7 @@ _CLEARED_BY = {
     "divider_positions_mm": [],
     "divider_spans": [],
     "shelf_kinds": [],
+    "shelf_depths_mm": [],
     "side_folds": [],
 }
 # Spacing and positions exclude each other: setting one drops the other.
@@ -156,9 +157,14 @@ def _set_interior(module: dict[str, Any], field: str, value: Any, change: dict[s
     if cleared:
         lines.append(f"{module_id}: {field} {was} → not set")
         module.pop(field, None)
+        if field == "shelf_depths_mm" and module.get("shelf_depth_align") and "shelf_depth_align" not in change:
+            lines.append(f"{module_id}: shelf_depth_align {module.pop('shelf_depth_align')} → not set")
         return
     lines.append(f"{module_id}: {field} {was} → {value}")
     module[field] = value
+    if field == "shelf_depths_mm" and "shelf_depth_align" not in change and not module.get("shelf_depth_align"):
+        module["shelf_depth_align"] = "back"
+        lines.append(f"{module_id}: shelf_depth_align not set → back")
     other = _REPLACES.get(field)
     if other is not None and module.get(other) and other not in change:
         lines.append(f"{module_id}: {other} {module.pop(other)} → not set (replaced by {field})")
@@ -191,6 +197,57 @@ def _apply_shelf_change(shelf: dict[str, Any], change: dict[str, Any], lines: li
             continue
         lines.append(f"{shelf['id']}: {field} {before} → {value}")
         shelf[field] = value
+
+
+FIT_PREFIX = "fit: "
+
+
+def _module_front_reach(spec: dict[str, Any], module: dict[str, Any]) -> int:
+    """How far the module's solid, shelves included, reaches in front of the build's y = 0 plane."""
+    materials = spec.get("materials") or {}
+    carcass = materials.get(module.get("carcass"))
+    if carcass is None:
+        return 0  # an undefined slot is refused by the schema, not here
+    back = materials.get(module.get("back")) if module.get("back") is not None else None
+    try:
+        _x, y0, _z, _w, _d, _h = module_bounds(module, carcass["thickness_mm"], back["thickness_mm"] if back else 0)
+    except (ValueError, KeyError, TypeError):
+        return 0  # an unreadable module is refused by the schema, not here
+    return max(0, -(module.get("y", 0) + y0))
+
+
+def fit_protruding_shelves(spec: dict[str, Any], lines: list[str]) -> None:
+    """Move the build back by the largest overhang past y = 0 and grow the envelope depth by the same.
+
+    Every module and wall shelf rises by the overhang, so the backs stay flush; nothing changes
+    when no board reaches in front of the plane (auto-fit-protruding-shelves).
+    """
+    reaches = {module["id"]: _module_front_reach(spec, module) for module in spec.get("modules") or []}
+    shift = max(reaches.values(), default=0)
+    if shift <= 0:
+        return
+    causes = ", ".join(f"{slug} ({reach} mm)" for slug, reach in reaches.items() if reach == shift)
+    lines.append(f"{FIT_PREFIX}{causes} reaches {shift} mm in front of the build; the build moves back {shift} mm")
+    for module in spec.get("modules") or []:
+        before = module.get("y", 0)
+        module["y"] = before + shift
+        lines.append(f"{FIT_PREFIX}{module['id']}: y {before} → {before + shift} mm")
+    for shelf in spec.get("wall_shelves") or []:
+        before = shelf.get("y", 0)
+        shelf["y"] = before + shift
+        lines.append(f"{FIT_PREFIX}{shelf['id']}: wall shelf y {before} → {before + shift} mm")
+    envelope = spec.get("envelope")
+    if envelope is not None:
+        lines.append(f"{FIT_PREFIX}envelope depth {envelope['depth']} → {envelope['depth'] + shift} mm")
+        envelope["depth"] += shift
+
+
+def fit_decision(lines: list[str]) -> tuple[str, str] | None:
+    """The decisions-note row (topic, decision) for the fit lines among `lines`, or `None` without a fit."""
+    fitted = [line[len(FIT_PREFIX) :] for line in lines if line.startswith(FIT_PREFIX)]
+    if not fitted:
+        return None
+    return "Protruding shelf fit", "; ".join(fitted)
 
 
 def revise_spec(
@@ -279,6 +336,7 @@ def revise_spec(
     if overrides or "part_overrides" in spec:
         spec["part_overrides"] = overrides
 
+    fit_protruding_shelves(spec, lines)
     return spec, lines
 
 

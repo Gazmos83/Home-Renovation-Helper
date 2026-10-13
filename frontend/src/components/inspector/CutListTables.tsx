@@ -1,15 +1,17 @@
 import { useState } from "react";
-import type { DrillEntry, DrillingList, PieceSpec, SpecPart } from "@/lib/api";
+import type { DrillEntry, DrillingList, PieceSpec, SpecHardware, SpecPart } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 /**
  * A built version's cut list and hardware, row for row from its `spec.json`
  * (piece-inspector) — the same document its `cutlist.csv` is written from.
  * Ported from the predecessor's `CutListPanel`, with its filter by module and
  * without the uploaded-list label. A module is named as the version's own
- * `module_names` names it.
+ * `module_names` names it. When a baseline version is given, new and changed
+ * rows are highlighted in red (revision-confirm-highlight-cuts).
  */
 
 /** The modules the parts name, in the order they first name them. */
@@ -19,6 +21,39 @@ function modulesOf(parts: SpecPart[]): string[] {
     if (part.module && !seen.includes(part.module)) seen.push(part.module);
   }
   return seen;
+}
+
+/** Part and hardware ids that are new or changed against a baseline `spec.json`. */
+export function changedCutIds(
+  current: Pick<PieceSpec, "parts" | "hardware">,
+  baseline: Pick<PieceSpec, "parts" | "hardware"> | null | undefined,
+): { parts: Set<string>; hardware: Set<string> } {
+  const parts = new Set<string>();
+  const hardware = new Set<string>();
+  if (!baseline) return { parts, hardware };
+  const wasParts = new Map((baseline.parts ?? []).map((part) => [part.id, part]));
+  for (const part of current.parts ?? []) {
+    const before = wasParts.get(part.id);
+    if (
+      before === undefined ||
+      before.l !== part.l ||
+      before.w !== part.w ||
+      before.t !== part.t ||
+      before.qty !== part.qty
+    ) {
+      parts.add(part.id);
+    }
+  }
+  const wasHardware = new Map((baseline.hardware ?? []).map((item) => [item.id, item]));
+  for (const item of current.hardware ?? []) {
+    const before = wasHardware.get(item.id);
+    if (before === undefined || before.qty !== item.qty) hardware.add(item.id);
+  }
+  return { parts, hardware };
+}
+
+function rowClass(changed: boolean): string | undefined {
+  return changed ? "text-destructive" : undefined;
 }
 
 function count(n: number, noun: string): string {
@@ -76,13 +111,21 @@ function DrillingTable({ drilling }: { drilling: DrillingList | undefined }) {
   );
 }
 
-export function CutListTables({ spec }: { spec: PieceSpec }) {
+export function CutListTables({
+  spec,
+  baseline,
+}: {
+  spec: PieceSpec;
+  /** The revised-from version's `spec.json`; when absent every row stays normal. */
+  baseline?: PieceSpec | null;
+}) {
   const allParts = spec.parts ?? [];
   const hardware = spec.hardware ?? [];
   const modules = modulesOf(allParts);
   const [module, setModule] = useState<string | null>(null);
   const parts = module === null ? allParts : allParts.filter((part) => part.module === module);
   const pieces = parts.reduce((total, part) => total + part.qty, 0);
+  const changed = changedCutIds(spec, baseline);
   return (
     <div className="grid gap-6">
       {spec.drilling && !spec.drilling.complete && (
@@ -137,21 +180,30 @@ export function CutListTables({ spec }: { spec: PieceSpec }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {parts.map((part) => (
-                    <TableRow key={part.id}>
-                      <TableCell className="font-mono text-xs">{part.id}</TableCell>
-                      <TableCell>{part.name}</TableCell>
-                      <TableCell className="tabular-nums">{part.qty}</TableCell>
-                      <TableCell className="tabular-nums">{part.l}</TableCell>
-                      <TableCell className="tabular-nums">{part.w}</TableCell>
-                      <TableCell className="tabular-nums">{part.t}</TableCell>
-                      <TableCell>{part.material}</TableCell>
-                      <TableCell>{part.grain}</TableCell>
-                      <TableCell>{part.banding}</TableCell>
-                      <TableCell title={part.module}>{moduleLabel(spec, part.module)}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{part.notes}</TableCell>
-                    </TableRow>
-                  ))}
+                  {parts.map((part) => {
+                    const highlight = changed.parts.has(part.id);
+                    return (
+                      <TableRow
+                        key={part.id}
+                        className={rowClass(highlight)}
+                        data-changed={highlight || undefined}
+                      >
+                        <TableCell className="font-mono text-xs">{part.id}</TableCell>
+                        <TableCell>{part.name}</TableCell>
+                        <TableCell className="tabular-nums">{part.qty}</TableCell>
+                        <TableCell className="tabular-nums">{part.l}</TableCell>
+                        <TableCell className="tabular-nums">{part.w}</TableCell>
+                        <TableCell className="tabular-nums">{part.t}</TableCell>
+                        <TableCell>{part.material}</TableCell>
+                        <TableCell>{part.grain}</TableCell>
+                        <TableCell>{part.banding}</TableCell>
+                        <TableCell title={part.module}>{moduleLabel(spec, part.module)}</TableCell>
+                        <TableCell className={cn("text-xs", highlight ? undefined : "text-muted-foreground")}>
+                          {part.notes}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -174,14 +226,23 @@ export function CutListTables({ spec }: { spec: PieceSpec }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {hardware.map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell className="font-mono text-xs">{item.id}</TableCell>
-                    <TableCell>{item.item}</TableCell>
-                    <TableCell className="tabular-nums">{item.qty === "" ? "no quantity" : item.qty}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{item.notes}</TableCell>
-                  </TableRow>
-                ))}
+                {hardware.map((item: SpecHardware) => {
+                  const highlight = changed.hardware.has(item.id);
+                  return (
+                    <TableRow
+                      key={item.id}
+                      className={rowClass(highlight)}
+                      data-changed={highlight || undefined}
+                    >
+                      <TableCell className="font-mono text-xs">{item.id}</TableCell>
+                      <TableCell>{item.item}</TableCell>
+                      <TableCell className="tabular-nums">{item.qty === "" ? "no quantity" : item.qty}</TableCell>
+                      <TableCell className={cn("text-xs", highlight ? undefined : "text-muted-foreground")}>
+                        {item.notes}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>

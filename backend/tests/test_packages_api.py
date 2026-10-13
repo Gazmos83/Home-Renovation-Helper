@@ -143,9 +143,20 @@ def test_listing_names_each_package_with_versions_newest_first(client: TestClien
     client.put("/packages/a-bench/spec", json={"spec": desk()})
     create(client, "b-desk")
     assert client.get("/packages").json() == [
-        {"package_id": "a-bench", "versions": [2, 1], "room": None},
-        {"package_id": "b-desk", "versions": [1], "room": None},
+        {"package_id": "a-bench", "versions": [2, 1], "room": None, "thread_id": None},
+        {"package_id": "b-desk", "versions": [1], "room": None, "thread_id": None},
     ]
+
+
+def test_listing_carries_each_piece_conversation_id(client: TestClient) -> None:
+    create(client, "hall-bench")
+    create(client, "shoe-rack")
+    started = client.post("/chat/threads", json={"package_id": "hall-bench"})
+    assert started.status_code == 201, started.text
+    thread_id = started.json()["thread_id"]
+    listed = {row["package_id"]: row for row in client.get("/packages").json()}
+    assert listed["hall-bench"]["thread_id"] == thread_id
+    assert listed["shoe-rack"]["thread_id"] is None
 
 
 def test_reading_a_package_lists_versions_newest_first(client: TestClient) -> None:
@@ -166,6 +177,26 @@ def test_reading_a_version_reports_files_and_renders(client: TestClient, render_
         "still": False, "turntable_frames": 12, "room_still": False, "room_turntable_frames": 0,
         "detail_still": False, "detail_turntable_frames": 0,
     }
+    assert body["revised_from"] is None
+
+
+def test_revised_from_is_read_from_the_house_file(client: TestClient, record) -> None:
+    create(client)
+    wider = desk()
+    wider["modules"][0]["width"] = 1100
+    assert client.put("/packages/hall-bench/spec", json={"spec": wider}).status_code == 202
+    from sqlalchemy.orm import Session
+
+    from app.agent import house_file
+
+    record(versions=(1,))
+    with Session(client.app.state.engine) as session:
+        house_file.record_version(session, "hall-bench", 2, revised_from=1, changes=["cabinet: width 1000 → 1100"])
+        session.commit()
+    assert client.get("/packages/hall-bench/versions/1").json()["revised_from"] is None
+    assert client.get("/packages/hall-bench/versions/2").json()["revised_from"] == 1
+    listed = client.get("/packages/hall-bench").json()["versions"]
+    assert [(v["version"], v["revised_from"]) for v in listed] == [(2, 1), (1, None)]
 
 
 @pytest.mark.parametrize("path", ["/packages/nope", "/packages/hall-bench/versions/9", "/packages/Bad..Id"])

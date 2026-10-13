@@ -41,7 +41,19 @@ _HEIGHT_QUESTION = re.compile(
     re.IGNORECASE,
 )
 HEIGHT_REPLY = "The height is not verified. What should the height be?"
+# Putting a piece somewhere in the room, which the routing model must not turn into an
+# engineering question on its own (short-engineering-reply).
+_PLACEMENT_VERB = re.compile(
+    r"\b(put|place|move|position|set|stell\w*|platzier\w*|schieb\w*)\b", re.IGNORECASE
+)
+_PLACEMENT_WHERE = re.compile(
+    r"\b(walls?|doors?|windows?|corners?|wand|wände|waende|tür|tuer|fenster|ecke)\b|"
+    r"\b\d+(?:[.,]\d+)?\s*(?:cm|mm|m)\b",
+    re.IGNORECASE,
+)
 INSUFFICIENT = "NOT VERIFIED. Numerical engineering calculation is not implemented. No capacity or conformity is established."
+# The only status line the owner sees on an engineering reply (short-engineering-reply).
+SHORT_STATUS = "Not verified: no engineering check is available, so load capacity, fixings and safety are unconfirmed."
 
 
 def engineering_intent(text: str) -> bool:
@@ -53,6 +65,15 @@ def engineering_intent(text: str) -> bool:
 def height_question(text: str) -> bool:
     """Whether the whole message only asks what the expected height is, with no engineering term."""
     return bool(_HEIGHT_QUESTION.match(text.strip())) and not engineering_intent(text)
+
+
+def placement_request(text: str) -> bool:
+    """Whether the message places a piece in the room, with no engineering term."""
+    return (
+        bool(_PLACEMENT_VERB.search(text))
+        and bool(_PLACEMENT_WHERE.search(text))
+        and not engineering_intent(text)
+    )
 
 
 def revision_intent(text: str) -> bool:
@@ -411,22 +432,8 @@ def render_answer(
         if not set(answer.property_ids).issubset(properties):
             raise ValueError("unsupported property")
     except ValidationError, ValueError:
-        return (
-            INSUFFICIENT
-            + " Invalid or unsupported engineering answer was rejected.\nMissing inputs: "
-            + "; ".join(missing_inputs(owner_text))
-            + metadata_links(session, metadata_ids or [])
-        )
-    lines = [
-        INSUFFICIENT,
-        "Preliminary design advice; a visual/design approval does not authorise installation.",
-    ]
-    if not enabled:
-        lines.append("Engineering lookup is switched off or unavailable.")
-    elif not packets:
-        lines.append(
-            "No applicable eligible supporting evidence was selected. Metadata links do not establish verification."
-        )
+        return SHORT_STATUS
+    lines = [SHORT_STATUS]
     if answer.owner_assumptions:
         lines.append(
             "Owner-supplied assumptions (unverified): "
@@ -467,7 +474,6 @@ def render_answer(
         lines.append(
             f"{prop['kind']}: {value} {unit}; {prop['verification_status']}; basis {prop['value_basis']}; {prop['page_section']}; conditions {json.dumps(prop['conditions'], ensure_ascii=False)}; original {prop['original_value'] if prop['original_value'] is not None else [prop['original_minimum'], prop['original_maximum']]} {prop['original_unit']}."
         )
-    lines.append("Missing inputs/review: " + "; ".join(missing_inputs(owner_text)))
     # A model selecting one property cannot hide a conflict in the eligible
     # evidence returned this turn. Recheck rights for every competing record.
     current_packets = [
@@ -480,9 +486,6 @@ def render_answer(
             "Conflict requiring resolution (code-detected; all values and conditions retained):\n"
             + json.dumps(conflict, ensure_ascii=False, indent=2)
         )
-    lines.append(
-        "Legal/standard applicability requires a project-specific check; indexed standards are not proof of conformity."
-    )
     if answer.report_ids:
         from app.engineering.reports import report_copy
 

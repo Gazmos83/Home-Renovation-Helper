@@ -158,7 +158,7 @@ Backend in `backend/`: `uv sync`, `uv run alembic upgrade head`, `uv run pytest 
 
 ### 9a. House file
 
-Long-term memory: every room's measured polygon, heights and openings; style preferences; pieces designed and their versions; reviews of a version (open items reach the Designer); render feedback (thumbs and comment with prompt, model, tier); generator-extension requests. The house file holds everything, but a conversation sees only its slice of it: rooms are confirmed per conversation (never assumed), and the prompt carries that room and the conversation's own builds (the active one in full, the others as a line each), so nothing from other conversations reaches it. Foreman, Intake and Designer read that slice first. Owned by the single account.
+Long-term memory: every room's measured polygon, heights and openings; style preferences; pieces designed and their versions; reviews of a version (open items reach the Designer); render feedback (thumbs and comment with prompt, model, tier); generator-extension requests. A conversation is about at most one piece (a room may hold many pieces). The house file holds everything, but a conversation sees only its slice of it: rooms are confirmed per conversation (never assumed), and the prompt carries that room and the single bound piece in full, so nothing from other conversations reaches it. Foreman, Intake and Designer read that slice first. Owned by the single account.
 
 ## 10. Open questions — ask, do not assume
 

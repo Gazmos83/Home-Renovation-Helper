@@ -1117,7 +1117,39 @@ def create_thread(session: Session, title: str = "", package_id: str | None = No
     thread = Thread(title=title.strip()[:200], package_id=package_id, created_at=now, last_turn_at=now)
     session.add(thread)
     session.flush()
+    # One piece per conversation: the start bind also seeds the summary row.
+    if package_id is not None:
+        add_build(session, thread.id, package_id)
     return thread
+
+
+def thread_id_for_piece(session: Session, package_id: str) -> UUID | None:
+    """The conversation bound to a piece (`Thread.package_id`), newest activity first when
+    legacy duplicates exist; `None` when none is bound."""
+    package_id = storage.validate_package_id(package_id)
+    return session.scalars(
+        select(Thread.id)
+        .where(Thread.package_id == package_id)
+        .order_by(Thread.last_turn_at.desc(), Thread.created_at.desc())
+        .limit(1)
+    ).first()
+
+
+def thread_ids_for_pieces(session: Session, package_ids: Sequence[str]) -> dict[str, UUID]:
+    """Each piece's bound conversation id, when one exists. Newest activity wins on duplicates."""
+    if not package_ids:
+        return {}
+    wanted = {storage.validate_package_id(pid) for pid in package_ids}
+    rows = session.execute(
+        select(Thread.package_id, Thread.id)
+        .where(Thread.package_id.in_(wanted))
+        .order_by(Thread.last_turn_at.desc(), Thread.created_at.desc())
+    ).all()
+    found: dict[str, UUID] = {}
+    for package_id, thread_id in rows:
+        if package_id is not None and package_id not in found:
+            found[package_id] = thread_id
+    return found
 
 
 def delete_thread(session: Session, thread_id: UUID) -> bool:
@@ -1309,12 +1341,17 @@ def builds_of(session: Session, thread_id: UUID) -> list[ThreadPiece]:
 
 
 def set_active_build(session: Session, thread_id: UUID, package_id: str) -> None:
-    """Make a piece the conversation's active build, adding it to the builds."""
-    add_build(session, thread_id, package_id)
+    """Bind an unbound conversation to a piece. A conversation already bound to a
+    different piece is left unchanged (one piece per conversation)."""
+    package_id = storage.validate_package_id(package_id)
     thread = session.get(Thread, thread_id)
-    if thread is not None:
-        thread.package_id = storage.validate_package_id(package_id)
-        session.flush()
+    if thread is None:
+        return
+    if thread.package_id is not None and thread.package_id != package_id:
+        return
+    add_build(session, thread_id, package_id)
+    thread.package_id = package_id
+    session.flush()
 
 
 def piece_room_name(session: Session, package_id: str) -> str | None:

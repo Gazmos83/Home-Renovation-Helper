@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { expect, test } from "vitest";
 import { stubFetch } from "../test/fetchStub";
 import Pieces from "./Pieces";
@@ -10,8 +10,11 @@ const turntable = {
   render: "turntable", label: "Turntable", tier: "draft", can_rate: true, rating: null, comment: null,
   preview: "/packages/bench/versions/2/files/frames/0", viewer: "/packages/bench/versions/2/files/viewer.html",
 };
-const legacy = { ...turntable, render: "still", label: "Still", can_rate: false, viewer: null,
-  preview: "/packages/bench/versions/2/files/still.png" };
+const still = {
+  render: "still", label: "Still", tier: "draft", can_rate: true, rating: null, comment: null,
+  preview: "/packages/bench/versions/2/files/still.png", viewer: null,
+};
+const legacy = { ...still, can_rate: false };
 
 function summary(name: string) {
   return {
@@ -22,7 +25,16 @@ function summary(name: string) {
 
 function show() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><MemoryRouter><Pieces /></MemoryRouter></QueryClientProvider>);
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={["/pieces"]}>
+        <Routes>
+          <Route path="/pieces" element={<Pieces />} />
+          <Route path="/conversations/:threadId" element={<p>the conversation</p>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
 
 function info(version: number, approvedVersion: number | null, status = "succeeded") {
@@ -40,7 +52,7 @@ function serve(
   return stubFetch((call) => {
     const mine = overrides(call);
     if (mine) return mine;
-    if (call === "GET /packages") return { body: [{ package_id: "bench", versions: [2, 1] }] };
+    if (call === "GET /packages") return { body: [{ package_id: "bench", versions: [2, 1], thread_id: null }] };
     if (call === "GET /packages/bench/versions/2/renders") return { body: renders };
     const read = /^GET \/packages\/bench\/versions\/(\d)$/.exec(call);
     if (read) return { body: info(Number(read[1]), state.approved, state.status) };
@@ -52,61 +64,70 @@ function serve(
   });
 }
 
-test("a render shows its preview and tier, and no viewer link", async () => {
+test("a still shows its preview and tier, and turntable cards are omitted", async () => {
+  serve([turntable, still]);
+  show();
+  expect(await screen.findByRole("img", { name: "Still of bench version 2" })).toHaveAttribute("src", still.preview);
+  expect(screen.getByText("draft")).toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: /Turntable/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /viewer/ })).not.toBeInTheDocument();
+});
+
+test("a version with only a turntable shows no render card", async () => {
   serve([turntable]);
   show();
-  expect(await screen.findByRole("img", { name: "Turntable of bench version 2" })).toHaveAttribute("src", turntable.preview);
-  expect(screen.getByText("draft")).toBeInTheDocument();
-  expect(screen.queryByRole("link", { name: /viewer/ })).not.toBeInTheDocument();
+  expect(await screen.findByRole("link", { name: "Inspect version 2" })).toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: /Turntable/ })).not.toBeInTheDocument();
+  expect(screen.queryByText("No renders of this version yet.")).not.toBeInTheDocument();
 });
 
 test("rating down with a comment is sent, shown and survives a reload of the list", async () => {
   const user = userEvent.setup();
   let stored: unknown = null;
-  const calls = serve([turntable], (call) => {
-    if (call === "PUT /packages/bench/versions/2/renders/turntable/feedback") {
-      stored = { ...turntable, rating: "down", comment: "too dark" };
+  const calls = serve([still], (call) => {
+    if (call === "PUT /packages/bench/versions/2/renders/still/feedback") {
+      stored = { ...still, rating: "down", comment: "too dark" };
       return { body: stored };
     }
     if (call === "GET /packages/bench/versions/2/renders" && stored) return { body: [stored] };
   });
   show();
-  await user.type(await screen.findByLabelText("Comment on Turntable"), "too dark");
-  await user.click(screen.getByRole("button", { name: "Thumbs down Turntable" }));
-  expect(await screen.findByRole("button", { name: "Thumbs down Turntable", pressed: true })).toBeInTheDocument();
+  await user.type(await screen.findByLabelText("Comment on Still"), "too dark");
+  await user.click(screen.getByRole("button", { name: "Thumbs down Still" }));
+  expect(await screen.findByRole("button", { name: "Thumbs down Still", pressed: true })).toBeInTheDocument();
   expect(calls.find(([m]) => m === "PUT")![2]).toEqual({ rating: "down", comment: "too dark" });
-  expect(screen.getByLabelText("Comment on Turntable")).toHaveValue("too dark");
+  expect(screen.getByLabelText("Comment on Still")).toHaveValue("too dark");
 });
 
 test("clearing a rating calls the API and unpresses the thumbs", async () => {
   const user = userEvent.setup();
   let cleared = false;
-  const rated = { ...turntable, rating: "up", comment: "nice" };
+  const rated = { ...still, rating: "up", comment: "nice" };
   const calls = serve([rated], (call) => {
-    if (call === "DELETE /packages/bench/versions/2/renders/turntable/feedback") {
+    if (call === "DELETE /packages/bench/versions/2/renders/still/feedback") {
       cleared = true;
-      return { body: turntable };
+      return { body: still };
     }
-    if (call === "GET /packages/bench/versions/2/renders" && cleared) return { body: [turntable] };
+    if (call === "GET /packages/bench/versions/2/renders" && cleared) return { body: [still] };
   });
   show();
-  await user.click(await screen.findByRole("button", { name: "Clear rating of Turntable" }));
-  expect(await screen.findByRole("button", { name: "Thumbs up Turntable", pressed: false })).toBeInTheDocument();
+  await user.click(await screen.findByRole("button", { name: "Clear rating of Still" }));
+  expect(await screen.findByRole("button", { name: "Thumbs up Still", pressed: false })).toBeInTheDocument();
   expect(calls.some(([m]) => m === "DELETE")).toBe(true);
 });
 
 test("a refusal is shown beside the render it names and the optimistic rating is rolled back", async () => {
   const user = userEvent.setup();
-  serve([turntable], (call) => {
+  serve([still], (call) => {
     if (call.startsWith("PUT")) {
       return { status: 409, body: { detail: { failure_class: "no_render", reason: "the render does not exist yet, so it cannot be rated" } } };
     }
   });
   show();
-  await user.click(await screen.findByRole("button", { name: "Thumbs up Turntable" }));
+  await user.click(await screen.findByRole("button", { name: "Thumbs up Still" }));
   const message = await screen.findByText("the render does not exist yet, so it cannot be rated");
-  expect(message.closest("section")).toHaveAccessibleName("Turntable");
-  expect(screen.getByRole("button", { name: "Thumbs up Turntable", pressed: false })).toBeInTheDocument();
+  expect(message.closest("section")).toHaveAccessibleName("Still");
+  expect(screen.getByRole("button", { name: "Thumbs up Still", pressed: false })).toBeInTheDocument();
 });
 
 test("a render made before ratings existed says so and offers no thumbs", async () => {
@@ -117,9 +138,9 @@ test("a render made before ratings existed says so and offers no thumbs", async 
 });
 
 test("no model, prompt, token or cost text appears on the page", async () => {
-  serve([turntable]);
+  serve([still]);
   show();
-  await screen.findByRole("img");
+  await screen.findByRole("img", { name: "Still of bench version 2" });
   const text = document.body.textContent ?? "";
   for (const word of [/deepseek/i, /prompt/i, /token/i, /\bmodel\b/i, /€|eur\b/i, /\bcost/i]) {
     expect(text).not.toMatch(word);
@@ -137,11 +158,11 @@ test("a packages refusal is shown instead of loading forever", async () => {
 
 test("another version loads its own renders", async () => {
   const user = userEvent.setup();
-  serve([turntable], (call) => {
+  serve([still], (call) => {
     if (call === "GET /packages/bench/versions/1/renders") return { body: [] };
   });
   show();
-  await screen.findByRole("img");
+  await screen.findByRole("img", { name: "Still of bench version 2" });
   await user.selectOptions(screen.getByRole("combobox", { name: "Versions of bench" }), "1");
   expect(await screen.findByText("No renders of this version yet.")).toBeInTheDocument();
 });
@@ -195,7 +216,7 @@ test("an approved version is unapproved and the page shows no approved version",
 test("a version that is not built offers no approval", async () => {
   serve([turntable], undefined, { approved: null, status: "running" });
   show();
-  await screen.findByRole("img");
+  expect(await screen.findByRole("option", { name: "Version 2 (building)" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Approve version/ })).toBeNull();
 });
 
@@ -263,7 +284,6 @@ test("a version still building offers the design but not the bundle", async () =
   serve([turntable], undefined, { approved: null, status: "running" });
   show();
   expect(await screen.findByRole("link", { name: "Download design (version 2)" })).toBeInTheDocument();
-  await screen.findByRole("img");
   expect(screen.queryByRole("link", { name: /Download bundle/ })).toBeNull();
   expect(screen.queryByRole("link", { name: /Inspect/ })).toBeNull();
 });
@@ -449,7 +469,89 @@ test("deleting the only version says the piece goes and drops the piece", async 
   await user.click(await screen.findByRole("button", { name: "Delete version 2" }));
   expect(screen.getByText(/the whole piece will be deleted/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Yes, delete version 2" }));
-  expect(await screen.findByText("No pieces yet. Describe one in a conversation.")).toBeInTheDocument();
+  expect(await screen.findByText("No pieces yet. Use Create A New Piece to start a conversation and describe one.")).toBeInTheDocument();
+});
+
+// --- piece conversations (piece-conversation-link) ---------------------------------------
+
+test("Create A New Piece sits above the cards, starts an unbound conversation and opens it", async () => {
+  const user = userEvent.setup();
+  const calls = serve([turntable], (call) => {
+    if (call === "GET /packages") {
+      return {
+        body: [
+          { package_id: "bench", versions: [2, 1], thread_id: null },
+          { package_id: "shelf", versions: [1], thread_id: null },
+        ],
+      };
+    }
+    if (call === "POST /chat/threads") {
+      return {
+        status: 201,
+        body: { thread_id: "t-new", title: "", package_id: null, created_at: "", last_turn_at: "" },
+      };
+    }
+  });
+  show();
+  const create = await screen.findByRole("button", { name: "Create A New Piece" });
+  const firstCard = await screen.findByRole("region", { name: "bench" });
+  expect(create.compareDocumentPosition(firstCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  await user.click(create);
+  expect(await screen.findByText("the conversation")).toBeInTheDocument();
+  expect(calls).toContainEqual(["POST", "/chat/threads", {}]);
+});
+
+test("Open conversation links to the piece's existing thread", async () => {
+  serve([turntable], (call) => {
+    if (call === "GET /packages") {
+      return { body: [{ package_id: "bench", versions: [2, 1], thread_id: "t-bench" }] };
+    }
+  });
+  show();
+  const card = await screen.findByRole("region", { name: "bench" });
+  const link = within(card).getByRole("link", { name: "Open conversation" });
+  expect(link).toHaveAttribute("href", "/conversations/t-bench");
+});
+
+test("Start conversation binds the piece and opens the new thread", async () => {
+  const user = userEvent.setup();
+  const calls = serve([turntable], (call) => {
+    if (call === "POST /chat/threads") {
+      return {
+        status: 201,
+        body: { thread_id: "t-bound", title: "", package_id: "bench", created_at: "", last_turn_at: "" },
+      };
+    }
+  });
+  show();
+  const card = await screen.findByRole("region", { name: "bench" });
+  await user.click(within(card).getByRole("button", { name: "Start conversation" }));
+  expect(await screen.findByText("the conversation")).toBeInTheDocument();
+  expect(calls).toContainEqual(["POST", "/chat/threads", { package_id: "bench" }]);
+});
+
+test("a refused start shows the reason next to the piece", async () => {
+  const user = userEvent.setup();
+  serve([turntable], (call) => {
+    if (call === "POST /chat/threads") {
+      return {
+        status: 409,
+        body: {
+          detail: {
+            failure_class: "piece_has_conversation",
+            reason: "hall-bench already has a conversation; open that one instead of starting another",
+          },
+        },
+      };
+    }
+  });
+  show();
+  const card = await screen.findByRole("region", { name: "bench" });
+  await user.click(within(card).getByRole("button", { name: "Start conversation" }));
+  expect(
+    await within(card).findByText("hall-bench already has a conversation; open that one instead of starting another"),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("the conversation")).not.toBeInTheDocument();
 });
 
 // --- the piece's picture (pieces-page-and-chat-scroll) -----------------------------------
@@ -483,7 +585,7 @@ test("the card shows the newest screenshot, keeps it when another version is cho
 test("a piece with no screenshot shows no picture", async () => {
   serve([turntable], undefined, { approved: null, status: "running" });
   show();
-  await screen.findByRole("img", { name: "Turntable of bench version 2" });
+  expect(await screen.findByRole("region", { name: "bench" })).toBeInTheDocument();
   expect(screen.queryByRole("img", { name: /^bench version/ })).toBeNull();
   expect(screen.queryByRole("figure")).toBeNull();
 });

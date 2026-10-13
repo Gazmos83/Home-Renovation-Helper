@@ -6,11 +6,19 @@ Defines how the homeowner talks to the Foreman: conversations as threads, one tu
 ## Requirements
 
 ### Requirement: Threads are started, listed and read
-The owner SHALL be able to start a conversation (optionally naming the piece it is about, and with or without a title), list conversations, read one conversation's messages and pending item, rename a conversation, and delete one. A thread id SHALL be issued by the service, never chosen by the client, and every thread route SHALL require the owner's session. A thread started without a title SHALL be given one after its first answered turn, written by the Foreman slot's model in three to six words from the owner's first message; the call SHALL be counted against that model's token budget like any other, and when it is refused or fails the title SHALL be the first words of the owner's message (at most 60 characters, cut at a word boundary). A title the owner has set SHALL never be replaced. Deleting a thread SHALL remove its index entry, its conversation memory, its tool settings, its uploads and its summary, and SHALL leave pieces, versions, rooms, preferences, reviews and recorded usage unchanged. A delete SHALL be refused, saying a reply is still being written, while a turn runs on the thread.
+The owner SHALL be able to start a conversation (optionally naming the piece it is about, and with or without a title), list conversations, read one conversation's messages and pending item, rename a conversation, and delete one. A thread id SHALL be issued by the service, never chosen by the client, and every thread route SHALL require the owner's session. Starting a conversation that names an existing piece SHALL bind that thread to the piece at once. Starting a conversation for a piece that already has a conversation SHALL be refused, naming that the piece already has a conversation. A thread started without a title SHALL be given one after its first answered turn, written by the Foreman slot's model in three to six words from the owner's first message; the call SHALL be counted against that model's token budget like any other, and when it is refused or fails the title SHALL be the first words of the owner's message (at most 60 characters, cut at a word boundary). A title the owner has set SHALL never be replaced. Deleting a thread SHALL remove its index entry, its conversation memory, its tool settings, its uploads and its summary, and SHALL leave pieces, versions, rooms, preferences, reviews and recorded usage unchanged. A delete SHALL be refused, saying a reply is still being written, while a turn runs on the thread.
 
 #### Scenario: Start and read
 - **WHEN** the owner starts a thread and sends one turn
 - **THEN** reading the thread returns the owner's message, the reply and nothing pending
+
+#### Scenario: Start bound to an existing piece
+- **WHEN** the owner starts a thread naming `hall-bench` and that piece has no conversation yet
+- **THEN** reading the thread shows it is about `hall-bench`
+
+#### Scenario: Piece already has a conversation
+- **WHEN** `hall-bench` already has a conversation and the owner starts a thread naming `hall-bench`
+- **THEN** the start is refused saying the piece already has a conversation, and no new thread is created
 
 #### Scenario: Not signed in
 - **WHEN** a thread route is called without the session cookie
@@ -18,7 +26,7 @@ The owner SHALL be able to start a conversation (optionally naming the piece it 
 
 #### Scenario: Title from the first message
 - **WHEN** the owner starts a thread with no title and sends "I want a listening wall for my records in the living room"
-- **THEN** after the reply the thread has a title of three to six words from the Foreman's model, and the thread list shows it
+- **THEN** after the reply the thread has a title of three to six words from the Foreman's model, and listing conversations shows it
 
 #### Scenario: Title call refused
 - **WHEN** the Foreman's model has reached its daily ceiling when the first turn of an untitled thread ends, and the owner's first message was "I want a listening wall for my records in the living room next to the window"
@@ -26,11 +34,11 @@ The owner SHALL be able to start a conversation (optionally naming the piece it 
 
 #### Scenario: Rename
 - **WHEN** the owner renames a thread to "Listening wall"
-- **THEN** the thread and the list show "Listening wall", and no later turn changes it
+- **THEN** the thread shows "Listening wall", and no later turn changes it
 
 #### Scenario: Delete a conversation with a piece
 - **WHEN** the owner deletes a thread that created `listening-wall` versions 1 to 4 and holds two uploads
-- **THEN** the thread is gone from the list, reading it answers 404, its uploads are no longer served, and `listening-wall` with all four versions is still in the house file and on the Pieces page
+- **THEN** reading it answers 404, its uploads are no longer served, and `listening-wall` with all four versions is still in the house file and on the Pieces page
 
 #### Scenario: Unknown thread
 - **WHEN** the owner deletes or renames a thread id that does not exist
@@ -149,27 +157,27 @@ The owner SHALL be able to read, on a thread, where the piece it is about stands
 - **THEN** the progress says a render is running; once it has finished or failed it says none is
 
 ### Requirement: A turn binds the thread to the piece it creates or revises
-When a confirmed action creates a piece or revises one, the thread SHALL be bound to that piece, replacing any earlier binding, so the thread's list entry and later turns name the piece last worked on; the piece SHALL join the conversation's builds if it is not one already and becomes the active build. When the owner's message names exactly one build of the conversation, or one house-file piece, other than the active build, that piece SHALL become the active build at the start of the turn, joining the builds if needed. A declined or failed action SHALL bind nothing. Switching the active build SHALL change no piece, version or room.
+When a confirmed action creates a piece or revises one on a thread with no bound piece, the thread SHALL be bound to that piece, so the thread's list entry and later turns name it. When the thread is already bound to a piece, a confirmed action that would create a different piece, or revise a different piece, SHALL be refused in plain words naming the bound piece, and SHALL change no binding. Naming another house-file piece in the owner's message SHALL NOT bind the thread to it or switch the piece. A declined or failed action SHALL bind nothing.
 
 #### Scenario: Created in the conversation
 - **WHEN** the owner confirms a new piece `hall-bench` on a thread started without a piece
-- **THEN** reading the thread shows it is about `hall-bench`, and the thread list shows the same
+- **THEN** reading the thread shows it is about `hall-bench`
 
 #### Scenario: Revised on an unbound thread
 - **WHEN** the owner confirms a revision of `hall-bench` on a thread with no piece
 - **THEN** the thread is about `hall-bench`
 
 #### Scenario: A second piece
-- **WHEN** a thread about `hall-bench` has a confirmed new piece `shelf`
-- **THEN** the thread is about `shelf` from then on, and its builds are `hall-bench` and `shelf`
+- **WHEN** a thread about `hall-bench` would confirm a new piece `shelf`
+- **THEN** the action is refused naming that the conversation is about `hall-bench`, the thread stays about `hall-bench`, and no second build is recorded
 
 #### Scenario: Declined
 - **WHEN** the owner answers `no` to a new piece
-- **THEN** the thread's piece and builds are unchanged
+- **THEN** the thread's piece is unchanged
 
 #### Scenario: Switch by name
-- **WHEN** a thread about `shelf` also holds `hall-bench` and the owner writes "back to the hall bench: make it 900 mm"
-- **THEN** the turn runs with `hall-bench` as the active build and the thread is about `hall-bench`
+- **WHEN** a thread about `hall-bench` has the owner write "back to the shoe rack: make it 900 mm" naming `shoe-rack`
+- **THEN** the thread stays about `hall-bench` and `shoe-rack` is not bound
 
 #### Scenario: Turntable published
 - **WHEN** the latest version's draft turntable has finished
@@ -398,3 +406,103 @@ The chat SHALL be able to read the wall lengths and ceiling heights of a named r
 #### Scenario: Other room refused
 - **WHEN** the bot is asked for the dimensions of a room outside the conversation's confirmed room
 - **THEN** the read is refused with a stated reason and nothing is returned
+
+### Requirement: Approving a version drops rows that only record an older version being saved
+When the owner approves a version of a piece, the system SHALL remove from the "decisions so far" note of every conversation bound to that piece each row that only records an older version of that piece (a lower number than the approved one) being saved, created or built. A row that states a decision or a reason, a row that names no older version, and a row about another piece SHALL be kept as written. The system SHALL NOT delete or change any version, folder, review, render or record, SHALL NOT call a model, and SHALL NOT save a note that would be left with no rows. Approving a version that is already approved SHALL change no note.
+
+#### Scenario: Older saved rows are dropped
+- **WHEN** version 3 of `listening-wall` is approved and the note holds "Version 1 saved" and "Version 2 saved" rows
+- **THEN** both rows are gone from the note, and versions 1 and 2 are still listed and openable
+
+#### Scenario: A decision that names an older version is kept
+- **WHEN** version 3 is approved and a row reads "Version 2 had the doors on top; moved to the bottom"
+- **THEN** the row stays in the note
+
+#### Scenario: The approved or a newer version is not dropped
+- **WHEN** version 2 is approved and the note holds a "Version 3 saved" row
+- **THEN** that row stays in the note
+
+#### Scenario: Another piece's rows are kept
+- **WHEN** version 3 of `listening-wall` is approved and a row says "Hall bench version 1 saved"
+- **THEN** that row stays in the note
+
+#### Scenario: Only rows would be left empty
+- **WHEN** every row of the note records an older version being saved
+- **THEN** the note is kept as it was
+
+#### Scenario: Re-approving changes nothing
+- **WHEN** an already approved version is approved again
+- **THEN** no note changes
+
+### Requirement: A plain question about the expected height gets a short reply
+When the owner's message only asks what the expected, maximum or highest height is, the Foreman SHALL answer, by an application rule before any specialist or model call, with exactly: "The height is not verified. What should the height be?" That answer SHALL carry no engineering status text, source, missing-input list or legal note. A message that names strength, load, deflection, anchorage, safety or another engineering term, names a kitchen part, or asks about any other dimension SHALL be routed as before. The rule SHALL change no stored data.
+
+#### Scenario: The short question
+- **WHEN** the owner asks "What's expected height"
+- **THEN** the reply is "The height is not verified. What should the height be?" and nothing else
+
+#### Scenario: A longer or different question is routed as before
+- **WHEN** the owner asks "What's the maximum height this cabinet can safely carry?"
+- **THEN** the message is routed to the engineering path and not answered by this rule
+
+#### Scenario: Another dimension
+- **WHEN** the owner asks "What's the expected depth"
+- **THEN** the rule does not apply
+
+#### Scenario: Nothing is stored
+- **WHEN** the rule answers
+- **THEN** the brief, the note and the house file are unchanged
+
+### Requirement: The owner changes the decisions note by asking in the chat
+The owner SHALL be able to add, change or delete one row of the active "decisions so far" note by asking an assistant in the chat. An assistant SHALL change a row only when the owner's own message explicitly asks for it; it MAY offer to, but SHALL NOT change the note unprompted or as a side effect of another request. Before anything is written the chat SHALL show the row as it is now and as it will be, and SHALL wait for the owner's "yes"; any other answer SHALL change nothing. The write SHALL be the panel's save: text neutralised, within the note's size limit, never leaving the note empty, and marked as the owner's. The note's thread and active build SHALL come from the session, never from a value the model supplies. A row SHALL be named by its topic, with its position when two rows share a topic; an unknown or ambiguous name SHALL be refused with the matching rows listed, and nothing SHALL be written. Deleting the only row SHALL be refused. The tool SHALL be switchable per conversation like other plugins. The panel SHALL show the changed note when the turn ends. A change made this way SHALL NOT change any spec, figure, price or house-file record.
+
+#### Scenario: Nothing changes unprompted
+- **WHEN** the owner states a decision or asks something else without asking for the note to change
+- **THEN** no confirmation is shown and the note is unchanged, though the assistant may offer to add the decision
+
+#### Scenario: A row is deleted on request
+- **WHEN** the owner asks the assistant to remove the "Doors" decision and answers "yes" to the shown change
+- **THEN** that row is removed from the note, the note is marked as the owner's, and the panel shows the note without that row
+
+#### Scenario: The owner declines
+- **WHEN** the owner answers anything but "yes" to the shown change
+- **THEN** the note is unchanged and the assistant says nothing was changed
+
+#### Scenario: A row is changed or added
+- **WHEN** the owner asks to note that the shelves are 18 mm and confirms
+- **THEN** the row for the shelves is changed, or a new "Shelves" row is added when none exists, and no other row changes
+
+#### Scenario: A name matches several rows
+- **WHEN** the owner names a topic that two rows share and gives no position
+- **THEN** the call is refused before any confirmation, listing the matching rows with their positions, and the note is unchanged
+
+#### Scenario: A last row or an empty edit is refused
+- **WHEN** the request would delete the only row, or leave a row's topic or decision empty
+- **THEN** the call is refused with the reason and the note is unchanged
+
+#### Scenario: Another conversation's note is out of reach
+- **WHEN** the model names another thread or another build in the call
+- **THEN** the value is ignored or refused, and only the session's active note can be changed
+
+#### Scenario: The tool is switched off
+- **WHEN** the owner has switched the tool off for the conversation
+- **THEN** the assistant cannot call it and says the tool is off
+
+### Requirement: The owner records a decision from a chat message
+Each message in the chat SHALL offer an "Add to decisions" action, shown as a bold, framed, light-green button. It SHALL make one model call that compresses the message into a one-line decision and a suggested topic, and open a new row in the "decisions so far" table with only those two values (never the full message text), for the owner to edit, save or cancel. Saving SHALL add the row as the panel's "Add Topic Decision" does, with the same checks and the owner's mark, and without a model call. Nothing SHALL be saved before the owner saves. If the compression call fails or is refused, the row SHALL open empty with a plain-words message.
+
+#### Scenario: A compressed decision is recorded from a message
+- **WHEN** the owner chooses "Add to decisions" on a long message
+- **THEN** the new row opens with a one-line decision and a suggested topic, not the full message; after the owner saves, that row is added to the end of the active note and the panel shows it
+
+#### Scenario: The compression fails
+- **WHEN** the compression call fails or a token ceiling refuses it
+- **THEN** the row opens empty, a plain-words message is shown, and the note is unchanged
+
+#### Scenario: The owner cancels
+- **WHEN** the owner chooses "Add to decisions" and then cancels
+- **THEN** the note is unchanged
+
+#### Scenario: The button's look
+- **WHEN** a chat message shows "Add to decisions"
+- **THEN** the button is bold, framed and light green

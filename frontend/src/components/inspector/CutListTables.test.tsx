@@ -1,10 +1,19 @@
 import { render, screen, within } from "@testing-library/react";
 import { expect, test } from "vitest";
-import type { DrillingList, PieceSpec } from "@/lib/api";
-import { CutListTables } from "./CutListTables";
+import type { DrillingList, PieceSpec, SpecPart } from "@/lib/api";
+import { changedCutIds, CutListTables } from "./CutListTables";
 
 const base: PieceSpec = {
   overall: { w: 1500, h: 400, d: 250 }, layers: {}, parts: [], hardware: [{ id: "shelf-pin", item: "Shelf pin", qty: "", notes: "No quantity" }],
+};
+
+const side: SpecPart = {
+  id: "cabinet-side", name: "Side", qty: 2, l: 400, w: 250, t: 18,
+  material: "birch", grain: "along", banding: "", notes: "", module: "cabinet",
+};
+const divider: SpecPart = {
+  id: "cabinet-divider", name: "Divider", qty: 1, l: 383, w: 388, t: 18,
+  material: "birch", grain: "along", banding: "", notes: "", module: "cabinet",
 };
 
 const entries: DrillingList["entries"] = [
@@ -70,4 +79,31 @@ test("an old version says drilling was not calculated", () => {
 test("a hardware line with no quantity says so", () => {
   show(undefined);
   expect(within(screen.getByRole("region", { name: "Hardware" })).getByText("no quantity")).toBeInTheDocument();
+});
+
+test("a new divider and a changed confirmat quantity are marked changed", () => {
+  const before: PieceSpec = {
+    ...base,
+    parts: [side],
+    hardware: [{ id: "confirmat-7x50", item: "Confirmat screw 7×50 mm", qty: 24, notes: "" }],
+  };
+  const after: PieceSpec = {
+    ...base,
+    parts: [side, divider],
+    hardware: [{ id: "confirmat-7x50", item: "Confirmat screw 7×50 mm", qty: 28, notes: "" }],
+  };
+  const changed = changedCutIds(after, before);
+  expect([...changed.parts]).toEqual(["cabinet-divider"]);
+  expect([...changed.hardware]).toEqual(["confirmat-7x50"]);
+  render(<CutListTables spec={after} baseline={before} />);
+  expect(screen.getByText("cabinet-divider").closest("tr")).toHaveAttribute("data-changed", "true");
+  expect(screen.getByText("cabinet-side").closest("tr")).not.toHaveAttribute("data-changed");
+  expect(screen.getByText("Confirmat screw 7×50 mm").closest("tr")).toHaveAttribute("data-changed", "true");
+});
+
+test("without a baseline no row is marked changed", () => {
+  const spec: PieceSpec = { ...base, parts: [side, divider] };
+  expect([...changedCutIds(spec, null).parts]).toEqual([]);
+  render(<CutListTables spec={spec} />);
+  expect(screen.getByText("cabinet-divider").closest("tr")).not.toHaveAttribute("data-changed");
 });

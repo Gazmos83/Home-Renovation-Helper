@@ -114,3 +114,9 @@ def test_the_guide_names_divider_spans_and_shelf_kinds() -> None:
     for field in ("divider_spans", "from_board", "to_board", "shelf_kinds"):
         assert field in guide
     assert "only a fixed shelf can anchor a divider" in guide
+
+
+def test_the_guide_names_per_shelf_depths() -> None:
+    guide = " ".join(load_template()["guide"])
+    assert "shelf_depths_mm" in guide and "shelf_depth_align" in guide
+    assert "null keeps the back-reduced depth" in guide

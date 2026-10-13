@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.agent import house_file
 from app.agent.tools.base import (
     ToolContext,
     ToolDeps,
@@ -21,6 +22,37 @@ from app.blender.spec_contract import SpecValidationError
 from app.packages import service
 
 NOT_APPROVED = "this action needs the owner's confirmation first and was not run"
+
+
+def conversation_piece(ctx: ToolContext) -> str | None:
+    """The package id this conversation is bound to, or `None` while unbound."""
+    if ctx.thread_id is None:
+        return None
+    with ctx.deps.session() as session:
+        thread = house_file.get_thread(session, ctx.thread_id)
+        return thread.package_id if thread is not None else None
+
+
+def refuse_new_piece_when_bound(ctx: ToolContext) -> str | None:
+    """A refusal when the conversation already has a piece, else `None`."""
+    bound = conversation_piece(ctx)
+    if bound is None:
+        return None
+    return (
+        f"this conversation is about {bound}; create a new piece from the Pieces page "
+        "with Create A New Piece"
+    )
+
+
+def refuse_other_piece(ctx: ToolContext, package_id: str) -> str | None:
+    """A refusal when the conversation is bound to a different piece, else `None`."""
+    bound = conversation_piece(ctx)
+    if bound is None or bound == package_id:
+        return None
+    return (
+        f"this conversation is about {bound}, not {package_id}; "
+        f"open {package_id}'s conversation from the Pieces page"
+    )
 
 
 def builds_unavailable(deps: ToolDeps) -> str | None:

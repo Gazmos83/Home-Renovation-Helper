@@ -10,7 +10,12 @@ from sqlalchemy import select
 from app.db.models import EngineeringChunk, KnowledgeSourceVersion
 from app.engineering.__main__ import seed_catalogue
 from app.engineering.assessments import AssessmentIn
-from app.engineering.chat import engineering_intent, missing_inputs, render_answer
+from app.engineering.chat import (
+    SHORT_STATUS,
+    engineering_intent,
+    missing_inputs,
+    render_answer,
+)
 from app.engineering.ingest import ingest_version
 from app.engineering.kitchen import (
     KitchenIntent,
@@ -244,8 +249,7 @@ def test_kitchen_acceptance_queries_are_not_verified(db_session, query, needle):
     missing = "; ".join(missing_inputs(query))
     assert needle.casefold() in missing.casefold()
     rendered = render_answer("{}", db_session, [], query, enabled=True)
-    assert "NOT VERIFIED" in rendered
-    assert needle.casefold() in rendered.casefold()
+    assert rendered == SHORT_STATUS
 
 
 def test_prior_murphy_and_material_filters_still_work(db_session, tmp_path, fake_embedder):

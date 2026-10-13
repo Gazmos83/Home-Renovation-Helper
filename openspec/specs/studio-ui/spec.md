@@ -7,7 +7,7 @@ Defines the Studio pages the owner and developer use: conversation tool toggles,
 ## Requirements
 
 ### Requirement: Conversations show their tool toggles
-The Studio SHALL list the owner's conversations with their title, the piece each is about when one is bound, and when each last had a turn, newest activity first, and SHALL open a conversation on its own route. A conversation SHALL be started with one action and no title to type; the new conversation opens at once. Each list entry SHALL offer a delete action that asks for confirmation naming the conversation and stating that its pieces are kept; a confirmed delete removes the entry. The conversation view SHALL show the conversation's toggleable tools by plain name and description with their on/off state in the Tools flyout, letting the owner switch them; tools that cannot be toggled SHALL be shown as always on. No conversation page SHALL show model names, token counts or costs.
+The conversation view SHALL show the conversation's toggleable tools by plain name and description with their on/off state in the Tools flyout, letting the owner switch them; tools that cannot be toggled SHALL be shown as always on. No conversation page SHALL show model names, token counts or costs. Starting a conversation and opening an existing one for navigation SHALL happen from the Pieces page as set out in the Pieces conversation requirements; the Conversations list page is not part of the Studio navigation. Delete of a conversation SHALL be offered on the conversation view as set out in "Conversations are deleted from the list".
 
 #### Scenario: Toggle a tool
 - **WHEN** the owner opens the Tools flyout and switches off the room check in one conversation
@@ -15,15 +15,15 @@ The Studio SHALL list the owner's conversations with their title, the piece each
 
 #### Scenario: List entry
 - **WHEN** a conversation is about `hall-bench` and last had a turn today
-- **THEN** its list entry shows the title, `hall-bench` and today's time, and clicking it opens the conversation
+- **THEN** the Pieces page conversation link for `hall-bench` opens that conversation
 
 #### Scenario: Start without a title
-- **WHEN** the owner clicks "New conversation"
-- **THEN** an untitled conversation opens with the composer ready, and after the first reply its heading and list entry show the generated title
+- **WHEN** the owner clicks "Create A New Piece"
+- **THEN** an untitled conversation opens with the composer ready, and after the first reply its heading shows the generated title
 
 #### Scenario: Delete with confirmation
-- **WHEN** the owner chooses delete on "Listening wall" and confirms
-- **THEN** the entry disappears from the list; when the owner cancels instead, nothing changes
+- **WHEN** the owner chooses delete on the open conversation "Listening wall" and confirms
+- **THEN** the conversation is gone and the owner is on the Pieces page; when the owner cancels instead, nothing changes
 
 ### Requirement: The developer panel has its own pages
 The Studio SHALL show the developer pages — models and routing, generation and token restrictions, plugins with invocations, usage per day — on a separate route tree that is reachable only when the developer API answers, and SHALL show an API refusal (a failed probe, an out-of-range value) next to the field it names. Each page SHALL pass a recorded browser check before it counts as done.
@@ -341,19 +341,19 @@ The Pieces page SHALL offer an "Inspect version N" button for the version shown 
 - **THEN** the panel shows an "Inspect version 1" button, and pressing it shows the inspector for version 1 beside the chat
 
 ### Requirement: Conversations are deleted from the list
-Each entry on the Conversations page SHALL offer a delete action. It asks for confirmation, naming the conversation and stating that its pieces and renders are kept and that the conversation cannot be restored. A confirmed delete removes the entry without a reload; a cancel changes nothing. A refusal (a reply still being written, or memory unavailable) SHALL be shown in words next to the entry, which stays. The delete flow SHALL pass a recorded browser check before it counts as done.
+The conversation view SHALL offer a delete action. It asks for confirmation, naming the conversation and stating that its pieces and renders are kept and that the conversation cannot be restored. A confirmed delete SHALL remove the conversation and return the owner to the Pieces page; a cancel changes nothing. A refusal (a reply still being written, or memory unavailable) SHALL be shown in words on the conversation view, which stays open. The delete flow SHALL pass a recorded browser check before it counts as done.
 
 #### Scenario: Delete with confirmation
-- **WHEN** the owner chooses delete on "Hall shoe bench" and confirms
-- **THEN** the entry disappears from the list and the piece is still on the Pieces page
+- **WHEN** the owner chooses delete on the open conversation "Hall shoe bench" and confirms
+- **THEN** the conversation is gone, the owner is on the Pieces page, and the piece is still listed there
 
 #### Scenario: Cancel
 - **WHEN** the owner chooses delete and then cancels
-- **THEN** nothing is sent and the entry stays
+- **THEN** nothing is sent and the conversation stays open
 
 #### Scenario: Refused while a reply is written
 - **WHEN** the owner confirms a delete while that conversation's turn is running
-- **THEN** the entry stays and the refusal is shown next to it
+- **THEN** the conversation stays open and the refusal is shown on the view
 
 ### Requirement: The Pieces page shows renders and takes feedback
 The Studio SHALL show the owner a Pieces page that lists the pieces, then each piece's versions, then each version's published renders, showing for each:
@@ -658,6 +658,7 @@ In Exploded mode, the inspector SHALL show one label per module that `spec.json`
 #### Scenario: Not exploded
 - **WHEN** the owner chooses Workshop
 - **THEN** no module labels are shown and the overall dimensions are drawn as before
+
 ### Requirement: The Pieces page lists a piece's versions in a dropdown
 The Pieces page SHALL show a piece's versions in one dropdown, not as a row of buttons, newest first. Each entry SHALL read "Version N", followed by the version's state when it has one:
 - "(approved)" for the approved version;
@@ -816,3 +817,55 @@ The panel and the pane SHALL NOT show model names of language models, prompts, t
 #### Scenario: One pane at a time
 - **WHEN** the room view of `Hall` is shown and the owner presses "Inspect version 2" in the Project panel
 - **THEN** the piece inspector for version 2 is shown beside the chat and the room view is closed; pressing "Inspect Hall" then shows the room and closes the inspector
+
+### Requirement: The Pieces page opens or starts each piece's conversation
+The Pieces page SHALL place a conversation link directly under each piece card's header (the piece's id or name). When that piece already has a conversation, the link SHALL open it. When it has none, the link SHALL start a conversation bound to that piece and open it. The link SHALL NOT show a model name, prompt, token count or cost. The flow SHALL pass a recorded browser check before it counts as done.
+
+#### Scenario: Open the existing conversation
+- **WHEN** `hall-bench` has a conversation and the owner chooses the conversation link under its header
+- **THEN** that conversation opens
+
+#### Scenario: Start when the piece has none
+- **WHEN** `shoe-rack` has no conversation and the owner chooses the conversation link under its header
+- **THEN** a conversation bound to `shoe-rack` is started and opens with the composer ready
+
+### Requirement: The Pieces page starts a conversation for a new piece
+The Pieces page SHALL show a "Create A New Piece" button at the top of the page. Choosing it SHALL start an unbound conversation and open it so the owner can describe a new piece. The button SHALL NOT show a model name, prompt, token count or cost. The flow SHALL pass a recorded browser check before it counts as done.
+
+#### Scenario: Create A New Piece
+- **WHEN** the owner clicks "Create A New Piece"
+- **THEN** an untitled conversation with no bound piece opens with the composer ready
+
+#### Scenario: Button at the top
+- **WHEN** the owner opens the Pieces page with two pieces listed
+- **THEN** "Create A New Piece" is shown above the piece cards
+
+### Requirement: Conversations are not listed in the Studio navigation
+The Studio navigation SHALL NOT include a Conversations item. Routes `/conversations` and `/conversations/:threadId` SHALL remain reachable by deep link and from the Pieces page conversation links. After sign-in the owner SHALL land on the Pieces page.
+
+#### Scenario: Nav without Conversations
+- **WHEN** the owner is signed in and looks at the Studio navigation
+- **THEN** there is no Conversations item, and Pieces is present
+
+#### Scenario: Sign-in lands on Pieces
+- **WHEN** the owner signs in successfully
+- **THEN** the Studio opens on the Pieces page
+
+#### Scenario: Deep link still works
+- **WHEN** the owner opens `/conversations/<thread-id>` for an existing conversation
+- **THEN** that conversation view opens
+
+### Requirement: Opening an inspector from the Project flyout closes the flyout
+When the owner chooses "Inspect version N" or "Inspect <room>" in the Project flyout, the conversation view SHALL close the flyout and show the inspector beside the chat. Other actions in the flyout (approve, unapprove, delete, using a look) SHALL leave it open, and the Tools and Decisions so far flyouts SHALL not be affected. Reopening the Project icon SHALL open the flyout again with the inspector still shown.
+
+#### Scenario: Inspecting a version closes the flyout
+- **WHEN** the owner opens the Project flyout and presses "Inspect version 1"
+- **THEN** the flyout is closed and the inspector for version 1 is shown beside the chat
+
+#### Scenario: Inspecting the room closes the flyout
+- **WHEN** the owner presses "Inspect Hall" in the Project flyout
+- **THEN** the flyout is closed and the room view is shown beside the chat
+
+#### Scenario: Other actions keep it open
+- **WHEN** the owner approves a version in the Project flyout
+- **THEN** the flyout stays open

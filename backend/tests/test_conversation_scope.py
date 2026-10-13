@@ -114,61 +114,45 @@ def test_a_design_file_without_a_confirmed_room_gets_the_question_and_is_not_imp
 # --- naming a build ---------------------------------------------------------------------
 
 
-def test_two_builds_named_ask_which_piece_and_no_specialist_runs(tool_state) -> None:
-    _house(tool_state)
-    models = fake_models(foreman={"decisions": [decision("designer")]})
-    harness = make_harness(tool_state, models)
-    harness.start(package_id="hall-bench")
-    with ToolDeps(tool_state).session() as session:
-        house_file.add_build(session, harness.thread, "shoe-rack")
-        session.commit()
-    state = harness.turn("make hall-bench and shoe-rack wider")
-    reply = last_reply(state)
-    assert reply.startswith("Which piece do you mean") and "hall-bench" in reply and "shoe-rack" in reply
-    assert state["specialist"] == "" and models["designer"].calls == 0
-
-
-def test_answering_which_piece_switches_to_the_one_named_and_is_not_asked_again(tool_state) -> None:
-    _house(tool_state)
-    models = fake_models(
-        foreman={"decisions": [decision("designer"), decision("designer")]}, designer={"replies": ["Wider."]}
-    )
-    harness = make_harness(tool_state, models)
-    harness.start(package_id="hall-bench")
-    with ToolDeps(tool_state).session() as session:
-        house_file.add_build(session, harness.thread, "shoe-rack")
-        session.commit()
-    harness.turn("make hall-bench and shoe-rack wider")
-    state = harness.turn("shoe-rack")
-    assert state["specialist"] == "designer" and last_reply(state) == "Wider."
-    assert _active(tool_state, harness) == "shoe-rack"
-
-
-def test_naming_one_build_switches_to_it(tool_state) -> None:
+def test_naming_another_piece_on_a_bound_conversation_does_not_switch(tool_state) -> None:
     _house(tool_state)
     models = fake_models(foreman={"decisions": [decision("designer")]}, designer={"replies": ["900 mm."]})
     harness = make_harness(tool_state, models)
     harness.start(package_id="shoe-rack")
-    with ToolDeps(tool_state).session() as session:
-        house_file.add_build(session, harness.thread, "hall-bench")
-        session.commit()
     state = harness.turn("back to the hall bench: make it 900 mm")
     assert state["specialist"] == "designer"
-    assert state["package_id"] == "hall-bench"
-    assert _active(tool_state, harness) == "hall-bench"
-    assert _builds(tool_state, harness) == ["hall-bench", "shoe-rack"]
+    assert state["package_id"] == "shoe-rack"
+    assert _active(tool_state, harness) == "shoe-rack"
+    assert last_reply(state) == "900 mm."
 
 
-def test_a_house_file_piece_named_joins_the_conversation(tool_state) -> None:
+def test_an_unbound_conversation_binds_a_named_piece_with_no_conversation(tool_state) -> None:
     _house(tool_state)
     models = fake_models(foreman={"decisions": [decision("designer")]}, designer={"replies": ["Which change?"]})
     harness = make_harness(tool_state, models)
-    harness.start(package_id="hall-bench")
-    state = harness.turn("let us look at murphy-bed")
+    harness.start()
+    place_in_room(harness, "murphy-bed")
+    state = harness.turn("revise murphy-bed")
     assert _active(tool_state, harness) == "murphy-bed"
-    assert _builds(tool_state, harness) == ["hall-bench", "murphy-bed"]
-    # murphy-bed has no room, so the placing question comes first (below).
-    assert state["specialist"] == "intake"
+    assert state["package_id"] == "murphy-bed"
+    assert state["specialist"] == "designer"
+    assert last_reply(state) == "Which change?"
+
+
+def test_an_unbound_conversation_refuses_a_piece_that_already_has_one(tool_state) -> None:
+    from app.agent.foreman import PIECE_HAS_CONVERSATION
+
+    _house(tool_state)
+    models = fake_models(foreman={"decisions": [decision("designer")]})
+    owner = make_harness(tool_state, fake_models())
+    owner.start(package_id="murphy-bed")
+    harness = make_harness(tool_state, models)
+    harness.start()
+    state = harness.turn("revise murphy-bed")
+    assert last_reply(state) == PIECE_HAS_CONVERSATION.format(piece="murphy-bed")
+    assert state["specialist"] == ""
+    assert _active(tool_state, harness) is None
+    assert models["designer"].calls == 0
 
 
 def test_an_active_build_with_no_room_is_placed_by_intake_first(tool_state) -> None:
@@ -207,20 +191,21 @@ def test_a_new_conversation_starts_without_the_room_or_any_piece(tool_state) -> 
         assert name not in prompt.replace("Hall bench", "")
 
 
-def test_the_confirmed_room_gives_its_size_and_the_active_build_in_full_and_others_as_a_line(tool_state) -> None:
+def test_the_confirmed_room_gives_its_size_and_the_bound_piece_in_full(tool_state) -> None:
     _house(tool_state)
     models = fake_models(foreman={"decisions": [decision("designer")]}, designer={"replies": ["Designing."]})
     harness = make_harness(tool_state, models)
     harness.start(package_id="hall-bench")
     with ToolDeps(tool_state).session() as session:
+        # Legacy second build row: must not appear in the Designer's context.
         house_file.add_build(session, harness.thread, "shoe-rack")
         session.commit()
     harness.turn("make the bench deeper")
     prompt = models["designer"].last_prompt_text()
     assert "Hall: bounding box 3000 × 2000 mm, ceiling 2500 mm" in prompt
     assert "- hall-bench (Hall bench): v1" in prompt and "approved: none, room: Hall" in prompt
-    assert "Other pieces in this conversation:" in prompt
-    assert "- shoe-rack (Shoe rack): v1, Hall" in prompt
+    assert "Other pieces in this conversation:" not in prompt
+    assert "shoe-rack" not in prompt
     assert "murphy-bed" not in prompt and "Wohnen" not in prompt
 
 

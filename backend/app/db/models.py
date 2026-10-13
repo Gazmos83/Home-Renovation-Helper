@@ -543,7 +543,7 @@ class ThreadNotice(Base):
     __tablename__ = "thread_notices"
     __table_args__ = (
         CheckConstraint("outcome IN ('succeeded', 'failed')", name="ck_thread_notices_outcome"),
-        CheckConstraint("kind IN ('render', 'build')", name="ck_thread_notices_kind"),
+        CheckConstraint("kind IN ('render', 'build', 'revision')", name="ck_thread_notices_kind"),
         Index("ix_thread_notices_thread_id_after_messages", "thread_id", "after_messages"),
     )
 

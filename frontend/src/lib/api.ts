@@ -31,7 +31,7 @@ export type ChatMessage = {
   role: "owner" | "assistant" | "confirmation" | "notice";
   text: string;
   /** `answers` is an answered question set, shown as its rows; a notice is a `render` or a `build` notice. */
-  kind?: "text" | "answers" | "render" | "build";
+  kind?: "text" | "answers" | "render" | "build" | "revision";
   rows?: AnswerRow[];
   upload_ids?: string[];
   /** An owner's message's id: the latest one can be edited. */
@@ -346,7 +346,12 @@ export type HardwareDataSheet = {
 
 export type NewHardwareDataSheet = Omit<HardwareDataSheet, "id" | "updated_at">;
 
-export type PieceSummary = { package_id: string; versions: number[]; room: string | null };
+export type PieceSummary = {
+  package_id: string;
+  versions: number[];
+  room: string | null;
+  thread_id: string | null;
+};
 
 /** A measured room of the house file, with what deleting it would touch (rooms-page). */
 export type RoomSummary = {
@@ -472,6 +477,8 @@ export type VersionInfo = {
   version: number;
   status: string | null;
   approved_at: string | null;
+  /** The version this one was revised from, when recorded in the house file. */
+  revised_from?: number | null;
   /** The version's files present by name (front.png and friends only on newer builds). */
   files?: string[];
 };
@@ -800,9 +807,16 @@ export const api = {
   threads: () => request<Thread[]>("/chat/threads"),
   deleteThread: (threadId: string) =>
     request<void>(`/chat/threads/${threadId}`, { method: "DELETE" }),
-  /** A new conversation; with no title, its first reply brings a generated one. */
-  createThread: (title?: string) =>
-    request<Thread>("/chat/threads", { method: "POST", body: JSON.stringify(title ? { title } : {}) }),
+  /** A new conversation; with no title, its first reply brings a generated one.
+   * Pass `packageId` to bind it to an existing piece (refused when that piece already has one). */
+  createThread: (title?: string, packageId?: string) =>
+    request<Thread>("/chat/threads", {
+      method: "POST",
+      body: JSON.stringify({
+        ...(title ? { title } : {}),
+        ...(packageId ? { package_id: packageId } : {}),
+      }),
+    }),
   renameThread: (threadId: string, title: string) =>
     request<Thread>(`/chat/threads/${threadId}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   streamTurn: (
@@ -976,6 +990,11 @@ export const api = {
   conversationNote: (threadId: string) => request<ConversationNote>(`/chat/threads/${threadId}/note`),
   saveConversationNote: (threadId: string, note: string) =>
     request<ConversationNote>(`/chat/threads/${threadId}/note`, { method: "PUT", body: JSON.stringify({ note }) }),
+  decisionFromMessage: (threadId: string, text: string) =>
+    request<{ topic: string; decision: string }>(`/chat/threads/${threadId}/note/decision`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
   compressConversation: (threadId: string) =>
     request<ConversationNote>(`/chat/threads/${threadId}/note/compress`, { method: "POST" }),
   memorySettings: () => request<MemoryPayload>("/admin/memory"),

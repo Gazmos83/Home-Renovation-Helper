@@ -119,6 +119,30 @@ def test_a_thread_for_a_package_that_does_not_exist_is_refused(client: TestClien
     assert response.json()["detail"]["failure_class"] == "unknown_package"
 
 
+def test_starting_a_thread_for_a_piece_binds_it_and_a_second_start_is_refused(
+    client: TestClient,
+) -> None:
+    from tests.api_helpers import create
+
+    create(client, "hall-bench")
+    first = client.post("/chat/threads", json={"package_id": "hall-bench"})
+    assert first.status_code == 201, first.text
+    body = first.json()
+    assert body["package_id"] == "hall-bench"
+    thread_id = body["thread_id"]
+
+    with Session(client.app.state.engine) as session:
+        builds = house_file.builds_of(session, UUID(thread_id))
+        assert [b.package_id for b in builds] == ["hall-bench"]
+
+    again = client.post("/chat/threads", json={"package_id": "hall-bench"})
+    assert again.status_code == 409, again.text
+    detail = again.json()["detail"]
+    assert detail["failure_class"] == "piece_has_conversation"
+    assert "hall-bench" in detail["reason"]
+    assert len(client.get("/chat/threads").json()) == 1
+
+
 def test_an_unknown_thread_is_not_found(client: TestClient) -> None:
     install(client, fake_models())
     assert client.get(f"/chat/threads/{uuid4()}").status_code == 404
@@ -319,7 +343,10 @@ def test_a_confirmed_revision_binds_an_unbound_thread(client: TestClient, render
     assert _piece_of(client, thread) == "hall-bench"
 
 
-def test_a_second_created_piece_rebinds_the_thread(client: TestClient, render_root: Path) -> None:
+def test_a_second_created_piece_is_refused_and_the_thread_stays_bound(
+    client: TestClient, render_root: Path
+) -> None:
+    from app.blender import storage
     from tests.api_helpers import desk
 
     install(client, fake_models(
@@ -327,18 +354,22 @@ def test_a_second_created_piece_rebinds_the_thread(client: TestClient, render_ro
         intake={"steps": [[tool_call("record_brief", HALL)], "Saved."]},
         designer={"steps": [
             [tool_call("create_piece", {"package_id": "hall-bench", "spec": desk()})], "Created.",
-            [tool_call("create_piece", {"package_id": "hall-shelf", "spec": desk()})], "Created.",
+            [tool_call("create_piece", {"package_id": "hall-shelf", "spec": desk()})], "Could not.",
         ]},
     ))
     thread = start(client)
     paused = client.post(f"/chat/threads/{thread}/turns", json={"message": "a hall bench"}).json()
     client.post(f"/chat/threads/{thread}/resume",
                 json={"confirmation_id": paused["pending"]["confirmation_id"], "answer": "yes"})
-    for name in ("hall-bench", "hall-shelf"):
-        paused = client.post(f"/chat/threads/{thread}/turns", json={"message": f"design {name}"}).json()
-        client.post(f"/chat/threads/{thread}/resume",
-                    json={"confirmation_id": paused["pending"]["confirmation_id"], "answer": "yes"})
-        assert _piece_of(client, thread) == name
+    paused = client.post(f"/chat/threads/{thread}/turns", json={"message": "design hall-bench"}).json()
+    client.post(f"/chat/threads/{thread}/resume",
+                json={"confirmation_id": paused["pending"]["confirmation_id"], "answer": "yes"})
+    assert _piece_of(client, thread) == "hall-bench"
+    second = client.post(f"/chat/threads/{thread}/turns", json={"message": "design hall-shelf"}).json()
+    # No confirmation: create_piece refused because the conversation is already bound.
+    assert second.get("pending") is None
+    assert _piece_of(client, thread) == "hall-bench"
+    assert storage.versions(render_root, "hall-shelf") == []
 
 
 def test_a_declined_piece_leaves_the_thread_unbound(client: TestClient, render_root: Path) -> None:
@@ -618,7 +649,10 @@ def test_deleting_a_conversation_removes_its_memory_index_and_uploads_and_keeps_
     assert not upload_dir.exists()
     memory = client.app.state.checkpointer.get_tuple({"configurable": {"thread_id": f"chat:{thread}", "checkpoint_ns": ""}})
     assert memory is None
-    assert {"package_id": "murphy-bed", "versions": [2, 1], "room": None} in client.get("/packages").json()
+    listed = {p["package_id"]: p for p in client.get("/packages").json()}
+    assert listed["murphy-bed"]["versions"] == [2, 1]
+    assert listed["murphy-bed"]["room"] is None
+    assert listed["murphy-bed"]["thread_id"] is None
     with Session(client.app.state.engine) as session:
         piece = {p["package_id"]: p for p in house_file.pieces(session, client.app.state.settings.render_root)}
     assert [v["version"] for v in piece["murphy-bed"]["versions"]] == [1, 2]

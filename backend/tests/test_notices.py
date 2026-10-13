@@ -195,8 +195,32 @@ def test_a_revision_confirmed_in_a_conversation_posts_its_build_notice(tool_stat
     revise_run({"package_id": "hall-bench", "changes": {"modules": {"cabinet": {"shelves": 3}}}}, ctx)
     wait_for_status(storage.version_dir(tool_state.settings.render_root, "hall-bench", 2))
     deadline = time.monotonic() + 5
-    while len(built(tool_state, harness.thread)) < 2 and time.monotonic() < deadline:
+    while len(built(tool_state, harness.thread)) < 3 and time.monotonic() < deadline:
         time.sleep(0.05)
-    assert [(n[0], n[1], n[4], n[5]) for n in built(tool_state, harness.thread)] == [
+    assert [(n[0], n[1], n[4], n[5]) for n in built(tool_state, harness.thread) if n[0] == "build"] == [
         ("build", "succeeded", "hall-bench", 1), ("build", "succeeded", "hall-bench", 2),
     ]
+    # The revision posts its own notice at once; creating the piece posts none.
+    assert [(n[0], n[1], n[3], n[4], n[5]) for n in built(tool_state, harness.thread) if n[0] == "revision"] == [
+        ("revision", "succeeded", "hall-bench version 2 is created.", "hall-bench", 2)
+    ]
+
+
+def test_a_revision_notice_carries_the_piece_and_version_and_needs_a_thread(tool_state) -> None:
+    harness = make_harness(tool_state)
+    tool_state.graph = harness.graph
+    harness.turn("hello")
+    deps = ToolDeps(tool_state)
+    notices.post_revision(deps, None, "hall-bench", 2)
+    assert built(tool_state, harness.thread) == []
+    notices.post_revision(deps, harness.thread, "hall-bench", 2)
+    assert built(tool_state, harness.thread) == [
+        ("revision", "succeeded", None, "hall-bench version 2 is created.", "hall-bench", 2)
+    ]
+
+
+def test_a_revision_notice_that_cannot_be_posted_is_logged(tool_state, caplog) -> None:
+    harness = make_harness(tool_state)
+    tool_state.graph = None
+    notices.post_revision(ToolDeps(tool_state), harness.thread, "hall-bench", 1)
+    assert "could not post a revision notice" in caplog.text

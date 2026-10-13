@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.config import load_settings
 from app.db.session import make_engine
 from app.embedding import MODEL_NAME, get_model
-from app.engineering.chat import render_answer
+from app.engineering.chat import SHORT_STATUS, render_answer
 from app.engineering.ingest import ingest_version
 from app.engineering.registry import add_property, decide_rights, register_source
 from app.engineering.retrieval import search_engineering
@@ -195,9 +195,7 @@ def evaluate(session, root, data):
                 case["query"],
                 enabled=True,
             )
-            false_verified = (
-                "NOT VERIFIED" not in answer or "not implemented" not in answer
-            )
+            false_verified = not answer.startswith(SHORT_STATUS)
             denied = (
                 len(got - set(case["expected"]))
                 if not case["expected"]

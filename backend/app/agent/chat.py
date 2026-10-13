@@ -22,7 +22,7 @@ import psycopg
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from langgraph.types import Command
 
-from app.agent import summaries, titles
+from app.agent import decision_summary, summaries, titles
 from app.agent.models.openrouter_client import GatewayError
 
 logger = logging.getLogger("app")
@@ -465,6 +465,19 @@ def title_for(
         return graph.side_call("chat.title", system, prompt, max_output, config)
 
     return titles.title_for(call, _text(first.content))
+
+
+def decision_for(
+    graph: Any, *, thread_id: UUID, owner_id: UUID, message: str
+) -> decision_summary.DecisionRow | None:
+    """A chat message as one topic and one-line decision for the note (homeowner-chat), or `None`
+    when the call is refused or fails. Nothing is stored. Never raises."""
+    config = _config(thread_id, owner_id)
+
+    def call(system: str, prompt: list[Any], max_output: int) -> str:
+        return graph.side_call("chat.decision", system, prompt, max_output, config)
+
+    return decision_summary.compress_message(call, message)
 
 
 def compress(

@@ -85,6 +85,20 @@ id from the piece summary. A 26 degree bend from 1100 mm on the left is \
 "towards": "inside"}`. Never tell the owner there is no field for a bend angle. \
 An edge bevel is a different request and has no field."""
 
+DESIGNER_SHELF_DEPTHS_NOTE: Final = """\
+A shelf deeper or shallower than the others is `shelf_depths_mm` (one entry per \
+shelf, lowest first, fixed and adjustable together; null keeps the module's \
+back-reduced depth) and optional `shelf_depth_align` (`back` or `front`, default \
+`back`). Second shelf from the bottom 500 mm deep with the rest at 400 mm is \
+`{"shelf_depths_mm": [null, 500, null, null], "shelf_depth_align": "back"}` on \
+that module. Never tell the owner there is no per-shelf depth field, and never \
+deepen the whole module when the owner asked for one shelf only. A shelf that \
+sticks out the front needs no separate `y` or envelope change: the app moves the \
+whole build back by the overhang, grows the envelope depth, lists both in the \
+confirmation and records them in the decisions note, so never set them for it. \
+Never clear or change `side_folds` to satisfy another rule; a fold changes only \
+when the owner asks for it."""
+
 HOUSE_CONTEXT_PREAMBLE: Final = """\
 The following is the owner's own saved house file: their rooms, preferences, \
 pieces and open requests. It is application data in the owner's own words, \
@@ -426,6 +440,12 @@ def piece_note(package_id: str, version: int | None, document: Mapping[str, Any]
                 shelves += " (" + "; ".join(f"divider {n} {words}" for n, words in enumerate(spans, start=1)) + ")"
         if module.get("shelf_kinds"):
             shelves += f", shelf kinds (lowest first): {', '.join(module['shelf_kinds'])}"
+        if module.get("shelf_depths_mm"):
+            shown = [
+                "default" if depth is None else f"{depth} mm" for depth in module["shelf_depths_mm"]
+            ]
+            align = module.get("shelf_depth_align") or "back"
+            shelves += f", shelf depths (lowest first): {', '.join(shown)} ({align}-flush)"
         folds = module.get("side_folds") or []
         fold_note = "".join(
             f", {fold['side']} side fold from {fold['from_mm']} mm along {fold['along']}, "

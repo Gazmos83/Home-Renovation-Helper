@@ -152,9 +152,20 @@ SHELF_KINDS_DESCRIPTION = (
     "each shelf's kind, lowest first, \"fixed\" or \"adjustable\", agreeing with shelves and "
     "adjustable_shelves; without it the fixed shelves are the lowest. [] clears."
 )
+SHELF_DEPTHS_DESCRIPTION = (
+    "each shelf's cut depth in mm, lowest first (fixed and adjustable together), or null for the "
+    "module's back-reduced depth; [] clears. Second shelf 500 mm: [null, 500, null, null]."
+)
+SHELF_DEPTH_ALIGN_DESCRIPTION = (
+    '"back" (default): shelf rear on the carcass inner rear; "front": shelf front on the side fronts. '
+    "Only with shelf_depths_mm."
+)
+MIN_SHELF_DEPTH_MM = 50
 
 ShelfNumber = Annotated[int, Field(ge=1, le=40)]
 ShelfKind = Literal["fixed", "adjustable"]
+ShelfDepthAlign = Literal["back", "front"]
+ShelfDepthEntry = Millimetres | None
 
 
 class DividerSpanIn(BaseModel):
@@ -196,15 +207,33 @@ class ModuleIn(BaseModel):
     shelf_kinds: Annotated[
         list[ShelfKind], Field(min_length=1, max_length=40, description=SHELF_KINDS_DESCRIPTION)
     ] | None = None
+    shelf_depths_mm: Annotated[
+        list[ShelfDepthEntry], Field(min_length=1, max_length=40, description=SHELF_DEPTHS_DESCRIPTION)
+    ] | None = None
+    shelf_depth_align: Annotated[ShelfDepthAlign, Field(description=SHELF_DEPTH_ALIGN_DESCRIPTION)] | None = None
     side_folds: Annotated[list[SideFoldIn], Field(max_length=2, description=SIDE_FOLDS_DESCRIPTION)] = []
     fronts: Annotated[list[FrontIn], Field(max_length=10)] = []
     hardware: Annotated[list[HardwareLineIn], Field(max_length=50)] = []
+
+    @model_validator(mode="after")
+    def _default_shelf_depth_align(self) -> ModuleIn:
+        if self.shelf_depths_mm is not None and self.shelf_depth_align is None:
+            return self.model_copy(update={"shelf_depth_align": "back"})
+        return self
 
     @model_serializer(mode="wrap")
     def _omit_unstated_interior(self, handler: Any) -> dict[str, Any]:
         # A module without spacing, positions, dividers or folds serialises exactly as before.
         dumped = handler(self)
-        for field in ("shelf_spacing_mm", "shelf_positions_mm", "divider_positions_mm", "divider_spans", "shelf_kinds"):
+        for field in (
+            "shelf_spacing_mm",
+            "shelf_positions_mm",
+            "divider_positions_mm",
+            "divider_spans",
+            "shelf_kinds",
+            "shelf_depths_mm",
+            "shelf_depth_align",
+        ):
             if dumped.get(field) is None:
                 dumped.pop(field, None)
         if not dumped.get("dividers"):
@@ -277,7 +306,7 @@ class CustomBuildContext:
     overall: dict[str, int]
 
 
-def _check_interior(where: str, module: ModuleIn, t: int) -> None:
+def _check_interior(where: str, module: ModuleIn, t: int, b: int = 0) -> None:
     """Shelf spacing or positions and dividers against the module's inner height and width."""
     count = module.shelves + module.adjustable_shelves
     spacing, positions = module.shelf_spacing_mm, module.shelf_positions_mm
@@ -341,6 +370,8 @@ def _check_interior(where: str, module: ModuleIn, t: int) -> None:
                 f"{module.shelves} fixed and {module.adjustable_shelves} adjustable shelves"
             )
 
+    _check_shelf_depths(where, module, t, b)
+
     spans = module.divider_spans
     if spans is None:
         return
@@ -366,6 +397,41 @@ def _check_interior(where: str, module: ModuleIn, t: int) -> None:
             raise SpecValidationError(
                 f"{where}.divider_spans: divider {number} must stand on a board below the one it reaches"
             )
+
+
+def _check_shelf_depths(where: str, module: ModuleIn, t: int, b: int) -> None:
+    """Per-shelf depths and align against the shelf count, minimum depth and folded inner depth."""
+    depths, align = module.shelf_depths_mm, module.shelf_depth_align
+    if align is not None and depths is None:
+        raise SpecValidationError(f"{where}.shelf_depth_align: shelf_depths_mm must be set when an align is given")
+    if depths is None:
+        return
+    count = module.shelves + module.adjustable_shelves
+    if not count:
+        raise SpecValidationError(f"{where}.shelf_depths_mm: module {module.id!r} has no shelves")
+    if len(depths) != count:
+        raise SpecValidationError(
+            f"{where}.shelf_depths_mm: {len(depths)} depths given, {count} shelves expected "
+            "(fixed and adjustable together)"
+        )
+    for index, depth in enumerate(depths, start=1):
+        if depth is not None and depth < MIN_SHELF_DEPTH_MM:
+            raise SpecValidationError(
+                f"{where}.shelf_depths_mm: shelf {index} depth {depth} mm is below the minimum of "
+                f"{MIN_SHELF_DEPTH_MM} mm"
+            )
+    document = module.model_dump(mode="json")
+    # A back-aligned board deeper than the folded inner depth sticks out the front, past the folds;
+    # only a front-aligned one would pass through the back (auto-fit-protruding-shelves).
+    if module.side_folds and custom_derive.shelf_depth_align_of(document) == "front":
+        profile = custom_derive.fold_profile(document, t, b)
+        available = profile.inner_d
+        for level, depth in enumerate(depths, start=1):
+            if depth is not None and depth > available:
+                raise SpecValidationError(
+                    f"{where}.shelf_depths_mm: shelf {level} depth {depth} mm exceeds the folded inner depth "
+                    f"of {available} mm along that board"
+                )
 
 
 def _module_aabb(module: ModuleIn, t: int, b: int) -> tuple[int, int, int, int, int, int]:
@@ -482,7 +548,7 @@ class CustomBuildSpec(BaseModel):
                 ):
                     raise SpecValidationError(f"{where}: module {module.id!r} lies outside the envelope")
             self._check_fronts(where, module, t, b)
-            _check_interior(where, module, t)
+            _check_interior(where, module, t, b)
             _check_folded_dividers(where, module, t, b)
 
         for index, part in enumerate(self.extra_parts):
@@ -622,6 +688,10 @@ class ModuleChange(BaseModel):
         list[DividerSpanIn], Field(max_length=MAX_DIVIDERS, description=DIVIDER_SPANS_DESCRIPTION)
     ] | None = None
     shelf_kinds: Annotated[list[ShelfKind], Field(max_length=40, description=SHELF_KINDS_DESCRIPTION)] | None = None
+    shelf_depths_mm: Annotated[
+        list[ShelfDepthEntry], Field(max_length=40, description=SHELF_DEPTHS_DESCRIPTION)
+    ] | None = None
+    shelf_depth_align: Annotated[ShelfDepthAlign, Field(description=SHELF_DEPTH_ALIGN_DESCRIPTION)] | None = None
     side_folds: Annotated[list[SideFoldIn], Field(max_length=2, description=SIDE_FOLDS_DESCRIPTION)] | None = None
     hinge: Slug | None = None  # sets the hinge item of every hinged door in the module
     fronts: Annotated[list[FrontIn], Field(max_length=10)] | None = None

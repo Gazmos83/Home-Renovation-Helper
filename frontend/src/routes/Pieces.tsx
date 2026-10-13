@@ -1,7 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ThumbsDown, ThumbsUp } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { PieceVariants } from "../components/Variants";
 import { api, ApiError, downloads, versionFile, type Pricing, type RenderItem, type VersionInfo } from "../lib/api";
 import { pictureVersion } from "../lib/pieces";
@@ -282,6 +282,11 @@ function Downloads({ packageId, version }: { packageId: string; version: number 
   );
 }
 
+/** Turntable cards are gone from Pieces; the inspector replaced that view. Stills stay for rating. */
+function isTurntableRender(render: string): boolean {
+  return render === "turntable" || render.endsWith("-turntable");
+}
+
 function Version({ packageId, version }: { packageId: string; version: number }) {
   const renders = useQuery({
     queryKey: ["renders", packageId, version],
@@ -290,15 +295,19 @@ function Version({ packageId, version }: { packageId: string; version: number })
   let shown;
   if (renders.error) shown = <FieldError message={message(renders.error)} />;
   else if (!renders.data) shown = <p>Loading…</p>;
-  else if (renders.data.length === 0) shown = <p>No renders of this version yet.</p>;
   else {
-    shown = (
-      <div className="grid gap-4 sm:grid-cols-2">
-        {renders.data.map((item) => (
-          <RenderCard key={item.render} packageId={packageId} version={version} item={item} />
-        ))}
-      </div>
-    );
+    const cards = renders.data.filter((item) => !isTurntableRender(item.render));
+    if (cards.length === 0) {
+      shown = renders.data.length === 0 ? <p>No renders of this version yet.</p> : null;
+    } else {
+      shown = (
+        <div className="grid gap-4 sm:grid-cols-2">
+          {cards.map((item) => (
+            <RenderCard key={item.render} packageId={packageId} version={version} item={item} />
+          ))}
+        </div>
+      );
+    }
   }
   return (
     <div className="grid gap-4">
@@ -354,7 +363,48 @@ function versionLabel(version: number, info: VersionInfo | undefined): string {
   return `Version ${version}`;
 }
 
-function Piece({ id, versions, room }: { id: string; versions: number[]; room: string | null }) {
+/** Open this piece's conversation, or start one bound to it when it has none. */
+function PieceConversation({ id, threadId }: { id: string; threadId: string | null }) {
+  const navigate = useNavigate();
+  const start = useMutation({
+    mutationFn: () => api.createThread(undefined, id),
+    onSuccess: (thread) => navigate(`/conversations/${thread.thread_id}`),
+  });
+  if (threadId) {
+    return (
+      <Button asChild variant="outline" size="lg" className="w-fit font-semibold">
+        <Link to={`/conversations/${threadId}`}>Open conversation</Link>
+      </Button>
+    );
+  }
+  return (
+    <div className="grid gap-1">
+      <Button
+        type="button"
+        variant="outline"
+        size="lg"
+        className="w-fit font-semibold"
+        disabled={start.isPending}
+        onClick={() => start.mutate()}
+      >
+        Start conversation
+      </Button>
+      <FieldError message={message(start.error)} />
+    </div>
+  );
+}
+
+function Piece({
+  id,
+  versions,
+  room,
+  threadId,
+}: {
+  id: string;
+  versions: number[];
+  room: string | null;
+  threadId: string | null;
+}) {
   const queryClient = useQueryClient();
   const [chosen, setVersion] = useState(versions[0]);
   // After a delete the chosen version may be gone: show the newest left.
@@ -372,6 +422,7 @@ function Piece({ id, versions, room }: { id: string; versions: number[]; room: s
   return (
     <section className={cardClass} aria-label={id}>
       <h2>{id}</h2>
+      <PieceConversation id={id} threadId={threadId} />
       {picture && (
         <figure className="grid w-fit gap-1">
           <img
@@ -419,7 +470,16 @@ function Piece({ id, versions, room }: { id: string; versions: number[]; room: s
 }
 
 export default function Pieces() {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const pieces = useQuery({ queryKey: ["pieces"], queryFn: api.pieces });
+  const create = useMutation({
+    mutationFn: () => api.createThread(),
+    onSuccess: (thread) => {
+      queryClient.invalidateQueries({ queryKey: ["threads"] });
+      navigate(`/conversations/${thread.thread_id}`);
+    },
+  });
   if (pieces.error) {
     return (
       <Page>
@@ -431,7 +491,13 @@ export default function Pieces() {
   if (!pieces.data) return <Page>Loading…</Page>;
   return (
     <Page>
-      <h1>Pieces</h1>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <h1>Pieces</h1>
+        <Button type="button" disabled={create.isPending} onClick={() => create.mutate()}>
+          Create A New Piece
+        </Button>
+      </div>
+      <FieldError message={message(create.error)} />
       <p>Your designs and their renders. Tell us what you think of a render; it helps the next one.</p>
       <p className="text-sm">
         <a href={downloads.importTemplate} download="import-template.json" className="underline">
@@ -439,9 +505,17 @@ export default function Pieces() {
         </a>{" "}
         — give it to another AI chat to fill in, then attach the file it returns in a new conversation.
       </p>
-      {pieces.data.length === 0 && <p>No pieces yet. Describe one in a conversation.</p>}
+      {pieces.data.length === 0 && (
+        <p>No pieces yet. Use Create A New Piece to start a conversation and describe one.</p>
+      )}
       {pieces.data.map((piece) => (
-        <Piece key={piece.package_id} id={piece.package_id} versions={piece.versions} room={piece.room} />
+        <Piece
+          key={piece.package_id}
+          id={piece.package_id}
+          versions={piece.versions}
+          room={piece.room}
+          threadId={piece.thread_id}
+        />
       ))}
     </Page>
   );

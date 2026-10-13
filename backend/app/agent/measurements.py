@@ -34,8 +34,10 @@ _WORD = re.compile(r"[a-zäöüß]+")
 _ENVELOPE = {"width": "w", "height": "h", "depth": "d"}
 # Module length fields a module may leave unset, and those that hold a list of positions
 # (shelf-spacing-and-dividers): an absolute length sets one, and a list holds the value.
-LIST_FIELDS = frozenset({"shelf_positions_mm", "divider_positions_mm", "side_folds"})
+LIST_FIELDS = frozenset({"shelf_positions_mm", "divider_positions_mm", "side_folds", "shelf_depths_mm"})
 OPTIONAL_FIELDS = LIST_FIELDS | {"shelf_spacing_mm"}
+# A quote that asks for a side fold names it with one of these (auto-fit-protruding-shelves).
+FOLD_WORDS = ("fold", "bend", "bent", "angle", "slant", "knick", "winkel", "schräg", "°")
 
 
 @dataclass(frozen=True)
@@ -168,6 +170,8 @@ def check(
             )
             continue
         found = lengths(quote)
+        if not found and entry.field == "side_folds":
+            continue  # a fold asked for by angle or by name alone is held by `fold_refusals`
         if not found:
             refusals.append(f"{quote!r} gives no length with a unit (mm, cm or m)")
             continue
@@ -228,6 +232,43 @@ def check(
                 f"the owner's {length.text!r} is not covered: add it to `requested` "
                 "(target `none` when it is not about the piece)"
             )
+    return refusals
+
+
+def _names_fold(quote: str) -> bool:
+    text = quote.casefold()
+    return any(word in text for word in FOLD_WORDS)
+
+
+def fold_refusals(
+    requested: Sequence[Requested],
+    owner_texts: Sequence[str],
+    current: Mapping[str, Any],
+    revised: Mapping[str, Any],
+) -> list[str]:
+    """Each module whose side folds the revision sets, changes or clears without the owner asking.
+
+    A fold changes only with a `requested` entry for that module and field `side_folds` whose
+    quote is in the owner's texts and names a fold; a module the revision adds or removes is not
+    a fold change. Empty when every fold change was asked for.
+    """
+    said = _norm("\n".join(owner_texts))
+    asked = {
+        entry.target.strip()
+        for entry in requested
+        if entry.field == "side_folds" and entry.quote.strip() and _norm(entry.quote) in said and _names_fold(entry.quote)
+    }
+    before = {module.get("id"): module.get("side_folds") or [] for module in current.get("modules") or []}
+    refusals = []
+    for module in revised.get("modules") or []:
+        slug = module.get("id")
+        if slug not in before or (module.get("side_folds") or []) == before[slug] or slug in asked:
+            continue
+        refusals.append(
+            f"{slug}: the changes would set side_folds, which the owner did not ask for. Keep the fold as it is "
+            "and never change it to satisfy another rule; ask the owner instead. When the owner asked, add a "
+            "`requested` entry for this module with field `side_folds` quoting the owner's words about the fold"
+        )
     return refusals
 
 

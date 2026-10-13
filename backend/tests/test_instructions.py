@@ -116,6 +116,19 @@ def test_the_designer_knows_divider_spans_and_shelf_kinds() -> None:
     assert "`search_guidelines`" in text and "recommended position" in text
 
 
+def test_the_designer_knows_per_shelf_depths() -> None:
+    text = load_instructions()["designer"].text
+    for field in ("shelf_depths_mm", "shelf_depth_align"):
+        assert f"`{field}`" in text
+    assert '"shelf_depths_mm": [null, 500, null, null]' in text
+    assert "Never tell the owner there is no per-shelf depth field" in text
+    assert "never deepen the whole module" in text
+    assert "needs no separate `y` or envelope change" in text
+    assert "never propose deepening the module to hold it" in text
+    assert "Never clear or change a module's `side_folds` to satisfy another rule" in text
+    assert "When the app refuses a change because of a fold, tell the owner" in text
+
+
 def test_the_foreman_routes_a_side_fold_to_the_designer() -> None:
     text = load_instructions()["foreman"].text
     line = next(line for line in text.splitlines() if line.startswith("- `designer`:"))

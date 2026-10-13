@@ -107,10 +107,12 @@ def test_the_designer_note_offers_the_custom_build_starter_first() -> None:
 
 
 def test_the_designer_is_told_a_panel_bend_is_side_folds() -> None:
-    from app.agent.prompts import DESIGNER_SIDE_FOLDS_NOTE
+    from app.agent.prompts import DESIGNER_SHELF_DEPTHS_NOTE, DESIGNER_SIDE_FOLDS_NOTE
 
     assert "`side_folds`" in DESIGNER_SIDE_FOLDS_NOTE
     assert "Never tell the owner there is no field for a bend angle" in DESIGNER_SIDE_FOLDS_NOTE
+    assert "shelf_depths_mm" in DESIGNER_SHELF_DEPTHS_NOTE
+    assert "Never tell the owner there is no per-shelf depth field" in DESIGNER_SHELF_DEPTHS_NOTE
 
 
 def test_the_facts_name_the_approved_version_of_the_bound_piece(tool_state) -> None:
@@ -900,8 +902,9 @@ def test_the_designer_sees_the_active_builds_modules_and_only_the_designer(tool_
     assert PIECE_HEADER in system
     cabinet = next(line for line in system.splitlines() if line.startswith("- cabinet "))
     assert "3 shelves" in cabinet and "fronts: 1 door (hinge)" in cabinet
+    # Legacy second thread_pieces row: one piece per conversation, so shoe-rack stays out.
     assert "Piece shoe-rack" not in system
-    assert "- shoe-rack (Shoe rack): v1" in system
+    assert "shoe-rack" not in system
     assert system.endswith(UNTRUSTED_CONTENT_PREAMBLE)
     assert "Template custom-build" not in system
     foreman_prompt = "\n".join(str(m.content) for m in models["foreman"].decision_prompts[-1])

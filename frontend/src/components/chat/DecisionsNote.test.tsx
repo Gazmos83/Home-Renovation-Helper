@@ -5,7 +5,7 @@ import { expect, test } from "vitest";
 import { stubFetch } from "../../test/fetchStub";
 import { DecisionsNote } from "./DecisionsNote";
 
-function show(props: { prefill?: string; onPrefillUsed?: () => void } = {}) {
+function show(props: { prefill?: { topic: string; decision: string; failed?: boolean }; compressing?: boolean; onPrefillUsed?: () => void } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
@@ -192,12 +192,12 @@ test("a message offered from the chat opens a new row with its text; the owner g
     if (call === "PUT /chat/threads/t1/note") return { body: { package_id: null, note: "x", owner_edited: true } };
   });
   let used = 0;
-  show({ prefill: "Shelves are 18 mm", onPrefillUsed: () => (used += 1) });
+  show({ prefill: { topic: "Shelves", decision: "Shelves are 18 mm" }, onPrefillUsed: () => (used += 1) });
   const user = userEvent.setup();
   expect(await screen.findByRole("textbox", { name: "New decision" })).toHaveValue("Shelves are 18 mm");
-  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   expect(calls.filter((c) => c[0] === "PUT")).toHaveLength(0);
-  await user.type(screen.getByRole("textbox", { name: "New topic" }), "Shelves");
+  expect(screen.getByRole("textbox", { name: "New topic" })).toHaveValue("Shelves");
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(calls).toContainEqual(["PUT", "/chat/threads/t1/note", { note: "- **Room:** Wohnen\n- **Shelves:** Shelves are 18 mm" }]);
   expect(used).toBe(1);
@@ -208,8 +208,26 @@ test("cancelling an offered message saves nothing", async () => {
     if (call === "GET /chat/threads/t1/note") return { body: { package_id: null, note: null, owner_edited: false } };
   });
   let used = 0;
-  show({ prefill: "Doors hinged", onPrefillUsed: () => (used += 1) });
+  show({ prefill: { topic: "", decision: "Doors hinged" }, onPrefillUsed: () => (used += 1) });
   await userEvent.setup().click(await screen.findByRole("button", { name: "Cancel" }));
   expect(calls.filter((c) => c[0] === "PUT")).toHaveLength(0);
   expect(used).toBe(1);
+});
+
+test("Save is disabled until a topic is given", async () => {
+  stubFetch((call) => {
+    if (call === "GET /chat/threads/t1/note") return { body: { package_id: null, note: null, owner_edited: false } };
+  });
+  show({ prefill: { topic: "", decision: "Doors hinged" } });
+  expect(await screen.findByRole("textbox", { name: "New decision" })).toHaveValue("Doors hinged");
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+});
+
+test("a message that could not be compressed opens an empty row with a message", async () => {
+  stubFetch((call) => {
+    if (call === "GET /chat/threads/t1/note") return { body: { package_id: null, note: null, owner_edited: false } };
+  });
+  show({ prefill: { topic: "", decision: "", failed: true } });
+  expect(await screen.findByRole("textbox", { name: "New decision" })).toHaveValue("");
+  expect(screen.getByText(/could not be compressed/)).toBeInTheDocument();
 });

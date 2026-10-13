@@ -7,7 +7,13 @@ import copy
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.agent.measurements import Requested, check, lengths, owner_texts_since_version
+from app.agent.measurements import (
+    Requested,
+    check,
+    fold_refusals,
+    lengths,
+    owner_texts_since_version,
+)
 
 CURRENT = {
     "modules": [{"id": "cabinet", "x": 0, "y": 0, "z": 0, "width": 600, "height": 2238, "depth": 400}],
@@ -213,3 +219,37 @@ def test_a_relative_fold_datum_is_refused_when_unset() -> None:
 def test_an_unknown_field_on_an_unset_module_value_is_still_refused() -> None:
     entry = Requested(SAID, "cabinet", "shelf_gap", 355)
     assert "has no length field 'shelf_gap'" in check([entry], [SAID], CURRENT, revised())[0]
+
+
+# --- auto-fit-protruding-shelves: fold_refusals ---------------------------------------------------
+
+_FOLD = {"side": "left", "from_mm": 1100, "along": "height", "angle_deg": 26, "towards": "inside"}
+
+
+def _with_folds(folds: list) -> dict:
+    return {"modules": [{"id": "cabinet", "side_folds": folds}]}
+
+
+def test_a_fold_cleared_without_an_entry_is_refused() -> None:
+    refused = fold_refusals([], ["550 mm deep shelf"], _with_folds([_FOLD]), _with_folds([]))
+    assert len(refused) == 1 and refused[0].startswith("cabinet:") and "side_folds" in refused[0]
+
+
+def test_a_fold_entry_must_quote_the_owner_and_name_a_fold() -> None:
+    said = ["drop the bend on the left", "make it nicer"]
+    ok = Requested("drop the bend on the left", "cabinet", "side_folds", 0)
+    invented = Requested("remove the fold", "cabinet", "side_folds", 0)
+    vague = Requested("make it nicer", "cabinet", "side_folds", 0)
+    assert fold_refusals([ok], said, _with_folds([_FOLD]), _with_folds([])) == []
+    assert fold_refusals([invented], said, _with_folds([_FOLD]), _with_folds([]))
+    assert fold_refusals([vague], said, _with_folds([_FOLD]), _with_folds([]))
+
+
+def test_an_unchanged_fold_needs_no_entry() -> None:
+    assert fold_refusals([], [], _with_folds([_FOLD]), _with_folds([_FOLD])) == []
+    assert fold_refusals([], [], {"modules": [{"id": "cabinet"}]}, _with_folds([])) == []
+
+
+def test_a_fold_entry_without_a_length_passes_the_length_check() -> None:
+    entry = Requested("make the left bend 30°", "cabinet", "side_folds", 0)
+    assert check([entry], ["make the left bend 30°"], _with_folds([_FOLD]), _with_folds([_FOLD])) == []

@@ -26,6 +26,7 @@ from app.agent.tools.shared import (
     NOT_APPROVED,
     builds_unavailable,
     checked_package_id,
+    refuse_new_piece_when_bound,
     validated_custom_build,
 )
 from app.blender import storage
@@ -88,6 +89,9 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext) -> tuple[str | None, d
     args, problem = parse_args(CreatePieceArgs, arguments)
     if args is None:
         return None, None, problem
+    bound = refuse_new_piece_when_bound(ctx)
+    if bound:
+        return None, None, bound
     _room, problem = piece_room(ctx)
     if problem:
         return None, None, problem
@@ -103,6 +107,12 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext) -> tuple[str | None, d
     question = position_question(None, spec, ctx.deps.design_rules)
     if question:
         return None, None, question
+    with ctx.deps.session() as session:
+        pin_inputs = freeze_inputs(session, ctx.deps.design_rules, spec)
+    try:
+        custom_derive.check_adjustable_shelf_depths(spec, pin_inputs)
+    except custom_derive.DeriveError as error:
+        return None, None, str(error)
     return package_id, spec, ""
 
 

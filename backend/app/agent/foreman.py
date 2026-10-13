@@ -48,6 +48,7 @@ from app.agent.models.budgets import Budgets
 from app.agent.models.openrouter_client import gateway_errors
 from app.agent.models.routing import IMAGE_SLOTS
 from app.agent.prompts import (
+    DESIGNER_SHELF_DEPTHS_NOTE,
     DESIGNER_SIDE_FOLDS_NOTE,
     EMPTY_ANSWER_NOTE,
     FORMATTING_NOTE,
@@ -99,10 +100,14 @@ SPECIALIST_LABELS: Final[dict[str, str]] = {
     "reviewer": "the Reviewer",
     "researcher": "the Researcher",
 }
-# The Foreman's two fixed replies, composed by the application (conversation-projects).
+# The Foreman's fixed replies, composed by the application.
 ROOM_QUESTION: Final = "Which room is this for?"
+# Kept so older threads that asked this still recognise the reply as the Foreman's.
 WHICH_PIECE: Final = "Which piece do you mean: {names}?"
 WHICH_PIECE_PREFIX: Final = "Which piece do you mean"
+PIECE_HAS_CONVERSATION: Final = (
+    "{piece} already has a conversation. Open it from the Pieces page."
+)
 # The turn's reply when a specialist answers empty twice (piece-versions-and-chat-delete).
 EMPTY_REPLY: Final = "{role} gave no answer. Please rephrase your message or ask again."
 _TOOL_NAME: Final = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -162,6 +167,7 @@ class ChatState(TypedDict, total=False):
     room_asked: bool
     build_room_ok: bool
     ambiguous_pieces: list[str]
+    piece_has_conversation: str | None
     brief: dict[str, Any]
     bound_tools: dict[str, list[str]]
     engineering_turn: bool
@@ -506,22 +512,22 @@ def build_graph(
                         "shell_version": built[-1] if built else None,
                     }
                 )
-            # Which of its builds the owner means: two named are asked about, exactly one
-            # named becomes the active build, joining the conversation if it is not yet in it.
-            build_ids = [b.package_id for b in house_file.builds_of(session, thread_id)] if thread_id else []
+            # One piece per conversation: bind only while unbound, and only when the named
+            # piece has no conversation of its own yet.
             active = thread.package_id if thread and thread.package_id else None
-            if active and active not in build_ids:
-                build_ids.append(active)
             matches = piece_named(messages, all_pieces)
-            named_here = [m for m in matches if m in build_ids]
-            names = {p["package_id"]: p["name"] for p in all_pieces}
-            ambiguous = [f"{m} ({names[m]})" if names.get(m) not in (None, m) else m for m in named_here] if len(named_here) >= 2 else []
-            if not ambiguous and len(matches) == 1 and thread_id is not None and matches[0] != active:
-                house_file.set_active_build(session, thread_id, matches[0])
-                session.commit()
-                active = matches[0]
-                if active not in build_ids:
-                    build_ids.append(active)
+            piece_taken: str | None = None
+            if active is None and len(matches) == 1 and thread_id is not None:
+                named = matches[0]
+                existing = house_file.thread_id_for_piece(session, named)
+                if existing is None:
+                    house_file.set_active_build(session, thread_id, named)
+                    session.commit()
+                    active = named
+                elif existing != thread_id:
+                    piece_taken = named
+            build_ids = [active] if active else []
+            ambiguous: list[str] = []
             requests = [
                 {"field": r.field, "request": r.request}
                 for r in house_file.open_extension_requests(
@@ -629,9 +635,8 @@ def build_graph(
             facts += f" Apartments: {listed}."
         image_attached, design_attached = _attached(engine, messages)
         bound_room = piece_rooms.get(package_id) if package_id else None
-        other_builds = [
-            with_room(p) for p in all_pieces if p["package_id"] in build_ids and p["package_id"] != package_id
-        ] if memory.other_builds == "line" else []
+        # One piece per conversation: never list other builds, even from legacy rows.
+        other_builds: list[dict[str, Any]] = []
         described_rooms = [house_file.describe_room(r) for r in scope_rooms]
         with Session(engine) as session:
             if scope_apartment_name is not None:
@@ -672,12 +677,13 @@ def build_graph(
             "detail_ready": detail_ready,
             "image_attached": image_attached,
             "design_attached": design_attached,
-            "piece_named": bool(matches),
+            "piece_named": bool(matches) and active is None and piece_taken is None,
             "room_confirmed": room_confirmed,
             "room_named": room_is_named,
             "room_asked": room_question_asked(messages),
             "build_room_ok": package_id is None or (bound_room is not None and bound_room in scope_room_names),
             "ambiguous_pieces": ambiguous,
+            "piece_has_conversation": piece_taken,
             "round_count": 0,
             "specialist": "",
             "bound_tools": tools_this_turn,
@@ -831,7 +837,11 @@ def build_graph(
             return Command(
                 update={"messages": [AIMessage(engineering_chat.HEIGHT_REPLY)], "specialist": ""}, goto=END
             )
-        engineering = bool(state.get("engineering_turn")) or bool(getattr(decision, "engineering_question", False))
+        # A placement in the room is not engineering on the model's flag alone (short-engineering-reply).
+        flagged = bool(getattr(decision, "engineering_question", False)) and not engineering_chat.placement_request(
+            _last_human_text(state)
+        )
+        engineering = bool(state.get("engineering_turn")) or flagged
         if engineering:
             changing = bool(state.get("package_id")) and (engineering_chat.revision_intent(_last_human_text(state)) or bool(getattr(decision, "requests_revision", False)))
             chosen = "designer" if changing else "researcher"
@@ -840,7 +850,9 @@ def build_graph(
         # question is the Researcher's whatever else holds; then the two fixed questions.
         if chosen != "researcher":
             fixed = None
-            if state.get("ambiguous_pieces"):
+            if state.get("piece_has_conversation"):
+                fixed = PIECE_HAS_CONVERSATION.format(piece=state["piece_has_conversation"])
+            elif state.get("ambiguous_pieces"):
                 fixed = WHICH_PIECE.format(names=", ".join(state["ambiguous_pieces"]))
             elif not state.get("room_confirmed") and not (
                 state.get("image_attached") or state.get("room_named") or state.get("room_asked")
@@ -904,6 +916,7 @@ def build_graph(
             if name == "designer":
                 notes.append(state.get("piece_note", ""))
                 notes.append(DESIGNER_SIDE_FOLDS_NOTE)
+                notes.append(DESIGNER_SHELF_DEPTHS_NOTE)
             if name in ("designer", "builder"):
                 notes.append(state.get("composition_note", ""))
             if name in ("designer", "lighting"):

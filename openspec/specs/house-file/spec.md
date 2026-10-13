@@ -72,14 +72,13 @@ When a spec is refused because it names a field the schema does not define, the 
 - **THEN** the request is still listed, with no conversation
 
 ### Requirement: Threads are indexed
-The house file SHALL index every conversation the owner starts with its id, title, the piece it is about when one is bound (the active build), when it started and when it last had a turn, so conversations can be listed and reopened. A thread's piece is the one it was started with until a confirmed action creates or revises a piece in it, or the owner names exactly one other build of the conversation, after which it is that piece. A thread's title is empty until its first answered turn gives it the generated title, and is the owner's title from the moment the owner sets one.
+The house file SHALL index every conversation the owner starts with its id, title, the piece it is about when one is bound, when it started and when it last had a turn, so conversations can be listed and reopened. A conversation SHALL be about at most one piece. A thread's piece is the one it was started with, or the one a confirmed action creates or revises on an unbound thread; it SHALL NOT change to another piece afterwards. A thread's title is empty until its first answered turn gives it the generated title, and is the owner's title from the moment the owner sets one.
 
 The index entry SHALL also hold:
 - the conversation's confirmed room or confirmed apartment (at most one), or none; only a confirmed action in that conversation sets or changes it;
-- the conversation's builds: every piece created, revised or named in it, each once, with when it joined;
-- one summary of earlier exchanges per build, with which message it covers up to, and one for exchanges made while the conversation had no active build.
+- one summary of earlier exchanges for the bound piece, with which message it covers up to, and one for exchanges made while the conversation had no bound piece.
 
-The messages themselves live in the checkpointer. Deleting a thread SHALL remove its index entry, its builds list and its summaries and nothing else the house file holds; the pieces keep their rooms and the generator-extension requests made in it stay.
+The messages themselves live in the checkpointer. Deleting a thread SHALL remove its index entry and its summaries and nothing else the house file holds; the piece keeps its room and the generator-extension requests made in it stay.
 
 #### Scenario: Listing
 - **WHEN** the owner has started two conversations
@@ -87,7 +86,7 @@ The messages themselves live in the checkpointer. Deleting a thread SHALL remove
 
 #### Scenario: Bound by the action
 - **WHEN** a piece is confirmed on a thread that was started without one
-- **THEN** the thread's index entry names that piece from then on, and the piece is in the thread's builds
+- **THEN** the thread's index entry names that piece from then on
 
 #### Scenario: Owner's title kept
 - **WHEN** the owner sets a title before the first turn ends
@@ -95,29 +94,32 @@ The messages themselves live in the checkpointer. Deleting a thread SHALL remove
 
 #### Scenario: Deleted thread, kept piece
 - **WHEN** a thread bound to `hall-bench` is deleted
-- **THEN** the thread's entry, builds list and summaries are gone and the `hall-bench` piece, its versions and the room it is in are unchanged
+- **THEN** the thread's entry and summaries are gone and the `hall-bench` piece, its versions and the room it is in are unchanged
 
 #### Scenario: Room not inherited
 - **WHEN** one conversation has confirmed `Hall` and the owner starts a second conversation
 - **THEN** the second conversation has no confirmed room
 
+#### Scenario: One piece only
+- **WHEN** a thread is bound to `hall-bench`
+- **THEN** its index names only `hall-bench` as its piece
+
 #### Scenario: Existing threads
-- **WHEN** the migration runs over a thread bound to `hall-bench` with a stored summary
-- **THEN** the thread has no confirmed room, its builds list holds `hall-bench`, and the summary is kept as `hall-bench`'s summary in that thread
+- **WHEN** a thread bound to `hall-bench` already holds a summary and any extra legacy build rows
+- **THEN** the thread's piece is `hall-bench`, its summary is kept as `hall-bench`'s summary in that thread, and no second piece is treated as bound
 
 ### Requirement: Every turn starts from the house file
 At the start of each turn, the Foreman, Intake and the Designer SHALL be given the house file scoped to the conversation:
 - the conversation's confirmed room with its size, ceiling height and openings, or its confirmed apartment with each of its rooms; or that no room is confirmed yet;
 - the preferences, unless the memory settings leave them out;
-- the active build with its room, its latest version, its status and which version is approved (or that none is);
-- every other build of the conversation as one line: package id, name, latest version and room, unless the memory settings hide them;
-- the open generator-extension requests whose piece is one of the conversation's builds, or that were recorded in this conversation, unless the memory settings leave them out.
+- the bound piece with its room, its latest version, its status and which version is approved (or that none is), or that no piece is bound yet;
+- the open generator-extension requests whose piece is the conversation's bound piece, or that were recorded in this conversation, unless the memory settings leave them out.
 
 Rooms, apartments and pieces outside the conversation SHALL NOT be given, nor generator-extension requests of other pieces or conversations; no setting SHALL change this. Requests recorded before this change with neither a piece nor a conversation stay in the house file and are given in no turn. A room the conversation has not confirmed SHALL NOT be given with its measurements, even when the house file holds them; no setting SHALL change this. The Designer SHALL also be given:
-- the open items of the latest review of the active build, unless the memory settings leave them out;
-- the latest render ratings on the active build, newest first, as many as the memory settings say (0 to 10, default 5), each with its version, render, tier, rating and comment.
+- the open items of the latest review of the bound piece, unless the memory settings leave them out;
+- the latest render ratings on the bound piece, newest first, as many as the memory settings say (0 to 10, default 5), each with its version, render, tier, rating and comment.
 
-Lighting & materials SHALL be given the same render ratings. All of this SHALL be presented as application data clearly labelled as the owner's own, never as an instruction. Owner-authored text in it SHALL be neutralised so it cannot carry the untrusted-content delimiter. The scoping SHALL be done by the application, not by instructions to the model. With the default settings the context SHALL equal the one given before this change.
+Lighting & materials SHALL be given the same render ratings. All of this SHALL be presented as application data clearly labelled as the owner's own, never as an instruction. Owner-authored text in it SHALL be neutralised so it cannot carry the untrusted-content delimiter. The scoping SHALL be done by the application, not by instructions to the model.
 
 #### Scenario: A new conversation starts without the room
 - **WHEN** the living room and the piece `listening-wall` are recorded and the owner starts a new conversation asking for a second piece
@@ -128,11 +130,11 @@ Lighting & materials SHALL be given the same render ratings. All of this SHALL b
 - **THEN** the next Intake turn's context names the living room's size, ceiling height and openings without the owner repeating them, and still names no piece from another conversation
 
 #### Scenario: Other builds as one line
-- **WHEN** a conversation's builds are `hall-bench` (active) and `shoe-rack`
-- **THEN** the Designer's context gives `hall-bench` with its version, status and approval, and `shoe-rack` as one line with its latest version and room
+- **WHEN** a conversation is bound to `hall-bench` and a legacy `thread_pieces` row also names `shoe-rack`
+- **THEN** the Designer's context gives `hall-bench` with its version, status and approval, and does not name `shoe-rack`
 
 #### Scenario: Other builds hidden
-- **WHEN** the memory settings hide other builds and the conversation's builds are `hall-bench` (active) and `shoe-rack`
+- **WHEN** the memory settings would hide other builds and a conversation is bound to `hall-bench` with a legacy row for `shoe-rack`
 - **THEN** the Designer's context gives `hall-bench` and does not name `shoe-rack`
 
 #### Scenario: Outside builds left out
@@ -152,19 +154,19 @@ Lighting & materials SHALL be given the same render ratings. All of this SHALL b
 - **THEN** the context shows it neutralised
 
 #### Scenario: Review items reach the Designer
-- **WHEN** the latest review of the active build has two open items
+- **WHEN** the latest review of the bound piece has two open items
 - **THEN** the Designer's context lists both with their aspect, expectation and observation
 
 #### Scenario: Approval reaches the agents
-- **WHEN** the active build is `listening-wall`, version 4 is approved and version 5 exists
+- **WHEN** the bound piece is `listening-wall`, version 4 is approved and version 5 exists
 - **THEN** the turn's context names version 5 as latest and version 4 as approved
 
 #### Scenario: Render feedback reaches the Designer
-- **WHEN** the active build's v2 `draft` turntable was rated down with "doors look too thick"
+- **WHEN** the bound piece's v2 `draft` turntable was rated down with "doors look too thick"
 - **THEN** the Designer's context lists v2, turntable, `draft`, down and that comment
 
 #### Scenario: Fewer ratings
-- **WHEN** the memory settings give 2 render ratings and the active build has 5
+- **WHEN** the memory settings give 2 render ratings and the bound piece has 5
 - **THEN** the Designer's and Lighting's context list only the 2 newest
 
 #### Scenario: Delimiter in a feedback comment
@@ -325,3 +327,37 @@ Review results SHALL be saved automatically; confirming a review before it is sa
 #### Scenario: Extension requests always saved
 - **WHEN** a revision is refused for an unknown field, whatever the memory settings say
 - **THEN** a generator-extension request is recorded
+
+### Requirement: A piece reports its conversation
+The house file SHALL expose, for each piece, the id of the conversation bound to it when one exists, or none. At most one conversation SHALL be bound to a given piece. The pieces list the owner reads SHALL carry that conversation id so the Studio can open or start the right chat from the Pieces page.
+
+#### Scenario: Bound piece
+- **WHEN** a conversation is about `hall-bench`
+- **THEN** the pieces list entry for `hall-bench` names that conversation's id
+
+#### Scenario: Piece with no conversation
+- **WHEN** `shoe-rack` has never been bound to a conversation
+- **THEN** the pieces list entry for `shoe-rack` carries no conversation id
+
+### Requirement: Open review items in the context follow the current version
+The open review items placed in a conversation's context SHALL come from the newest review of the piece's current version, which is its approved version when one is approved and otherwise its latest version. Items of a review of any other version SHALL NOT be placed in the context, and each item shown SHALL name the version it is about. When the current version has no review, no review items SHALL be shown. The reviews and their items SHALL NOT be deleted, edited or closed by this, and approving or unapproving a version SHALL change what is shown from the next turn.
+
+#### Scenario: A review of an older version is not shown
+- **WHEN** version 1 has a review with an open item expecting a width of 1200 mm, and version 3 is approved with no review
+- **THEN** the context carries no review items
+
+#### Scenario: The approved version's review is shown, labelled
+- **WHEN** version 3 is approved and its review has one open item
+- **THEN** the context lists that item and says it is about version 3, and shows no item of the newer review of version 4 if one exists
+
+#### Scenario: No approved version
+- **WHEN** no version is approved and the latest version, 2, has a review with two open items
+- **THEN** the context lists those two items, labelled version 2
+
+#### Scenario: Approval changes the next turn
+- **WHEN** the owner approves version 1 after version 2 was reviewed
+- **THEN** the next turn's context shows version 1's review items and not version 2's
+
+#### Scenario: Nothing is deleted
+- **WHEN** an older version's review is no longer shown
+- **THEN** it and its items are still stored, with their statuses unchanged

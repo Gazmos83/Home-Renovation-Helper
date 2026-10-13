@@ -27,9 +27,12 @@ slot's, or 0 without a back):
 - back: one, full width × full height in the back slot, fixed over the rear;
   with a fold, the net follows the side profile and the row is its
   grain-aligned bounding rectangle;
-- fixed shelves: between the sides, (width − 2t) × (depth − b); with a fold,
-  each is cut to the smallest inner width along its thickness, one `{id}-shelf-{n}`
-  row when the widths differ, lowest first;
+- fixed shelves: between the sides, (width − 2t) × (depth − b), or each board's
+  own depth from `shelf_depths_mm` (null keeps the back-reduced depth) placed by
+  `shelf_depth_align` (`back` default: rear on the inner rear; `front`: front on
+  the side fronts); with a fold, each is cut to the smallest inner width along
+  its thickness, one `{id}-shelf-{n}` row when the widths or depths differ,
+  lowest first;
 - shelf heights: evenly spaced, fixed shelves lowest; or, when stated, each
   underside at `shelf_positions_mm`, or one `shelf_spacing_mm` clear gap above
   the board below, measured from the top face of the bottom panel;
@@ -63,11 +66,13 @@ slot's, or 0 without a back):
     two doors of one entry with different nets become `{id}-door-{entry}-1`
     and `-2` left to right, each qty 1; a drawer box stays a rectangle cut to
     the smallest inner width along that drawer's height, less runner clearance;
-- adjustable shelves: one row between the sides at the back-reduced depth, less
-  `ADJUSTABLE_SHELF_CLEARANCE_MM` (rounded down to a whole millimetre); pins
-  per shelf times shelves of the module's shelf-pin item, or no quantity when
-  its data sheet lacks the value; with a fold, each board is cut to the
-  smallest inner width along its thickness, then the clearance, floored;
+- adjustable shelves: one row between the sides at that shelf's depth (the
+  back-reduced depth when unset), less `ADJUSTABLE_SHELF_CLEARANCE_MM` on the
+  width (rounded down); pins per shelf times shelves of the module's shelf-pin
+  item, or no quantity when its data sheet lacks the value; with a fold, each
+  board is cut to the smallest inner width along its thickness, then the
+  clearance, floored; an adjustable shelf with a custom depth must cover both
+  pin columns when the sheet gives exact front and rear setbacks;
 - hinges are keyed by the door's hinge item; the count per door is the item's
   own count table when its data sheet has one, else the height rule above; a
   data sheet that names a mounting-plate item adds one plate per hinge;
@@ -577,9 +582,22 @@ def fold_profile(module: Mapping[str, Any], t: int, b: int) -> FoldProfile:
 
 
 def module_bounds(module: Mapping[str, Any], t: int, b: int) -> tuple[int, int, int, int, int, int]:
-    """The folded solid's AABB in the module's frame: (x0, y0, z0, w, d, h)."""
+    """The folded solid's AABB in the module's frame: (x0, y0, z0, w, d, h), including protruding shelves."""
     profile = fold_profile(module, t, b)
-    return profile.x0, profile.y0, profile.z0, profile.w, profile.d, profile.h
+    x0, y0, z0 = float(profile.x0), float(profile.y0), float(profile.z0)
+    x1, y1, z1 = x0 + profile.w, y0 + profile.d, z0 + profile.h
+    if module.get("shelf_depths_mm") and (module.get("shelves") or module.get("adjustable_shelves")):
+        for board in shelf_boards(module, t, b):
+            y0 = min(y0, board.y0)
+            y1 = max(y1, board.y0 + board.depth)
+    return (
+        math.floor(x0),
+        math.floor(y0),
+        math.floor(z0),
+        math.ceil(x1 - x0),
+        math.ceil(y1 - y0),
+        math.ceil(z1 - z0),
+    )
 
 
 # --- dividers between named boards and shelves split where they cross (partial-and-folded-dividers) ---
@@ -603,6 +621,36 @@ class ShelfBoard(NamedTuple):
     x0: float
     centre: float
     width: int
+    depth: int
+    y0: float
+
+
+def shelf_depth_align_of(module: Mapping[str, Any]) -> str:
+    """`back` or `front`; `back` when depths are unset or align is omitted."""
+    return module.get("shelf_depth_align") or "back"
+
+
+def shelf_depth_of(module: Mapping[str, Any], level: int, inner_d: int) -> int:
+    """Cut depth for shelf `level` (1-based, lowest first): stated depth or the back-reduced default."""
+    depths = module.get("shelf_depths_mm")
+    if not depths:
+        return inner_d
+    stated = depths[level - 1]
+    return inner_d if stated is None else stated
+
+
+def shelf_y0(align: str, inner_d: int, depth: int) -> float:
+    """Front face of a shelf board in the module frame from the flush align."""
+    if align == "front":
+        return 0.0
+    return float(inner_d - depth)
+
+
+def shelf_covers_pin_columns(y0: float, depth: int, inner_d: int, front_setback: float, rear_setback: float) -> bool:
+    """Whether a placed shelf covers both pin columns (setbacks from front and rear edges)."""
+    front_col = front_setback
+    rear_col = inner_d - rear_setback
+    return y0 <= front_col + 1e-9 and y0 + depth >= rear_col - 1e-9
 
 
 def uses_divider_layout(module: Mapping[str, Any]) -> bool:
@@ -694,9 +742,13 @@ def shelf_boards(module: Mapping[str, Any], t: int, b: int) -> list[ShelfBoard]:
     """Every shelf board, lowest level first and left to right: a level is split only where a divider crosses it."""
     places = divider_places(module, t, b)
     profile = fold_profile(module, t, b) if module.get("side_folds") else None
+    inner_d = profile.inner_d if profile is not None else module["depth"] - b
+    align = shelf_depth_align_of(module)
     found = []
     for level, (centre, kind) in enumerate(shelf_levels(module, t), start=1):
         z0, z1 = centre - t / 2, centre + t / 2
+        depth = shelf_depth_of(module, level, inner_d)
+        y0 = shelf_y0(align, inner_d, depth)
         crossing = sorted((p for p in places if p.bottom < centre < p.top), key=lambda p: p.left)
         if profile is None:
             left_edge: float = t
@@ -707,18 +759,22 @@ def shelf_boards(module: Mapping[str, Any], t: int, b: int) -> list[ShelfBoard]:
             right_edge = min(inner_right_x(profile, y, z) for y, z in samples)
         if not crossing:
             if profile is None:
-                found.append(ShelfBoard(level, kind, None, left_edge, centre, math.floor(right_edge - left_edge)))
+                found.append(
+                    ShelfBoard(level, kind, None, left_edge, centre, math.floor(right_edge - left_edge), depth, y0)
+                )
             else:
                 opening_left, _opening = narrowest_opening(profile, z0, z1)
                 width = min_inner_width(profile, 0, profile.inner_d, z0, z1)
-                found.append(ShelfBoard(level, kind, None, opening_left, centre, width))
+                found.append(ShelfBoard(level, kind, None, opening_left, centre, width, depth, y0))
             continue
         edges = [left_edge]
         for place in crossing:
             edges += [place.left, place.left + t]
         edges.append(right_edge)
         for bay, (start, end) in enumerate(zip(edges[::2], edges[1::2], strict=True), start=1):
-            found.append(ShelfBoard(level, kind, bay, start, centre, math.floor(end - start + 1e-9)))
+            found.append(
+                ShelfBoard(level, kind, bay, start, centre, math.floor(end - start + 1e-9), depth, y0)
+            )
     return found
 
 
@@ -746,11 +802,11 @@ def _where(boards: list[ShelfBoard]) -> str:
     return "; ".join(parts)
 
 
-def shelf_rows(module: Mapping[str, Any], t: int, b: int) -> list[tuple[str, str, str, int, list[ShelfBoard]]]:
-    """The span-aware layout's shelf rows: (id, name, kind, cut width, boards), grouped by cut width.
+def shelf_rows(module: Mapping[str, Any], t: int, b: int) -> list[tuple[str, str, str, int, int, list[ShelfBoard]]]:
+    """Shelf rows: (id, name, kind, cut width, cut depth, boards), grouped by (width, depth).
 
-    One width of a kind keeps `{id}-shelf` / `{id}-adjustable-shelf`; several become `-<n>`, numbered by
-    first appearance from the lowest level and, within a level, from the left.
+    One (width, depth) of a kind keeps `{id}-shelf` / `{id}-adjustable-shelf`; several become `-<n>`,
+    numbered by first appearance from the lowest level and, within a level, from the left.
     """
     mid = module["id"]
     rows = []
@@ -758,16 +814,16 @@ def shelf_rows(module: Mapping[str, Any], t: int, b: int) -> list[tuple[str, str
         ("fixed", f"{mid}-shelf", "Fixed shelf"),
         ("adjustable", f"{mid}-adjustable-shelf", "Adjustable shelf"),
     ):
-        groups: dict[int, list[ShelfBoard]] = {}
+        groups: dict[tuple[int, int], list[ShelfBoard]] = {}
         for board in shelf_boards(module, t, b):
             if board.kind == kind:
-                groups.setdefault(board_cut_width(board), []).append(board)
+                groups.setdefault((board_cut_width(board), board.depth), []).append(board)
         if len(groups) == 1:
-            ((width, boards),) = groups.items()
-            rows.append((prefix, name, kind, width, boards))
+            (((width, depth), boards),) = groups.items()
+            rows.append((prefix, name, kind, width, depth, boards))
             continue
-        for number, (width, boards) in enumerate(groups.items(), start=1):
-            rows.append((f"{prefix}-{number}", f"{name} {number}", kind, width, boards))
+        for number, ((width, depth), boards) in enumerate(groups.items(), start=1):
+            rows.append((f"{prefix}-{number}", f"{name} {number}", kind, width, depth, boards))
     return rows
 
 
@@ -1169,7 +1225,7 @@ def _divider_layout_rows(
         )
     fixed_boards = 0
     adjustable_boards = 0
-    for row_id, name, kind, width, boards in shelf_rows(module, t, b):
+    for row_id, name, kind, width, depth, boards in shelf_rows(module, t, b):
         if kind == "fixed":
             fixed_boards += len(boards)
             rule = "fixed shelf boards between the sides and the dividers that cross them"
@@ -1179,11 +1235,12 @@ def _divider_layout_rows(
                 f"adjustable shelf boards between the sides and the dividers that cross them, less "
                 f"{ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance (rounded down)"
             )
+        depth_note = f" at {depth} mm depth" if depth != inner_d else " at the back-reduced depth"
         rows.append(
             _part(
-                row_id, name, qty=len(boards), l=width, w=inner_d, t=t, material=material,
+                row_id, name, qty=len(boards), l=width, w=depth, t=t, material=material,
                 grain="length (left-right)", banding="front edge",
-                notes=f"Rule: {rule}; {_where(boards)}", module=mid,
+                notes=f"Rule: {rule}{depth_note}; {_where(boards)}", module=mid,
             )
         )
     dividers = module.get("dividers", 0)
@@ -1324,57 +1381,86 @@ def _folded_module_rows(
         hardware.free(module.get("hardware") or [])
         return rows
 
-    shelf_widths = _folded_shelf_widths(module, profile)
-    if shelf_widths:
-        if len(set(shelf_widths)) == 1:
+    n_folds = len(profile.folds)
+    if module.get("shelf_depths_mm"):
+        fixed_boards = 0
+        adjustable_boards = 0
+        for row_id, name, kind, width, depth, boards in shelf_rows(module, t, b):
+            if kind == "fixed":
+                fixed_boards += len(boards)
+                rule = "fixed shelf between the sides at the smallest inner width along its thickness"
+            else:
+                adjustable_boards += len(boards)
+                rule = (
+                    f"between the sides at the smallest inner width along its thickness, "
+                    f"less {ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance (rounded down)"
+                )
+            depth_note = f" at {depth} mm depth" if depth != inner_d else ""
             rows.append(
                 carcass_part(
-                    f"{mid}-shelf", "Fixed shelf", qty=len(shelf_widths), l=shelf_widths[0], w=inner_d,
-                    notes="Rule: fixed shelves between the sides at the smallest inner width along each board",
+                    row_id, name, qty=len(boards), l=width, w=depth,
+                    notes=f"Rule: {rule}{depth_note}; {_where(boards)}",
                 )
             )
-        else:
-            for index, width in enumerate(shelf_widths, start=1):
+        hardware.add(
+            CONFIRMAT_ID,
+            "Confirmat screw 7×50 mm",
+            8 + 4 * n_folds + 4 * fixed_boards,
+            "Rule: 8 per carcass plus 4 per fold joint plus 4 per fixed shelf board",
+        )
+        if adjustable_boards:
+            _pin_line(module, adjustable_boards, inputs, hardware)
+    else:
+        shelf_widths = _folded_shelf_widths(module, profile)
+        if shelf_widths:
+            if len(set(shelf_widths)) == 1:
                 rows.append(
                     carcass_part(
-                        f"{mid}-shelf-{index}", f"Fixed shelf {index}", qty=1, l=width, w=inner_d,
-                        notes="Rule: fixed shelf between the sides at the smallest inner width along its thickness",
+                        f"{mid}-shelf", "Fixed shelf", qty=len(shelf_widths), l=shelf_widths[0], w=inner_d,
+                        notes="Rule: fixed shelves between the sides at the smallest inner width along each board",
                     )
                 )
+            else:
+                for index, width in enumerate(shelf_widths, start=1):
+                    rows.append(
+                        carcass_part(
+                            f"{mid}-shelf-{index}", f"Fixed shelf {index}", qty=1, l=width, w=inner_d,
+                            notes="Rule: fixed shelf between the sides at the smallest inner width along its thickness",
+                        )
+                    )
 
-    n_folds = len(profile.folds)
-    hardware.add(
-        CONFIRMAT_ID,
-        "Confirmat screw 7×50 mm",
-        8 + 4 * n_folds + 4 * len(shelf_widths),
-        "Rule: 8 per carcass plus 4 per fold joint plus 4 per fixed shelf board",
-    )
-    adjustable_widths = _folded_adjustable_widths(module, profile)
-    if adjustable_widths:
-        if len(set(adjustable_widths)) == 1:
-            rows.append(
-                carcass_part(
-                    f"{mid}-adjustable-shelf", "Adjustable shelf",
-                    qty=len(adjustable_widths), l=adjustable_widths[0], w=inner_d,
-                    notes=(
-                        f"Rule: between the sides at the smallest inner width along each board, "
-                        f"less {ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance (rounded down)"
-                    ),
-                )
-            )
-        else:
-            for index, width in enumerate(adjustable_widths, start=1):
+        hardware.add(
+            CONFIRMAT_ID,
+            "Confirmat screw 7×50 mm",
+            8 + 4 * n_folds + 4 * len(shelf_widths),
+            "Rule: 8 per carcass plus 4 per fold joint plus 4 per fixed shelf board",
+        )
+        adjustable_widths = _folded_adjustable_widths(module, profile)
+        if adjustable_widths:
+            if len(set(adjustable_widths)) == 1:
                 rows.append(
                     carcass_part(
-                        f"{mid}-adjustable-shelf-{index}", f"Adjustable shelf {index}",
-                        qty=1, l=width, w=inner_d,
+                        f"{mid}-adjustable-shelf", "Adjustable shelf",
+                        qty=len(adjustable_widths), l=adjustable_widths[0], w=inner_d,
                         notes=(
-                            f"Rule: between the sides at the smallest inner width along its thickness, "
+                            f"Rule: between the sides at the smallest inner width along each board, "
                             f"less {ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance (rounded down)"
                         ),
                     )
                 )
-        _pin_line(module, len(adjustable_widths), inputs, hardware)
+            else:
+                for index, width in enumerate(adjustable_widths, start=1):
+                    rows.append(
+                        carcass_part(
+                            f"{mid}-adjustable-shelf-{index}", f"Adjustable shelf {index}",
+                            qty=1, l=width, w=inner_d,
+                            notes=(
+                                f"Rule: between the sides at the smallest inner width along its thickness, "
+                                f"less {ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance (rounded down)"
+                            ),
+                        )
+                    )
+            _pin_line(module, len(adjustable_widths), inputs, hardware)
     bottom_slot = back if back is not None else {"thickness_mm": t, "material": material}
     _add_front_rows(
         rows, module, hardware, t, b, material, bottom_slot, profile.width - 2 * t, inner_d, inputs, profile,
@@ -1436,67 +1522,108 @@ def _module_rows(
         )
     widths = bay_cut_widths(module, t)
     shelves = module["shelves"]
-    if shelves and not dividers:
-        rows.append(
-            _part(
-                f"{mid}-shelf", "Fixed shelf", qty=shelves, l=inner_w, w=inner_d, t=t,
-                material=material, grain="length (left-right)", banding="front edge",
-                notes="Rule: fixed shelves between the sides at the back-reduced depth", module=mid,
-            )
-        )
-    elif shelves:
-        for row_id, name, qty, width in bay_rows(f"{mid}-shelf", "Fixed shelf", shelves, widths):
+    adjustable = module.get("adjustable_shelves", 0)
+    if module.get("shelf_depths_mm"):
+        fixed_boards = 0
+        adjustable_boards = 0
+        for row_id, name, kind, width, depth, boards in shelf_rows(module, t, b):
+            if kind == "fixed":
+                fixed_boards += len(boards)
+                rule = "fixed shelf boards between the sides"
+                if dividers:
+                    rule += " and the dividers that cross them"
+            else:
+                adjustable_boards += len(boards)
+                rule = (
+                    f"adjustable shelf boards between the sides"
+                    f"{' and the dividers that cross them' if dividers else ''}, less "
+                    f"{ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance (rounded down)"
+                )
+            depth_note = f" at {depth} mm depth" if depth != inner_d else " at the back-reduced depth"
             rows.append(
                 _part(
-                    row_id, name, qty=qty, l=width, w=inner_d, t=t,
-                    material=material, grain="length (left-right)", banding="front edge",
-                    notes="Rule: fixed shelves in every bay between the sides and dividers at the back-reduced depth",
-                    module=mid,
+                    row_id, name, qty=len(boards), l=width, w=depth, t=t, material=material,
+                    grain="length (left-right)", banding="front edge",
+                    notes=f"Rule: {rule}{depth_note}; {_where(boards)}", module=mid,
                 )
             )
-    adjustable = module.get("adjustable_shelves", 0)
-    if adjustable and not dividers:
-        rows.append(
-            _part(
-                f"{mid}-adjustable-shelf", "Adjustable shelf", qty=adjustable,
-                l=math.floor(inner_w - ADJUSTABLE_SHELF_CLEARANCE_MM), w=inner_d, t=t,
-                material=material, grain="length (left-right)", banding="front edge",
-                notes=(
-                    f"Rule: between the sides less {ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance "
-                    "(rounded down), at the back-reduced depth"
-                ),
-                module=mid,
+        if adjustable_boards:
+            _pin_line(module, adjustable_boards, inputs, hardware)
+        if dividers:
+            hardware.add(
+                CONFIRMAT_ID,
+                "Confirmat screw 7×50 mm",
+                8 + 4 * fixed_boards + 4 * dividers,
+                "Rule: 8 per carcass plus 4 per fixed shelf board plus 4 per divider",
             )
-        )
-    elif adjustable:
-        for row_id, name, qty, width in bay_rows(f"{mid}-adjustable-shelf", "Adjustable shelf", adjustable, widths):
+        else:
+            hardware.add(
+                CONFIRMAT_ID,
+                "Confirmat screw 7×50 mm",
+                8 + 4 * fixed_boards,
+                "Rule: 8 per carcass plus 4 per fixed shelf",
+            )
+    else:
+        if shelves and not dividers:
             rows.append(
                 _part(
-                    row_id, name, qty=qty, l=math.floor(width - ADJUSTABLE_SHELF_CLEARANCE_MM), w=inner_d, t=t,
+                    f"{mid}-shelf", "Fixed shelf", qty=shelves, l=inner_w, w=inner_d, t=t,
+                    material=material, grain="length (left-right)", banding="front edge",
+                    notes="Rule: fixed shelves between the sides at the back-reduced depth", module=mid,
+                )
+            )
+        elif shelves:
+            for row_id, name, qty, width in bay_rows(f"{mid}-shelf", "Fixed shelf", shelves, widths):
+                rows.append(
+                    _part(
+                        row_id, name, qty=qty, l=width, w=inner_d, t=t,
+                        material=material, grain="length (left-right)", banding="front edge",
+                        notes="Rule: fixed shelves in every bay between the sides and dividers at the back-reduced depth",
+                        module=mid,
+                    )
+                )
+        if adjustable and not dividers:
+            rows.append(
+                _part(
+                    f"{mid}-adjustable-shelf", "Adjustable shelf", qty=adjustable,
+                    l=math.floor(inner_w - ADJUSTABLE_SHELF_CLEARANCE_MM), w=inner_d, t=t,
                     material=material, grain="length (left-right)", banding="front edge",
                     notes=(
-                        f"Rule: in every bay less {ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance "
+                        f"Rule: between the sides less {ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance "
                         "(rounded down), at the back-reduced depth"
                     ),
                     module=mid,
                 )
             )
-    if adjustable:
-        _pin_line(module, adjustable * len(widths), inputs, hardware)
-    if dividers:
-        hardware.add(
-            CONFIRMAT_ID,
-            "Confirmat screw 7×50 mm",
-            8 + 4 * shelves * len(widths) + 4 * dividers,
-            "Rule: 8 per carcass plus 4 per fixed shelf board plus 4 per divider",
-        )
-    else:
-        hardware.add(
-            CONFIRMAT_ID,
-            "Confirmat screw 7×50 mm",
-            8 + 4 * shelves,
-            "Rule: 8 per carcass plus 4 per fixed shelf",
-        )
+        elif adjustable:
+            for row_id, name, qty, width in bay_rows(f"{mid}-adjustable-shelf", "Adjustable shelf", adjustable, widths):
+                rows.append(
+                    _part(
+                        row_id, name, qty=qty, l=math.floor(width - ADJUSTABLE_SHELF_CLEARANCE_MM), w=inner_d, t=t,
+                        material=material, grain="length (left-right)", banding="front edge",
+                        notes=(
+                            f"Rule: in every bay less {ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance "
+                            "(rounded down), at the back-reduced depth"
+                        ),
+                        module=mid,
+                    )
+                )
+        if adjustable:
+            _pin_line(module, adjustable * len(widths), inputs, hardware)
+        if dividers:
+            hardware.add(
+                CONFIRMAT_ID,
+                "Confirmat screw 7×50 mm",
+                8 + 4 * shelves * len(widths) + 4 * dividers,
+                "Rule: 8 per carcass plus 4 per fixed shelf board plus 4 per divider",
+            )
+        else:
+            hardware.add(
+                CONFIRMAT_ID,
+                "Confirmat screw 7×50 mm",
+                8 + 4 * shelves,
+                "Rule: 8 per carcass plus 4 per fixed shelf",
+            )
 
     bottom_slot = back if back is not None else carcass
     _add_front_rows(
@@ -1532,6 +1659,37 @@ def _form(raw: Mapping[str, Any] | None) -> Form | None:
     if "min" in raw and "max" in raw:
         return {"min_mm": raw["min"], "max_mm": raw["max"]}
     return None
+
+
+def check_adjustable_shelf_depths(spec: Mapping[str, Any], inputs: Mapping[str, Any]) -> None:
+    """Refuse an adjustable shelf whose custom depth misses an exact pin column.
+
+    Raises `DeriveError` naming `shelf_depths_mm` and the shelf number.
+    """
+    materials = spec.get("materials") or {}
+    for index, module in enumerate(spec["modules"]):
+        if not module.get("shelf_depths_mm") or not module.get("adjustable_shelves"):
+            continue
+        key = module.get("shelf_pin") or SHELF_PIN_ID
+        sheet = _sheet(inputs, key)
+        if sheet is None:
+            continue
+        raw = sheet.get("values") or {}
+        front_form, rear_form = _form(raw.get("front_setback_mm")), _form(raw.get("rear_setback_mm"))
+        if front_form is None or rear_form is None or "mm" not in front_form or "mm" not in rear_form:
+            continue
+        front, rear = float(front_form["mm"]), float(rear_form["mm"])
+        t, b = _carcass_tb(module, materials)
+        inner_d = module["depth"] - b
+        for board in shelf_boards(module, t, b):
+            if board.kind != "adjustable":
+                continue
+            if shelf_covers_pin_columns(board.y0, board.depth, inner_d, front, rear):
+                continue
+            raise DeriveError(
+                f"modules[{index}].shelf_depths_mm: shelf {board.level} does not cover both shelf-pin columns "
+                f"(front setback {front:g} mm, rear setback {rear:g} mm)"
+            )
 
 
 def _n(value: float) -> str:
@@ -2443,6 +2601,8 @@ def derive(
     parts; hardware follows the order each id first appears. Part overrides
     are applied last. The same input always yields identical output.
     """
+    if inputs is not None:
+        check_adjustable_shelf_depths(spec, inputs)
     parts, hardware = _rule_rows(spec, inputs)
     parts = _apply_overrides(parts, spec.get("part_overrides") or [])
     return parts, hardware, _assembly(spec)

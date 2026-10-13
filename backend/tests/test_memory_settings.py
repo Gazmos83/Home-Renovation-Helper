@@ -363,3 +363,52 @@ def test_extension_requests_are_saved_whatever_the_settings(make_ctx, tool_state
     preview({"package_id": "hall-bench", "changes": {"modules": {"cabinet": {"bevel_mm": 3}}}}, make_ctx())
     with tool_deps.session() as session:
         assert [r.field for r in house_file.open_extension_requests(session)] == ["modules.cabinet.bevel_mm"]
+
+
+# --- "Add to decisions": one message compressed into a row (homeowner-chat) --------------------
+
+
+def test_an_answer_is_parsed_into_a_capped_validated_row() -> None:
+    from app.agent.decision_summary import DECISION_MAX_CHARS, parse_row
+
+    row = parse_row("**Topic:** Door latch\nDecision: Use a push-latch, 18 mm.")
+    assert (row.topic, row.decision) == ("Door latch", "Use a push-latch, 18 mm.")
+    assert len(parse_row("Topic: a\nDecision: " + "x" * 5000).decision) == DECISION_MAX_CHARS
+    assert parse_row("Decision: no topic line") is None
+    assert parse_row("") is None
+
+
+def test_a_message_is_compressed_to_a_row_and_nothing_is_written(client) -> None:
+    thread = _talked(client)
+    install(client, fake_models(foreman={"replies": ["Topic: Wall width\nDecision: The wall is 3 m wide."]}))
+    response = client.post(f"/chat/threads/{thread}/note/decision", json={"text": "A very long message " * 50})
+    assert response.status_code == 200, response.text
+    assert response.json() == {"topic": "Wall width", "decision": "The wall is 3 m wide."}
+    assert client.get(f"/chat/threads/{thread}/note").json()["note"] is None
+    for word in ("token", "deepseek", "cost"):
+        assert word not in response.text.lower()
+
+
+def test_a_refused_or_failed_summary_gives_an_empty_row(client) -> None:
+    from app.db.models import OperatorSetting
+
+    thread = _talked(client)
+    slug = client.app.state.routing.model_for("foreman")
+    with Session(client.app.state.engine) as session:
+        session.merge(OperatorSetting(
+            key=f"budget:{slug}", value=json.dumps({"context_budget_tokens": 32000, "daily_token_ceiling": 1}),
+            updated_at=datetime.now(UTC),
+        ))
+        session.commit()
+    install(client, fake_models(foreman={"replies": ["Topic: x\nDecision: y"]}))
+    response = client.post(f"/chat/threads/{thread}/note/decision", json={"text": "hello"})
+    assert response.status_code == 200 and response.json() == {"topic": "", "decision": ""}
+    assert client.get(f"/chat/threads/{thread}/note").json()["note"] is None
+
+
+def test_the_decision_route_checks_the_session_and_the_text(client) -> None:
+    thread = start(client)
+    assert client.post(f"/chat/threads/{thread}/note/decision", json={"text": ""}).status_code == 422
+    assert client.post(f"/chat/threads/{thread}/note/decision", json={"text": "x" * 9000}).status_code == 422
+    client.post("/auth/logout")
+    assert client.post(f"/chat/threads/{thread}/note/decision", json={"text": "hi"}).status_code == 401

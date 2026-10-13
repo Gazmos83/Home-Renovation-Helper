@@ -155,7 +155,17 @@ def _module_boxes(module: Mapping[str, Any], materials: Mapping[str, Any]) -> di
             "backs",
             [((width, b, height), (x + width / 2, y + depth - b / 2, z + height / 2))],
         )
-    if rules.uses_divider_layout(module):
+    if rules.uses_divider_layout(module) or module.get("shelf_depths_mm"):
+        if module.get("dividers") and not rules.uses_divider_layout(module):
+            found = rules.bays(module, t)
+            if len(found) > 1:
+                pieces[f"{mid}-divider"] = (
+                    "carcass",
+                    [
+                        ((t, inner_d, height - 2 * t), (x + t + left + bay_w + t / 2, y + inner_d / 2, z + height / 2))
+                        for left, bay_w in found[:-1]
+                    ],
+                )
         pieces.update(_divider_layout_pieces(module, t, b))
         _add_front_boxes(pieces, module, materials, t, b)
         return pieces
@@ -219,11 +229,14 @@ def _divider_layout_pieces(module: Mapping[str, Any], t: int, b: int) -> dict[st
                 for place in places
             ],
         )
-    for row_id, _name, _kind, width, boards in rules.shelf_rows(module, t, b):
+    for row_id, _name, _kind, width, _depth, boards in rules.shelf_rows(module, t, b):
         pieces[row_id] = (
             "shelves",
             [
-                ((width, inner_d, t), (x + board.x0 + board.width / 2, y + inner_d / 2, z + board.centre))
+                (
+                    (width, board.depth, t),
+                    (x + board.x0 + board.width / 2, y + board.y0 + board.depth / 2, z + board.centre),
+                )
                 for board in boards
             ],
         )
@@ -405,7 +418,7 @@ def _folded_module_pieces(
     if back is not None:
         pieces[f"{mid}-back"] = ("backs", [_back_prism(module, profile)])
 
-    if module.get("dividers"):
+    if module.get("dividers") or module.get("shelf_depths_mm"):
         for row_id, (layer, boxes) in _divider_layout_pieces(module, t, b).items():
             pieces[row_id] = (layer, [Placement(size, centre) for size, centre in boxes])
         _add_folded_fronts(pieces, module, materials, profile, t, b)

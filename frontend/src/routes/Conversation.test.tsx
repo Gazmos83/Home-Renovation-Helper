@@ -26,7 +26,7 @@ type Msg = {
   package_id?: string;
   version?: number;
   upload_ids?: string[];
-  kind?: "text" | "answers" | "render" | "build";
+  kind?: "text" | "answers" | "render" | "build" | "revision";
   rows?: { question: string; answer: string }[];
 };
 type Reply = { status?: number; body?: unknown };
@@ -165,6 +165,9 @@ beforeEach(() => {
         title = String(body.title);
         return json({ body: { thread_id: "t1", title, package_id: null, created_at: "", last_turn_at: "" } });
       }
+      if (call === "DELETE /chat/threads/t1") {
+        return new Response(null, { status: 204 });
+      }
       if (call === "POST /chat/threads/t1/uploads") return json(upload());
       return json({ status: 404, body: { detail: "not found" } });
     }),
@@ -187,7 +190,10 @@ function show(path = "/conversations/t1") {
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
-        <Routes><Route path="/conversations/:threadId" element={<Conversation />} /></Routes>
+        <Routes>
+          <Route path="/conversations/:threadId" element={<Conversation />} />
+          <Route path="/pieces" element={<p>the pieces page</p>} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -951,23 +957,27 @@ test("only the latest owner message offers Edit", async () => {
   expect(edits[0].closest("[data-side]")).toHaveTextContent("third");
 });
 
-test("Add to decisions opens the decisions table with the message as a new row, and nothing is saved before Save", async () => {
+test("Add to decisions opens the decisions table with the compressed message as a new row, and nothing is saved before Save", async () => {
   const user = userEvent.setup();
   messages = [{ ...owner("the shelves are 18 mm"), message_id: "m1" }, reply("Noted.")];
   extra = (call) => {
     if (call === "GET /chat/threads/t1/note") return { body: { package_id: null, note: "- **Room:** Wohnen", owner_edited: false } };
     if (call === "PUT /chat/threads/t1/note") return { body: { package_id: null, note: "x", owner_edited: true } };
+    if (call === "POST /chat/threads/t1/note/decision") return { body: { topic: "", decision: "Shelves are 18 mm" } };
     return undefined;
   };
   show();
   const list = within(await screen.findByRole("region", { name: "Messages" }));
-  await user.click(list.getAllByRole("button", { name: "Add to decisions" })[0]);
-  expect(await screen.findByRole("textbox", { name: "New decision" })).toHaveValue("the shelves are 18 mm");
+  const button = list.getAllByRole("button", { name: "Add to decisions" })[0];
+  expect(button).toHaveClass("font-bold", "border-2", "bg-green-100");
+  await user.click(button);
+  expect(await screen.findByRole("textbox", { name: "New decision" })).toHaveValue("Shelves are 18 mm");
+  expect(calls.find(([m, url]) => m === "POST" && url === "/chat/threads/t1/note/decision")?.[2]).toEqual({ text: "the shelves are 18 mm" });
   expect(calls.filter(([m, url]) => m === "PUT" && url === "/chat/threads/t1/note")).toHaveLength(0);
   await user.type(screen.getByRole("textbox", { name: "New topic" }), "Shelves");
   await user.click(screen.getByRole("button", { name: "Save" }));
   const saved = calls.find(([m, url]) => m === "PUT" && url === "/chat/threads/t1/note");
-  expect(saved?.[2]).toEqual({ note: "- **Room:** Wohnen\n- **Shelves:** the shelves are 18 mm" });
+  expect(saved?.[2]).toEqual({ note: "- **Room:** Wohnen\n- **Shelves:** Shelves are 18 mm" });
 });
 
 test("the decisions note is read again when a turn ends", async () => {
@@ -1092,6 +1102,21 @@ test("a build notice has an Inspect button that opens the inspector; a failed or
   const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
   expect(await inspector.findByText("Overall: W 1200 mm × H 450 mm × D 400 mm")).toBeInTheDocument();
   expect(screen.getByRole("textbox")).toBeEnabled();
+});
+
+test("a revision notice has a centered Open button that opens the inspector, before any build ends", async () => {
+  const user = userEvent.setup();
+  messages = [
+    reply("Created hall-bench version 1."),
+    { role: "notice", kind: "revision", text: "hall-bench version 1 is created.", outcome: "succeeded", package_id: "hall-bench", version: 1 },
+  ];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  const notice = await list.findByRole("region", { name: "Revision notice" });
+  expect(notice).toHaveClass("mx-auto", "items-center", "text-center");
+  await user.click(within(notice).getByRole("button", { name: "Open version 1" }));
+  const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
+  expect(await inspector.findByText("Overall: W 1200 mm × H 450 mm × D 400 mm")).toBeInTheDocument();
 });
 
 test("a build notice appears without a reload once the followed build ends", async () => {
@@ -1455,4 +1480,77 @@ test("unapproving a piece placed in an approved room shows the refusal in the pr
   await user.click(panel.getByRole("button", { name: "Unapprove version 1" }));
   expect(await panel.findByText(/Hall version 2/)).toBeInTheDocument();
   expect(panel.getByRole("button", { name: "Unapprove version 1" })).toBeInTheDocument();
+});
+
+// --- delete conversation (piece-conversation-link) ---------------------------------------
+
+test("the conversation links back to Pieces", async () => {
+  messages = [reply("Hello")];
+  show();
+  expect(await screen.findByRole("link", { name: "All pieces" })).toHaveAttribute("href", "/pieces");
+});
+
+test("a confirmed delete removes the conversation and lands on Pieces", async () => {
+  const user = userEvent.setup();
+  title = "Hall shoe bench";
+  messages = [reply("Hello")];
+  show();
+  await user.click(await screen.findByRole("button", { name: "Delete Hall shoe bench" }));
+  const confirm = screen.getByRole("group", { name: "Delete Hall shoe bench?" });
+  expect(confirm).toHaveTextContent("its pieces and renders are kept");
+  expect(confirm).toHaveTextContent("cannot be restored");
+  await user.click(within(confirm).getByRole("button", { name: "Delete" }));
+  await waitFor(() => expect(calls).toContainEqual(["DELETE", "/chat/threads/t1", undefined]));
+  expect(await screen.findByText("the pieces page")).toBeInTheDocument();
+});
+
+test("cancelling a delete sends nothing and keeps the conversation open", async () => {
+  const user = userEvent.setup();
+  title = "Hall shoe bench";
+  messages = [reply("Hello")];
+  show();
+  await user.click(await screen.findByRole("button", { name: "Delete Hall shoe bench" }));
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.getByRole("heading", { name: "Hall shoe bench" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Delete Hall shoe bench" })).toBeInTheDocument();
+  expect(calls.some(([method]) => method === "DELETE")).toBe(false);
+});
+
+test("a refused delete stays on the conversation and shows the reason", async () => {
+  const user = userEvent.setup();
+  title = "Hall shoe bench";
+  messages = [reply("Hello")];
+  extra = (call) =>
+    call === "DELETE /chat/threads/t1"
+      ? {
+          status: 409,
+          body: {
+            detail: {
+              failure_class: "turn_running",
+              reason: "a reply is still being written in this conversation",
+            },
+          },
+        }
+      : undefined;
+  show();
+  await user.click(await screen.findByRole("button", { name: "Delete Hall shoe bench" }));
+  await user.click(screen.getByRole("button", { name: "Delete" }));
+  expect(await screen.findByText("a reply is still being written in this conversation")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Hall shoe bench" })).toBeInTheDocument();
+  expect(screen.queryByText("the pieces page")).not.toBeInTheDocument();
+});
+
+test("Add to decisions opens an empty row with a message when the message cannot be compressed, never the full text", async () => {
+  const user = userEvent.setup();
+  messages = [{ ...owner("the shelves are 18 mm"), message_id: "m1" }, reply("Noted.")];
+  extra = (call) => {
+    if (call === "GET /chat/threads/t1/note") return { body: { package_id: null, note: null, owner_edited: false } };
+    if (call === "POST /chat/threads/t1/note/decision") return { body: { topic: "", decision: "" } };
+    return undefined;
+  };
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  await user.click(list.getAllByRole("button", { name: "Add to decisions" })[0]);
+  expect(await screen.findByRole("textbox", { name: "New decision" })).toHaveValue("");
+  expect(screen.getByText(/could not be compressed/)).toBeInTheDocument();
 });

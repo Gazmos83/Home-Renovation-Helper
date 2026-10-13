@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { expect, test } from "vitest";
 import App from "./App";
@@ -39,4 +39,62 @@ test("the header stays at the top of the screen while the page scrolls", async (
   show("/remnants");
   const header = (await screen.findByRole("navigation", { name: "Main" })).closest("header");
   expect(header).toHaveClass("sticky", "top-0");
+});
+
+test("the homeowner nav has Pieces and no Conversations", async () => {
+  stubFetch((call) => {
+    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+    if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+    if (call === "GET /packages") return { body: [] };
+  });
+  show("/pieces");
+  const nav = await screen.findByRole("navigation", { name: "Main" });
+  expect(within(nav).getByRole("link", { name: "Pieces" })).toHaveAttribute("href", "/pieces");
+  expect(within(nav).queryByRole("link", { name: "Conversations" })).not.toBeInTheDocument();
+});
+
+test("a conversation deep link still opens the conversation view", async () => {
+  stubFetch((call) => {
+    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+    if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+    if (call === "GET /chat/threads/t1") {
+      return {
+        body: {
+          thread_id: "t1",
+          title: "Hall bench",
+          package_id: "hall-bench",
+          created_at: "",
+          last_turn_at: "",
+          messages: [],
+          pending: null,
+        },
+      };
+    }
+    if (call === "GET /chat/threads/t1/progress") {
+      return {
+        body: {
+          package_id: null,
+          name: null,
+          latest_version: null,
+          approved_version: null,
+          build_status: null,
+          version_count: 0,
+          max_versions: 15,
+          steps: [],
+          next_step: null,
+          open_review_items: 0,
+          open_requests: [],
+          screenshot: null,
+          still: null,
+          viewer: null,
+          rendering: false,
+        },
+      };
+    }
+    if (call === "GET /chat/threads/t1/tools") return { body: [] };
+    if (call === "GET /chat/threads/t1/uploads") return { body: [] };
+  });
+  show("/conversations/t1");
+  expect(await screen.findByRole("heading", { name: "Hall bench" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "All pieces" })).toHaveAttribute("href", "/pieces");
 });

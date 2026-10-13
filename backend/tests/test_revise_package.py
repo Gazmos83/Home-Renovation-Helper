@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 
+from langchain_core.messages import HumanMessage
+from sqlalchemy.orm import Session
+
 from app.agent import house_file
 from app.agent.tools.base import Confirmation
 from app.agent.tools.create_piece import run as create_run
@@ -306,7 +309,7 @@ def test_a_rebuild_after_the_highest_version_was_deleted_names_a_new_number(make
     assert shown.summary.startswith("Rebuild hall-bench as version 4, unchanged from version 2")
 
 
-# partial-and-folded-dividers: the two questions and the derived lines in the preview.
+# partial-and-folded-dividers: the two questions; revision-confirm-highlight-cuts: change lines only.
 TOP_SPAN = [{"from_board": 2, "to_board": "top"}]
 
 
@@ -320,7 +323,7 @@ def test_a_new_divider_without_a_position_is_asked_not_previewed(make_ctx, tool_
     assert storage.versions(tool_state.settings.render_root, "hall-bench") == [1]
 
 
-def test_a_positioned_divider_is_previewed_with_its_cut_list_and_hardware_lines(make_ctx, tool_state) -> None:
+def test_a_positioned_divider_is_previewed_with_change_lines_only(make_ctx, tool_state) -> None:
     make_piece(make_ctx, tool_state)
     change = {
         "package_id": "hall-bench",
@@ -328,13 +331,15 @@ def test_a_positioned_divider_is_previewed_with_its_cut_list_and_hardware_lines(
     }
     shown = preview(change, make_ctx())
     assert isinstance(shown, Confirmation)
-    assert "Cut list: + cabinet-divider" in shown.summary
-    assert "Hardware: Confirmat screw 7×50 mm" in shown.summary
+    assert "Cut list:" not in shown.summary
+    assert "Hardware:" not in shown.summary
     assert shown.proposal["changes"] == [
         "cabinet: dividers None → 1",
         "cabinet: divider_positions_mm not set → [473]",
         "cabinet: divider_spans full height → divider 1 from shelf 2 to the top",
     ]
+    for line in shown.proposal["changes"]:
+        assert line in shown.summary
 
 
 def test_a_divider_on_an_adjustable_shelf_asks_to_fix_it(make_ctx, tool_state) -> None:
@@ -362,3 +367,131 @@ def test_create_piece_asks_for_a_new_dividers_position(make_ctx) -> None:
     document["modules"][0] |= {"dividers": 1}
     answer = create_preview({"package_id": "divided-desk", "spec": document}, make_ctx())
     assert isinstance(answer, str) and "[473] mm from the left side's inner face" in answer
+
+
+# --- auto-fit-protruding-shelves ---------------------------------------------------------------
+
+DEEPER = {
+    "package_id": "hall-bench",
+    "changes": {"modules": {"cabinet": {"shelf_depths_mm": [None, 400], "shelf_depth_align": "back"}}},
+    "requested": [
+        {"quote": "second shelf 40 cm deep", "target": "cabinet", "field": "shelf_depths_mm", "value_mm": 400}
+    ],
+}
+
+
+def make_boxed_piece(make_ctx, tool_state, thread) -> None:
+    document = desk()
+    document["envelope"] = {"width": 1000, "height": 1450, "depth": 300}
+    create_run({"package_id": "hall-bench", "spec": document}, replace(make_ctx(), approved=True))
+    wait_for_status(storage.version_dir(tool_state.settings.render_root, "hall-bench", 1))
+    with Session(tool_state.engine) as session:
+        house_file.add_build(session, thread, "hall-bench")
+        house_file.write_owner_summary(session, thread, "- **Doors:** flap", "hall-bench")
+        session.commit()
+
+
+def _bound_thread(tool_state):
+    with Session(tool_state.engine) as session:
+        thread = house_file.create_thread(session, "test", package_id="hall-bench")
+        session.commit()
+        return thread.id
+
+
+def _note(tool_state, thread) -> str | None:
+    with Session(tool_state.engine) as session:
+        return house_file.read_summary(session, thread, "hall-bench")[0]
+
+
+def test_the_fit_is_shown_in_the_confirmation_and_the_row_follows_the_yes(make_ctx, tool_state) -> None:
+    thread = _bound_thread(tool_state)
+    make_boxed_piece(make_ctx, tool_state, thread)
+    ctx = replace(make_ctx(thread_id=thread, package_id="hall-bench"), history=(HumanMessage("second shelf 40 cm deep"),))
+    shown = preview(DEEPER, ctx)
+    assert isinstance(shown, Confirmation)
+    assert "cabinet: y 0 → 112 mm" in shown.summary and "envelope depth 300 → 412 mm" in shown.summary
+    assert "Protruding shelf fit" not in (_note(tool_state, thread) or "")  # nothing before the yes
+
+    run(DEEPER, replace(ctx, approved=True))
+    note = _note(tool_state, thread) or ""
+    assert note.startswith("- **Doors:** flap\n- **Protruding shelf fit:**") and "envelope depth 300 → 412 mm" in note
+
+
+def test_a_declined_or_unapproved_revision_writes_no_row(make_ctx, tool_state) -> None:
+    thread = _bound_thread(tool_state)
+    make_boxed_piece(make_ctx, tool_state, thread)
+    ctx = replace(make_ctx(thread_id=thread, package_id="hall-bench"), history=(HumanMessage("second shelf 40 cm deep"),))
+    preview(DEEPER, ctx)
+    run(DEEPER, ctx)  # not approved
+    assert _note(tool_state, thread) == "- **Doors:** flap"
+
+
+def test_a_revision_without_a_fit_writes_no_row(make_ctx, tool_state) -> None:
+    thread = _bound_thread(tool_state)
+    make_boxed_piece(make_ctx, tool_state, thread)
+    run(SHELVES, replace(make_ctx(thread_id=thread, package_id="hall-bench"), approved=True))
+    assert _note(tool_state, thread) == "- **Doors:** flap"
+
+
+# --- auto-fit-protruding-shelves: a side fold changes only on the owner's request ----------------
+
+BEND = {"side": "left", "from_mm": 1100, "along": "height", "angle_deg": 26, "towards": "inside"}
+
+
+def make_folded_piece(make_ctx, tool_state) -> None:
+    from tests.test_shelf_depths import _build
+
+    document = _build(shelves=3, side_folds=[BEND])
+    document["envelope"] = {"width": 800, "height": 1600, "depth": 400}
+    create_run({"package_id": "hall-bench", "spec": document}, replace(make_ctx(), approved=True))
+    wait_for_status(storage.version_dir(tool_state.settings.render_root, "hall-bench", 1))
+
+
+def test_a_fold_cleared_without_a_request_is_refused_and_creates_nothing(make_ctx, tool_state) -> None:
+    make_folded_piece(make_ctx, tool_state)
+    ctx = make_ctx(history=(HumanMessage("make the top shelf 550 mm deep"),))
+    arguments = {
+        "package_id": "hall-bench",
+        "changes": {
+            "modules": {
+                "cabinet": {"shelf_depths_mm": [None, None, 550], "shelf_depth_align": "back", "side_folds": []}
+            }
+        },
+        "requested": [
+            {"quote": "550 mm deep", "target": "cabinet", "field": "shelf_depths_mm", "value_mm": 550}
+        ],
+    }
+    refused = preview(arguments, ctx)
+    assert isinstance(refused, str)
+    assert "cabinet" in refused and "side_folds" in refused and "ask the owner" in refused
+    assert run(arguments, replace(ctx, approved=True)) == refused
+    assert storage.versions(tool_state.settings.render_root, "hall-bench") == [1]
+
+
+def test_a_fold_changed_at_the_owners_request_is_confirmed(make_ctx, tool_state) -> None:
+    make_folded_piece(make_ctx, tool_state)
+    ctx = make_ctx(history=(HumanMessage("make the left bend 30°"),))
+    arguments = {
+        "package_id": "hall-bench",
+        "changes": {"modules": {"cabinet": {"side_folds": [{**BEND, "angle_deg": 30}]}}},
+        "requested": [{"quote": "make the left bend 30°", "target": "cabinet", "field": "side_folds", "value_mm": 0}],
+    }
+    shown = preview(arguments, ctx)
+    assert isinstance(shown, Confirmation), shown
+    assert "side_folds" in shown.summary and "30°" in shown.summary
+
+
+def test_a_revision_that_leaves_the_fold_alone_needs_no_fold_entry(make_ctx, tool_state) -> None:
+    make_folded_piece(make_ctx, tool_state)
+    ctx = make_ctx(history=(HumanMessage("make the top shelf 550 mm deep"),))
+    arguments = {
+        "package_id": "hall-bench",
+        "changes": {"modules": {"cabinet": {"shelf_depths_mm": [None, None, 550], "shelf_depth_align": "back"}}},
+        "requested": [
+            {"quote": "550 mm deep", "target": "cabinet", "field": "shelf_depths_mm", "value_mm": 550}
+        ],
+    }
+    shown = preview(arguments, ctx)
+    assert isinstance(shown, Confirmation), shown
+    assert "side_folds" not in shown.summary
+    assert "cabinet: y 0 → 162 mm" in shown.summary and "envelope depth 400 → 562 mm" in shown.summary

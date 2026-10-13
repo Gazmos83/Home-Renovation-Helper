@@ -601,16 +601,31 @@ def test_a_thread_scope_is_a_room_or_an_apartment_never_both(db_session) -> None
     assert room.name == "Hall" and chosen is None
 
 
-def test_a_build_is_listed_once_and_the_active_one_is_the_thread_piece(db_session) -> None:
+def test_a_build_is_listed_once_and_set_active_does_not_switch_a_bound_thread(db_session) -> None:
     thread = house_file.create_thread(db_session, "Builds")
     house_file.touch_thread(db_session, thread.id, package_id="hall-bench")
     house_file.touch_thread(db_session, thread.id, package_id="hall-bench")
     house_file.set_active_build(db_session, thread.id, "shoe-rack")
-    house_file.add_build(db_session, thread.id, "hall-bench")
+    house_file.add_build(db_session, thread.id, "shoe-rack")
     db_session.expire_all()
 
+    # Legacy add_build can still insert a row; the bound piece stays hall-bench.
     assert sorted(b.package_id for b in house_file.builds_of(db_session, thread.id)) == ["hall-bench", "shoe-rack"]
-    assert house_file.get_thread(db_session, thread.id).package_id == "shoe-rack"
+    assert house_file.get_thread(db_session, thread.id).package_id == "hall-bench"
+
+
+def test_thread_id_for_piece_returns_the_bound_conversation(db_session) -> None:
+    assert house_file.thread_id_for_piece(db_session, "hall-bench") is None
+    older = house_file.create_thread(db_session, "Older", package_id="hall-bench")
+    newer = house_file.create_thread(db_session, "Newer", package_id="hall-bench")
+    house_file.touch_thread(db_session, newer.id)
+    db_session.expire_all()
+
+    assert house_file.thread_id_for_piece(db_session, "hall-bench") == newer.id
+    assert house_file.thread_ids_for_pieces(db_session, ["hall-bench", "shoe-rack"]) == {
+        "hall-bench": newer.id,
+    }
+    assert older.id != newer.id
 
 
 def test_a_summary_is_kept_per_build(db_session) -> None:

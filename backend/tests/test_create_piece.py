@@ -58,6 +58,32 @@ def test_a_package_id_already_in_use_is_refused(make_ctx) -> None:
     assert "already in use" in refused
 
 
+def test_a_second_piece_on_a_bound_conversation_is_refused(make_ctx, tool_deps) -> None:
+    from uuid import uuid4
+
+    thread_id = uuid4()
+    with tool_deps.session() as session:
+        thread = house_file.create_thread(session, "Hall", package_id="hall-bench")
+        thread_id = thread.id
+        session.commit()
+    refused = preview(arguments("shelf"), make_ctx(thread_id=thread_id))
+    assert isinstance(refused, str)
+    assert "hall-bench" in refused
+    assert "Create A New Piece" in refused
+
+
+def test_create_on_an_unbound_thread_binds_it(make_ctx, tool_deps, tool_state) -> None:
+    with tool_deps.session() as session:
+        thread = house_file.create_thread(session, "New")
+        thread_id = thread.id
+        session.commit()
+    ctx = replace(make_ctx(thread_id=thread_id), approved=True, brief={"budget_eur": 400})
+    output = run(arguments(), ctx)
+    assert output.update == {"package_id": "hall-bench"}
+    with tool_deps.session() as session:
+        assert house_file.get_thread(session, thread_id).package_id == "hall-bench"
+
+
 def test_an_invalid_package_id_is_refused(make_ctx) -> None:
     assert isinstance(preview(arguments("Not A Slug"), make_ctx()), str)
 

@@ -20,6 +20,7 @@ from typing import Any, Final
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agent import decisions_note, house_file
@@ -30,7 +31,7 @@ from app.blender.custom_build.derive import overall
 from app.blender.launch import subprocess_launch
 from app.blender.schemas import CustomBuildSpec, describe_validation_error
 from app.blender.spec_contract import SpecValidationError
-from app.db.models import Piece
+from app.db.models import Piece, PieceVersion
 from app.design_import import export_document
 from app.guidelines.hardware_inputs import freeze_inputs
 from app.packages import service
@@ -133,7 +134,11 @@ def _frame_count(folder: Path) -> int:
 
 
 def describe_version(
-    root: Path, package_id: str, version: int, approved_at: str | None = None
+    root: Path,
+    package_id: str,
+    version: int,
+    approved_at: str | None = None,
+    revised_from: int | None = None,
 ) -> dict[str, Any]:
     folder = storage.version_dir(root, package_id, version)
     state = storage.read_status(folder) or {}
@@ -147,6 +152,7 @@ def describe_version(
         "finished_at": state.get("finished_at"),
         "error": state.get("error"),
         "approved_at": approved_at,
+        "revised_from": revised_from,
         "files": files,
         "renders": {
             "still": (folder / "still.png").is_file(),
@@ -168,6 +174,15 @@ def _approvals(request: Request, package_id: str) -> dict[int, str]:
             return {}
         row = house_file.version_row(session, package_id, number)
         return {number: row.approved_at.isoformat()}
+
+
+def _revised_from(request: Request, package_id: str) -> dict[int, int | None]:
+    """Each house-file version mapped to the version it was revised from (revision-confirm-highlight-cuts)."""
+    with Session(request.app.state.engine) as session:
+        return {
+            row.version: row.revised_from
+            for row in session.scalars(select(PieceVersion).where(PieceVersion.package_id == package_id))
+        }
 
 
 def _start_build(
@@ -219,15 +234,18 @@ def create_package(body: PackageIn, request: Request, background: BackgroundTask
 
 @router.get("")
 def list_packages(request: Request):
+    packages = list(storage.list_packages(render_root(request)))
     with Session(request.app.state.engine) as session:
         rooms = house_file.piece_room_names(session)
+        threads = house_file.thread_ids_for_pieces(session, [package_id for package_id, _ in packages])
     return [
         {
             "package_id": package_id,
             "versions": sorted(found, reverse=True),
             "room": rooms.get(package_id),
+            "thread_id": str(threads[package_id]) if package_id in threads else None,
         }
-        for package_id, found in storage.list_packages(render_root(request))
+        for package_id, found in packages
     ]
 
 
@@ -265,10 +283,17 @@ def read_package(package_id: str, request: Request):
     if not found:
         raise not_found()
     approvals = _approvals(request, package_id)
+    links = _revised_from(request, package_id)
     return {
         "package_id": package_id,
         "versions": [
-            describe_version(render_root(request), package_id, number, approvals.get(number))
+            describe_version(
+                render_root(request),
+                package_id,
+                number,
+                approvals.get(number),
+                revised_from=links.get(number),
+            )
             for number in sorted(found, reverse=True)
         ],
     }
@@ -278,7 +303,13 @@ def read_package(package_id: str, request: Request):
 def read_version(package_id: str, version: int, request: Request):
     existing_version(request, package_id, version)
     approved_at = _approvals(request, package_id).get(version)
-    return describe_version(render_root(request), package_id, version, approved_at)
+    return describe_version(
+        render_root(request),
+        package_id,
+        version,
+        approved_at,
+        revised_from=_revised_from(request, package_id).get(version),
+    )
 
 
 @router.put("/{package_id}/versions/{version}/approval")
@@ -319,14 +350,19 @@ def approve_version(package_id: str, version: int, request: Request):
                 logger.exception("raising the brief's height limit failed for %s", package_id)
         session.commit()
         approved_at = row.approved_at.isoformat()
-    return describe_version(render_root(request), package_id, version, approved_at)
+        revised_from = row.revised_from
+    return describe_version(
+        render_root(request), package_id, version, approved_at, revised_from=revised_from
+    )
 
 
 @router.delete("/{package_id}/versions/{version}/approval")
 def unapprove_version(package_id: str, version: int, request: Request):
     existing_version(request, package_id, version)
     with Session(request.app.state.engine) as session:
-        if house_file.version_row(session, package_id, version) is not None:
+        row = house_file.version_row(session, package_id, version)
+        revised_from = row.revised_from if row is not None else None
+        if row is not None:
             try:
                 house_file.unapprove_version(
                     session, package_id, version, root=render_root(request)
@@ -334,7 +370,9 @@ def unapprove_version(package_id: str, version: int, request: Request):
             except house_file.HouseFileError as error:
                 raise refused(409, "placed_in_approved_room", str(error)) from None
             session.commit()
-    return describe_version(render_root(request), package_id, version)
+    return describe_version(
+        render_root(request), package_id, version, revised_from=revised_from
+    )
 
 
 @router.delete("/{package_id}/versions/{version}", status_code=status.HTTP_204_NO_CONTENT)

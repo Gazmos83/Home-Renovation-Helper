@@ -18,7 +18,7 @@ from app.db.models import (
     Thread,
 )
 from app.engineering.assessments import AssessmentIn
-from app.engineering.chat import render_answer, request_history
+from app.engineering.chat import SHORT_STATUS, render_answer, request_history
 from app.engineering.geometry import digest, part_domain, stored_geometry
 from app.engineering.methods import method
 from app.engineering.registry import (
@@ -469,7 +469,7 @@ def test_calculate_fetch_and_typed_renderer_use_code_report_and_refuse_disabled_
             calculators_enabled=False,
             render_root=root,
         )
-        assert "rejected" in rejected and "98.1" not in rejected
+        assert rejected == SHORT_STATUS
         assert session.get(PieceVersion, (piece[0], 1)).approved_at is None
     assert tool_state.launched == []
 

@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.agent.revise import ReviseError, revise_spec
+from app.blender.custom_build.derive import overall
 from app.blender.schemas import CustomBuildSpec, PackageChanges
 
 TEMPLATES = Path(__file__).resolve().parents[1] / "fixtures" / "packages" / "templates"
@@ -267,3 +268,70 @@ def test_removing_the_dividers_drops_their_positions(desk: dict) -> None:
     plain, lines = _revise(divided, modules={"cabinet": {"dividers": 0}})
     assert lines == ["cabinet: divider_positions_mm [400] → not set", "cabinet: dividers 1 → 0"]
     CustomBuildSpec.model_validate(plain)
+
+
+# --- auto-fit-protruding-shelves ---------------------------------------------------------------
+
+DEEPER = {"cabinet": {"shelf_depths_mm": [None, 400], "shelf_depth_align": "back"}}
+
+
+@pytest.fixture
+def boxed(desk: dict) -> dict:
+    desk["envelope"] = {"width": 1000, "height": 1450, "depth": 300}
+    return CustomBuildSpec.model_validate(desk).model_dump(mode="json")
+
+
+def test_a_shelf_past_the_front_moves_the_build_back_and_grows_the_envelope(boxed: dict) -> None:
+    revised, lines = revise_spec(boxed, PackageChanges(modules=DEEPER))
+    # 400 mm shelf, back-flush on a 300 mm module with a 12 mm back: 288 − 400 = −112 mm
+    assert revised["modules"][0]["y"] == 112
+    assert revised["envelope"]["depth"] == 412
+    assert "fit: cabinet: y 0 → 112 mm" in lines and "fit: envelope depth 300 → 412 mm" in lines
+    CustomBuildSpec.model_validate(revised)
+    # room_fit places the piece by its overall size, which follows the grown envelope
+    assert overall(revised) == {"w": 1000, "h": 1450, "d": 412}
+
+
+def test_without_the_fit_the_same_change_is_refused(boxed: dict) -> None:
+    unfitted = json.loads(json.dumps(boxed))
+    unfitted["modules"][0].update(shelf_depths_mm=[None, 400], shelf_depth_align="back")
+    with pytest.raises(Exception, match="lies outside the envelope"):
+        CustomBuildSpec.model_validate(unfitted)
+
+
+def test_the_whole_build_moves_together(boxed: dict) -> None:
+    second = {**boxed["modules"][0], "id": "second", "x": 1000}
+    boxed["modules"].append(second)
+    boxed["envelope"]["width"] = 2000
+    boxed["wall_shelves"] = [
+        {"id": "ledge", "name": "Ledge", "x": 0, "y": 0, "z": 1500, "length": 500, "depth": 150, "material": "carcass"}
+    ]
+    boxed["envelope"]["height"] = 1700
+    revised, _ = revise_spec(boxed, PackageChanges(modules=DEEPER))
+    assert [module["y"] for module in revised["modules"]] == [112, 112]
+    assert revised["wall_shelves"][0]["y"] == 112
+    assert revised["envelope"]["depth"] == 412
+
+
+def test_a_build_already_clear_of_the_front_is_fitted_only_for_the_shortfall(boxed: dict) -> None:
+    boxed["modules"][0]["y"] = 100
+    boxed["envelope"]["depth"] = 400
+    revised, _ = revise_spec(boxed, PackageChanges(modules=DEEPER))
+    assert revised["modules"][0]["y"] == 112 and revised["envelope"]["depth"] == 412
+
+
+def test_no_protrusion_changes_no_position(boxed: dict) -> None:
+    revised, lines = revise_spec(boxed, PackageChanges(modules={"cabinet": {"shelves": 3}}))
+    assert revised["modules"][0]["y"] == 0 and revised["envelope"]["depth"] == 300
+    assert not any(line.startswith("fit: ") for line in lines)
+
+
+def test_a_build_without_an_envelope_moves_but_gains_none(desk: dict) -> None:
+    revised, _ = revise_spec(desk, PackageChanges(modules=DEEPER))
+    assert revised["modules"][0]["y"] == 112 and revised.get("envelope") is None
+
+
+def test_other_overflow_is_still_refused(boxed: dict) -> None:
+    revised, _ = revise_spec(boxed, PackageChanges(modules={"cabinet": {"width": 1200}}))
+    with pytest.raises(Exception, match="lies outside the envelope"):
+        CustomBuildSpec.model_validate(revised)

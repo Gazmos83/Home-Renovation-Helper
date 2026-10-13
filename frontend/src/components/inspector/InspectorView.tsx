@@ -172,6 +172,12 @@ export function InspectorView({
     queryFn: () => api.pieceSpec(packageId, version),
     enabled: built,
   });
+  const revisedFrom = info.data?.revised_from ?? null;
+  const priorSpec = useQuery({
+    queryKey: ["spec", packageId, revisedFrom],
+    queryFn: () => api.pieceSpec(packageId, revisedFrom!),
+    enabled: built && revisedFrom != null && revisedFrom > 0,
+  });
 
   let body;
   if (!Number.isInteger(version) || version < 1) body = <p>There is no version {versionLabel} of {packageId}.</p>;
@@ -197,7 +203,7 @@ export function InspectorView({
           onChange={setTab}
         />
         {tab === "cutlist" ? (
-          <CutListTables spec={spec.data} />
+          <CutListTables spec={spec.data} baseline={priorSpec.data ?? null} />
         ) : (
           <>
             <p className="text-sm">

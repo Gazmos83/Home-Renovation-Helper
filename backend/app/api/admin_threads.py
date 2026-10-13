@@ -22,7 +22,7 @@ from app.db.models import ModelUsage
 router = APIRouter(prefix="/admin/threads", tags=["admin"], dependencies=[Depends(require_dev)])
 
 # Calls made on the Foreman slot outside its routing decision.
-FOREMAN_OPERATIONS = frozenset({"chat.title", "chat.summary"})
+FOREMAN_OPERATIONS = frozenset({"chat.title", "chat.summary", "chat.decision"})
 
 
 class CallOut(BaseModel):

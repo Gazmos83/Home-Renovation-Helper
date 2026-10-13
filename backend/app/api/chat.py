@@ -26,7 +26,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
-from app.agent import chat, house_file, progress, uploads
+from app.agent import chat, decision_summary, house_file, progress, uploads
 from app.agent.decisions_note import NO_SUCH_NOTE, NOTE_MAX_CHARS, store_note
 from app.agent.memory_settings import read_memory_settings
 from app.api.gate import require_owner
@@ -146,7 +146,7 @@ class MessageOut(BaseModel):
     text: str
     # `answers` is an answered question set, shown as its `rows` (studio-chat-polish); a
     # notice is a `render` or a `build` notice (version-cleanup-and-inspection).
-    kind: Literal["text", "answers", "render", "build"] = Field(
+    kind: Literal["text", "answers", "render", "build", "revision"] = Field(
         default="text", exclude_if=lambda kind: kind == "text"
     )
     rows: list[AnswerRowOut] | None = Field(default=None, exclude_if=lambda rows: rows is None)
@@ -448,15 +448,22 @@ def _stream(request: Request, thread: Any, owner: UUID, message: str, make_event
 
 @router.post("/threads", status_code=status.HTTP_201_CREATED)
 def start_thread(body: ThreadIn, request: Request) -> ThreadOut:
-    if body.package_id is not None:
+    package_id = body.package_id
+    if package_id is not None:
         try:
-            package_id = storage.validate_package_id(body.package_id)
+            package_id = storage.validate_package_id(package_id)
         except storage.InvalidPackageId as error:
             raise _refusal(422, "invalid_package_id", str(error)) from None
         if not storage.versions(request.app.state.settings.render_root, package_id):
             raise _refusal(422, "unknown_package", f"there is no package {package_id!r}")
     with Session(request.app.state.engine) as session:
-        thread = house_file.create_thread(session, body.title, package_id=body.package_id)
+        if package_id is not None and house_file.thread_id_for_piece(session, package_id) is not None:
+            raise _refusal(
+                status.HTTP_409_CONFLICT,
+                "piece_has_conversation",
+                f"{package_id} already has a conversation; open that one instead of starting another",
+            )
+        thread = house_file.create_thread(session, body.title, package_id=package_id)
         session.commit()
         session.refresh(thread)
         return _thread_out(thread)
@@ -730,6 +737,27 @@ def save_note(thread_id: UUID, body: NoteIn, request: Request) -> NoteOut:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=refusal)
         session.commit()
     return _note_out(request, thread)
+
+
+class DecisionIn(BaseModel):
+    text: str = Field(min_length=1, max_length=decision_summary.MESSAGE_MAX_CHARS)
+
+
+class DecisionOut(BaseModel):
+    """A compressed chat message for the owner to edit; empty strings when it could not be made."""
+
+    topic: str
+    decision: str
+
+
+@router.post("/threads/{thread_id}/note/decision")
+def summarise_decision(
+    thread_id: UUID, body: DecisionIn, request: Request, login: Annotated[AuthSessionRecord, Depends(require_owner)]
+) -> DecisionOut:
+    """One message as a topic and a one-line decision to pre-fill a new row. Writes nothing."""
+    thread = _load_thread(request, thread_id)
+    row = chat.decision_for(_graph(request), thread_id=thread.id, owner_id=login.user_id, message=body.text)
+    return DecisionOut(topic=row.topic if row else "", decision=row.decision if row else "")
 
 
 @router.post("/threads/{thread_id}/note/compress")

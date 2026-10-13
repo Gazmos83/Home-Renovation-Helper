@@ -12,7 +12,12 @@ from app.agent.budget import BudgetRefused, RequestBudget, prepare
 from app.agent.models.openrouter_client import build_chat_model
 from app.agent.summaries import transcript
 from app.db.models import EngineeringEvidenceUse
-from app.engineering.chat import missing_inputs, render_answer, request_history
+from app.engineering.chat import (
+    SHORT_STATUS,
+    missing_inputs,
+    render_answer,
+    request_history,
+)
 from app.engineering.registry import add_property, decide_rights
 from app.engineering.schemas import PropertyIn, RightsIn
 from app.observability.langfuse import Tracing, mask_personal_data
@@ -146,11 +151,10 @@ def test_typed_renderer_rejects_model_claims_and_keeps_units_conditions_citation
     rendered = render_answer(
         valid, db_session, [identifier], "18 mm shelf safe?", enabled=True
     )
+    assert rendered.startswith(SHORT_STATUS)
     assert all(
         value in rendered
         for value in (
-            "NOT VERIFIED",
-            "not implemented",
             "2000.0 MPa",
             "dry only",
             "pages [1]",
@@ -167,11 +171,23 @@ def test_typed_renderer_rejects_model_claims_and_keeps_units_conditions_citation
         rejected = render_answer(
             invalid, db_session, [identifier], "18 mm shelf", enabled=True
         )
-        assert (
-            "NOT VERIFIED" in rejected
-            and "rejected" in rejected
-            and "100 kg" not in rejected
-        )
+        assert rejected == SHORT_STATUS
+
+
+def test_the_status_is_one_short_sentence_without_the_old_block(db_session):
+    assert len(SHORT_STATUS.split()) <= 20
+    rendered = render_answer(
+        "{}", db_session, [], "Can this shelf hold 30 kg?", enabled=False
+    )
+    assert rendered == SHORT_STATUS
+    for gone in (
+        "not implemented",
+        "Preliminary design advice",
+        "switched off",
+        "Missing inputs",
+        "Legal/standard",
+    ):
+        assert gone not in rendered
 
 
 @pytest.mark.parametrize(
@@ -197,7 +213,7 @@ def test_standalone_engineering_routes_to_researcher_and_rejects_unsafe_prose(
     harness = make_harness(tool_state, models, room=None)
     result = harness.turn("What load capacity can a shelf carry?")
     assert result["specialist"] == "researcher"
-    assert "NOT VERIFIED" in result["messages"][-1].content
+    assert result["messages"][-1].content == SHORT_STATUS
     assert "safe for 100 kg" not in result["messages"][-1].content
     assert models["reviewer"].calls == 0 and tool_state.launched == []
 
@@ -221,7 +237,7 @@ def test_engineering_revision_stays_designer_and_visual_discrepancy_stays_review
     _bind_piece(tool_state, harness, screenshot=True)
     revision = harness.turn("Change the bench for greater load capacity")
     assert revision["specialist"] == "designer" and revision["engineering_turn"]
-    assert "NOT VERIFIED" in revision["messages"][-1].content
+    assert SHORT_STATUS in revision["messages"][-1].content
     visual = harness.turn("The render shows the wrong width; compare against the spec")
     assert visual["specialist"] == "reviewer" and not visual["engineering_turn"]
     assert visual["messages"][-1].content == "Visual discrepancy only."
@@ -281,7 +297,7 @@ def test_plugin_uses_current_context_and_records_separate_evidence_ids(
         result = harness.turn("TEST board elasticity and load capacity?")
         assert (
             "Evidence:" in result["messages"][-1].content
-            and "NOT VERIFIED" in result["messages"][-1].content
+            and result["messages"][-1].content.startswith(SHORT_STATUS)
         )
         assert "search_catalog_knowledge" not in models["researcher"].bound_tools
         with Session(tool_state.engine) as session:

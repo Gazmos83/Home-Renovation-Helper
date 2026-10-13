@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import EngineeringChunk, KnowledgeSourceVersion
 from app.engineering.__main__ import seed_catalogue
+from app.engineering.chat import SHORT_STATUS
 from tests.api_helpers import sign_in
 from tests.test_dev_panel_insights_api import _make
 from tests.test_guideline_ingestion import PDF
@@ -273,7 +274,7 @@ def test_api_tracing_suppresses_content_and_later_calls_keep_local_usage(
     first = client.post(
         f"/chat/threads/{thread}/turns", json={"message": "TEST board load capacity?"}
     )
-    assert first.status_code == 200 and "NOT VERIFIED" in first.json()["reply"]
+    assert first.status_code == 200 and first.json()["reply"].startswith(SHORT_STATUS)
     assert (
         client.post(
             f"/chat/threads/{thread}/turns", json={"message": "Thanks; what next?"}

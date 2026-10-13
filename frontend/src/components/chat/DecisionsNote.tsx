@@ -77,11 +77,15 @@ export function pageOfRows(rows: Row[], page: number): { rows: Row[]; pages: num
 export function DecisionsNote({
   threadId,
   prefill,
+  compressing,
   onPrefillUsed,
 }: {
   threadId: string;
-  /** A chat message's text offered as a new row ("Add to decisions"); the owner gives the topic and saves. */
-  prefill?: string;
+  /** A chat message compressed to a topic and one-line decision ("Add to decisions"); the owner edits and saves.
+   * `failed` when it could not be compressed: the row is empty and a message says so. */
+  prefill?: { topic: string; decision: string; failed?: boolean };
+  /** The message is still being compressed. */
+  compressing?: boolean;
   /** Called once the new row is saved or cancelled, so the offer is not made again. */
   onPrefillUsed?: () => void;
 }) {
@@ -92,7 +96,7 @@ export function DecisionsNote({
   const [page, setPage] = useState(prefill === undefined ? 0 : Number.MAX_SAFE_INTEGER);
   const [deleting, setDeleting] = useState<number | null>(null);
   const [adding, setAdding] = useState<{ topic: string; decision: string } | null>(
-    prefill === undefined ? null : { topic: "", decision: prefill.slice(0, 2000) },
+    prefill === undefined ? null : { topic: prefill.topic.slice(0, 200), decision: prefill.decision.slice(0, 2000) },
   );
   const [editing, setEditing] = useState<{ line: number; topic: string; decision: string } | null>(null);
   const done = (value: Awaited<ReturnType<typeof api.conversationNote>>) => {
@@ -126,6 +130,10 @@ export function DecisionsNote({
         Earlier parts of a long conversation are sent to the assistants as this note. The full conversation stays
         here.
       </p>
+      {compressing && <p className="text-sm text-muted-foreground">Compressing the message…</p>}
+      {prefill?.failed && adding && (
+        <p className="text-sm text-muted-foreground">The message could not be compressed; write the decision yourself.</p>
+      )}
       <>
           {text || adding ? (
             <table className="w-full border-collapse text-left text-sm">

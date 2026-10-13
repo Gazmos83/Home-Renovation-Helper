@@ -1,13 +1,14 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { Check, Circle, Pencil, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   api,
   type ChatMessage,
   type Pending,
   type Progress,
   type ResumeBody,
+  type Thread,
   type ThreadDetail,
   type ToolToggle,
   type TurnEvent,
@@ -440,6 +441,56 @@ function Title({ threadId, title }: { threadId: string; title: string }) {
   );
 }
 
+/** Delete this conversation; pieces and renders stay. Lands on Pieces. */
+function DeleteConversation({ threadId, title }: { threadId: string; title: string }) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const name = title || "Untitled";
+  const remove = useMutation({
+    mutationFn: () => api.deleteThread(threadId),
+    onSuccess: () => {
+      queryClient.setQueryData<Thread[]>(["threads"], (list) => list?.filter((t) => t.thread_id !== threadId));
+      queryClient.invalidateQueries({ queryKey: ["threads"] });
+      queryClient.invalidateQueries({ queryKey: ["pieces"] });
+      navigate("/pieces");
+    },
+  });
+  if (confirming) {
+    return (
+      <div className="grid gap-2" role="group" aria-label={`Delete ${name}?`}>
+        <p className="text-sm">
+          Delete “{name}”? Its messages and attached files go; its pieces and renders are kept. A deleted
+          conversation cannot be restored.
+        </p>
+        <div className="flex gap-2">
+          <Button type="button" variant="destructive" disabled={remove.isPending} onClick={() => remove.mutate()}>
+            Delete
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              setConfirming(false);
+              remove.reset();
+            }}
+          >
+            Cancel
+          </Button>
+        </div>
+        <FieldError message={message(remove.error)} />
+      </div>
+    );
+  }
+  return (
+    <div>
+      <Button type="button" variant="ghost" size="sm" onClick={() => setConfirming(true)}>
+        Delete {name}
+      </Button>
+    </div>
+  );
+}
+
 function OwnerMessage({ m, uploadById, onEdit, onAddDecision }: {
   m: ChatMessage;
   uploadById: Map<string, Upload>;
@@ -463,7 +514,7 @@ function OwnerMessage({ m, uploadById, onEdit, onAddDecision }: {
         </Button>
       )}
       {onAddDecision && (
-        <Button type="button" variant="ghost" size="sm" className="mt-1" onClick={onAddDecision}>
+        <Button type="button" variant="outline" size="sm" className={ADD_DECISION_CLASS} onClick={onAddDecision}>
           Add to decisions
         </Button>
       )}
@@ -472,6 +523,9 @@ function OwnerMessage({ m, uploadById, onEdit, onAddDecision }: {
 }
 
 /** The side pane beside the chat: a piece version or the conversation's room. */
+// "Add to decisions": bold, framed, light green.
+const ADD_DECISION_CLASS =
+  "mt-1 border-2 border-green-600 bg-green-100 font-bold text-green-900 hover:bg-green-200";
 const paneClass =
   "min-w-0 space-y-2 lg:sticky lg:top-[calc(var(--header-h)+1rem)] lg:max-h-(--chat-h) lg:overflow-y-auto";
 
@@ -500,10 +554,11 @@ export default function Conversation() {
   const [specialists, setSpecialists] = useState<string[]>([]);
   const [running, setRunning] = useState<Running | null>(null);
   const [answerError, setAnswerError] = useState<string | null>(null);
-  const [optimistic, setOptimistic] = useState<{ text: string; uploads: Upload[] } | null>(null);
+  const [optimistic, setOptimistic] = useState<{ text: string; uploads: Upload[]; after: string | undefined } | null>(null);
   const [panel, setPanel] = useState<string | null>(null);
   // A message's text offered as a new row in the decisions table ("Add to decisions").
-  const [decisionText, setDecisionText] = useState<{ id: number; text: string } | null>(null);
+  const [decisionText, setDecisionText] = useState<{ id: number; topic: string; decision: string; failed: boolean } | null>(null);
+  const [compressing, setCompressing] = useState(false);
   const [editing, setEditing] = useState<{ messageId: string; text: string } | null>(null);
   const [kept, setKept] = useState<string[]>([]);
   // The running turn's stream, aborted only when the stop route finds no turn to stop.
@@ -651,9 +706,18 @@ export default function Conversation() {
     return refused;
   }
 
-  function addDecision(text: string) {
-    setDecisionText({ id: Date.now(), text });
+  async function addDecision(text: string) {
+    setDecisionText(null);
+    setCompressing(true);
     setPanel("notes");
+    let row = { topic: "", decision: "" };
+    try {
+      row = await api.decisionFromMessage(threadId, text);
+    } catch {
+      // An empty row opens with a message; the full message text is never offered.
+    }
+    setCompressing(false);
+    setDecisionText({ id: Date.now(), ...row, failed: !row.decision });
   }
 
   async function stop() {
@@ -669,7 +733,8 @@ export default function Conversation() {
     const edited = editing;
     setEditing(null);
     atBottom.current = true;
-    setOptimistic({ text, uploads: edited ? [] : files });
+    const owned = thread.data?.messages.filter((m) => m.role === "owner" && m.message_id);
+    setOptimistic({ text, uploads: edited ? [] : files, after: owned?.at(-1)?.message_id });
     const refused = await follow((onEvent, signal) =>
       edited
         ? api.streamEdit(threadId, edited.messageId, text, onEvent, signal)
@@ -689,12 +754,15 @@ export default function Conversation() {
     return (
       <Page>
         <FieldError message={message(thread.error)} />
-        <Link to="/conversations" className="underline">All conversations</Link>
+        <Link to="/pieces" className="underline">All pieces</Link>
       </Page>
     );
   }
   if (!thread.data) return <Page>Loading…</Page>;
   const { messages, pending } = thread.data;
+  // Once a refetch brings the sent message in, the saved copy replaces the optimistic one.
+  const lastSaved = messages.filter((m) => m.role === "owner" && m.message_id).at(-1)?.message_id;
+  const showOptimistic = optimistic !== null && lastSaved === optimistic.after;
   const lastReply = messages.reduce((found, m, index) => (m.role === "assistant" && m.kind !== "answers" ? index : found), -1);
   const lastOwner = messages.reduce((found, m, index) => (m.role === "owner" && m.message_id ? index : found), -1);
   const canEdit = running === null && !pending && !optimistic;
@@ -721,7 +789,8 @@ export default function Conversation() {
               <DecisionsNote
                 key={decisionText?.id ?? "none"}
                 threadId={threadId}
-                prefill={decisionText?.text}
+                prefill={decisionText ?? undefined}
+                compressing={compressing}
                 onPrefillUsed={() => setDecisionText(null)}
               />
             ),
@@ -750,8 +819,9 @@ export default function Conversation() {
         ]}
       />
       <Page wide>
-        <p><Link to="/conversations" className="underline">All conversations</Link></p>
+        <p><Link to="/pieces" className="underline">All pieces</Link></p>
         <Title key={thread.data.title} threadId={threadId} title={thread.data.title} />
+        <DeleteConversation threadId={threadId} title={thread.data.title} />
         <div
           className={inspected || roomShown ? "grid gap-4 lg:grid-cols-2 lg:items-start" : "mx-auto max-w-5xl"}
           // The window height left under the header and the title, less the page's bottom padding:
@@ -768,7 +838,7 @@ export default function Conversation() {
               className={`${cardClass} min-h-48 flex-1 space-y-4 overflow-y-auto`}
               aria-label="Messages"
             >
-              {messages.length === 0 && !optimistic && <p className="text-muted-foreground">Nothing said yet. Describe the piece you want.</p>}
+              {messages.length === 0 && !showOptimistic && <p className="text-muted-foreground">Nothing said yet. Describe the piece you want.</p>}
               {messages.map((m, index) => {
                 if (m.role === "confirmation") {
                   return (
@@ -800,7 +870,7 @@ export default function Conversation() {
                 return (
                   <Bubble key={index} side="left" speaker="Foreman">
                     <Reply text={m.text} />
-                    <Button type="button" variant="ghost" size="sm" className="mt-1" onClick={() => addDecision(m.text)}>
+                    <Button type="button" variant="outline" size="sm" className={ADD_DECISION_CLASS} onClick={() => addDecision(m.text)}>
                       Add to decisions
                     </Button>
                     {index === lastReply && specialists.length > 0 && (
@@ -813,7 +883,7 @@ export default function Conversation() {
                   </Bubble>
                 );
               })}
-              {optimistic && (
+              {optimistic && showOptimistic && (
                 <OwnerMessage m={{ role: "owner", text: optimistic.text, upload_ids: optimistic.uploads.map((u) => u.upload_id) }} uploadById={new Map(optimistic.uploads.map((u) => [u.upload_id, u]))} />
               )}
               {running && <WaitingBubble working={running.working} tool={running.tool} />}
