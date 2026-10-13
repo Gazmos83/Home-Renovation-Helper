@@ -399,6 +399,7 @@ test("a built piece has an Inspect button that opens the split view, a building 
   const panel = within(await openProject());
   expect(panel.queryByRole("link", { name: /Inspect/ })).not.toBeInTheDocument();
   await userEvent.setup().click(await panel.findByRole("button", { name: "Inspect version 1" }));
+  expect(screen.queryByRole("region", { name: "Project" })).not.toBeInTheDocument();
   const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
   expect(await inspector.findByText("Overall: W 1200 mm × H 450 mm × D 400 mm")).toBeInTheDocument();
   // The heading names the piece; the version is not part of it (version-cleanup-and-inspection).
@@ -476,6 +477,7 @@ test("the panel shows latest v5 beside approved v4 and approving v5 refreshes it
   await waitFor(() => expect(within(panel).queryByRole("button", { name: "Approve version 5" })).toBeNull());
   expect(within(panel).getByRole("button", { name: "Unapprove version 5" })).toBeInTheDocument();
   expect(calls.some(([m, u]) => m === "PUT" && u === "/packages/hall-bench/versions/5/approval")).toBe(true);
+  expect(screen.getByRole("region", { name: "Project" })).toBeInTheDocument(); // approving leaves the flyout open
 });
 
 test("no approve control is offered while the latest version is still building", async () => {
@@ -949,6 +951,41 @@ test("only the latest owner message offers Edit", async () => {
   expect(edits[0].closest("[data-side]")).toHaveTextContent("third");
 });
 
+test("Add to decisions opens the decisions table with the message as a new row, and nothing is saved before Save", async () => {
+  const user = userEvent.setup();
+  messages = [{ ...owner("the shelves are 18 mm"), message_id: "m1" }, reply("Noted.")];
+  extra = (call) => {
+    if (call === "GET /chat/threads/t1/note") return { body: { package_id: null, note: "- **Room:** Wohnen", owner_edited: false } };
+    if (call === "PUT /chat/threads/t1/note") return { body: { package_id: null, note: "x", owner_edited: true } };
+    return undefined;
+  };
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  await user.click(list.getAllByRole("button", { name: "Add to decisions" })[0]);
+  expect(await screen.findByRole("textbox", { name: "New decision" })).toHaveValue("the shelves are 18 mm");
+  expect(calls.filter(([m, url]) => m === "PUT" && url === "/chat/threads/t1/note")).toHaveLength(0);
+  await user.type(screen.getByRole("textbox", { name: "New topic" }), "Shelves");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  const saved = calls.find(([m, url]) => m === "PUT" && url === "/chat/threads/t1/note");
+  expect(saved?.[2]).toEqual({ note: "- **Room:** Wohnen\n- **Shelves:** the shelves are 18 mm" });
+});
+
+test("the decisions note is read again when a turn ends", async () => {
+  const user = userEvent.setup();
+  messages = [{ ...owner("hello"), message_id: "m1" }, reply("Hi.")];
+  turn = () => ({ events: replied("Done.", "designer") });
+  extra = (call) =>
+    call === "GET /chat/threads/t1/note" ? { body: { package_id: null, note: "- **Room:** Wohnen", owner_edited: false } } : undefined;
+  show();
+  await user.click(await screen.findByRole("button", { name: "Decisions so far" }));
+  await screen.findByRole("table");
+  const reads = () => calls.filter(([m, url]) => m === "GET" && url === "/chat/threads/t1/note").length;
+  const before = reads();
+  await user.type(await screen.findByLabelText("Message"), "remove the doors decision");
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(reads()).toBeGreaterThan(before));
+});
+
 test("no Edit while a confirmation is pending", async () => {
   messages = [{ ...owner("one more shelf"), message_id: "m1" }];
   pending = card;
@@ -1225,6 +1262,7 @@ test("the Project panel opens the conversation's room beside the chat and closes
   const panel = within(await openProject());
   await user.click(await panel.findByRole("button", { name: "Inspect Hall" }));
   const pane = within(await screen.findByRole("complementary", { name: "Room view" }));
+  expect(screen.queryByRole("region", { name: "Project" })).not.toBeInTheDocument();
   expect(pane.getByRole("heading", { name: "Hall" })).toBeInTheDocument();
   const switches = within(await pane.findByRole("group", { name: "Surfaces" }));
   expect(switches.getByRole("button", { name: "ceiling" })).toHaveAttribute("aria-pressed", "false");
@@ -1264,7 +1302,7 @@ test("only one side pane is shown: the room and the piece inspector replace each
   expect(await screen.findByRole("complementary", { name: "Inspector" })).toBeInTheDocument();
   expect(screen.queryByRole("complementary", { name: "Room view" })).not.toBeInTheDocument();
 
-  await user.click(panel.getByRole("button", { name: "Inspect Hall" }));
+  await user.click(within(await openProject()).getByRole("button", { name: "Inspect Hall" }));
   expect(await screen.findByRole("complementary", { name: "Room view" })).toBeInTheDocument();
   expect(screen.queryByRole("complementary", { name: "Inspector" })).not.toBeInTheDocument();
 });

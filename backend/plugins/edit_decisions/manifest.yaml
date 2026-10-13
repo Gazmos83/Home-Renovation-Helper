@@ -1,0 +1,7 @@
+name: edit_decisions
+description: Add, change or delete one row of the conversation's "decisions so far" note when the owner asks, after the owner confirms.
+kind: builtin
+role: designer
+tools: [edit_decisions]
+enabled_by_default: true
+toggleable: true

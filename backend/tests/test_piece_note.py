@@ -27,7 +27,7 @@ def test_a_module_is_listed_with_size_position_shelves_fronts_and_hardware() -> 
     assert '"Cabinet": 800×1800×400 mm at x0 y0 z0' in line
     assert "carcass carcass, back back" in line
     assert "3 shelves + 2 adjustable (shelf-pin)" in line
-    assert "fronts: 1 door (hinge), 1 drawer 200 mm" in line
+    assert "fronts: 1 door (hinge) at the top, " in line and "1 drawer 200 mm at the bottom, " in line
     assert 'hardware: cabinet-hanger "Cabinet wall hanger" ×2' in line
 
 
@@ -126,3 +126,49 @@ def test_full_height_dividers_are_shown_as_before() -> None:
     document["modules"][0] |= {"shelves": 4, "dividers": 2}
     line = next(line for line in piece_note("hall-bench", 2, document).splitlines() if line.startswith("- cabinet "))
     assert "2 dividers (equal bays)" in line and "from" not in line.split("2 dividers (equal bays)")[1].split(",")[0]
+
+
+# --- designer-sees-front-positions ----------------------------------------------------------
+
+
+def _cabinet(**changes) -> dict:
+    document = _starter()
+    document["modules"][0] |= {"height": 2238, "shelves": 3, "shelf_spacing_mm": 355} | changes
+    return document
+
+
+def _line(document: dict) -> str:
+    return next(line for line in piece_note("listening-wall", 17, document).splitlines() if line.startswith("- cabinet "))
+
+
+def test_a_door_at_the_top_covers_no_shelf() -> None:
+    line = _line(_cabinet(fronts=[{"type": "door", "count": 2, "opening": "hinge", "height": 746}]))
+    assert "2 doors 746 mm (hinge) at the top, 1492–2238 mm above the bottom, covers no shelf" in line
+
+
+def test_entries_stack_from_the_top_and_name_the_shelves_they_cover() -> None:
+    line = _line(
+        _cabinet(
+            height=1000, shelf_spacing_mm=None, shelf_positions_mm=[282, 482, 682],
+            fronts=[{"type": "door", "count": 1, "opening": "hinge", "height": 400},
+                    {"type": "door", "count": 1, "opening": "push_latch", "height": 600}],
+        )
+    )
+    assert "1 door 400 mm (hinge) at the top, 600–1000 mm above the bottom, covers shelf 3" in line
+    assert "1 door 600 mm (push_latch) at the bottom, 0–600 mm above the bottom, covers shelf 1 and 2" in line
+
+
+def test_a_front_in_the_middle_is_between() -> None:
+    line = _cabinet(fronts=[{"type": "drawer", "count": 1, "height": 300}, {"type": "door", "count": 1, "opening": "hinge", "height": 500}])
+    assert "between" in _line(line)
+
+
+def test_without_fronts_or_when_positions_cannot_be_derived_the_old_text_stays() -> None:
+    assert "fronts: none" in _line(_cabinet(fronts=[]))
+    too_tall = _cabinet(fronts=[{"type": "door", "count": 1, "opening": "hinge", "height": 9000}])
+    assert "fronts: 1 door 9000 mm (hinge)," in _line(too_tall)
+
+
+def test_the_label_puts_built_positions_before_the_brief() -> None:
+    note = piece_note("listening-wall", 17, _cabinet())
+    assert "go by them, not by the brief or earlier messages" in note

@@ -13,6 +13,7 @@ is still listed, read through from its folders, without a brief.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -459,6 +460,53 @@ def approve_version(session: Session, package_id: str, version: int) -> PieceVer
     row.approved_at = _now()
     session.flush()
     return row
+
+
+def raised_height_limit(brief: dict[str, Any], height: float, version: int) -> dict[str, Any]:
+    """The brief with `max_piece_height_mm` raised to an approved version's height when that is taller,
+    naming the version; else the brief as it was (brief-height-follows-approved-version)."""
+    limit = brief.get("max_piece_height_mm")
+    millimetres = round(height)
+    if not isinstance(limit, int | float) or isinstance(limit, bool) or millimetres <= limit:
+        return brief
+    return {**brief, "max_piece_height_mm": millimetres, "max_piece_height_from_version": version}
+
+
+def raise_brief_height_limit(session: Session, package_id: str, version: int, height: float) -> bool:
+    """Store `raised_height_limit` on the piece; whether the brief changed. The caller commits."""
+    piece = session.get(Piece, package_id)
+    if piece is None:
+        return False
+    raised = raised_height_limit(dict(piece.brief or {}), height, version)
+    if raised == (piece.brief or {}):
+        return False
+    piece.brief = raised
+    session.flush()
+    return True
+
+
+_HEIGHT_LIMIT = re.compile(r"max_piece_height_mm\D{0,6}(\d+(?:\.\d+)?)")
+
+
+def dismiss_outdated_height_items(session: Session, package_id: str, version: int, limit: float) -> int:
+    """Dismiss the version's open review items that expect a height limit below `limit`; how many.
+
+    Matches the key name and the figure in the item's expected text; no text is rewritten and no
+    other item changes (brief-height-follows-approved-version). The caller commits."""
+    items = session.scalars(
+        select(ReviewItem)
+        .join(Review, Review.id == ReviewItem.review_id)
+        .where(Review.package_id == package_id, Review.version == version, ReviewItem.status == "open")
+    )
+    changed = 0
+    for item in items:
+        found = _HEIGHT_LIMIT.search(item.expected or "")
+        if found and float(found.group(1)) < limit:
+            item.status = "dismissed"
+            item.status_at = _now()
+            changed += 1
+    session.flush()
+    return changed
 
 
 def unapprove_version(
@@ -1348,19 +1396,19 @@ def items_of(session: Session, review_id: UUID) -> list[ReviewItem]:
     )
 
 
-def latest_open_items(session: Session, package_id: str) -> list[dict[str, Any]]:
-    """Open items of the newest review of `package_id`, for the Designer's note."""
-    review = session.scalars(
-        select(Review)
-        .where(Review.package_id == package_id)
-        .order_by(Review.created_at.desc())
-        .limit(1)
-    ).first()
+def latest_open_items(session: Session, package_id: str, version: int | None = None) -> list[dict[str, Any]]:
+    """Open items of the newest review of `package_id`, for the Designer's note; of the newest review
+    of `version` when one is given (review-items-follow-approved-version), each item naming it."""
+    query = select(Review).where(Review.package_id == package_id)
+    if version is not None:
+        query = query.where(Review.version == version)
+    review = session.scalars(query.order_by(Review.created_at.desc()).limit(1)).first()
     if review is None:
         return []
     return [
         {
             "id": item.id,
+            "version": review.version,
             "aspect": item.aspect,
             "expected": item.expected,
             "observed": item.observed,

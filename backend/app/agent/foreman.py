@@ -572,8 +572,10 @@ def build_graph(
         recent_feedback: list[dict[str, Any]] = []
         if package_id:
             with Session(engine) as session:
-                if memory.include_review_items:
-                    open_review = house_file.latest_open_items(session, package_id)
+                # The approved version's review, else the latest's; an older version's items stay stored.
+                current = bound["approved_version"] or bound["latest_version"] if bound else None
+                if memory.include_review_items and current:
+                    open_review = house_file.latest_open_items(session, package_id, current)
                 if memory.render_ratings:
                     recent_feedback = ratings.recent_for_piece(session, package_id, memory.render_ratings)
 
@@ -824,6 +826,11 @@ def build_graph(
         if chosen not in SPECIALISTS:
             chosen = "intake"
         reason = getattr(decision, "reason", "") or ""
+        # A plain question about the expected height is answered by code, whatever the model flagged.
+        if engineering_chat.height_question(_last_human_text(state)):
+            return Command(
+                update={"messages": [AIMessage(engineering_chat.HEIGHT_REPLY)], "specialist": ""}, goto=END
+            )
         engineering = bool(state.get("engineering_turn")) or bool(getattr(decision, "engineering_question", False))
         if engineering:
             changing = bool(state.get("package_id")) and (engineering_chat.revision_intent(_last_human_text(state)) or bool(getattr(decision, "requests_revision", False)))

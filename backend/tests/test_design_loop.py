@@ -224,7 +224,7 @@ def test_review_then_fix_it_revises_to_version_2(tool_state) -> None:
     assert paused["specialist"] == "designer"
     prompt = models["designer"].last_prompt_text()
     assert "Open review items:" in prompt
-    assert "brief: expected two drawers; observed one drawer" in prompt
+    assert "brief (version 1): expected two drawers; observed one drawer" in prompt
     interrupts = harness.snapshot().interrupts
     assert len(interrupts) == 1
     assert interrupts[0].value["subject"] == "revise"

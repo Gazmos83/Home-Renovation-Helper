@@ -34,6 +34,13 @@ _REVISION = re.compile(
     r"\b(revise|change|widen|make|resize|add|remove|ändern|verbreitern|vergrößern|hinzufügen)\b",
     re.IGNORECASE,
 )
+# The short question "what's the expected height" and nothing else (simple-height-question-reply).
+_HEIGHT_QUESTION = re.compile(
+    r"^\W*(?:(?:what|which)(?:'s|\u2019s| is| are)?\s+|tell me\s+)?(?:the\s+)?"
+    r"(?:expected|maximum|max|highest|target|intended)\s+(?:piece\s+)?height(?:\s+of\s+the\s+piece)?\W*$",
+    re.IGNORECASE,
+)
+HEIGHT_REPLY = "The height is not verified. What should the height be?"
 INSUFFICIENT = "NOT VERIFIED. Numerical engineering calculation is not implemented. No capacity or conformity is established."
 
 
@@ -41,6 +48,11 @@ def engineering_intent(text: str) -> bool:
     from app.engineering.kitchen import kitchen_intents
 
     return bool(_ENGINEERING.search(text)) or bool(kitchen_intents(text))
+
+
+def height_question(text: str) -> bool:
+    """Whether the whole message only asks what the expected height is, with no engineering term."""
+    return bool(_HEIGHT_QUESTION.match(text.strip())) and not engineering_intent(text)
 
 
 def revision_intent(text: str) -> bool:

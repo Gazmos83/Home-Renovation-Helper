@@ -440,11 +440,13 @@ function Title({ threadId, title }: { threadId: string; title: string }) {
   );
 }
 
-function OwnerMessage({ m, uploadById, onEdit }: {
+function OwnerMessage({ m, uploadById, onEdit, onAddDecision }: {
   m: ChatMessage;
   uploadById: Map<string, Upload>;
   /** Only the latest owner message, while nothing runs or waits, can be edited. */
   onEdit?: () => void;
+  /** Opens the decisions table with this message's text as a new row to adjust and save. */
+  onAddDecision?: () => void;
 }) {
   const files = (m.upload_ids ?? []).map((id) => uploadById.get(id)).filter((u): u is Upload => Boolean(u));
   return (
@@ -458,6 +460,11 @@ function OwnerMessage({ m, uploadById, onEdit }: {
       {onEdit && (
         <Button type="button" variant="ghost" size="sm" className="mt-1" onClick={onEdit}>
           Edit
+        </Button>
+      )}
+      {onAddDecision && (
+        <Button type="button" variant="ghost" size="sm" className="mt-1" onClick={onAddDecision}>
+          Add to decisions
         </Button>
       )}
     </Bubble>
@@ -495,6 +502,8 @@ export default function Conversation() {
   const [answerError, setAnswerError] = useState<string | null>(null);
   const [optimistic, setOptimistic] = useState<{ text: string; uploads: Upload[] } | null>(null);
   const [panel, setPanel] = useState<string | null>(null);
+  // A message's text offered as a new row in the decisions table ("Add to decisions").
+  const [decisionText, setDecisionText] = useState<{ id: number; text: string } | null>(null);
   const [editing, setEditing] = useState<{ messageId: string; text: string } | null>(null);
   const [kept, setKept] = useState<string[]>([]);
   // The running turn's stream, aborted only when the stop route finds no turn to stop.
@@ -607,6 +616,8 @@ export default function Conversation() {
       queryClient.invalidateQueries({ queryKey: ["progress", threadId] }),
       queryClient.invalidateQueries({ queryKey: ["uploads", threadId] }),
       queryClient.invalidateQueries({ queryKey: ["threads"] }),
+      // A chat edit of the decisions note shows in its panel when the turn ends.
+      queryClient.invalidateQueries({ queryKey: ["conversation-note", threadId] }),
     ]);
   }
 
@@ -638,6 +649,11 @@ export default function Conversation() {
     await refresh();
     setRunning(null);
     return refused;
+  }
+
+  function addDecision(text: string) {
+    setDecisionText({ id: Date.now(), text });
+    setPanel("notes");
   }
 
   async function stop() {
@@ -701,7 +717,15 @@ export default function Conversation() {
         onOpen={setPanel}
         panels={[
           { id: "tools", label: "Tools", icon: "tools", content: <Tools threadId={threadId} /> },
-          { id: "notes", label: "Decisions so far", icon: "notes", content: <DecisionsNote threadId={threadId} /> },
+          { id: "notes", label: "Decisions so far", icon: "notes", content: (
+              <DecisionsNote
+                key={decisionText?.id ?? "none"}
+                threadId={threadId}
+                prefill={decisionText?.text}
+                onPrefillUsed={() => setDecisionText(null)}
+              />
+            ),
+          },
           {
             id: "project",
             label: "Project",
@@ -710,8 +734,14 @@ export default function Conversation() {
               <ProjectPanel
                 threadId={threadId}
                 progress={progress}
-                onInspect={inspect}
-                onInspectRoom={inspectRoom}
+                onInspect={(packageId, version) => {
+                  inspect(packageId, version);
+                  setPanel(null);
+                }}
+                onInspectRoom={(slug) => {
+                  inspectRoom(slug);
+                  setPanel(null);
+                }}
                 onDeleted={deleted}
                 onUseLook={(text) => void send(text, [])}
               />
@@ -763,12 +793,16 @@ export default function Conversation() {
                       m={m}
                       uploadById={uploadById}
                       onEdit={editable ? () => setEditing({ messageId: m.message_id as string, text: m.text }) : undefined}
+                      onAddDecision={m.message_id ? () => addDecision(m.text) : undefined}
                     />
                   );
                 }
                 return (
                   <Bubble key={index} side="left" speaker="Foreman">
                     <Reply text={m.text} />
+                    <Button type="button" variant="ghost" size="sm" className="mt-1" onClick={() => addDecision(m.text)}>
+                      Add to decisions
+                    </Button>
                     {index === lastReply && specialists.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1" aria-label="Specialists in this turn">
                         {specialists.map((role) => (

@@ -621,3 +621,230 @@ def test_setting_a_piece_room_leaves_every_conversations_room_alone(client: Test
     with Session(client.app.state.engine) as session:
         room, _ = house_file.thread_scope(session, thread_id)
         assert room.name == "Hall"
+
+
+# --- drop-superseded-version-rows ---------------------------------------------------------
+
+
+def _note_for(client: TestClient, thread, package_id: str = "hall-bench") -> str | None:
+    from sqlalchemy.orm import Session
+
+    from app.agent import house_file
+
+    with Session(client.app.state.engine) as session:
+        return house_file.read_summary(session, thread, package_id)[0]
+
+
+def _bound_thread(client: TestClient, note: str, owner_edited: bool = False):
+    from sqlalchemy.orm import Session
+
+    from app.agent import house_file
+
+    with Session(client.app.state.engine) as session:
+        thread = house_file.create_thread(session, "test", package_id="hall-bench")
+        house_file.add_build(session, thread.id, "hall-bench")
+        house_file.write_summary(session, thread.id, note, "m1", "hall-bench", owner_edited=owner_edited)
+        session.commit()
+        return thread.id
+
+
+def test_approving_a_newer_version_drops_the_older_saved_rows_and_keeps_every_version(
+    client: TestClient, record, render_root: Path
+) -> None:
+    create(client)
+    wider = desk()
+    wider["modules"][0]["width"] = 1100
+    assert client.put("/packages/hall-bench/spec", json={"spec": wider}).status_code == 202
+    record(versions=(1, 2))
+    note = "- **Version 1:** saved\n- Version 2 had doors on top; moved to the bottom\n- **Handles:** push-latch"
+    first = _bound_thread(client, note, owner_edited=True)
+    second = _bound_thread(client, "## Builds\n- v1 saved")
+    assert client.put("/packages/hall-bench/versions/2/approval").status_code == 200
+    kept = "- Version 2 had doors on top; moved to the bottom\n- **Handles:** push-latch"
+    assert _note_for(client, first) == kept
+    assert _note_for(client, second) == "## Builds\n- v1 saved"  # would leave no row: kept
+    from sqlalchemy.orm import Session
+
+    from app.db.models import ThreadPiece
+
+    with Session(client.app.state.engine) as session:
+        assert session.get(ThreadPiece, (first, "hall-bench")).summary_owner_edited is True
+        assert session.get(ThreadPiece, (second, "hall-bench")).summary_owner_edited is False
+    assert [v["version"] for v in client.get("/packages/hall-bench").json()["versions"]] == [2, 1]
+    assert storage.version_dir(render_root, "hall-bench", 1).is_dir()
+
+
+def test_approving_again_and_approving_the_older_version_change_no_note(client: TestClient, record) -> None:
+    create(client)
+    wider = desk()
+    wider["modules"][0]["width"] = 1100
+    assert client.put("/packages/hall-bench/spec", json={"spec": wider}).status_code == 202
+    record(versions=(1, 2))
+    thread = _bound_thread(client, "- Version 2 saved\n- **Handles:** push-latch")
+    assert client.put("/packages/hall-bench/versions/1/approval").status_code == 200
+    assert _note_for(client, thread).startswith("- Version 2 saved")  # 2 is newer than 1
+    assert client.put("/packages/hall-bench/versions/2/approval").status_code == 200
+    after = _note_for(client, thread)
+    assert "Version 2 saved" in after  # the approved version itself is kept
+    assert client.put("/packages/hall-bench/versions/2/approval").status_code == 200
+    assert _note_for(client, thread) == after
+
+
+def test_a_failure_dropping_the_rows_still_approves(client: TestClient, record, monkeypatch) -> None:
+    from app.agent import decisions_note
+
+    create(client)
+    record()
+    monkeypatch.setattr(decisions_note, "drop_superseded_version_rows", lambda *a: 1 / 0)
+    assert client.put("/packages/hall-bench/versions/1/approval").status_code == 200
+    assert client.get("/packages/hall-bench/versions/1").json()["approved_at"] is not None
+
+
+def test_a_conversation_not_bound_to_the_piece_keeps_its_note(client: TestClient, record) -> None:
+    from sqlalchemy.orm import Session
+
+    from app.agent import house_file
+
+    create(client)
+    wider = desk()
+    wider["modules"][0]["width"] = 1100
+    assert client.put("/packages/hall-bench/spec", json={"spec": wider}).status_code == 202
+    record(versions=(1, 2))
+    with Session(client.app.state.engine) as session:
+        loose = house_file.create_thread(session, "loose")
+        house_file.write_summary(session, loose.id, "- Version 1 saved\n- **A:** b", "m1")
+        session.commit()
+        loose_id = loose.id
+    assert client.put("/packages/hall-bench/versions/2/approval").status_code == 200
+    with Session(client.app.state.engine) as session:
+        assert house_file.read_summary(session, loose_id)[0] == "- Version 1 saved\n- **A:** b"
+
+
+# --- brief-height-follows-approved-version -----------------------------------------------
+
+
+def _brief_of(client: TestClient, package_id: str = "hall-bench") -> dict:
+    from sqlalchemy.orm import Session
+
+    from app.db.models import Piece
+
+    with Session(client.app.state.engine) as session:
+        return dict(session.get(Piece, package_id).brief)
+
+
+def _set_brief(client: TestClient, brief: dict) -> None:
+    from sqlalchemy.orm import Session
+
+    from app.db.models import Piece
+
+    with Session(client.app.state.engine) as session:
+        session.get(Piece, "hall-bench").brief = brief
+        session.commit()
+
+
+def test_raised_height_limit_only_raises_a_stated_limit_and_names_the_version() -> None:
+    from app.agent.house_file import raised_height_limit
+
+    brief = {"room": "Wohnen", "purpose": "wall unit up to 2.2 m", "max_piece_height_mm": 2200, "style": "oak"}
+    assert raised_height_limit(brief, 2238, 17) == brief | {"max_piece_height_mm": 2238, "max_piece_height_from_version": 17}
+    assert raised_height_limit(brief, 2200, 3) is brief
+    assert raised_height_limit(brief, 2100, 3) is brief
+    assert raised_height_limit({"room": "Wohnen"}, 2238, 3) == {"room": "Wohnen"}
+    assert raised_height_limit({"max_piece_height_mm": None}, 2238, 3) == {"max_piece_height_mm": None}
+
+
+def test_approving_a_taller_version_raises_the_stored_height_limit(client: TestClient, record) -> None:
+    from app.blender.custom_build.derive import overall
+
+    create(client)
+    record()
+    height = overall(desk())["h"]
+    _set_brief(client, {"room": "Wohnen", "max_piece_height_mm": height - 38, "style": "oak"})
+    assert client.put("/packages/hall-bench/versions/1/approval").status_code == 200
+    assert _brief_of(client) == {
+        "room": "Wohnen", "max_piece_height_mm": height, "max_piece_height_from_version": 1, "style": "oak",
+    }
+    # Unapproving keeps the limit; re-approving and an unrelated change leave it.
+    assert client.delete("/packages/hall-bench/versions/1/approval").status_code == 200
+    assert _brief_of(client)["max_piece_height_mm"] == height
+
+
+def test_approving_a_lower_version_or_with_no_limit_leaves_the_brief(client: TestClient, record) -> None:
+    from app.blender.custom_build.derive import overall
+
+    create(client)
+    record()
+    brief = {"room": "Wohnen", "max_piece_height_mm": overall(desk())["h"] + 100}
+    _set_brief(client, brief)
+    assert client.put("/packages/hall-bench/versions/1/approval").status_code == 200
+    assert _brief_of(client) == brief
+    client.delete("/packages/hall-bench/versions/1/approval")
+    _set_brief(client, {"room": "Wohnen"})
+    assert client.put("/packages/hall-bench/versions/1/approval").status_code == 200
+    assert _brief_of(client) == {"room": "Wohnen"}
+
+
+def test_a_failure_raising_the_limit_still_approves(client: TestClient, record, monkeypatch) -> None:
+    from app.agent import house_file
+
+    create(client)
+    record()
+    monkeypatch.setattr(house_file, "raise_brief_height_limit", lambda *a: 1 / 0)
+    assert client.put("/packages/hall-bench/versions/1/approval").status_code == 200
+    assert client.get("/packages/hall-bench/versions/1").json()["approved_at"] is not None
+
+
+def _seed_height_items(client: TestClient) -> None:
+    from sqlalchemy.orm import Session
+
+    from app.agent import house_file
+
+    base = {"expected_source": "brief", "image": 1, "severity": "major"}
+    with Session(client.app.state.engine) as session:
+        house_file.record_review(
+            session, "hall-bench", 1, ["screenshot.png"],
+            [
+                {**base, "aspect": "brief", "expected": "max_piece_height_mm 2200.0 mm", "observed": "taller than 2200"},
+                {**base, "aspect": "brief", "expected": "doors covering the bottom two shelves", "observed": "doors on top"},
+                {**base, "aspect": "brief", "expected": "max_piece_height_mm 2400", "observed": "over"},
+            ],
+        )
+        session.commit()
+
+
+def _item_statuses(client: TestClient) -> dict[str, str]:
+    from sqlalchemy.orm import Session
+
+    from app.agent import house_file
+
+    with Session(client.app.state.engine) as session:
+        return {
+            i.expected: i.status
+            for r in house_file.reviews_for(session, "hall-bench", 1)
+            for i in house_file.items_of(session, r.id)
+        }
+
+
+def test_a_second_approval_after_the_limit_was_raised_still_clears_earlier_items(client: TestClient, record) -> None:
+    create(client)
+    record()
+    _set_brief(client, {"room": "Wohnen", "max_piece_height_mm": 2238, "max_piece_height_from_version": 1})
+    _seed_height_items(client)
+    assert client.put("/packages/hall-bench/versions/1/approval").status_code == 200
+    statuses = _item_statuses(client)
+    assert statuses["max_piece_height_mm 2200.0 mm"] == "dismissed"
+    assert statuses["max_piece_height_mm 2400"] == "open"  # a higher figure than the limit stays
+    assert statuses["doors covering the bottom two shelves"] == "open"
+    # The review text is as the Reviewer wrote it.
+    assert "max_piece_height_mm 2200.0 mm" in statuses
+
+
+def test_a_failure_dismissing_items_still_approves(client: TestClient, record, monkeypatch) -> None:
+    from app.agent import house_file
+
+    create(client)
+    record()
+    _set_brief(client, {"max_piece_height_mm": 2238})
+    monkeypatch.setattr(house_file, "dismiss_outdated_height_items", lambda *a: 1 / 0)
+    assert client.put("/packages/hall-bench/versions/1/approval").status_code == 200
+    assert client.get("/packages/hall-bench/versions/1").json()["approved_at"] is not None

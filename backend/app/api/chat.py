@@ -27,8 +27,8 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.agent import chat, house_file, progress, uploads
+from app.agent.decisions_note import NO_SUCH_NOTE, NOTE_MAX_CHARS, store_note
 from app.agent.memory_settings import read_memory_settings
-from app.agent.prompts import neutralise
 from app.api.gate import require_owner
 from app.auth.sessions import AuthSessionRecord
 from app.blender import storage
@@ -693,7 +693,6 @@ def stream_answer(
 
 # --- the conversation's "decisions so far" note (conversation-memory-settings) -------------
 
-NOTE_MAX_CHARS = 8000
 
 
 class NoteOut(BaseModel):
@@ -724,8 +723,11 @@ def save_note(thread_id: UUID, body: NoteIn, request: Request) -> NoteOut:
     """Store the owner's correction as the note, marked as the owner's and sent as written."""
     thread = _load_thread(request, thread_id)
     with Session(request.app.state.engine) as session:
-        if not house_file.write_owner_summary(session, thread.id, neutralise(body.note.strip()), thread.package_id):
+        refusal = store_note(session, thread.id, thread.package_id, body.note)
+        if refusal == NO_SUCH_NOTE:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not Found")
+        if refusal is not None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=refusal)
         session.commit()
     return _note_out(request, thread)
 

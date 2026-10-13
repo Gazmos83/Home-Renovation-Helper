@@ -45,7 +45,7 @@ def test_each_agent_names_exactly_its_tools() -> None:
     assert loaded["intake"].tools == ("record_brief", "record_plan", "confirm_room", "ask_owner")
     assert set(loaded["designer"].tools) == {
         "create_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit", "compose_room",
-        "read_room_version_dimensions", "search_guidelines",
+        "read_room_version_dimensions", "edit_decisions", "search_guidelines",
         "ask_owner", "search_engineering_knowledge", "record_assessment_inputs", "calculate_engineering", "get_engineering_report",
     }
     assert set(loaded["builder"].tools) == {
@@ -334,3 +334,15 @@ def test_the_designer_fills_requested_with_the_owners_lengths() -> None:
     assert "is added to the value in the piece summary" in text
     assert "Use target `none` for a length that is not about the piece" in text
     assert "never invent a value" in text
+
+
+def test_the_designer_changes_the_decisions_note_only_when_asked() -> None:
+    text = (Path(__file__).resolve().parent.parent / "app" / "agent" / "instructions" / "designer.md").read_text()
+    assert "only when the owner's own message asks for that" in text
+    assert "never change it unprompted" in text
+    assert "nothing is written before yes" in text
+
+
+def test_the_designer_goes_by_the_stated_front_positions() -> None:
+    text = load_instructions()["designer"].text
+    assert "where each front sits" in text and "not by the brief or earlier messages" in text
