@@ -103,6 +103,7 @@ Each tool is a folder under `backend/plugins/<name>/` with `manifest.yaml` (name
 | — | `catalog_research` | Researcher | port | `search_catalog_knowledge`, `check_live_listing`, `compare_products` |
 | 7 | `revision_review` | Reviewer | port | render vs spec vs brief; discrepancy list; no write tool |
 | 8 | `photoreal_detail` | Lighting | built | detail pass on a copy of `model.blend` over the socket, allow-listed; its render is `final` tier only |
+| — | `restyle_render` | Builder | built | draft or preview stills of a piece's look or a room's style from `config/looks.yaml` and `config/styles.yaml`; in-memory override, nothing saved, appearance only; one guard ticket per variant, never `final` |
 
 ### 5a. Pricing (kept, reworked)
 
