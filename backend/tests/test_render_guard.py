@@ -181,3 +181,45 @@ def test_a_ticket_for_the_model_does_not_match_the_detail_copy_nor_the_reverse()
     assert detail.matches("desk", 1, "turntable", False, "piece", "detail")
     assert not detail.matches("desk", 1, "turntable", False, "piece", "model")
     assert not detail.matches("desk", 1, "turntable", False)
+
+
+# --- restyle renders (restyle-variants) ------------------------------------------------------------
+
+
+def test_a_restyle_at_final_is_refused_as_a_concept_picture() -> None:
+    with pytest.raises(RenderRefused, match="concept picture") as caught:
+        _call(kind="still", tier="final", source="restyle", variant="walnut-draft", approval="yes")
+    assert caught.value.field == "tier"
+
+
+@pytest.mark.parametrize("tier", ["draft", "preview"])
+def test_a_restyle_at_draft_or_preview_needs_no_approval_and_is_one_frame(tier: str) -> None:
+    ticket = _call(kind="still", tier=tier, source="restyle", variant="walnut")
+    assert ticket.quote.source == "restyle" and ticket.quote.frames == 1
+    assert "restyle" in ticket.quote.summary
+
+
+def test_a_restyle_is_a_still_for_a_named_variant_on_the_laptop() -> None:
+    with pytest.raises(RenderRefused, match="still"):
+        _call(kind="turntable", source="restyle", variant="walnut")
+    with pytest.raises(RenderRefused, match="named variant"):
+        _call(kind="still", source="restyle")
+
+
+def test_a_restyle_batch_estimate_is_the_sum_of_single_frame_estimates() -> None:
+    quotes = [
+        quote(package_id="desk", version=1, kind="still", tier="draft", tiers=TIERS, benchmark=BENCH,
+              source="restyle", variant=name)
+        for name in ("walnut", "oak", "sage-green")
+    ]
+    single = quote(package_id="desk", version=1, kind="still", tier="draft", tiers=TIERS, benchmark=BENCH)
+    assert sum(q.estimate_seconds for q in quotes) == pytest.approx(3 * single.estimate_seconds)
+
+
+def test_a_ticket_for_one_variant_does_not_match_another_nor_the_built_model() -> None:
+    ticket = _call(kind="still", source="restyle", variant="walnut")
+    assert ticket.matches("desk", 1, "still", False, "piece", "restyle", "walnut")
+    assert not ticket.matches("desk", 1, "still", False, "piece", "restyle", "sage-green")
+    assert not ticket.matches("desk", 1, "still", False, "piece", "model")
+    model = _call(kind="still")
+    assert not model.matches("desk", 1, "still", False, "piece", "restyle", "walnut")

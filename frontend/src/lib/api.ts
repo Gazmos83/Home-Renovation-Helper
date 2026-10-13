@@ -546,6 +546,20 @@ export type RenderItem = {
   comment: string | null;
 };
 
+/** One restyle picture of a version (restyle-variants): appearance only, never a render of the design. */
+export type Variant = {
+  id: string;
+  label: string;
+  tier: string | null;
+  note: string | null;
+  /** A piece variant: material slot name to look id. */
+  looks: Record<string, string> | null;
+  /** A room variant: the style id. */
+  style: string | null;
+  created_at: string | null;
+  still: string;
+};
+
 export type FeedbackRow = {
   slot: string | null;
   model: string | null;
@@ -905,6 +919,10 @@ export const api = {
   /** Delete one version with its renders, reviews and pricings; the last one deletes the piece. */
   deleteVersion: (packageId: string, version: number) =>
     request<void>(`/packages/${encodeURIComponent(packageId)}/versions/${version}`, { method: "DELETE" }),
+  variants: (packageId: string, version: number) =>
+    request<Variant[]>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/variants`),
+  compositionVariants: (slug: string, version: number) =>
+    request<Variant[]>(`/compositions/${encodeURIComponent(slug)}/versions/${version}/variants`),
   renders: (packageId: string, version: number) =>
     request<RenderItem[]>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/renders`),
   rateRender: (packageId: string, version: number, render: string, rating: "up" | "down", comment: string | null) =>

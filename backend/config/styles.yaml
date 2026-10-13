@@ -1,0 +1,35 @@
+# Room styles for restyle-variants: walls, floor, ceiling, light and stand-in colours.
+# Placed pieces and library models keep their own appearance.
+styles:
+  scandi:
+    label: Scandinavian
+    wall: {colour: "#f0eee9", roughness: 0.9}
+    ceiling: {colour: "#fbfaf7", roughness: 0.9}
+    floor: {colour: "#c9a77c", roughness: 0.55}
+    world: {colour: "#f6f1e8", strength: 0.9}
+    stand_ins: {sofa: "#bdb7ad", rug: "#e7e1d6", curtain: "#f3efe8"}
+    fallback: "#cfc8bc"
+  japandi:
+    label: Japandi
+    wall: {colour: "#d8cfc0", roughness: 0.95}
+    ceiling: {colour: "#ece6da", roughness: 0.95}
+    floor: {colour: "#8a6c4c", roughness: 0.5}
+    world: {colour: "#f2e7d6", strength: 0.8}
+    stand_ins: {sofa: "#6b6a5a", rug: "#c9bda6", curtain: "#e6dcc8"}
+    fallback: "#a89c86"
+  industrial:
+    label: Industrial
+    wall: {colour: "#8d8f91", roughness: 0.85}
+    ceiling: {colour: "#6f7173", roughness: 0.9}
+    floor: {colour: "#4d4f52", roughness: 0.6}
+    world: {colour: "#dfe3e8", strength: 0.7}
+    stand_ins: {sofa: "#4a3a2e", rug: "#2f3133", curtain: "#55585c"}
+    fallback: "#5c5f63"
+  warm-modern:
+    label: Warm modern
+    wall: {colour: "#e6d3bd", roughness: 0.85}
+    ceiling: {colour: "#f6ede1", roughness: 0.9}
+    floor: {colour: "#7a4f35", roughness: 0.45}
+    world: {colour: "#ffe7c8", strength: 0.9}
+    stand_ins: {sofa: "#9c5b3c", rug: "#d8b998", curtain: "#e9d2b4"}
+    fallback: "#b78a67"

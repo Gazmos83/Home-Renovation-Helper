@@ -2,6 +2,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { ThumbsDown, ThumbsUp } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { PieceVariants } from "../components/Variants";
 import { api, ApiError, downloads, versionFile, type Pricing, type RenderItem, type VersionInfo } from "../lib/api";
 import { pictureVersion } from "../lib/pieces";
 import { euros } from "../lib/money";
@@ -305,6 +306,7 @@ function Version({ packageId, version }: { packageId: string; version: number })
       <Downloads packageId={packageId} version={version} />
       <PricingPanel packageId={packageId} version={version} />
       {shown}
+      <PieceVariants packageId={packageId} version={version} />
     </div>
   );
 }

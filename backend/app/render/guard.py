@@ -36,9 +36,11 @@ FORBIDDEN_FIELDS: Final[tuple[str, ...]] = (
     "engine",
 )
 KINDS: Final[tuple[str, ...]] = ("still", "turntable")
-# What a render reads: the built model, or the detail pass's copy of it
-# (photoreal-detail). A detail render is `final` only and never placed in a room.
-SOURCES: Final[tuple[str, ...]] = ("model", "detail")
+# What a render reads: the built model, the detail pass's copy of it
+# (photoreal-detail), or the built model restyled in memory (restyle-variants). A detail
+# render is `final` only and never placed in a room; a restyle is a still at `draft` or
+# `preview` only.
+SOURCES: Final[tuple[str, ...]] = ("model", "detail", "restyle")
 
 _MINT: Final = object()
 
@@ -85,6 +87,8 @@ class RenderQuote:
     source: str = "model"
     # Where it runs: the laptop, or the render server (finals only; render-offload).
     target: str = "local"
+    # A restyle ticket is for one variant; no other variant can use it.
+    variant: str = ""
 
     @property
     def estimate_text(self) -> str:
@@ -94,6 +98,7 @@ class RenderQuote:
     def summary(self) -> str:
         what = "a still" if self.kind == "still" else f"{self.frames} frames"
         what += " of the detailed copy" if self.source == "detail" else ""
+        what += " of a restyle" if self.source == "restyle" else ""
         where = " on the render server" if self.target == "remote" else ""
         return (
             f"tier {self.tier.name} — {what} at {self.tier.resolution}×{self.tier.resolution} "
@@ -128,10 +133,11 @@ class RenderTicket:
         room: bool,
         record: str = "piece",
         source: str = "model",
+        variant: str = "",
     ) -> bool:
         q = self.quote
-        return (q.package_id, q.version, q.kind, q.room, q.record, q.source) == (
-            package_id, version, kind, room, record, source,
+        return (q.package_id, q.version, q.kind, q.room, q.record, q.source, q.variant) == (
+            package_id, version, kind, room, record, source, variant,
         )
 
     def consume(self) -> None:
@@ -168,6 +174,7 @@ def quote(
     source: str = "model",
     target: str = "local",
     remote_benchmark: RemoteBenchmark | None = None,
+    variant: str = "",
 ) -> RenderQuote:
     """Validate a request and price it. Never approves and never starts anything."""
     for name in raw_fields:
@@ -187,7 +194,19 @@ def quote(
     if kind not in KINDS:
         raise RenderRefused(f"unknown render kind {kind!r}; use still or turntable", field="kind")
     if source not in SOURCES:
-        raise RenderRefused(f"unknown render source {source!r}; use model or detail", field="source")
+        raise RenderRefused(
+            f"unknown render source {source!r}; use model, detail or restyle", field="source"
+        )
+    if source == "restyle":
+        if chosen.name == "final":
+            raise RenderRefused(
+                "a restyle is a concept picture; a final is rendered from a real revision",
+                field="tier",
+            )
+        if kind != "still":
+            raise RenderRefused("a restyle is a still", field="kind")
+        if not variant:
+            raise RenderRefused("a restyle ticket is for one named variant", field="variant")
     if source == "detail":
         if room:
             raise RenderRefused(
@@ -200,6 +219,8 @@ def quote(
             )
     if target not in ("local", "remote"):
         raise RenderRefused(f"unknown render target {target!r}; use local or remote", field="target")
+    if source == "restyle" and target == "remote":
+        raise RenderRefused("a restyle runs on the laptop only", field="target")
     frames = 1 if kind == "still" else chosen.frames
     if target == "remote":
         if chosen.name != "final":
@@ -225,7 +246,9 @@ def quote(
     seconds = estimate_seconds(
         chosen, benchmark.seconds_per_megapixel, cycles_multiplier, frames=frames
     )
-    return RenderQuote(package_id, version, kind, room, chosen, frames, seconds, record, source)
+    return RenderQuote(
+        package_id, version, kind, room, chosen, frames, seconds, record, source, variant=variant
+    )
 
 
 def authorise(
@@ -244,6 +267,7 @@ def authorise(
     source: str = "model",
     target: str = "local",
     remote_benchmark: RemoteBenchmark | None = None,
+    variant: str = "",
 ) -> RenderTicket:
     """Validate, price and — for `final` — require approval; then mint a ticket."""
     priced = quote(
@@ -260,6 +284,7 @@ def authorise(
         source=source,
         target=target,
         remote_benchmark=remote_benchmark,
+        variant=variant,
     )
     if priced.tier.name == "final" and not _is_yes(approval):
         if approval is None:

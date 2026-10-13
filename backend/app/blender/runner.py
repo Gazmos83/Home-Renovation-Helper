@@ -64,11 +64,15 @@ SHELL_GENERATOR: Final = GENERATORS / "build_shell.py"
 CHECK_MODEL_GENERATOR: Final = GENERATORS / "check_model.py"
 COMPOSITION_GENERATOR: Final = GENERATORS / "build_composition.py"
 COMPOSITION_RENDERER: Final = GENERATORS / "render_composition.py"
+RESTYLE_RENDERER: Final = GENERATORS / "render_restyle.py"
 
 # Every script that writes an Eevee or Cycles frame. A build is not on this list
 # (it writes a Workbench screenshot; render-guard design decision 5).
 RENDER_SCRIPTS: Final = frozenset(
-    {STILL_GENERATOR.name, TURNTABLE_GENERATOR.name, ROOM_GENERATOR.name, COMPOSITION_RENDERER.name}
+    {
+        STILL_GENERATOR.name, TURNTABLE_GENERATOR.name, ROOM_GENERATOR.name,
+        COMPOSITION_RENDERER.name, RESTYLE_RENDERER.name,
+    }
 )
 
 
@@ -94,7 +98,10 @@ async def launch_unguarded(
 async def launch_guarded(
     ticket: object,
     *,
-    expected: tuple[str, int, str, bool] | tuple[str, int, str, bool, str] | tuple[str, int, str, bool, str, str],
+    expected: tuple[str, int, str, bool]
+    | tuple[str, int, str, bool, str]
+    | tuple[str, int, str, bool, str, str]
+    | tuple[str, int, str, bool, str, str, str],
     argv: list[str],
     cwd: Path,
     timeout: float,

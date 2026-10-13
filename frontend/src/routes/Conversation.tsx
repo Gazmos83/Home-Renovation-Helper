@@ -25,6 +25,7 @@ import { Attachment } from "@/components/chat/Attachment";
 import { Bubble } from "@/components/chat/Bubble";
 import { Notice } from "@/components/chat/Notice";
 import { Composer } from "@/components/chat/Composer";
+import { PieceVariants, RoomVariants, keepLookRequest } from "@/components/Variants";
 import { QuestionForm } from "@/components/chat/QuestionForm";
 import { Rail } from "@/components/chat/Rail";
 import { Reply } from "@/components/chat/Reply";
@@ -169,6 +170,9 @@ function RoomSection({
           )}
         </div>
       )}
+      {room.slug && latest && latest.status === "succeeded" && (
+        <RoomVariants slug={room.slug} version={latest.version} />
+      )}
       {room.slug && room.model && room.surfaces ? (
         <p>
           <Button type="button" variant="outline" onClick={() => onInspectRoom(room.slug as string)}>
@@ -192,9 +196,12 @@ function ProjectPanel({
   onInspect,
   onInspectRoom,
   onDeleted,
+  onUseLook,
 }: {
   threadId: string;
   progress: UseQueryResult<Progress>;
+  /** Keep a restyle look: sends the owner's request to the conversation. */
+  onUseLook: (text: string) => void;
   onInspect: (packageId: string, version: number) => void;
   onInspectRoom: (slug: string) => void;
   /** A version of the piece was deleted. */
@@ -300,6 +307,13 @@ function ProjectPanel({
             Inspect version {p.latest_version}
           </Button>
         </p>
+      )}
+      {p.package_id && p.latest_version !== null && p.build_status === "succeeded" && (
+        <PieceVariants
+          packageId={p.package_id}
+          version={p.latest_version}
+          onUse={(variant) => onUseLook(keepLookRequest(p.package_id as string, p.latest_version as number, variant))}
+        />
       )}
       {p.room && <RoomSection room={p.room} threadId={threadId} onInspectRoom={onInspectRoom} />}
       <ol className="space-y-1">
@@ -699,6 +713,7 @@ export default function Conversation() {
                 onInspect={inspect}
                 onInspectRoom={inspectRoom}
                 onDeleted={deleted}
+                onUseLook={(text) => void send(text, [])}
               />
             ),
           },

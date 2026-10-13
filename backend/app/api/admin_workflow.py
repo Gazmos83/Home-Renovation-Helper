@@ -21,7 +21,7 @@ from app.plugins.enablement import global_enabled
 router = APIRouter(prefix="/admin/workflow", tags=["admin"], dependencies=[Depends(require_dev)])
 
 # The tools whose renders pass the render guard (CLAUDE.md §6); every other render-free tool does not.
-GUARDED_TOOLS: Final = frozenset({"render_turntable", "render_detail"})
+GUARDED_TOOLS: Final = frozenset({"render_turntable", "render_detail", "restyle_render"})
 HOMEOWNER: Final = "homeowner"
 INTERNAL_NODES: Final = frozenset({"__start__", "__end__", "load_house"})
 

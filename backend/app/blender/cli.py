@@ -228,3 +228,42 @@ def parse_composition_render_arguments(argv: list[str]) -> tuple[Path, Path, Pat
         _readable_file(parsed.spec, "--spec"), Path(parsed.pieces), Path(parsed.models), Path(parsed.out),
         parsed.kind, _tier_from(parsed),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class RestyleArguments:
+    """`render_restyle.py`'s arguments. A piece restyle names `blend`; a room restyle
+    names `spec`, `pieces` and `models`. `restyle` is the validated look or style file."""
+
+    restyle: Path
+    out: Path
+    tier: TierArguments
+    blend: Path | None = None
+    spec: Path | None = None
+    pieces: Path | None = None
+    models: Path | None = None
+
+
+def parse_restyle_arguments(argv: list[str]) -> RestyleArguments:
+    """Resolved paths and tier for one restyle still. Exactly one of `--blend` (a piece)
+    or `--spec` with `--pieces` and `--models` (a composition) is required."""
+    parser = _ArgumentParser(add_help=False)
+    parser.add_argument("--restyle", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--blend")
+    parser.add_argument("--spec")
+    parser.add_argument("--pieces")
+    parser.add_argument("--models")
+    _add_tier_arguments(parser)
+    parsed = parser.parse_args(_after_separator(argv, "--restyle, --out and the --tier-* values"))
+    restyle = _readable_file(parsed.restyle, "restyle")
+    out = _new_output(parsed.out)
+    tier = _tier_from(parsed)
+    if parsed.blend and not parsed.spec:
+        return RestyleArguments(restyle, out, tier, blend=_readable_file(parsed.blend, "blend"))
+    if parsed.spec and parsed.pieces and parsed.models and not parsed.blend:
+        return RestyleArguments(
+            restyle, out, tier, spec=_readable_file(parsed.spec, "spec"),
+            pieces=Path(parsed.pieces), models=Path(parsed.models),
+        )
+    raise InputError("arguments: name --blend (a piece) or --spec, --pieces and --models (a composition)")

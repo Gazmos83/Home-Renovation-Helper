@@ -1,0 +1,7 @@
+name: restyle_render
+description: Draft pictures of an approved piece in other colours and finishes, or of a room in other styles, without changing the design.
+kind: builtin
+role: builder
+tools: [restyle_render]
+enabled_by_default: true
+toggleable: true

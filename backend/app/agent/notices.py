@@ -25,6 +25,8 @@ PANEL_SENTENCE = " You can also check it in the Project panel."
 
 def _what(quote: RenderQuote) -> str:
     kind = "still" if quote.kind == "still" else "turntable"
+    if quote.source == "restyle":
+        return "restyle"
     return f"detail {kind}" if quote.source == "detail" else kind
 
 
@@ -46,6 +48,8 @@ def _message_count(deps: Any, thread_id: UUID) -> int:
 def notice_text(quote: RenderQuote, outcome: str) -> str:
     """The notice's words, built here and nowhere else."""
     subject = f"The {quote.tier.name} {_what(quote)} of {_label(quote)} version {quote.version}"
+    if outcome != "succeeded" and quote.source == "restyle":
+        return f"{subject} did not finish for every variant; the ones that finished are ready. You can ask for the rest again."
     if outcome != "succeeded":
         return f"{subject} did not finish, so nothing new was published. You can ask for it again."
     return f"{subject} is ready." + (PANEL_SENTENCE if quote.record == "piece" else "")

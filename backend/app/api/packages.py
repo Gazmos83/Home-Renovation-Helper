@@ -32,6 +32,7 @@ from app.db.models import Piece
 from app.design_import import export_document
 from app.guidelines.hardware_inputs import freeze_inputs
 from app.packages import service
+from app.restyle import store as restyle_store
 
 logger = logging.getLogger("app")
 
@@ -350,10 +351,37 @@ def frame_index(match: re.Match[str]) -> int:
     return int(match.group(1) or match.group(2))
 
 
+_VARIANT_FILES: Final = {"still.png": "image/png", "scene.json": "application/json"}
+_VARIANT: Final = re.compile(r"^variants/([a-z0-9][a-z0-9-]{0,63})/(still\.png|scene\.json)$")
+
+
+def describe_variants(base: str, folder: Path) -> list[dict[str, Any]]:
+    """A version's restyle variants for the studio: what each shows, and where its picture is.
+
+    Appearance only (restyle-variants): no model, prompt, token or cost is listed.
+    """
+    return [
+        {
+            "id": item["id"],
+            "label": item.get("label") or item["id"],
+            "tier": item.get("tier"),
+            "note": item.get("note"),
+            "looks": item.get("looks"),
+            "style": item.get("style"),
+            "created_at": item.get("created_at"),
+            "still": f"{base}/files/variants/{item['id']}/still.png",
+        }
+        for item in reversed(restyle_store.list_variants(folder))
+    ]
+
+
 def _file_for(folder: Path, name: str) -> tuple[Path, str] | None:
     """The path and media type for an exactly-named file, or `None`."""
     if name in storage.SERVED_FILES:
         return folder / name, storage.SERVED_FILES[name]
+    variant = _VARIANT.match(name)
+    if variant:
+        return folder / "variants" / variant.group(1) / variant.group(2), _VARIANT_FILES[variant.group(2)]
     frame = _FRAME.match(name)
     if frame:
         return folder / "frames" / f"frame_{frame_index(frame):03d}.png", "image/png"
@@ -386,6 +414,12 @@ def _file_for(folder: Path, name: str) -> tuple[Path, str] | None:
                 "image/png",
             )
     return None
+
+
+@router.get("/{package_id}/versions/{version}/variants")
+def list_variants(package_id: str, version: int, request: Request) -> list[dict[str, Any]]:
+    folder = existing_version(request, package_id, version)
+    return describe_variants(f"/packages/{package_id}/versions/{version}", folder)
 
 
 @router.get("/{package_id}/versions/{version}/files/{name:path}", response_class=FileResponse)

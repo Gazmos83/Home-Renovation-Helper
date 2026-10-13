@@ -19,7 +19,7 @@ from app import compositions
 from app.agent import house_file, progress
 from app.agent.house_file import HouseFileError, VersionMissing
 from app.api.gate import require_owner
-from app.api.packages import _file_for, refused
+from app.api.packages import _file_for, describe_variants, refused
 from app.blender import storage
 
 router = APIRouter(prefix="/compositions", tags=["compositions"], dependencies=[Depends(require_owner)])
@@ -141,6 +141,12 @@ def read_composition_dimensions(slug: str, version: int, request: Request) -> di
     if found is None:
         raise _not_found()
     return found
+
+
+@router.get("/{slug}/versions/{version}/variants")
+def list_composition_variants(slug: str, version: int, request: Request) -> list[dict[str, Any]]:
+    folder = _existing_version(request.app.state.settings.render_root, slug, version)
+    return describe_variants(f"/compositions/{slug}/versions/{version}", folder)
 
 
 @router.get("/{slug}/versions/{version}/files/{name:path}", response_class=FileResponse)

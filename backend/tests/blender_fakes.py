@@ -209,6 +209,9 @@ def fake_pipeline_launch(
             else:
                 write_frames(out, frames=int(arg_value(argv, "--tier-frames")), size=size)
             return
+        if script == "render_restyle.py":
+            write_still(out, size=int(arg_value(argv, "--tier-resolution")))
+            return
         if script == "check_model.py":
             out.mkdir(parents=True, exist_ok=True)
             (out / "check.json").write_text(

@@ -1,0 +1,39 @@
+# Piece looks for restyle-variants: how a material slot looks in a draft picture.
+# Appearance only. A look is never a material, a price or a cut-list line.
+looks:
+  walnut:
+    label: Walnut
+    colour: "#5a3e2b"
+    roughness: 0.45
+    metallic: 0.0
+    grain: true
+  oak:
+    label: Natural oak
+    colour: "#b8905f"
+    roughness: 0.5
+    metallic: 0.0
+    grain: true
+  white-lacquer:
+    label: White lacquer
+    colour: "#f1efea"
+    roughness: 0.25
+    metallic: 0.0
+    grain: false
+  sage-green:
+    label: Sage green
+    colour: "#8a9a7b"
+    roughness: 0.4
+    metallic: 0.0
+    grain: false
+  charcoal:
+    label: Charcoal
+    colour: "#3a3c3f"
+    roughness: 0.4
+    metallic: 0.0
+    grain: false
+  black-steel:
+    label: Black steel
+    colour: "#1d1e20"
+    roughness: 0.35
+    metallic: 0.9
+    grain: false

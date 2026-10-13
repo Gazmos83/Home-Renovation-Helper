@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { cardClass } from "@/components/ui/card";
 import { Page } from "@/components/Page";
 import { DeleteCompositionVersion } from "@/components/DeleteCompositionVersion";
+import { RoomVariants } from "@/components/Variants";
 import { RoomView, VersionSelect } from "@/components/inspector/RoomView";
 
 function message(error: unknown): string | null {
@@ -110,6 +111,9 @@ function CompositionCard({ composition }: { composition: Composition }) {
       </ul>
       {shown.picture && (
         <img src={shown.picture} alt={`Picture of ${composition.name}, version ${shown.version}`} className="max-h-72 rounded-md border" />
+      )}
+      {succeeded && composition.slug && version !== null && (
+        <RoomVariants slug={composition.slug} version={version} />
       )}
       {shown.viewer && (
         <p>
