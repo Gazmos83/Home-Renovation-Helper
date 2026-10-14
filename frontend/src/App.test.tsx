@@ -92,6 +92,32 @@ test("a piece version's inspector keeps its address", async () => {
   expect(screen.queryByRole("heading", { name: "Design Studio" })).not.toBeInTheDocument();
 });
 
+test("a reloaded dialog address opens the Design Studio tab with that dialog (Link reopens)", async () => {
+  stubFetch((call) => {
+    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+    if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+    if (call === "GET /rooms") {
+      return {
+        body: [{ name: "Wohnen", width_mm: 4000, depth_mm: 3500, corners: 4, height_mm: 2500, openings: 2,
+          apartment: null, pieces: [], conversations: 0, composition: null }],
+      };
+    }
+    if (call === "GET /compositions") return { body: [] };
+  });
+  show("/studio/rooms/Wohnen?page=1");
+  const dialog = await screen.findByRole("dialog", { name: "Wohnen" });
+  expect(within(dialog).getByText("4000 × 3500 mm, ceiling 2500 mm, 2 openings")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Measured Rooms", hidden: true })).toHaveAttribute("aria-selected", "true");
+  const nav = screen.getByRole("navigation", { name: "Main", hidden: true });
+  expect(within(nav).getByRole("link", { name: "Design Studio", hidden: true })).toHaveAttribute("aria-current", "page");
+});
+
+test("without a session a dialog address is the sign-in page", async () => {
+  stubFetch((call) => (call === "GET /auth/me" ? { status: 401, body: { detail: "Not authenticated" } } : undefined));
+  show("/studio/models/upload");
+  expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+});
+
 test("without a session the model library is the sign-in page", async () => {
   stubFetch((call) => (call === "GET /auth/me" ? { status: 401, body: { detail: "Not authenticated" } } : undefined));
   show("/studio/models");

@@ -8,8 +8,17 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
-from app.assets.models import Limits, ModelRefused, add_model, model_dir
+from app.assets.models import (
+    Limits,
+    ModelRefused,
+    add_model,
+    delete_model,
+    model_dir,
+    store_thumbnail,
+    thumbnail_path,
+)
 from tests import model_fixtures as fx
+from tests.blender_fakes import png_bytes
 
 LIMITS = Limits(max_bytes=2_000_000, max_entries=20, max_unpacked_bytes=1_000_000)
 
@@ -130,3 +139,58 @@ def test_the_entry_count_and_unpacked_size_caps_hold(session, tmp_path: Path) ->
     refused(session, tmp_path, fx.zipped({"box.obj": fx.obj_text(), "box.mtl": "", **many}), 415, "entries", "at most 20")
     big = fx.zipped({"box.obj": fx.obj_text(), "box.mtl": "", "huge.png": b"\x00" * 1_200_000})
     refused(session, tmp_path, big, 415, "unpacks to more than")
+
+
+def ready(session, root: Path):
+    row = upload(session, root, fx.glb())
+    row.state = "ready"
+    session.commit()
+    return row
+
+
+def thumbnail_refused(root: Path, row, data: bytes, status: int, phrase: str) -> None:
+    with pytest.raises(ModelRefused) as caught:
+        store_thumbnail(root, row, data)
+    assert caught.value.status == status
+    assert phrase in caught.value.reason, caught.value.reason
+
+
+def test_a_ready_models_picture_is_stored_apart_from_its_files_and_replaced(session, tmp_path: Path) -> None:
+    row = ready(session, tmp_path)
+    store_thumbnail(tmp_path, row, png_bytes(384, 384))
+    assert thumbnail_path(tmp_path, row.id).read_bytes() == png_bytes(384, 384)
+    assert sorted(p.name for p in model_dir(tmp_path, row.id).iterdir()) == ["model.glb"]
+    store_thumbnail(tmp_path, row, png_bytes(64, 64))
+    assert thumbnail_path(tmp_path, row.id).read_bytes() == png_bytes(64, 64)
+    assert [p.name for p in thumbnail_path(tmp_path, row.id).parent.iterdir()] == [f"{row.id}.png"]
+
+
+def test_a_picture_of_a_model_not_ready_is_refused_with_409(session, tmp_path: Path) -> None:
+    row = upload(session, tmp_path, fx.glb())
+    thumbnail_refused(tmp_path, row, png_bytes(64, 64), 409, "checking")
+    assert not thumbnail_path(tmp_path, row.id).exists()
+
+
+@pytest.mark.parametrize(
+    "data", [b"\xff\xd8\xff\xe0" + b"\x00" * 40, b"<svg xmlns='http://www.w3.org/2000/svg'/>", b"\x89PNG"],
+    ids=["jpeg", "svg", "truncated"],
+)
+def test_a_picture_that_is_not_a_png_is_refused_with_415_keeping_the_earlier_one(session, tmp_path: Path, data: bytes) -> None:
+    row = ready(session, tmp_path)
+    store_thumbnail(tmp_path, row, png_bytes(64, 64))
+    thumbnail_refused(tmp_path, row, data, 415, "PNG")
+    assert thumbnail_path(tmp_path, row.id).read_bytes() == png_bytes(64, 64)
+
+
+def test_a_picture_too_large_is_refused_naming_the_limit(session, tmp_path: Path) -> None:
+    row = ready(session, tmp_path)
+    thumbnail_refused(tmp_path, row, png_bytes(2048, 2048), 422, "2048 × 2048")
+    thumbnail_refused(tmp_path, row, png_bytes(4, 4) + b"\x00" * (256 * 1024), 413, "256 KB")
+    assert not thumbnail_path(tmp_path, row.id).exists()
+
+
+def test_deleting_a_model_deletes_its_picture(session, tmp_path: Path) -> None:
+    row = ready(session, tmp_path)
+    store_thumbnail(tmp_path, row, png_bytes(64, 64))
+    delete_model(session, tmp_path, row, [])
+    assert not thumbnail_path(tmp_path, row.id).exists()

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { expect, test } from "vitest";
 import { stubFetch } from "../test/fetchStub";
 import Pieces from "./Pieces";
@@ -23,19 +23,28 @@ function summary(name: string) {
   };
 }
 
-function show() {
+function Address() {
+  const location = useLocation();
+  return <output aria-label="address">{location.pathname + location.search}</output>;
+}
+
+/** The Pieces tab at `path`; by default with the `bench` dialog open, which holds what its card held. */
+function show(path = "/studio/pieces/bench") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/pieces"]}>
+      <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/pieces" element={<Pieces />} />
+          <Route path="/studio/:tab/*" element={<Pieces />} />
           <Route path="/conversations/:threadId" element={<p>the conversation</p>} />
         </Routes>
+        <Address />
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
+
+const address = () => screen.getByRole("status", { name: "address", hidden: true }).textContent;
 
 function info(version: number, approvedVersion: number | null, status = "succeeded") {
   return {
@@ -196,7 +205,7 @@ test("a built version is approved from the page and the badge shows without a re
   expect(await screen.findByText("No version approved yet.")).toBeInTheDocument();
   await user.click(await screen.findByRole("button", { name: "Approve version 2" }));
   expect(await screen.findByText("Approved: version 2")).toBeInTheDocument();
-  expect(screen.getByText("Approved")).toBeInTheDocument();
+  expect(within(screen.getByRole("dialog", { name: "bench" })).getByText("Approved")).toBeInTheDocument();
   expect(calls.some(([m, u]) => m === "PUT" && u === "/packages/bench/versions/2/approval")).toBe(true);
   expect(screen.getByRole("button", { name: "Unapprove version 2" })).toBeInTheDocument();
 });
@@ -256,11 +265,30 @@ test("unapproving a piece placed in an approved room shows the refusal next to t
 
 test("the import template is offered with how to use it", async () => {
   serve([turntable]);
-  show();
+  show("/studio/pieces");
   const link = await screen.findByRole("link", { name: "Download the import template" });
   expect(link).toHaveAttribute("href", "/design-import/template");
   expect(link).toHaveAttribute("download", "import-template.json");
-  expect(screen.getByText(/give it to another AI chat to fill in/)).toBeInTheDocument();
+  expect(link).toHaveTextContent("Import template");
+  expect(screen.queryByText(/give it to another AI chat to fill in/)).toBeNull();
+  const user = userEvent.setup();
+  const about = screen.getByRole("button", { name: "About pieces and the import template" });
+  await user.click(about);
+  expect(about).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByRole("note")).toHaveTextContent(/give it to another AI chat to fill in/);
+  expect(screen.getByRole("note")).toHaveTextContent(/Tell us what you think of a render/);
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("note")).toBeNull();
+});
+
+test("the button, the template link and its help share one row above the tiles (Pieces header fits)", async () => {
+  serve([turntable]);
+  show("/studio/pieces");
+  const create = await screen.findByRole("button", { name: "Create A New Piece" });
+  const row = create.parentElement!;
+  expect(within(row).getByRole("link", { name: "Download the import template" })).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "About pieces and the import template" })).toBeInTheDocument();
+  expect(row.compareDocumentPosition(screen.getByRole("list", { name: "Pieces" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 test("a built version offers the design and the bundle downloads", async () => {
@@ -338,7 +366,7 @@ test("a refusal from the room route is shown next to the piece and its room is u
   await screen.findByRole("option", { name: "Attic" });
   await user.selectOptions(screen.getByLabelText("Room of bench"), "Attic");
   const refusal = await screen.findByText("there is no room 'Attic' in the house file");
-  expect(refusal.closest("section")).toHaveAccessibleName("bench");
+  expect(refusal.closest('[role="dialog"]')).toHaveAccessibleName("bench");
   expect(screen.getByText("Room: Hall")).toBeInTheDocument();
 });
 
@@ -474,7 +502,7 @@ test("deleting the only version says the piece goes and drops the piece", async 
 
 // --- piece conversations (piece-conversation-link) ---------------------------------------
 
-test("Create A New Piece sits above the cards, starts an unbound conversation and opens it", async () => {
+test("Create A New Piece sits above the tiles, starts an unbound conversation and opens it", async () => {
   const user = userEvent.setup();
   const calls = serve([turntable], (call) => {
     if (call === "GET /packages") {
@@ -492,9 +520,9 @@ test("Create A New Piece sits above the cards, starts an unbound conversation an
       };
     }
   });
-  show();
+  show("/studio/pieces");
   const create = await screen.findByRole("button", { name: "Create A New Piece" });
-  const firstCard = await screen.findByRole("region", { name: "bench" });
+  const firstCard = await screen.findByRole("button", { name: "bench" });
   expect(create.compareDocumentPosition(firstCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   await user.click(create);
   expect(await screen.findByText("the conversation")).toBeInTheDocument();
@@ -508,7 +536,7 @@ test("Open conversation links to the piece's existing thread", async () => {
     }
   });
   show();
-  const card = await screen.findByRole("region", { name: "bench" });
+  const card = await screen.findByRole("dialog", { name: "bench" });
   const link = within(card).getByRole("link", { name: "Open conversation" });
   expect(link).toHaveAttribute("href", "/conversations/t-bench");
 });
@@ -524,7 +552,7 @@ test("Start conversation binds the piece and opens the new thread", async () => 
     }
   });
   show();
-  const card = await screen.findByRole("region", { name: "bench" });
+  const card = await screen.findByRole("dialog", { name: "bench" });
   await user.click(within(card).getByRole("button", { name: "Start conversation" }));
   expect(await screen.findByText("the conversation")).toBeInTheDocument();
   expect(calls).toContainEqual(["POST", "/chat/threads", { package_id: "bench" }]);
@@ -546,7 +574,7 @@ test("a refused start shows the reason next to the piece", async () => {
     }
   });
   show();
-  const card = await screen.findByRole("region", { name: "bench" });
+  const card = await screen.findByRole("dialog", { name: "bench" });
   await user.click(within(card).getByRole("button", { name: "Start conversation" }));
   expect(
     await within(card).findByText("hall-bench already has a conversation; open that one instead of starting another"),
@@ -585,7 +613,101 @@ test("the card shows the newest screenshot, keeps it when another version is cho
 test("a piece with no screenshot shows no picture", async () => {
   serve([turntable], undefined, { approved: null, status: "running" });
   show();
-  expect(await screen.findByRole("region", { name: "bench" })).toBeInTheDocument();
+  expect(await screen.findByRole("dialog", { name: "bench" })).toBeInTheDocument();
   expect(screen.queryByRole("img", { name: /^bench version/ })).toBeNull();
   expect(screen.queryByRole("figure")).toBeNull();
+});
+
+// --- tiles and the dialog (studio-tile-grid) ---------------------------------------------
+
+function twoPieces(path: string, extra: (call: string) => { status?: number; body?: unknown } | undefined = () => undefined) {
+  const built = (version: number, approved: number | null) => ({ ...info(version, approved), files: ["screenshot.png"] });
+  const state = { approved: 1 as number | null };
+  serve([still], (call) => {
+    const mine = extra(call);
+    if (mine) return mine;
+    if (call === "GET /packages") {
+      return {
+        body: [
+          { package_id: "bench", versions: [2, 1], thread_id: null, room: null },
+          { package_id: "shelf", versions: [1], thread_id: null, room: null },
+        ],
+      };
+    }
+    const read = /^GET \/packages\/bench\/versions\/(\d)$/.exec(call);
+    if (read) return { body: built(Number(read[1]), state.approved) };
+    if (call === "GET /packages/shelf/versions/1") return { body: { package_id: "shelf", version: 1, status: "running", approved_at: null } };
+    if (call === "PUT /packages/bench/versions/2/approval") {
+      state.approved = 2;
+      return { body: built(2, 2) };
+    }
+  }, state);
+  show(path);
+}
+
+test("each piece is a tile with its picture, caption and approval badge", async () => {
+  twoPieces("/studio/pieces");
+  const bench = await screen.findByRole("button", { name: "bench" });
+  await within(bench).findByText("Version 1 (approved)");
+  expect(bench.querySelector("img")).toHaveAttribute("src", "/packages/bench/versions/1/files/screenshot.png");
+  expect(within(bench).getByText("Approved")).toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("a piece with no screenshot shows a placeholder tile and no error (No screenshot at all)", async () => {
+  twoPieces("/studio/pieces");
+  const shelf = await screen.findByRole("button", { name: "shelf" });
+  expect(within(shelf).getByTestId("tile-placeholder")).toBeInTheDocument();
+  expect(shelf.querySelector("img")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("choosing a tile opens its dialog at its own address, keeping the page (Open a piece)", async () => {
+  const user = userEvent.setup();
+  twoPieces("/studio/pieces?page=1");
+  await user.click(await screen.findByRole("button", { name: "bench" }));
+  expect(address()).toBe("/studio/pieces/bench?page=1");
+  const dialog = await screen.findByRole("dialog", { name: "bench" });
+  expect(within(dialog).getByRole("button", { name: "Start conversation" })).toBeInTheDocument();
+  expect(within(dialog).getByRole("combobox", { name: "Versions of bench" })).toBeInTheDocument();
+  expect(within(dialog).getByRole("combobox", { name: "Room of bench" })).toBeInTheDocument();
+  expect(await within(dialog).findByRole("img", { name: "Still of bench version 2" })).toBeInTheDocument();
+});
+
+test("closing a dialog opened from the grid goes back to the grid's address (Back closes)", async () => {
+  const user = userEvent.setup();
+  twoPieces("/studio/pieces?page=1");
+  await user.click(await screen.findByRole("button", { name: "bench" }));
+  await screen.findByRole("dialog", { name: "bench" });
+  await user.keyboard("{Escape}");
+  expect(address()).toBe("/studio/pieces?page=1");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("button", { name: "bench" })).toHaveFocus();
+});
+
+test("a dialog address reached directly opens the dialog, and closing it shows the grid", async () => {
+  const user = userEvent.setup();
+  twoPieces("/studio/pieces/bench");
+  expect(await screen.findByRole("dialog", { name: "bench" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  expect(address()).toBe("/studio/pieces");
+  expect(screen.getByRole("button", { name: "bench" })).toBeInTheDocument();
+});
+
+test("an address naming no piece shows the grid and no dialog (Unknown item)", async () => {
+  twoPieces("/studio/pieces/murphy-bed");
+  expect(await screen.findByRole("button", { name: "bench" })).toBeInTheDocument();
+  await waitFor(() => expect(address()).toBe("/studio/pieces"));
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("approving in the dialog moves the tile's picture without a reload (Approval changes the tile)", async () => {
+  const user = userEvent.setup();
+  twoPieces("/studio/pieces/bench");
+  const dialog = await screen.findByRole("dialog", { name: "bench" });
+  await user.click(await within(dialog).findByRole("button", { name: "Approve version 2" }));
+  await user.keyboard("{Escape}");
+  const bench = screen.getByRole("button", { name: "bench" });
+  expect(await within(bench).findByText("Version 2 (approved)")).toBeInTheDocument();
+  expect(bench.querySelector("img")).toHaveAttribute("src", "/packages/bench/versions/2/files/screenshot.png");
 });

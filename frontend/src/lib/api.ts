@@ -492,6 +492,11 @@ export type ModelAsset = {
   height_mm: number;
   state: "checking" | "ready" | "refused";
   reason: string | null;
+  measured_mm: { x: number; y: number; z: number } | null;
+  triangles: number | null;
+  /** The model file the others hang from: `model.glb`, or the zip's one `.gltf` or `.obj`. */
+  entry: string;
+  has_thumbnail: boolean;
 };
 
 export type VersionInfo = {
@@ -785,6 +790,11 @@ const versionPath = (packageId: string, version: number) =>
 export const versionFile = (packageId: string, version: number, name: string) =>
   `${versionPath(packageId, version)}/files/${name}`;
 
+/** A library model's stored file, and its preview picture (studio-tile-grid). */
+export const modelFile = (modelId: string, name: string) =>
+  `/models/${modelId}/files/${name.split("/").map(encodeURIComponent).join("/")}`;
+export const modelThumbnail = (modelId: string) => `/models/${modelId}/thumbnail`;
+
 /** Download links: plain URLs, so the browser sends the session cookie and saves the file. */
 export const downloads = {
   importTemplate: "/design-import/template",
@@ -936,6 +946,8 @@ export const api = {
     return request<ModelAsset>("/models", { method: "POST", body: form, headers: {} });
   },
   deleteModel: (modelId: string) => request<void>(`/models/${modelId}`, { method: "DELETE" }),
+  storeModelThumbnail: (modelId: string, picture: Blob) =>
+    request<void>(modelThumbnail(modelId), { method: "PUT", body: picture, headers: { "Content-Type": "image/png" } }),
   version: (packageId: string, version: number) =>
     request<VersionInfo>(`/packages/${encodeURIComponent(packageId)}/versions/${version}`),
   /** Every version of a piece, newest first, with its build state and approval. */

@@ -106,7 +106,7 @@ export default function App() {
           element={signedIn ? <Conversation /> : <Navigate to="/login" replace />}
         />
         <Route path="/studio" element={signedIn ? <Studio /> : <Navigate to="/login" replace />} />
-        <Route path="/studio/:tab" element={signedIn ? <Studio /> : <Navigate to="/login" replace />} />
+        <Route path="/studio/:tab/*" element={signedIn ? <Studio /> : <Navigate to="/login" replace />} />
         <Route path="/pieces" element={<Navigate to="/studio/pieces" replace />} />
         <Route
           path="/pieces/:packageId/versions/:version"

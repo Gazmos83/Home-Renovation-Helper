@@ -21,6 +21,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -48,17 +49,21 @@ class ModelOut(BaseModel):
     measured_mm: dict[str, float] | None
     triangles: int | None
     files: list[str]
+    entry: str
+    has_thumbnail: bool
 
 
 def _out(request: Request, model: Any) -> ModelOut:
-    folder = library.model_dir(request.app.state.settings.upload_root, model.id)
+    root = request.app.state.settings.upload_root
+    folder = library.model_dir(root, model.id)
     files = sorted(
         p.relative_to(folder).as_posix() for p in folder.rglob("*") if p.is_file() and p.name != "check.json"
     ) if folder.is_dir() else []
     return ModelOut(
         model_id=model.id, name=model.name, kind=model.kind, width_mm=model.width_mm, depth_mm=model.depth_mm,
         height_mm=model.height_mm, state=model.state, reason=model.reason, measured_mm=model.measured_mm,
-        triangles=model.triangles, files=files,
+        triangles=model.triangles, files=files, entry=model.entry,
+        has_thumbnail=library.thumbnail_path(root, model.id).is_file(),
     )
 
 
@@ -171,6 +176,40 @@ def read_model_file(model_id: UUID, name: str, request: Request) -> FileResponse
         raise _not_found()
     path, content_type = found
     return FileResponse(path, media_type=content_type, headers={"X-Content-Type-Options": "nosniff"})
+
+
+@router.put("/{model_id}/thumbnail", status_code=status.HTTP_204_NO_CONTENT)
+async def store_thumbnail(model_id: UUID, request: Request) -> None:
+    """The model's preview picture, drawn by the owner's browser (studio-tile-grid)."""
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > library.THUMBNAIL_MAX_BYTES:
+            raise _refusal(library.ModelRefused(413, f"the picture is larger than {library.THUMBNAIL_MAX_BYTES // 1024} KB"))
+
+    def store() -> None:
+        with Session(request.app.state.engine) as session:
+            model = library.get_model(session, model_id)
+            if model is None:
+                raise _not_found()
+            try:
+                library.store_thumbnail(request.app.state.settings.upload_root, model, bytes(data))
+            except library.ModelRefused as error:
+                if error.status == 409:
+                    raise HTTPException(409, detail={"failure_class": "not_ready", "reason": error.reason}) from None
+                if error.status == 422:
+                    raise HTTPException(422, detail={"failure_class": "invalid_size", "reason": error.reason}) from None
+                raise _refusal(error) from None
+
+    await run_in_threadpool(store)
+
+
+@router.get("/{model_id}/thumbnail", response_class=FileResponse)
+def read_thumbnail(model_id: UUID, request: Request) -> FileResponse:
+    path = library.thumbnail_path(request.app.state.settings.upload_root, model_id)
+    if not path.is_file():
+        raise _not_found()
+    return FileResponse(path, media_type="image/png", headers={"X-Content-Type-Options": "nosniff"})
 
 
 @router.delete("/{model_id}", status_code=status.HTTP_204_NO_CONTENT)

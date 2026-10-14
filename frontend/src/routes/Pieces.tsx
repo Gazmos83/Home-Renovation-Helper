@@ -1,9 +1,9 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ThumbsDown, ThumbsUp } from "lucide-react";
-import { useState } from "react";
+import { Armchair, Info, ThumbsDown, ThumbsUp } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { PieceVariants } from "../components/Variants";
-import { api, ApiError, downloads, versionFile, type Pricing, type RenderItem, type VersionInfo } from "../lib/api";
+import { api, ApiError, downloads, versionFile, type PieceSummary, type Pricing, type RenderItem, type VersionInfo } from "../lib/api";
 import { pictureVersion } from "../lib/pieces";
 import { euros } from "../lib/money";
 import { FieldError } from "../lib/form";
@@ -12,7 +12,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { cardClass } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DeleteVersion } from "@/components/DeleteVersion";
+import { Tile } from "@/components/studio/Tile";
+import { TileGrid } from "@/components/studio/TileGrid";
+import { useStudioDialog } from "@/components/studio/useStudioDialog";
 
 function message(error: unknown): string | null {
   return error instanceof Error ? error.message : null;
@@ -393,7 +397,8 @@ function PieceConversation({ id, threadId }: { id: string; threadId: string | nu
   );
 }
 
-function Piece({
+/** Everything about one piece, shown in its dialog (studio-tile-grid): what its card held before. */
+function PieceDetail({
   id,
   versions,
   room,
@@ -419,8 +424,10 @@ function Piece({
   // The approved version's screenshot, else the newest one's: it does not follow the dropdown.
   const picture = pictureVersion(infos.map((q) => q.data));
   return (
-    <section className={cardClass} aria-label={id}>
-      <h2>{id}</h2>
+    <>
+      <DialogHeader>
+        <DialogTitle>{id}</DialogTitle>
+      </DialogHeader>
       <PieceConversation id={id} threadId={threadId} />
       {picture && (
         <figure className="grid w-fit gap-1">
@@ -464,13 +471,86 @@ function Piece({
         />
       )}
       <Version packageId={id} version={version} />
-    </section>
+    </>
+  );
+}
+
+/**
+ * The Pieces intro and how the import template is used, behind an information button so the header stays
+ * one row and the grid fills the screen (studio-tile-grid). It floats over the grid, as wide as the header row.
+ */
+function PiecesHelp() {
+  const [open, setOpen] = useState(false);
+  return (
+    <span
+      onBlur={(event) => !event.currentTarget.contains(event.relatedTarget) && setOpen(false)}
+      onKeyDown={(event) => event.key === "Escape" && setOpen(false)}
+    >
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="size-8 p-0"
+        aria-label="About pieces and the import template"
+        aria-expanded={open}
+        aria-controls="pieces-help"
+        onClick={() => setOpen(!open)}
+      >
+        <Info aria-hidden size={18} />
+      </Button>
+      {open && (
+        <span
+          id="pieces-help"
+          role="note"
+          className="absolute inset-x-0 top-full z-20 mt-1 grid max-w-md gap-2 rounded-md border bg-popover p-3 text-sm text-popover-foreground shadow-md"
+        >
+          <span>Your designs and their renders. Tell us what you think of a render; it helps the next one.</span>
+          <span>
+            The import template: give it to another AI chat to fill in, then attach the file it returns in a new
+            conversation.
+          </span>
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** A piece's tile: the picture the card chose, its caption, and "Approved" when a version is. */
+function PieceTile({ piece, onOpen }: { piece: PieceSummary; onOpen: () => void }) {
+  const queryClient = useQueryClient();
+  const infos = useQueries({
+    queries: piece.versions.map((n) => ({
+      queryKey: ["version", piece.package_id, n],
+      queryFn: () => api.version(piece.package_id, n),
+    })),
+  });
+  const picture = pictureVersion(infos.map((q) => q.data));
+  const approved = infos.some((q) => q.data?.approved_at);
+  const newest = piece.versions[0];
+  return (
+    <Tile
+      name={piece.package_id}
+      picture={picture ? versionFile(piece.package_id, picture.version, "screenshot.png") : null}
+      detail={picture ? `Version ${picture.version}${picture.approved ? " (approved)" : ""}` : undefined}
+      placeholder={Armchair}
+      badge={approved ? <Badge>Approved</Badge> : undefined}
+      onOpen={onOpen}
+      // The dialog opens on the newest version's renders; start loading them now.
+      onPrefetch={() =>
+        newest !== undefined &&
+        queryClient.prefetchQuery({
+          queryKey: ["renders", piece.package_id, newest],
+          queryFn: () => api.renders(piece.package_id, newest),
+        })
+      }
+    />
   );
 }
 
 export default function Pieces() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const dialog = useStudioDialog("pieces");
   const pieces = useQuery({ queryKey: ["pieces"], queryFn: api.pieces });
   const create = useMutation({
     mutationFn: () => api.createThread(),
@@ -479,37 +559,53 @@ export default function Pieces() {
       navigate(`/conversations/${thread.thread_id}`);
     },
   });
+  const wanted = dialog.segments.length === 1 ? dialog.segments[0] : null;
+  const opened = pieces.data?.find((piece) => piece.package_id === wanted);
+  // An address naming no piece (unknown, or its last version just deleted) shows the grid.
+  const missing = Boolean(pieces.data) && dialog.segments.length > 0 && !opened;
+  useEffect(() => {
+    if (missing) dialog.dismiss();
+  }, [missing]);
   if (pieces.error) {
     return <FieldError message={message(pieces.error)} />;
   }
   if (!pieces.data) return <p>Loading…</p>;
   return (
     <>
-      <div className="flex flex-wrap items-center justify-end gap-4">
+      <div className="relative flex flex-wrap items-center gap-x-4 gap-y-2">
         <Button type="button" disabled={create.isPending} onClick={() => create.mutate()}>
           Create A New Piece
         </Button>
+        <a
+          href={downloads.importTemplate}
+          download="import-template.json"
+          aria-label="Download the import template"
+          className="text-sm underline"
+        >
+          Import template
+        </a>
+        <PiecesHelp />
       </div>
       <FieldError message={message(create.error)} />
-      <p>Your designs and their renders. Tell us what you think of a render; it helps the next one.</p>
-      <p className="text-sm">
-        <a href={downloads.importTemplate} download="import-template.json" className="underline">
-          Download the import template
-        </a>{" "}
-        — give it to another AI chat to fill in, then attach the file it returns in a new conversation.
-      </p>
       {pieces.data.length === 0 && (
         <p>No pieces yet. Use Create A New Piece to start a conversation and describe one.</p>
       )}
-      {pieces.data.map((piece) => (
-        <Piece
-          key={piece.package_id}
-          id={piece.package_id}
-          versions={piece.versions}
-          room={piece.room}
-          threadId={piece.thread_id}
-        />
-      ))}
+      <TileGrid label="Pieces" items={pieces.data} keyOf={(piece) => piece.package_id}>
+        {(piece) => <PieceTile piece={piece} onOpen={() => dialog.open(piece.package_id)} />}
+      </TileGrid>
+      <Dialog open={Boolean(opened)} onOpenChange={(open) => !open && dialog.close()}>
+        {opened && (
+          <DialogContent aria-describedby={undefined}>
+            <PieceDetail
+              key={opened.package_id}
+              id={opened.package_id}
+              versions={opened.versions}
+              room={opened.room}
+              threadId={opened.thread_id}
+            />
+          </DialogContent>
+        )}
+      </Dialog>
     </>
   );
 }

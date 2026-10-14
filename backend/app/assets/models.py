@@ -44,6 +44,9 @@ CONTENT_TYPES: Final = {
     "jpg": "image/jpeg",
     "jpeg": "image/jpeg",
 }
+PNG_SIGNATURE: Final = b"\x89PNG\r\n\x1a\n"
+THUMBNAIL_MAX_BYTES: Final = 256 * 1024
+THUMBNAIL_MAX_SIDE: Final = 512
 UNSUPPORTED: Final = (
     "only a GLB file, or a zip holding one glTF or one OBJ model with its files, is accepted"
 )
@@ -67,6 +70,11 @@ class Limits:
 
 def model_dir(root: Path, model_id: UUID) -> Path:
     return root / "models" / str(model_id)
+
+
+def thumbnail_path(root: Path, model_id: UUID) -> Path:
+    """The preview picture, kept beside the uploads so no upload can list, reach or replace it."""
+    return root / "model-thumbnails" / f"{model_id}.png"
 
 
 # --- the upload stream ---------------------------------------------------------------
@@ -358,3 +366,30 @@ def delete_model(session: Session, root: Path, model: ModelAsset, used_by: list[
     session.delete(model)
     session.commit()
     shutil.rmtree(model_dir(root, model.id), ignore_errors=True)
+    thumbnail_path(root, model.id).unlink(missing_ok=True)
+
+
+def store_thumbnail(root: Path, model: ModelAsset, data: bytes) -> None:
+    """Store a ready model's preview picture, replacing any earlier one; refused bytes leave it in place."""
+    if model.state != "ready":
+        raise ModelRefused(409, f"the model is {model.state}; a picture is stored once it is ready")
+    if len(data) > THUMBNAIL_MAX_BYTES:
+        raise ModelRefused(413, f"the picture is larger than {THUMBNAIL_MAX_BYTES // 1024} KB")
+    # Signature, then the IHDR chunk: length 13, type, width and height as big-endian uint32.
+    if len(data) < 24 or not data.startswith(PNG_SIGNATURE) or data[12:16] != b"IHDR":
+        raise ModelRefused(415, "the picture must be a PNG")
+    width, height = struct.unpack(">II", data[16:24])
+    if not (1 <= width <= THUMBNAIL_MAX_SIDE and 1 <= height <= THUMBNAIL_MAX_SIDE):
+        raise ModelRefused(
+            422, f"the picture is {width} × {height} pixels; at most {THUMBNAIL_MAX_SIDE} × {THUMBNAIL_MAX_SIDE} are allowed",
+        )
+    target = thumbnail_path(root, model.id)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=target.parent, suffix=".part")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.replace(temporary, target)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise

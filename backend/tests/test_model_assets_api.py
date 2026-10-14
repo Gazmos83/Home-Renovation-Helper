@@ -8,11 +8,12 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from app.blender import storage
 from tests import model_fixtures as fx
 from tests.api_helpers import make_client, sign_in
-from tests.blender_fakes import fake_failure_launch, fake_pipeline_launch
+from tests.blender_fakes import fake_failure_launch, fake_pipeline_launch, png_bytes
 from tests.conftest import clean_house_file
 
 SIZE = {"name": "armchair", "width_mm": "800", "depth_mm": "700", "height_mm": "900"}
@@ -144,7 +145,74 @@ def test_every_model_route_needs_the_owner(
     try:
         some = "00000000-0000-0000-0000-000000000000"
         for method, path in (("post", "/models"), ("get", "/models"), ("get", f"/models/{some}"),
-                             ("get", f"/models/{some}/files/model.glb"), ("delete", f"/models/{some}")):
+                             ("get", f"/models/{some}/files/model.glb"), ("delete", f"/models/{some}"),
+                             ("get", f"/models/{some}/thumbnail"), ("put", f"/models/{some}/thumbnail")):
             assert getattr(c, method)(path).status_code == 401, path
     finally:
         c.__exit__(None, None, None)
+
+
+def put_thumbnail(client: TestClient, model_id: str, data: bytes):
+    return client.put(f"/models/{model_id}/thumbnail", content=data, headers={"content-type": "image/png"})
+
+
+def test_a_ready_models_picture_is_stored_and_served(client: TestClient) -> None:
+    body = upload(client, fx.glb()).json()
+    assert (body["entry"], body["has_thumbnail"]) == ("model.glb", False)
+    model_id = body["model_id"]
+    assert client.get(f"/models/{model_id}/thumbnail").status_code == 404
+    assert put_thumbnail(client, model_id, png_bytes(384, 384)).status_code == 204
+    served = client.get(f"/models/{model_id}/thumbnail")
+    assert served.status_code == 200 and served.content == png_bytes(384, 384)
+    assert served.headers["content-type"] == "image/png"
+    assert served.headers["x-content-type-options"] == "nosniff"
+    assert client.get(f"/models/{model_id}").json()["has_thumbnail"] is True
+    assert [m["has_thumbnail"] for m in client.get("/models").json()] == [True]
+
+
+def test_a_picture_of_a_model_still_checking_is_refused_with_409(client: TestClient) -> None:
+    model_id = upload(client, fx.glb()).json()["model_id"]
+    with client.app.state.engine.begin() as connection:
+        connection.execute(text("UPDATE model_assets SET state = 'checking' WHERE id = :id"), {"id": model_id})
+    response = put_thumbnail(client, model_id, png_bytes(64, 64))
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"failure_class": "not_ready", "reason": "the model is checking; a picture is stored once it is ready"}
+    assert client.get(f"/models/{model_id}/thumbnail").status_code == 404
+
+
+def test_a_picture_that_is_not_a_png_or_too_big_is_refused(client: TestClient) -> None:
+    model_id = upload(client, fx.glb()).json()["model_id"]
+    assert put_thumbnail(client, model_id, png_bytes(64, 64)).status_code == 204
+    jpeg = put_thumbnail(client, model_id, b"\xff\xd8\xff\xe0" + b"\x00" * 64)
+    assert (jpeg.status_code, jpeg.json()["detail"]["failure_class"]) == (415, "unsupported_type")
+    large = put_thumbnail(client, model_id, png_bytes(2048, 2048))
+    assert (large.status_code, large.json()["detail"]["failure_class"]) == (422, "invalid_size")
+    assert "2048 × 2048" in large.json()["detail"]["reason"]
+    heavy = put_thumbnail(client, model_id, b"\x89PNG" + b"\x00" * (300 * 1024))
+    assert (heavy.status_code, heavy.json()["detail"]["failure_class"]) == (413, "too_large")
+    assert client.get(f"/models/{model_id}/thumbnail").content == png_bytes(64, 64), "the earlier picture is kept"
+
+
+def test_the_picture_is_kept_apart_from_a_zips_own_files(client: TestClient) -> None:
+    zipped = fx.zipped({"box.obj": fx.obj_text(), "box.mtl": "map_Kd thumbnail.png\n", "thumbnail.png": png_bytes(4, 4)})
+    body = upload(client, zipped, "box.zip").json()
+    assert body["entry"] == "box.obj"
+    model_id = body["model_id"]
+    assert put_thumbnail(client, model_id, png_bytes(64, 64)).status_code == 204
+    model = client.get(f"/models/{model_id}").json()
+    assert model["files"] == ["box.mtl", "box.obj", "thumbnail.png"]
+    assert client.get(f"/models/{model_id}/files/thumbnail.png").content == png_bytes(4, 4)
+    assert client.get(f"/models/{model_id}/thumbnail").content == png_bytes(64, 64)
+
+
+def test_an_unknown_model_has_no_picture(client: TestClient) -> None:
+    some = "00000000-0000-0000-0000-000000000000"
+    assert client.get(f"/models/{some}/thumbnail").status_code == 404
+    assert put_thumbnail(client, some, png_bytes(64, 64)).status_code == 404
+
+
+def test_delete_removes_the_picture(client: TestClient, upload_root: Path) -> None:
+    model_id = upload(client, fx.glb()).json()["model_id"]
+    put_thumbnail(client, model_id, png_bytes(64, 64))
+    assert client.delete(f"/models/{model_id}").status_code == 204
+    assert not (upload_root / "model-thumbnails" / f"{model_id}.png").exists()

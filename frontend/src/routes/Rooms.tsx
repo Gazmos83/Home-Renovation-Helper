@@ -1,21 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { Ruler } from "lucide-react";
+import { useEffect, useState } from "react";
 import { api, type Composition, type RoomSummary } from "../lib/api";
 import { FieldError } from "../lib/form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cardClass } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DeleteCompositionVersion } from "@/components/DeleteCompositionVersion";
 import { RoomVariants } from "@/components/Variants";
 import { RoomView, VersionSelect } from "@/components/inspector/RoomView";
+import { isOpen, roomEntries } from "../lib/rooms";
+import { Tile } from "@/components/studio/Tile";
+import { TileGrid } from "@/components/studio/TileGrid";
+import { useStudioDialog } from "@/components/studio/useStudioDialog";
 
 function message(error: unknown): string | null {
   return error instanceof Error ? error.message : null;
 }
 
 /**
- * A composition and its chosen version: a card of its own, or, inside its measured room's
- * card, a group under a "Composition" heading (split-rooms-page).
+ * A composition and its chosen version: a dialog of its own, or, inside its measured room's
+ * dialog, a group under a "Composition" heading (split-rooms-page, studio-tile-grid).
  */
 function CompositionCard({ composition, inRoom = false }: { composition: Composition; inRoom?: boolean }) {
   const queryClient = useQueryClient();
@@ -54,12 +59,12 @@ function CompositionCard({ composition, inRoom = false }: { composition: Composi
   });
   const body = (
     <>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className={inRoom ? "flex flex-wrap items-center gap-2" : "flex flex-wrap items-center gap-2 pr-8"}>
         {inRoom ? (
           <h3>Composition</h3>
         ) : (
           <>
-            <h2>{composition.name}</h2>
+            <DialogTitle>{composition.name}</DialogTitle>
             <Badge variant="secondary">{scope}</Badge>
           </>
         )}
@@ -160,9 +165,7 @@ function CompositionCard({ composition, inRoom = false }: { composition: Composi
       {body}
     </div>
   ) : (
-    <section className={cardClass} aria-label={composition.name}>
-      {body}
-    </section>
+    body
   );
 }
 
@@ -172,7 +175,7 @@ function plural(count: number, one: string, many: string): string {
 
 /**
  * One measured room, with its delete action and the warning of what it touches (rooms-page),
- * and its composition once the compositions are read (split-rooms-page).
+ * and its composition once the compositions are read (split-rooms-page), shown in its dialog.
  */
 function MeasuredRoom({
   room,
@@ -201,11 +204,11 @@ function MeasuredRoom({
       `its composition and ${plural(room.composition.versions.length, "version", "versions")} will be removed`,
   ].filter(Boolean);
   return (
-    <section className={`${cardClass} grid gap-2`} aria-label={`Measured room ${room.name}`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <h2>{room.name}</h2>
+    <>
+      <DialogHeader>
+        <DialogTitle>{room.name}</DialogTitle>
         {room.apartment && <Badge variant="secondary">{room.apartment}</Badge>}
-      </div>
+      </DialogHeader>
       <p className="text-sm">
         {room.width_mm} × {room.depth_mm} mm{shape}, ceiling {room.height_mm} mm,{" "}
         {plural(room.openings, "opening", "openings")}
@@ -258,18 +261,38 @@ function MeasuredRoom({
           </p>
         )
       )}
-    </section>
+    </>
   );
 }
 
-/** Measured rooms with their compositions, laid out like the Pieces page (split-rooms-page). */
+function roomSize(room: RoomSummary): string {
+  return `${room.width_mm} × ${room.depth_mm} mm, ceiling ${room.height_mm} mm`;
+}
+
+/**
+ * Measured rooms, then the compositions with no room of their own, as tiles; each opens its dialog at
+ * `/studio/rooms/<room>` or `/studio/rooms/compositions/<slug>` (split-rooms-page, studio-tile-grid).
+ */
 export default function Rooms() {
+  const dialog = useStudioDialog("rooms");
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
   const compositions = useQuery({ queryKey: ["compositions"], queryFn: api.compositions });
   const listed = compositions.data ?? [];
-  const claimed = new Set((rooms.data ?? []).flatMap((room) => (room.composition ? [room.composition.slug] : [])));
-  // Apartment compositions, and a room's whose room is gone, keep a card of their own.
-  const unclaimed = rooms.data || rooms.error ? listed.filter((c) => !claimed.has(c.slug)) : [];
+  // Rooms, then apartment compositions and a room's whose room is gone, each with a tile of its own.
+  const items = roomEntries(rooms.data, compositions.data, Boolean(rooms.data || rooms.error));
+  const roomComposition = (room: RoomSummary) =>
+    room.composition ? listed.find((c) => c.slug === room.composition?.slug) : undefined;
+
+  const opened = items.find((item) => isOpen(item, dialog.segments));
+  const openRoom = opened?.kind === "room" ? opened.room : undefined;
+  const openComposition = opened?.kind === "composition" ? opened.composition : undefined;
+  // An address naming nothing listed (unknown, or just deleted) shows the grid once both lists are read.
+  const read = Boolean(rooms.data || rooms.error) && Boolean(compositions.data || compositions.error);
+  const missing = read && dialog.segments.length > 0 && !openRoom && !openComposition;
+  useEffect(() => {
+    if (missing) dialog.dismiss();
+  }, [missing]);
+
   return (
     <>
       <p>
@@ -279,17 +302,45 @@ export default function Rooms() {
       {rooms.error && <FieldError message={message(rooms.error)} />}
       {compositions.error && <FieldError message={message(compositions.error)} />}
       {rooms.data && rooms.data.length === 0 && <p>No rooms measured yet. Describe one in a conversation.</p>}
-      {(rooms.data ?? []).map((room) => (
-        <MeasuredRoom
-          key={room.name}
-          room={room}
-          composition={room.composition ? listed.find((c) => c.slug === room.composition?.slug) : undefined}
-          loaded={Boolean(compositions.data)}
-        />
-      ))}
-      {unclaimed.map((composition) => (
-        <CompositionCard key={composition.slug} composition={composition} />
-      ))}
+      <TileGrid label="Measured rooms" items={items} keyOf={(item) => item.segments.join("/")}>
+        {(item) =>
+          item.kind === "room" ? (
+            <Tile
+              name={item.room.name}
+              detail={roomSize(item.room)}
+              picture={roomComposition(item.room)?.picture}
+              placeholder={Ruler}
+              badge={item.room.apartment ? <Badge variant="secondary">{item.room.apartment}</Badge> : undefined}
+              onOpen={() => dialog.open(item.room.name)}
+            />
+          ) : (
+            <Tile
+              name={item.composition.name}
+              picture={item.composition.picture}
+              placeholder={Ruler}
+              badge={<Badge variant="secondary">{item.composition.scope === "room" ? "Room" : "Apartment"}</Badge>}
+              onOpen={() => dialog.open("compositions", item.composition.slug)}
+            />
+          )
+        }
+      </TileGrid>
+      <Dialog open={Boolean(openRoom || openComposition)} onOpenChange={(open) => !open && dialog.close()}>
+        {openRoom && (
+          <DialogContent aria-describedby={undefined}>
+            <MeasuredRoom
+              key={openRoom.name}
+              room={openRoom}
+              composition={roomComposition(openRoom)}
+              loaded={Boolean(compositions.data)}
+            />
+          </DialogContent>
+        )}
+        {openComposition && (
+          <DialogContent aria-describedby={undefined}>
+            <CompositionCard key={openComposition.slug} composition={openComposition} />
+          </DialogContent>
+        )}
+      </Dialog>
     </>
   );
 }
