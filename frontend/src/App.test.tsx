@@ -41,16 +41,61 @@ test("the header stays at the top of the screen while the page scrolls", async (
   expect(header).toHaveClass("sticky", "top-0");
 });
 
-test("the homeowner nav has Pieces and no Conversations", async () => {
+test("the homeowner nav has Design Studio and no Conversations", async () => {
   stubFetch((call) => {
     if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
     if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
     if (call === "GET /packages") return { body: [] };
   });
-  show("/pieces");
+  show("/studio/pieces");
   const nav = await screen.findByRole("navigation", { name: "Main" });
-  expect(within(nav).getByRole("link", { name: "Pieces" })).toHaveAttribute("href", "/pieces");
+  expect(within(nav).getByRole("link", { name: "Design Studio" })).toHaveAttribute("href", "/studio");
   expect(within(nav).queryByRole("link", { name: "Conversations" })).not.toBeInTheDocument();
+});
+
+test("the nav has one Design Studio item, first, and no Pieces, Measured Rooms or Model Library", async () => {
+  stubFetch((call) => {
+    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+    if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+    if (call === "GET /models") return { body: [] };
+  });
+  show("/studio/models");
+  const nav = await screen.findByRole("navigation", { name: "Main" });
+  const labels = within(nav).getAllByRole("link").map((link) => link.textContent);
+  expect(labels[0]).toBe("Design Studio");
+  expect(within(nav).getByRole("link", { name: "Design Studio" })).toHaveAttribute("aria-current", "page");
+  for (const old of ["Pieces", "Measured Rooms", "Model Library", "Rooms"]) {
+    expect(within(nav).queryByRole("link", { name: old })).not.toBeInTheDocument();
+  }
+});
+
+test("an old address opens its tab on the Design Studio page", async () => {
+  stubFetch((call) => {
+    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+    if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+    if (call === "GET /rooms") return { body: [] };
+    if (call === "GET /compositions") return { body: [] };
+  });
+  show("/rooms");
+  expect(await screen.findByRole("heading", { level: 1, name: "Design Studio" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Measured Rooms" })).toHaveAttribute("aria-selected", "true");
+});
+
+test("a piece version's inspector keeps its address", async () => {
+  stubFetch((call) => {
+    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+    if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+  });
+  show("/pieces/shoe-bench/versions/2");
+  expect(await screen.findByRole("heading", { level: 1, name: "shoe-bench, version 2" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Back to pieces" })).toHaveAttribute("href", "/pieces");
+  expect(screen.queryByRole("heading", { name: "Design Studio" })).not.toBeInTheDocument();
+});
+
+test("without a session the model library is the sign-in page", async () => {
+  stubFetch((call) => (call === "GET /auth/me" ? { status: 401, body: { detail: "Not authenticated" } } : undefined));
+  show("/studio/models");
+  expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
 });
 
 test("a conversation deep link still opens the conversation view", async () => {

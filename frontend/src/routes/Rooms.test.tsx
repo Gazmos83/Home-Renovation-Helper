@@ -26,10 +26,6 @@ const wohnen = {
   picture: "/compositions/wohnen/versions/2/files/screenshot.png" as string | null,
   viewer: "/compositions/wohnen/versions/2/files/viewer.html" as string | null,
 };
-const armchair = {
-  model_id: "m1", name: "Armchair", kind: "glb", width_mm: 800, depth_mm: 700, height_mm: 900,
-  state: "checking", reason: null,
-};
 
 function show() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -39,7 +35,6 @@ function show() {
 test("a placed piece that is no longer approved is marked plainly", async () => {
   stubFetch((call) => {
     if (call === "GET /compositions") return { body: [wohnen] };
-    if (call === "GET /models") return { body: [] };
   });
   show();
   const card = within(await screen.findByRole("region", { name: "Wohnen" }));
@@ -49,50 +44,14 @@ test("a placed piece that is no longer approved is marked plainly", async () => 
   expect(card.getByRole("link", { name: "Open the turntable viewer of Wohnen" })).toHaveAttribute("href", wohnen.viewer);
 });
 
-test("a refused upload shows its reason and leaves the library unchanged", async () => {
-  // A file picker's filter can be overridden by the owner, so the service decides.
-  const user = userEvent.setup({ applyAccept: false });
-  stubFetch((call) => {
-    if (call === "GET /compositions") return { body: [] };
-    if (call === "GET /models") return { body: [] };
-    if (call === "POST /models") {
-      return { status: 415, body: { detail: { failure_class: "unsupported_type", reason: "a .blend file is not accepted; export the model as GLB, glTF or OBJ" } } };
-    }
-  });
-  show();
-  await user.upload(await screen.findByLabelText("File"), new File(["BLENDER"], "chair.blend"));
-  await user.type(screen.getByLabelText("Name"), "Chair");
-  await user.type(screen.getByLabelText("Width (mm)"), "800");
-  await user.type(screen.getByLabelText("Depth (mm)"), "700");
-  await user.type(screen.getByLabelText("Height (mm)"), "900");
-  await user.click(screen.getByRole("button", { name: "Upload model" }));
-  expect(await screen.findByText("a .blend file is not accepted; export the model as GLB, glTF or OBJ")).toBeInTheDocument();
-  expect(screen.getByText("No models yet.")).toBeInTheDocument();
-});
-
-test("a model being checked turns ready without a reload", async () => {
-  let checked = false;
-  stubFetch((call) => {
-    if (call === "GET /compositions") return { body: [] };
-    if (call === "GET /models") {
-      const body = [{ ...armchair, state: checked ? "ready" : "checking" }];
-      checked = true;
-      return { body };
-    }
-  });
-  show();
-  const library = within(await screen.findByRole("region", { name: "Model library" }));
-  expect(await library.findByText("checking")).toBeInTheDocument();
-  await waitFor(() => expect(library.getByText("ready")).toBeInTheDocument(), { timeout: 4000 });
-});
-
-test("no model name, prompt, token or cost text appears on the page", async () => {
-  stubFetch((call) => {
+test("no model library, model name, prompt, token or cost text appears on the page", async () => {
+  const calls = stubFetch((call) => {
     if (call === "GET /compositions") return { body: [wohnen] };
-    if (call === "GET /models") return { body: [{ ...armchair, state: "ready" }] };
   });
   show();
   await screen.findByRole("region", { name: "Wohnen" });
+  expect(calls.map(([, url]) => url)).not.toContain("/models");
+  expect(screen.queryByText(/model library/i)).toBeNull();
   const text = document.body.textContent ?? "";
   for (const word of [/deepseek/i, /prompt/i, /token/i, /€|eur\b/i, /\bcost/i]) {
     expect(text).not.toMatch(word);
@@ -112,7 +71,6 @@ function serveRooms(rooms: unknown[], extra: (call: string) => { status?: number
     if (mine) return mine;
     if (call === "GET /rooms") return { body: rooms };
     if (call === "GET /compositions") return { body: [] };
-    if (call === "GET /models") return { body: [] };
   });
 }
 
@@ -122,7 +80,43 @@ test("a measured room is listed with its size, ceiling, openings and pieces", as
   const card = within(await screen.findByRole("region", { name: "Measured room Hall" }));
   expect(card.getByText("3000 × 2000 mm, ceiling 2500 mm, 1 opening")).toBeInTheDocument();
   expect(card.getByText("Pieces: Hall bench")).toBeInTheDocument();
-  expect(card.getByText("composed")).toBeInTheDocument();
+  expect(card.getByRole("heading", { level: 2, name: "Hall" })).toBeInTheDocument();
+});
+
+test("a room without a composition says so and how to get one", async () => {
+  serveRooms([{ ...hall, composition: null }]);
+  show();
+  const card = within(await screen.findByRole("region", { name: "Measured room Hall" }));
+  expect(await card.findByText("No composition yet. Ask the Designer in a conversation to compose Hall.")).toBeInTheDocument();
+});
+
+test("a room's composition is shown inside its card, not on a card of its own", async () => {
+  const wohnenRoom = { ...hall, name: "Wohnen", pieces: [], composition: { slug: "wohnen", versions: [2] } };
+  serveRooms([wohnenRoom], (call) => (call === "GET /compositions" ? { body: [wohnen] } : undefined));
+  show();
+  const card = within(await screen.findByRole("region", { name: "Measured room Wohnen" }));
+  const composition = within(await card.findByRole("group", { name: "Wohnen" }));
+  expect(composition.getByRole("heading", { level: 3, name: "Composition" })).toBeInTheDocument();
+  expect(composition.getByText("listening-wall v4")).toBeInTheDocument();
+  expect(composition.getByRole("img")).toHaveAttribute("src", wohnen.picture);
+  expect(screen.queryByRole("region", { name: "Wohnen" })).toBeNull();
+  expect(card.queryByText(/No composition yet/)).toBeNull();
+});
+
+test("an apartment composition has a card of its own below the rooms", async () => {
+  const wohnung = { ...wohnen, scope: "apartment", name: "Wohnung", slug: "wohnung" };
+  serveRooms([kueche], (call) => (call === "GET /compositions" ? { body: [wohnung] } : undefined));
+  show();
+  const card = await screen.findByRole("region", { name: "Wohnung" });
+  expect(within(card).getByText("Apartment")).toBeInTheDocument();
+  const room = screen.getByRole("region", { name: "Measured room Küche" });
+  expect(room.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test("with no rooms the page says none are measured yet", async () => {
+  serveRooms([]);
+  show();
+  expect(await screen.findByText("No rooms measured yet. Describe one in a conversation.")).toBeInTheDocument();
 });
 
 test("delete warns first, and cancel sends nothing", async () => {
@@ -205,7 +199,6 @@ const modelled = {
 function serve3d() {
   return stubFetch((call) => {
     if (call === "GET /compositions") return { body: [modelled] };
-    if (call === "GET /models") return { body: [] };
     if (call === "GET /compositions/wohnen/versions/2/files/report.json")
       return { body: { surfaces: SURFACES, extent_mm: { min: [0, 0, 0], max: [5000, 4000, 2600] } } };
   });
@@ -259,7 +252,6 @@ test("an older composition without a model shows its picture and says how to get
   stubFetch((call) => {
     if (call === "GET /compositions")
       return { body: [{ ...wohnen, name: "Hall", slug: "hall", latest_version: 1, model: null, surfaces: null }] };
-    if (call === "GET /models") return { body: [] };
   });
   show();
   const card = within(await screen.findByRole("region", { name: "Hall" }));
@@ -297,7 +289,6 @@ const versioned = {
 function serveVersions() {
   return stubFetch((call) => {
     if (call === "GET /compositions") return { body: [versioned] };
-    if (call === "GET /models") return { body: [] };
     if (/^GET \/compositions\/wohnen\/versions\/\d\/files\/report\.json$/.test(call))
       return { body: { surfaces: SURFACES, extent_mm: { min: [0, 0, 0], max: [6200, 6064, 2500] } } };
     if (/^GET \/compositions\/wohnen\/versions\/\d\/dimensions$/.test(call)) return { body: DIMENSIONS };
@@ -381,7 +372,7 @@ function serveComposed(
     const mine = extra(call);
     if (mine) return mine;
     if (call === "GET /compositions") return { body: [listed] };
-    if (call === "GET /models" || call === "GET /rooms") return { body: [] };
+    if (call === "GET /rooms") return { body: [] };
     const change = /^(PUT|DELETE) \/compositions\/wohnen\/versions\/(\d+)\/approval$/.exec(call);
     if (change) {
       const version = Number(change[2]);
@@ -451,7 +442,7 @@ test("a confirmed delete removes the version and the page shows another", async 
   let listed = composed();
   stubFetch((call) => {
     if (call === "GET /compositions") return { body: listed.versions.length ? [listed] : [] };
-    if (call === "GET /models" || call === "GET /rooms") return { body: [] };
+    if (call === "GET /rooms") return { body: [] };
     if (call === "DELETE /compositions/wohnen/versions/2") {
       listed = {
         ...listed,

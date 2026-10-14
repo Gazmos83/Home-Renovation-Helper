@@ -8,18 +8,16 @@ import Conversations from "./routes/Conversations";
 import GuidelineNotes from "./routes/GuidelineNotes";
 import Help from "./routes/Help";
 import Login from "./routes/Login";
-import Pieces from "./routes/Pieces";
 import PieceInspector from "./routes/PieceInspector";
 import Pricing from "./routes/Pricing";
-import Rooms from "./routes/Rooms";
+import Studio from "./routes/Studio";
 import AgentSettings from "./routes/admin/AgentSettings";
 import AdminGuidelines from "./routes/admin/Guidelines";
 import Knowledge from "./routes/admin/Knowledge";
 import Rules from "./routes/admin/Rules";
 
 const links = [
-  ["/pieces", "Pieces"],
-  ["/rooms", "Rooms"],
+  ["/studio", "Design Studio"],
   ["/pricing", "Pricing Overview"],
   ["/guidelines", "Guidelines"],
   ["/help", "Help"],
@@ -107,12 +105,15 @@ export default function App() {
           path="/conversations/:threadId"
           element={signedIn ? <Conversation /> : <Navigate to="/login" replace />}
         />
-        <Route path="/pieces" element={signedIn ? <Pieces /> : <Navigate to="/login" replace />} />
+        <Route path="/studio" element={signedIn ? <Studio /> : <Navigate to="/login" replace />} />
+        <Route path="/studio/:tab" element={signedIn ? <Studio /> : <Navigate to="/login" replace />} />
+        <Route path="/pieces" element={<Navigate to="/studio/pieces" replace />} />
         <Route
           path="/pieces/:packageId/versions/:version"
           element={signedIn ? <PieceInspector /> : <Navigate to="/login" replace />}
         />
-        <Route path="/rooms" element={signedIn ? <Rooms /> : <Navigate to="/login" replace />} />
+        <Route path="/rooms" element={<Navigate to="/studio/rooms" replace />} />
+        <Route path="/models" element={<Navigate to="/studio/models" replace />} />
         <Route path="/pricing" element={signedIn ? <Pricing /> : <Navigate to="/login" replace />} />
         <Route path="/pricing/:tab" element={signedIn ? <Pricing /> : <Navigate to="/login" replace />} />
         <Route path="/price-list" element={<Navigate to="/pricing/prices" replace />} />

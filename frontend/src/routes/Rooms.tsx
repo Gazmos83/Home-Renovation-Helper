@@ -1,13 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState, type FormEvent } from "react";
+import { useState } from "react";
 import { api, type Composition, type RoomSummary } from "../lib/api";
-import { FieldError, fieldError, formError } from "../lib/form";
+import { FieldError } from "../lib/form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { cardClass } from "@/components/ui/card";
-import { Page } from "@/components/Page";
 import { DeleteCompositionVersion } from "@/components/DeleteCompositionVersion";
 import { RoomVariants } from "@/components/Variants";
 import { RoomView, VersionSelect } from "@/components/inspector/RoomView";
@@ -16,7 +13,11 @@ function message(error: unknown): string | null {
   return error instanceof Error ? error.message : null;
 }
 
-function CompositionCard({ composition }: { composition: Composition }) {
+/**
+ * A composition and its chosen version: a card of its own, or, inside its measured room's
+ * card, a group under a "Composition" heading (split-rooms-page).
+ */
+function CompositionCard({ composition, inRoom = false }: { composition: Composition; inRoom?: boolean }) {
   const queryClient = useQueryClient();
   const scope = composition.scope === "room" ? "Room" : "Apartment";
   const [open3d, setOpen3d] = useState(false);
@@ -51,11 +52,17 @@ function CompositionCard({ composition }: { composition: Composition }) {
         : api.unapproveCompositionVersion(composition.slug, version as number),
     onSuccess: reload,
   });
-  return (
-    <section className={cardClass} aria-label={composition.name}>
+  const body = (
+    <>
       <div className="flex flex-wrap items-center gap-2">
-        <h2>{composition.name}</h2>
-        <Badge variant="secondary">{scope}</Badge>
+        {inRoom ? (
+          <h3>Composition</h3>
+        ) : (
+          <>
+            <h2>{composition.name}</h2>
+            <Badge variant="secondary">{scope}</Badge>
+          </>
+        )}
         {views.length > 0 ? (
           <VersionSelect name={composition.name} versions={views} value={shown.version as number} onChange={setChosen} />
         ) : (
@@ -146,6 +153,15 @@ function CompositionCard({ composition }: { composition: Composition }) {
           </p>
         )
       )}
+    </>
+  );
+  return inRoom ? (
+    <div role="group" aria-label={composition.name} className="grid gap-4 border-t pt-4">
+      {body}
+    </div>
+  ) : (
+    <section className={cardClass} aria-label={composition.name}>
+      {body}
     </section>
   );
 }
@@ -154,8 +170,19 @@ function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
-/** One measured room, with its delete action and the warning of what it touches (rooms-page). */
-function MeasuredRoom({ room }: { room: RoomSummary }) {
+/**
+ * One measured room, with its delete action and the warning of what it touches (rooms-page),
+ * and its composition once the compositions are read (split-rooms-page).
+ */
+function MeasuredRoom({
+  room,
+  composition,
+  loaded,
+}: {
+  room: RoomSummary;
+  composition: Composition | undefined;
+  loaded: boolean;
+}) {
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);
   const remove = useMutation({
@@ -176,9 +203,8 @@ function MeasuredRoom({ room }: { room: RoomSummary }) {
   return (
     <section className={`${cardClass} grid gap-2`} aria-label={`Measured room ${room.name}`}>
       <div className="flex flex-wrap items-center gap-2">
-        <h3>{room.name}</h3>
+        <h2>{room.name}</h2>
         {room.apartment && <Badge variant="secondary">{room.apartment}</Badge>}
-        {room.composition && <Badge variant="outline">composed</Badge>}
       </div>
       <p className="text-sm">
         {room.width_mm} × {room.depth_mm} mm{shape}, ceiling {room.height_mm} mm,{" "}
@@ -222,115 +248,48 @@ function MeasuredRoom({ room }: { room: RoomSummary }) {
         </div>
       )}
       <FieldError message={message(remove.error)} />
+      {composition ? (
+        <CompositionCard composition={composition} inRoom />
+      ) : (
+        loaded &&
+        !room.composition && (
+          <p className="text-sm text-muted-foreground">
+            No composition yet. Ask the Designer in a conversation to compose {room.name}.
+          </p>
+        )
+      )}
     </section>
   );
 }
 
-function MeasuredRooms() {
+/** Measured rooms with their compositions, laid out like the Pieces page (split-rooms-page). */
+export default function Rooms() {
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
+  const compositions = useQuery({ queryKey: ["compositions"], queryFn: api.compositions });
+  const listed = compositions.data ?? [];
+  const claimed = new Set((rooms.data ?? []).flatMap((room) => (room.composition ? [room.composition.slug] : [])));
+  // Apartment compositions, and a room's whose room is gone, keep a card of their own.
+  const unclaimed = rooms.data || rooms.error ? listed.filter((c) => !claimed.has(c.slug)) : [];
   return (
-    <section className="grid gap-3" aria-label="Measured rooms">
-      <h2>Measured rooms</h2>
+    <>
+      <p>
+        Your measured rooms, each with its composition: your approved pieces placed in the room with the rest of the
+        furniture. Ask the Designer in a conversation to compose a room.
+      </p>
       {rooms.error && <FieldError message={message(rooms.error)} />}
+      {compositions.error && <FieldError message={message(compositions.error)} />}
       {rooms.data && rooms.data.length === 0 && <p>No rooms measured yet. Describe one in a conversation.</p>}
       {(rooms.data ?? []).map((room) => (
-        <MeasuredRoom key={room.name} room={room} />
+        <MeasuredRoom
+          key={room.name}
+          room={room}
+          composition={room.composition ? listed.find((c) => c.slug === room.composition?.slug) : undefined}
+          loaded={Boolean(compositions.data)}
+        />
       ))}
-    </section>
-  );
-}
-
-function ModelLibrary() {
-  const queryClient = useQueryClient();
-  const library = useQuery({
-    queryKey: ["model-library"],
-    queryFn: api.modelLibrary,
-    // A model is checked in the background; follow it until every check is over.
-    refetchInterval: (query) => (query.state.data?.some((m) => m.state === "checking") ? 2000 : false),
-  });
-  const files = useRef<HTMLInputElement>(null);
-  const [name, setName] = useState("");
-  const [width, setWidth] = useState("");
-  const [depth, setDepth] = useState("");
-  const [height, setHeight] = useState("");
-  const reload = () => queryClient.invalidateQueries({ queryKey: ["model-library"] });
-  const upload = useMutation({
-    mutationFn: (file: File) => api.uploadModel(file, name, width, depth, height),
-    onSuccess: () => {
-      setName("");
-      setWidth("");
-      setDepth("");
-      setHeight("");
-      if (files.current) files.current.value = "";
-      reload();
-    },
-  });
-  const remove = useMutation({ mutationFn: api.deleteModel, onSuccess: reload });
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    const file = files.current?.files?.[0];
-    if (file) upload.mutate(file);
-  }
-
-  return (
-    <section className="space-y-4" aria-label="Model library">
-      <h2>Model library</h2>
-      <p>Bought furniture and decor as 3D models: a GLB file, or a zip with one glTF or OBJ model and its files.</p>
-      {library.error && <FieldError message={message(library.error)} />}
-      {library.data && library.data.length === 0 && <p>No models yet.</p>}
-      <ul className="space-y-2">
-        {(library.data ?? []).map((model) => (
-          <li key={model.model_id} className={cardClass}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span>
-                <strong>{model.name}</strong> {model.width_mm} × {model.depth_mm} × {model.height_mm} mm{" "}
-                <Badge variant={model.state === "refused" ? "destructive" : "outline"}>{model.state}</Badge>
-                {model.reason && <span className="ml-2 text-sm text-muted-foreground">{model.reason}</span>}
-              </span>
-              <Button variant="secondary" size="sm" onClick={() => remove.mutate(model.model_id)}>
-                Delete {model.name}
-              </Button>
-            </div>
-          </li>
-        ))}
-      </ul>
-      <FieldError message={message(remove.error)} />
-      <form onSubmit={submit} className={cardClass} aria-label="Upload a model">
-        <h3>Upload a model</h3>
-        <Label htmlFor="model-file">File</Label>
-        <input id="model-file" ref={files} type="file" accept=".glb,.zip,model/gltf-binary,application/zip" />
-        <Label htmlFor="model-name">Name</Label>
-        <Input id="model-name" value={name} onChange={(e) => setName(e.target.value)} />
-        <Label htmlFor="model-width">Width (mm)</Label>
-        <Input id="model-width" value={width} onChange={(e) => setWidth(e.target.value)} />
-        <FieldError message={fieldError(upload.error, "width_mm")} />
-        <Label htmlFor="model-depth">Depth (mm)</Label>
-        <Input id="model-depth" value={depth} onChange={(e) => setDepth(e.target.value)} />
-        <FieldError message={fieldError(upload.error, "depth_mm")} />
-        <Label htmlFor="model-height">Height (mm)</Label>
-        <Input id="model-height" value={height} onChange={(e) => setHeight(e.target.value)} />
-        <FieldError message={fieldError(upload.error, "height_mm")} />
-        <FieldError message={formError(upload.error, ["width_mm", "depth_mm", "height_mm"])} />
-        <p><Button type="submit" disabled={upload.isPending}>Upload model</Button></p>
-      </form>
-    </section>
-  );
-}
-
-export default function Rooms() {
-  const compositions = useQuery({ queryKey: ["compositions"], queryFn: api.compositions });
-  return (
-    <Page>
-      <h1>Rooms</h1>
-      <p>Your approved pieces placed in a room with the rest of the furniture. Ask the Designer in a conversation to compose a room.</p>
-      <MeasuredRooms />
-      {compositions.error && <FieldError message={message(compositions.error)} />}
-      {compositions.data && compositions.data.length === 0 && <p>No rooms composed yet.</p>}
-      {(compositions.data ?? []).map((composition) => (
+      {unclaimed.map((composition) => (
         <CompositionCard key={composition.slug} composition={composition} />
       ))}
-      <ModelLibrary />
-    </Page>
+    </>
   );
 }

@@ -12,7 +12,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { cardClass } from "@/components/ui/card";
-import { Page } from "@/components/Page";
 import { DeleteVersion } from "@/components/DeleteVersion";
 
 function message(error: unknown): string | null {
@@ -481,18 +480,12 @@ export default function Pieces() {
     },
   });
   if (pieces.error) {
-    return (
-      <Page>
-        <h1>Pieces</h1>
-        <FieldError message={message(pieces.error)} />
-      </Page>
-    );
+    return <FieldError message={message(pieces.error)} />;
   }
-  if (!pieces.data) return <Page>Loading…</Page>;
+  if (!pieces.data) return <p>Loading…</p>;
   return (
-    <Page>
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1>Pieces</h1>
+    <>
+      <div className="flex flex-wrap items-center justify-end gap-4">
         <Button type="button" disabled={create.isPending} onClick={() => create.mutate()}>
           Create A New Piece
         </Button>
@@ -517,6 +510,6 @@ export default function Pieces() {
           threadId={piece.thread_id}
         />
       ))}
-    </Page>
+    </>
   );
 }

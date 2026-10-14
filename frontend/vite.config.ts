@@ -26,7 +26,7 @@ export default defineConfig({
       "/packages": API,
       "/design-import": API,
       "/compositions": API,
-      "/models": API,
+      "/models": page,
       "/uploads": API,
       "/apartments": API,
       "/reviews": API,
