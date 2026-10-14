@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, type WorkflowMap } from "../../lib/api";
-import { Page } from "@/components/Page";
 import { ROLE_LABELS } from "@/components/chat/roles";
 
 const BOX_W = 150;
@@ -98,11 +97,10 @@ function Diagram({ map }: { map: WorkflowMap }) {
 /** How the agents hand work to each other, read from the running graph (dev-panel-insights). */
 export default function Workflow() {
   const map = useQuery({ queryKey: ["admin-workflow"], queryFn: api.workflow });
-  if (map.error instanceof Error) return <Page>The workflow map is not available: {map.error.message}</Page>;
-  if (!map.data) return <Page>Loading…</Page>;
+  if (map.error instanceof Error) return <>The workflow map is not available: {map.error.message}</>;
+  if (!map.data) return <>Loading…</>;
   return (
-    <Page>
-      <h1>Agent workflow</h1>
+    <>
       <p className="text-sm text-muted-foreground">
         The homeowner talks only to the Foreman, which hands each turn to one specialist. ✓? waits for the owner's
         confirmation; ⛨ passes the render guard; (off) is disabled globally.
@@ -128,6 +126,6 @@ export default function Workflow() {
           </li>
         ))}
       </ul>
-    </Page>
+    </>
   );
 }

@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { cardClass } from "@/components/ui/card";
-import { Page } from "@/components/Page";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 const seconds = (value: number | null) => (value === null ? "—" : `${value.toFixed(1)} s`);
@@ -30,13 +29,12 @@ export default function Offload() {
     },
   });
 
-  if (!summary.data) return <Page>Loading…</Page>;
+  if (!summary.data) return <>Loading…</>;
   const data = summary.data;
   const shownRate = rate ?? (data.hourly_rate_eur === null ? "" : String(data.hourly_rate_eur));
 
   return (
-    <Page>
-      <h1>Render offload</h1>
+    <>
 
       <section className={cardClass} aria-label="Render server">
         <h2>Render server</h2>
@@ -147,6 +145,6 @@ export default function Offload() {
           </TableBody>
         </Table>
       )}
-    </Page>
+    </>
   );
 }

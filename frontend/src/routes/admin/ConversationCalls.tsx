@@ -3,7 +3,6 @@ import { useState } from "react";
 import { api } from "../../lib/api";
 import { FieldError } from "../../lib/form";
 import { Label } from "@/components/ui/label";
-import { Page } from "@/components/Page";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { ROLE_LABELS } from "@/components/chat/roles";
 import { UsageCharts } from "@/components/UsageCharts";
@@ -20,8 +19,7 @@ export default function ConversationCalls() {
   });
 
   return (
-    <Page>
-      <h1>Calls</h1>
+    <>
       <UsageCharts />
       <h2>Conversation calls</h2>
       {threads.data?.length === 0 && <p>No conversations yet.</p>}
@@ -82,6 +80,6 @@ export default function ConversationCalls() {
           </TableBody>
         </Table>
       )}
-    </Page>
+    </>
   );
 }

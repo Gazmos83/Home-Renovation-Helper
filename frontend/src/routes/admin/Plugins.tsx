@@ -3,7 +3,6 @@ import { api } from "../../lib/api";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cardClass } from "@/components/ui/card";
-import { Page } from "@/components/Page";
 
 export default function Plugins() {
   const queryClient = useQueryClient();
@@ -13,11 +12,10 @@ export default function Plugins() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-plugins"] }),
   });
 
-  if (!plugins.data) return <Page>Loading…</Page>;
+  if (!plugins.data) return <>Loading…</>;
 
   return (
-    <Page>
-      <h1>Plugins</h1>
+    <>
       {plugins.data.map((plugin) => (
         <section key={plugin.name} className={cardClass}>
           <div className="flex items-center justify-between gap-4">
@@ -40,6 +38,6 @@ export default function Plugins() {
           </div>
         </section>
       ))}
-    </Page>
+    </>
   );
 }

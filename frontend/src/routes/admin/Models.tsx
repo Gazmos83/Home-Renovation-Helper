@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { cardClass } from "@/components/ui/card";
-import { Page } from "@/components/Page";
 import { ModelPrices } from "@/components/ModelPrices";
 
 export default function Models() {
@@ -46,12 +45,11 @@ export default function Models() {
     },
   });
 
-  if (!models.data) return <Page>Loading…</Page>;
+  if (!models.data) return <>Loading…</>;
   const entries = models.data.registry.filter((row) => row.slug);
 
   return (
-    <Page>
-      <h1>Models and routing</h1>
+    <>
       {models.data.slots.map((slot) => (
         <section key={slot.slot} className={cardClass}>
           <h2>
@@ -73,7 +71,7 @@ export default function Models() {
         </section>
       ))}
       <ModelPrices />
-      <h1>Generation and budgets</h1>
+      <h2>Generation and budgets</h2>
       {models.data.models.map((model) => (
         <section key={model.slug} className={cardClass}>
           <h2>{model.slug}</h2>
@@ -108,6 +106,6 @@ export default function Models() {
           </form>
         </section>
       ))}
-    </Page>
+    </>
   );
 }

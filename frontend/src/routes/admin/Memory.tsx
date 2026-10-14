@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { cardClass } from "@/components/ui/card";
-import { Page } from "@/components/Page";
 
 type Field = keyof MemorySettings;
 type Row = { field: Field; label: string; kind: "number" | "text" | "bool" | "choice"; choices?: [string, string][]; unit?: string };
@@ -107,11 +106,10 @@ export default function Memory() {
   const save = useMutation({ mutationFn: api.saveMemorySettings, onSuccess: done, onError: (e: Error) => setError(e.message) });
   const reset = useMutation({ mutationFn: api.resetMemorySetting, onSuccess: done, onError: (e: Error) => setError(e.message) });
 
-  if (!memory.data) return <Page>Loading…</Page>;
+  if (!memory.data) return <>Loading…</>;
   const payload = memory.data;
   return (
-    <Page>
-      <h1>Memory</h1>
+    <>
       <p className="text-sm text-muted-foreground">
         Changes apply from the next call, without a restart. Every default is the behaviour before these settings.
         Summary calls are metered on the Foreman's model like any other call.
@@ -139,6 +137,6 @@ export default function Memory() {
           ))}
         </ul>
       </section>
-    </Page>
+    </>
   );
 }

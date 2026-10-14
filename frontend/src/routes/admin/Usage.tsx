@@ -1,14 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
-import { Page } from "@/components/Page";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 export default function Usage() {
   const usage = useQuery({ queryKey: ["admin-usage"], queryFn: () => api.usage(1) });
-  if (!usage.data) return <Page>Loading…</Page>;
+  if (!usage.data) return <>Loading…</>;
   return (
-    <Page>
-      <h1>Usage</h1>
+    <>
       <Table>
         <TableHeader>
           <TableRow>
@@ -31,6 +29,6 @@ export default function Usage() {
           ))}
         </TableBody>
       </Table>
-    </Page>
+    </>
   );
 }

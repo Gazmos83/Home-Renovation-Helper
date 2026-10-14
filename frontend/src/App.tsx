@@ -12,17 +12,10 @@ import Pieces from "./routes/Pieces";
 import PieceInspector from "./routes/PieceInspector";
 import Pricing from "./routes/Pricing";
 import Rooms from "./routes/Rooms";
-import ConversationCalls from "./routes/admin/ConversationCalls";
-import Feedback from "./routes/admin/Feedback";
+import AgentSettings from "./routes/admin/AgentSettings";
 import AdminGuidelines from "./routes/admin/Guidelines";
-import Memory from "./routes/admin/Memory";
 import Knowledge from "./routes/admin/Knowledge";
-import Models from "./routes/admin/Models";
-import Offload from "./routes/admin/Offload";
-import Plugins from "./routes/admin/Plugins";
 import Rules from "./routes/admin/Rules";
-import Usage from "./routes/admin/Usage";
-import Workflow from "./routes/admin/Workflow";
 
 const links = [
   ["/pieces", "Pieces"],
@@ -32,17 +25,10 @@ const links = [
   ["/help", "Help"],
 ] as const;
 const adminLinks = [
-  ["/admin/models", "Models"],
-  ["/admin/plugins", "Plugins"],
-  ["/admin/usage", "Usage"],
-  ["/admin/feedback", "Feedback"],
-  ["/admin/offload", "Offload"],
-  ["/admin/conversations", "Calls"],
-  ["/admin/workflow", "Workflow"],
+  ["/admin/agents", "AI & Agent Settings"],
   ["/admin/guidelines", "Guidelines"],
   ["/admin/knowledge", "Knowledge"],
   ["/admin/rules", "Rules"],
-  ["/admin/memory", "Memory"],
 ] as const;
 
 function NavItem({ to, label }: { to: string; label: string }) {
@@ -64,7 +50,8 @@ function NavItem({ to, label }: { to: string; label: string }) {
 export default function App() {
   const location = useLocation();
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
-  const [dev, setDev] = useState(false);
+  // null until the developer check answers, so a reloaded developer page is not redirected away.
+  const [dev, setDev] = useState<boolean | null>(null);
 
   useEffect(() => {
     api
@@ -77,6 +64,7 @@ export default function App() {
   useEffect(() => onUnauthorized(() => setSignedIn(false)), []);
 
   useEffect(() => {
+    if (signedIn === null) return;
     if (!signedIn) {
       setDev(false);
       return;
@@ -87,7 +75,7 @@ export default function App() {
       .catch(() => setDev(false));
   }, [signedIn]);
 
-  if (signedIn === null) return <Page>Loading…</Page>;
+  if (signedIn === null || (signedIn && dev === null)) return <Page>Loading…</Page>;
 
   return (
     <>
@@ -133,32 +121,40 @@ export default function App() {
         <Route path="/guidelines" element={signedIn ? <GuidelineNotes /> : <Navigate to="/login" replace />} />
         <Route path="/help" element={signedIn ? <Help /> : <Navigate to="/login" replace />} />
         <Route
+          path="/admin/agents"
+          element={signedIn && dev ? <AgentSettings /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+        />
+        <Route
+          path="/admin/agents/:tab"
+          element={signedIn && dev ? <AgentSettings /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+        />
+        <Route
           path="/admin/models"
-          element={signedIn && dev ? <Models /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/models" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/plugins"
-          element={signedIn && dev ? <Plugins /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/plugins" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/usage"
-          element={signedIn && dev ? <Usage /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/usage" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/feedback"
-          element={signedIn && dev ? <Feedback /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/score" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/offload"
-          element={signedIn && dev ? <Offload /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/offload" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/conversations"
-          element={signedIn && dev ? <ConversationCalls /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/calls" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/workflow"
-          element={signedIn && dev ? <Workflow /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/workflow" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/guidelines"
@@ -171,7 +167,7 @@ export default function App() {
         <Route path="/admin/knowledge" element={signedIn && dev ? <Knowledge /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />} />
         <Route
           path="/admin/memory"
-          element={signedIn && dev ? <Memory /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/memory" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route path="*" element={<Navigate to={signedIn ? "/pieces" : "/login"} replace />} />
       </Routes>

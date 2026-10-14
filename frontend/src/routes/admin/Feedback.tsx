@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, type FeedbackRow } from "../../lib/api";
 import { Button } from "@/components/ui/button";
-import { Page } from "@/components/Page";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 const name = (row: FeedbackRow) => `${row.slot ?? "no agent"} · ${row.model ?? "no model"} · ${row.tier}`;
@@ -15,10 +14,9 @@ export default function Feedback() {
     queryFn: () => api.feedbackComments(selected!),
     enabled: selected !== null,
   });
-  if (!summary.data) return <Page>Loading…</Page>;
+  if (!summary.data) return <>Loading…</>;
   return (
-    <Page>
-      <h1>Feedback</h1>
+    <>
       <p>Ratings of renders in the last 30 days, per agent, model and tier. This never changes routing.</p>
       <Table>
         <TableHeader>
@@ -62,6 +60,6 @@ export default function Feedback() {
           </ul>
         </section>
       )}
-    </Page>
+    </>
   );
 }

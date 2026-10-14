@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import App from "./App";
 import { stubFetch } from "./test/fetchStub";
 
@@ -124,4 +124,62 @@ test("an old address opens its tab on the Pricing Overview page", async () => {
   show("/snapshots");
   expect(await screen.findByRole("heading", { level: 1, name: "Pricing Overview" })).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Snapshots" })).toHaveAttribute("aria-selected", "true");
+});
+
+function stubDeveloper() {
+  return stubFetch((call) => {
+    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+    if (call === "GET /admin/models") return { body: { slots: [], registry: [], profiles: [] } };
+    if (call === "GET /chat/threads") return { body: [] };
+    if (call.startsWith("GET /admin/usage/summary")) return { body: { days: 30, totals: [], per_day: [] } };
+    if (call === "GET /packages") return { body: [] };
+    if (call.startsWith("GET /admin/usage?")) return { body: [] };
+  });
+}
+
+test("the developer nav has one AI & Agent Settings item in place of the eight agent pages", async () => {
+  stubDeveloper();
+  show("/pieces");
+  const nav = await screen.findByRole("navigation", { name: "Main" });
+  const settings = await within(nav).findByRole("link", { name: "AI & Agent Settings" });
+  expect(settings).toHaveAttribute("href", "/admin/agents");
+  const labels = within(nav).getAllByRole("link").map((link) => link.textContent);
+  expect(labels.slice(labels.indexOf("AI & Agent Settings"))).toEqual(["AI & Agent Settings", "Guidelines", "Knowledge", "Rules"]);
+  for (const old of ["Models", "Plugins", "Usage", "Feedback", "Offload", "Calls", "Workflow", "Memory"]) {
+    expect(within(nav).queryByRole("link", { name: old })).not.toBeInTheDocument();
+  }
+});
+
+test("an old developer address opens its tab on the AI & Agent Settings page", async () => {
+  stubDeveloper();
+  show("/admin/conversations");
+  expect(await screen.findByRole("heading", { level: 1, name: "AI & Agent Settings" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Agent Calls" })).toHaveAttribute("aria-selected", "true");
+  const nav = screen.getByRole("navigation", { name: "Main" });
+  expect(within(nav).getByRole("link", { name: "AI & Agent Settings" })).toHaveAttribute("aria-current", "page");
+});
+
+test("without the developer gate the AI & Agent Settings page is not shown", async () => {
+  stubFetch((call) => {
+    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+    if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+    if (call === "GET /packages") return { body: [] };
+  });
+  show("/admin/agents/models");
+  expect(await screen.findByRole("navigation", { name: "Main" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "AI & Agent Settings" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+});
+
+test("a reloaded developer tab waits for the developer check instead of leaving the page", async () => {
+  stubDeveloper();
+  const stubbed = globalThis.fetch;
+  // The developer check answers after the session check, as on a real reload.
+  vi.stubGlobal("fetch", async (input: RequestInfo, init?: RequestInit) => {
+    if (String(input) === "/admin/models") await new Promise((resolve) => setTimeout(resolve, 50));
+    return stubbed(input, init);
+  });
+  show("/admin/agents/usage");
+  expect(await screen.findByRole("heading", { level: 1, name: "AI & Agent Settings" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Token Usage" })).toHaveAttribute("aria-selected", "true");
 });
