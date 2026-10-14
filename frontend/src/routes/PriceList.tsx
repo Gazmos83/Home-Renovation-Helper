@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { cardClass } from "@/components/ui/card";
-import { Page } from "@/components/Page";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 const CATEGORIES = ["panel", "hardware", "finish", "edge_band", "cut_service", "delivery"];
@@ -193,8 +192,7 @@ export default function PriceList() {
   const reload = () => queryClient.invalidateQueries({ queryKey: ["price-list"] });
 
   return (
-    <Page>
-      <h1>Price list</h1>
+    <>
       <Label htmlFor="filter">Category</Label>
       <Select id="filter" value={category} onChange={(e) => setCategory(e.target.value)}>
         <option value="">all</option>
@@ -211,6 +209,6 @@ export default function PriceList() {
       </Table>
       <AddEntryForm onDone={reload} />
       <FromUrlForm onDone={reload} />
-    </Page>
+    </>
   );
 }

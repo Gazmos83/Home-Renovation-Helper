@@ -10,10 +10,8 @@ import Help from "./routes/Help";
 import Login from "./routes/Login";
 import Pieces from "./routes/Pieces";
 import PieceInspector from "./routes/PieceInspector";
-import PriceList from "./routes/PriceList";
-import Remnants from "./routes/Remnants";
+import Pricing from "./routes/Pricing";
 import Rooms from "./routes/Rooms";
-import Snapshots from "./routes/Snapshots";
 import ConversationCalls from "./routes/admin/ConversationCalls";
 import Feedback from "./routes/admin/Feedback";
 import AdminGuidelines from "./routes/admin/Guidelines";
@@ -29,9 +27,7 @@ import Workflow from "./routes/admin/Workflow";
 const links = [
   ["/pieces", "Pieces"],
   ["/rooms", "Rooms"],
-  ["/price-list", "Price list"],
-  ["/snapshots", "Snapshots"],
-  ["/remnants", "Remnants"],
+  ["/pricing", "Pricing Overview"],
   ["/guidelines", "Guidelines"],
   ["/help", "Help"],
 ] as const;
@@ -129,9 +125,11 @@ export default function App() {
           element={signedIn ? <PieceInspector /> : <Navigate to="/login" replace />}
         />
         <Route path="/rooms" element={signedIn ? <Rooms /> : <Navigate to="/login" replace />} />
-        <Route path="/price-list" element={signedIn ? <PriceList /> : <Navigate to="/login" replace />} />
-        <Route path="/snapshots" element={signedIn ? <Snapshots /> : <Navigate to="/login" replace />} />
-        <Route path="/remnants" element={signedIn ? <Remnants /> : <Navigate to="/login" replace />} />
+        <Route path="/pricing" element={signedIn ? <Pricing /> : <Navigate to="/login" replace />} />
+        <Route path="/pricing/:tab" element={signedIn ? <Pricing /> : <Navigate to="/login" replace />} />
+        <Route path="/price-list" element={<Navigate to="/pricing/prices" replace />} />
+        <Route path="/snapshots" element={<Navigate to="/pricing/snapshots" replace />} />
+        <Route path="/remnants" element={<Navigate to="/pricing/remnants" replace />} />
         <Route path="/guidelines" element={signedIn ? <GuidelineNotes /> : <Navigate to="/login" replace />} />
         <Route path="/help" element={signedIn ? <Help /> : <Navigate to="/login" replace />} />
         <Route

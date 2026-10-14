@@ -26,7 +26,7 @@ test("a 401 from any call returns the owner to sign-in", async () => {
     if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
     if (call === "GET /remnants") return { status: 401, body: { detail: "session expired" } };
   });
-  show("/remnants");
+  show("/pricing/remnants");
   expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
 });
 
@@ -97,4 +97,31 @@ test("a conversation deep link still opens the conversation view", async () => {
   show("/conversations/t1");
   expect(await screen.findByRole("heading", { name: "Hall bench" })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "All pieces" })).toHaveAttribute("href", "/pieces");
+});
+
+test("the nav has one Pricing Overview item and no Price list, Snapshots or Remnants", async () => {
+  stubFetch((call) => {
+    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+    if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+    if (call === "GET /remnants") return { body: [] };
+  });
+  show("/pricing/remnants");
+  const nav = await screen.findByRole("navigation", { name: "Main" });
+  const pricing = within(nav).getByRole("link", { name: "Pricing Overview" });
+  expect(pricing).toHaveAttribute("href", "/pricing");
+  expect(pricing).toHaveAttribute("aria-current", "page");
+  for (const old of ["Price list", "Snapshots", "Remnants"]) {
+    expect(within(nav).queryByRole("link", { name: old })).not.toBeInTheDocument();
+  }
+});
+
+test("an old address opens its tab on the Pricing Overview page", async () => {
+  stubFetch((call) => {
+    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+    if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+    if (call === "GET /snapshots") return { body: [] };
+  });
+  show("/snapshots");
+  expect(await screen.findByRole("heading", { level: 1, name: "Pricing Overview" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Snapshots" })).toHaveAttribute("aria-selected", "true");
 });

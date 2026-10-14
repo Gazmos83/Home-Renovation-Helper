@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { cardClass } from "@/components/ui/card";
-import { Page } from "@/components/Page";
 
 export default function Remnants() {
   const queryClient = useQueryClient();
@@ -30,8 +29,7 @@ export default function Remnants() {
   }
 
   return (
-    <Page>
-      <h1>Remnants</h1>
+    <>
       <p>Offcuts in the workshop. Pricing uses them before it counts a new sheet.</p>
       {rack.data && rack.data.length === 0 && <p>The rack is empty.</p>}
       {(rack.data ?? []).map((r) => (
@@ -64,6 +62,6 @@ export default function Remnants() {
         <FieldError message={formError(add.error, ["material_key", "length_mm", "width_mm", "quantity"])} />
         <p><Button type="submit">Add remnant</Button></p>
       </form>
-    </Page>
+    </>
   );
 }

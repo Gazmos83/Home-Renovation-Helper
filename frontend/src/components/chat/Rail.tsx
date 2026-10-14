@@ -25,6 +25,50 @@ function writeExpanded(value: boolean) {
   }
 }
 
+/** Whether a rail shows its labels, remembered in the browser and shared by every rail. */
+export function useRailLabels(): [boolean, () => void] {
+  const [expanded, setExpanded] = useState(readExpanded);
+  return [
+    expanded,
+    () => {
+      writeExpanded(!expanded);
+      setExpanded(!expanded);
+    },
+  ];
+}
+
+/** The rail column pinned at the screen's left edge below the header. */
+export function railClass(expanded: boolean) {
+  return cn(
+    "sticky top-[var(--header-h)] flex h-[calc(100vh-var(--header-h))] shrink-0 flex-col gap-2 self-start border-r bg-card p-1 pt-2",
+    expanded ? "w-36 items-stretch" : "w-12 items-center",
+  );
+}
+
+/** One icon of a rail, with its label beside it when expanded. */
+export function railItemClass(expanded: boolean) {
+  return expanded ? "h-10 justify-start gap-2 px-2" : "size-10 p-0";
+}
+
+/** The rail's "Show labels" / "Hide labels" switch, at the rail's foot. */
+export function RailLabelsToggle({ expanded, onToggle }: { expanded: boolean; onToggle: () => void }) {
+  const Toggle = expanded ? ChevronsLeft : ChevronsRight;
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className={cn("mt-auto", railItemClass(expanded))}
+      aria-label={expanded ? "Hide labels" : "Show labels"}
+      aria-expanded={expanded}
+      onClick={onToggle}
+    >
+      <Toggle aria-hidden size={20} className="shrink-0" />
+      {expanded && <span aria-hidden>Hide labels</span>}
+    </Button>
+  );
+}
+
 /**
  * The panel rail, pinned at the screen's left edge below the header. Icons only, or with
  * their labels beside them when expanded (remembered in the browser). Choosing an icon
@@ -36,7 +80,7 @@ export function Rail({ panels, open, onOpen }: { panels: Panel[]; open: string |
   const flyout = useRef<HTMLElement>(null);
   const icons = useRef<Record<string, HTMLButtonElement | null>>({});
   const last = useRef<string | null>(null);
-  const [expanded, setExpanded] = useState(readExpanded);
+  const [expanded, toggleLabels] = useRailLabels();
 
   useEffect(() => {
     if (open) {
@@ -56,21 +100,12 @@ export function Rail({ panels, open, onOpen }: { panels: Panel[]; open: string |
     return () => document.removeEventListener("keydown", close);
   }, [open, onOpen]);
 
-  function toggleLabels() {
-    writeExpanded(!expanded);
-    setExpanded(!expanded);
-  }
-
   const shown = panels.find((p) => p.id === open);
-  const Toggle = expanded ? ChevronsLeft : ChevronsRight;
   return (
     <>
       <nav
         aria-label="Panels"
-        className={cn(
-          "sticky top-[var(--header-h)] flex h-[calc(100vh-var(--header-h))] shrink-0 flex-col gap-2 self-start border-r bg-card p-1 pt-2",
-          expanded ? "w-36 items-stretch" : "w-12 items-center",
-        )}
+        className={railClass(expanded)}
       >
         {panels.map((panel) => {
           const Icon = ICONS[panel.icon];
@@ -83,7 +118,7 @@ export function Rail({ panels, open, onOpen }: { panels: Panel[]; open: string |
               type="button"
               variant="ghost"
               size="sm"
-              className={cn(expanded ? "h-10 justify-start gap-2 px-2" : "size-10 p-0", open === panel.id && "bg-accent")}
+              className={cn(railItemClass(expanded), open === panel.id && "bg-accent")}
               aria-label={panel.label}
               aria-expanded={open === panel.id}
               onClick={() => onOpen(open === panel.id ? null : panel.id)}
@@ -93,18 +128,7 @@ export function Rail({ panels, open, onOpen }: { panels: Panel[]; open: string |
             </Button>
           );
         })}
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className={cn("mt-auto", expanded ? "h-10 justify-start gap-2 px-2" : "size-10 p-0")}
-          aria-label={expanded ? "Hide labels" : "Show labels"}
-          aria-expanded={expanded}
-          onClick={toggleLabels}
-        >
-          <Toggle aria-hidden size={20} className="shrink-0" />
-          {expanded && <span aria-hidden>Hide labels</span>}
-        </Button>
+        <RailLabelsToggle expanded={expanded} onToggle={toggleLabels} />
       </nav>
       {shown && (
         <section

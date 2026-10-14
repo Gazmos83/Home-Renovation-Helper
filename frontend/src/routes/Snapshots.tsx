@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cardClass } from "@/components/ui/card";
-import { Page } from "@/components/Page";
 
 const FIELDS = ["retailer", "url", "product_name", "price", "specification", "captured_on", "key", "category", "unit"];
 
@@ -50,8 +49,7 @@ export default function Snapshots() {
   }
 
   return (
-    <Page>
-      <h1>Snapshots</h1>
+    <>
       <p>A page the crawl cannot reach, recorded by hand.</p>
       {(snapshots.data ?? []).map((snapshot) => (
         <section key={snapshot.id} className={cardClass}>
@@ -97,6 +95,6 @@ export default function Snapshots() {
         <FieldError message={formError(create.error, FIELDS)} />
         <p><Button type="submit">Record snapshot</Button></p>
       </form>
-    </Page>
+    </>
   );
 }
