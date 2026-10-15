@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Final
 from uuid import UUID
 
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.blender import storage
 from app.db.models import RenderFeedback, RenderRun
 from app.feedback.runs import latest_succeeded_run
+from app.restyle import store as restyle_store
 
 RATINGS: Final = ("up", "down")
 MAX_COMMENT_CHARACTERS: Final = 1000
@@ -64,14 +66,43 @@ def _clean_comment(comment: object) -> str | None:
     return cleaned or None
 
 
-def _target(session: Session, package_id: str, version: int, render_key: str) -> RenderRun:
-    if render_key not in storage.RENDER_KEYS:
+def variant_published(render_root: Path, package_id: str, version: int, variant_id: str) -> bool:
+    """Whether the piece version holds the restyle variant `variant_id` (two-tier-renders)."""
+    try:
+        folder = restyle_store.variant_dir(storage.version_dir(render_root, package_id, version), variant_id)
+    except (storage.InvalidPackageId, ValueError):
+        return False
+    return (folder / "still.png").is_file()
+
+
+def variant_label(render_root: Path, package_id: str, version: int, variant_id: str) -> str | None:
+    """The label a published variant's `scene.json` records ("Walnut"), or `None`."""
+    try:
+        folder = storage.version_dir(render_root, package_id, version)
+    except (storage.InvalidPackageId, ValueError):
+        return None
+    for item in restyle_store.list_variants(folder):
+        if item["id"] == variant_id:
+            return item.get("label")
+    return None
+
+
+def _target(
+    session: Session, package_id: str, version: int, render_key: str, render_root: Path | None
+) -> RenderRun:
+    variant = storage.variant_of(render_key)
+    if render_key not in storage.RENDER_KEYS and variant is None:
         raise FeedbackRefused(
-            f"unknown render {render_key!r}; use one of {', '.join(storage.RENDER_KEYS)}",
+            f"unknown render {render_key!r}; use one of {', '.join(storage.RENDER_KEYS)} "
+            "or a restyle variant",
             failure_class="unknown_render",
             status=404,
         )
     run = latest_succeeded_run(session, package_id, version, render_key)
+    if variant is not None and (
+        render_root is None or not variant_published(render_root, package_id, version, variant)
+    ):
+        run = None
     if run is None:
         raise FeedbackRefused(
             "the render does not exist yet, so it cannot be rated",
@@ -89,12 +120,16 @@ def rate(
     render_key: str,
     rating: object,
     comment: object = None,
+    render_root: Path | None = None,
 ) -> Rated:
-    """Store (or replace) the rating of the render's latest succeeded run."""
+    """Store (or replace) the rating of the render's latest succeeded run.
+
+    A restyle variant can be rated only while the version holds it, which needs `render_root`.
+    """
     if rating not in RATINGS:
         raise FeedbackRefused("the rating must be 'up' or 'down'", failure_class="invalid_rating")
     cleaned = _clean_comment(comment)
-    run = _target(session, package_id, version, render_key)
+    run = _target(session, package_id, version, render_key, render_root)
     existing = session.get(RenderFeedback, run.id)
     now = datetime.now(UTC)
     if existing is None:
@@ -110,9 +145,11 @@ def rate(
     )
 
 
-def clear(session: Session, *, package_id: str, version: int, render_key: str) -> bool:
+def clear(
+    session: Session, *, package_id: str, version: int, render_key: str, render_root: Path | None = None
+) -> bool:
     """Remove the render's rating; whether there was one."""
-    run = _target(session, package_id, version, render_key)
+    run = _target(session, package_id, version, render_key, render_root)
     existing = session.get(RenderFeedback, run.id)
     if existing is None:
         return False

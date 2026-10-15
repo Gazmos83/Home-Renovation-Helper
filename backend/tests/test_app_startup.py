@@ -97,8 +97,7 @@ def test_the_summary_names_the_tiers_the_benchmark_and_generation(
 
     record = _ready_record(capsys)
     assert record["tiers"] == {
-        "draft": "12 × 600² eevee",
-        "preview": "24 × 1000² eevee",
+        "draft": "12 × 800² eevee",
         "final": "36 × 1500² cycles",
     }
     assert record["benchmark"] == "missing"
@@ -143,7 +142,7 @@ def test_the_app_registers_the_render_state_and_routes(migrated_database: str) -
     app = create_app(_settings(migrated_database))
     assert app.state.blender_launch is None, "production falls through to the real launcher"
     assert app.state.blender_semaphore._value == 1, "one Blender process at a time"
-    assert [name for name, _ in app.state.tiers.items()] == ["draft", "preview", "final"]
+    assert [name for name, _ in app.state.tiers.items()] == ["draft", "final"]
     paths = set(app.openapi()["paths"])
     assert {"/packages", "/packages/{package_id}/spec",
             "/packages/{package_id}/versions/{version}/renders",

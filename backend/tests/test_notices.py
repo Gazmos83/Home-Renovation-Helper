@@ -63,21 +63,21 @@ def test_a_shell_and_a_composition_notice_has_no_piece_and_no_panel_sentence(too
     tool_state.graph = harness.graph
     deps = ToolDeps(tool_state)
     notices.post(deps, harness.thread, quote(tool_state.tiers, package_id="flat", record="shell"), "succeeded")
-    notices.post(deps, harness.thread, quote(tool_state.tiers, "preview", package_id="wohnen", record="room"), "succeeded")
+    notices.post(deps, harness.thread, quote(tool_state.tiers, "draft", package_id="wohnen", record="room"), "succeeded")
     shell, room = stored(tool_state, harness.thread)
     assert shell[2] == "The draft turntable of the flat shell version 1 is ready."
-    assert room[2] == "The preview turntable of wohnen version 1 is ready."
+    assert room[2] == "The draft turntable of wohnen version 1 is ready."
     assert (shell[3], shell[4], room[3], room[4]) == (None, None, None, None)
 
 
 def test_a_failed_render_says_so_without_error_text(tool_state) -> None:
     harness = make_harness(tool_state)
     tool_state.graph = harness.graph
-    notices.post(ToolDeps(tool_state), harness.thread, quote(tool_state.tiers, "preview", version=2), "failed")
+    notices.post(ToolDeps(tool_state), harness.thread, quote(tool_state.tiers, "draft", version=2), "failed")
     [(outcome, tier, text, *_)] = stored(tool_state, harness.thread)
-    assert (outcome, tier) == ("failed", "preview")
+    assert (outcome, tier) == ("failed", "draft")
     assert text == (
-        "The preview turntable of hall-bench version 2 did not finish, so nothing new was published. "
+        "The draft turntable of hall-bench version 2 did not finish, so nothing new was published. "
         "You can ask for it again."
     )
 

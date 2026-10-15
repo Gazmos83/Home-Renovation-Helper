@@ -10,8 +10,7 @@ from app.render.tiers import TierError, load_tiers
 
 GOOD = """
 tiers:
-  draft: {frames: 12, resolution: 600, engine: eevee, timeout_multiplier: 1}
-  preview: {frames: 24, resolution: 1000, engine: eevee, timeout_multiplier: 2}
+  draft: {frames: 12, resolution: 800, engine: eevee, timeout_multiplier: 1}
   final: {frames: 36, resolution: 1500, engine: cycles, timeout_multiplier: 24}
 """
 
@@ -24,33 +23,41 @@ def _load(tmp_path: Path, text: str):
 
 def test_the_shipped_tiers_load() -> None:
     tiers = load_tiers()
-    draft, preview, final = (tiers.get(n) for n in ("draft", "preview", "final"))
-    assert (draft.frames, draft.resolution, draft.engine) == (12, 600, "eevee")
-    assert (preview.frames, preview.resolution, preview.engine) == (24, 1000, "eevee")
+    draft, final = (tiers.get(n) for n in ("draft", "final"))
+    assert (draft.frames, draft.resolution, draft.engine) == (12, 800, "eevee")
     assert (final.frames, final.resolution, final.engine) == (36, 1500, "cycles")
+    assert [name for name, _ in tiers.items()] == ["draft", "final"]
     assert final.blender_engine == "CYCLES"
     assert draft.blender_engine == "BLENDER_EEVEE"
 
 
 def test_megapixels() -> None:
     tiers = load_tiers()
-    assert tiers.get("draft").megapixels == pytest.approx(0.36)
+    assert tiers.get("draft").megapixels == pytest.approx(0.64)
     assert tiers.get("final").megapixels == pytest.approx(2.25)
 
 
 def test_the_summary_lists_each_tier() -> None:
     assert load_tiers().summary() == {
-        "draft": "12 × 600² eevee",
-        "preview": "24 × 1000² eevee",
+        "draft": "12 × 800² eevee",
         "final": "36 × 1500² cycles",
     }
 
 
 def test_a_missing_tier_fails_by_name(tmp_path: Path) -> None:
-    text = "\n".join(line for line in GOOD.splitlines() if "preview" not in line)
+    text = "\n".join(line for line in GOOD.splitlines() if "final" not in line)
     with pytest.raises(TierError) as caught:
         _load(tmp_path, text)
-    assert "preview" in str(caught.value)
+    assert "final" in str(caught.value)
+
+
+def test_a_configuration_still_naming_preview_fails_as_an_unknown_tier(tmp_path: Path) -> None:
+    text = GOOD + "  preview: {frames: 24, resolution: 1000, engine: eevee, timeout_multiplier: 2}\n"
+    with pytest.raises(TierError) as caught:
+        _load(tmp_path, text)
+    message = str(caught.value)
+    assert "unknown tier" in message and "preview" in message
+    assert "draft" in message and "final" in message
 
 
 def test_a_duplicate_tier_fails(tmp_path: Path) -> None:
@@ -87,10 +94,10 @@ def test_a_non_positive_or_non_integer_value_fails(tmp_path: Path, bad: str) -> 
     assert "frames" in str(caught.value)
 
 
-def test_get_refuses_an_unknown_tier_listing_the_three() -> None:
+@pytest.mark.parametrize("name", ["ultra", "preview"])
+def test_get_refuses_an_unknown_tier_listing_the_two(name: str) -> None:
     with pytest.raises(TierError) as caught:
-        load_tiers().get("ultra")
+        load_tiers().get(name)
     message = str(caught.value)
-    assert "ultra" in message
-    for name in ("draft", "preview", "final"):
-        assert name in message
+    assert name in message
+    assert "the tiers are draft, final" in message

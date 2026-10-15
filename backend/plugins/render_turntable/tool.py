@@ -1,10 +1,11 @@
 """`render_turntable` (Builder): a still or turntable, only through the guard.
 
 The tier is required and decides frames, resolution and engine; a raw value for
-any of them is refused by name. `draft` and `preview` start straight away and
-the reply carries the estimate; `final` pauses for the owner's yes (the guard's
-own approval) and runs only on it. The render is enqueued on the app loop, never
-waited for.
+any of them is refused by name. `draft` starts straight away and the reply
+carries the estimate; `final` pauses for the owner's yes (the guard's own
+approval) and runs only on it. A draft of a piece on its own is a turntable
+(two-tier-renders); a draft still stays for a piece in its room, a shell and a
+composition. The render is enqueued on the app loop, never waited for.
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ class RenderArgs(BaseModel):
     )
     version: int | None = Field(default=None, description="a version number; the latest when left out")
     kind: str = Field(default="turntable", description="'turntable' or 'still'")
-    tier: str | None = Field(default=None, description="required: draft, preview or final")
+    tier: str | None = Field(default=None, description="required: draft or final")
     room: dict[str, Any] | None = Field(
         default=None, description="the room document from room_fit, to render the piece in its room"
     )
@@ -143,6 +144,8 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext):
         priced = quote(**price_args)
     except RenderRefused as error:
         return error.reason
+    if record == "piece" and args.room is None and priced.tier.name == "draft" and priced.kind == "still":
+        return "a draft of a piece is a turntable; ask for a draft turntable, or a final still"
     state = storage.read_status(folder) or {}
     if state.get("status") != "succeeded" or not (folder / "model.blend").is_file():
         return (
@@ -242,9 +245,10 @@ render_turntable = AgentTool(
     name="render_turntable",
     description=(
         "Render a still or a turntable of a built piece (package_id), of an apartment's shell "
-        "(shell) or of a composed room (composition). A tier is required (draft, preview or final) and decides frames, resolution and "
-        "engine; never pass those. Optionally pass the room document from room_fit to render a "
-        "piece in its room. Draft and preview start now; final waits for the owner's yes."
+        "(shell) or of a composed room (composition). A tier is required (draft or final) and decides "
+        "frames, resolution and engine; never pass those. A draft of a piece on its own is a "
+        "turntable. Optionally pass the room document from room_fit to render a piece in its room. "
+        "A draft starts now; final waits for the owner's yes."
     ),
     schema=RenderArgs,
     run=run,

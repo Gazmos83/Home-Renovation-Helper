@@ -762,7 +762,7 @@ class RenderRun(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     package_id: Mapped[str] = mapped_column(String(64), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
-    render_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    render_key: Mapped[str] = mapped_column(String(96), nullable=False)
     tier: Mapped[str] = mapped_column(String(16), nullable=False)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

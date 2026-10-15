@@ -3,7 +3,8 @@
 The tool proposes the rating it read from the owner's words and records it only
 after the owner answers yes. The package is the conversation's bound piece, never
 an argument the model supplied; the target defaults to the piece's most recent
-succeeded render (feedback-capture design decision 4).
+succeeded render (feedback-capture design decision 4), a restyle variant included
+(two-tier-renders).
 """
 
 from __future__ import annotations
@@ -32,6 +33,19 @@ LABELS = {
 FACES = {"up": "thumbs up", "down": "thumbs down"}
 
 
+def label_of(render_key: str) -> str:
+    """How a render is named to the owner: a fixed render's words, or a restyle variant's id."""
+    variant = storage.variant_of(render_key)
+    return f"restyle {variant}" if variant else LABELS[render_key]
+
+
+def _variant_matches(value: str, variant_id: str, label: str | None) -> bool:
+    """Whether the model's `render` names this variant: its key, its id, its label, or a preset
+    name its id starts with ("walnut" for `walnut-draft`)."""
+    wanted = storage.variant_of(value) or value
+    return wanted.lower() in {variant_id, (label or "").lower()} or variant_id.startswith(f"{wanted.lower()}-")
+
+
 class FeedbackArgs(BaseModel):
     rating: str = Field(description="'up' or 'down', as the owner reacted")
     comment: str | None = Field(
@@ -40,8 +54,9 @@ class FeedbackArgs(BaseModel):
     render: str | None = Field(
         default=None,
         description=(
-            "which render: still, turntable, room-still, room-turntable, detail-still or "
-            "detail-turntable; the most recent one when left out"
+            "which render: still, turntable, room-still, room-turntable, detail-still, "
+            "detail-turntable, or a restyle variant by its name (e.g. 'walnut'); the most recent "
+            "one when left out"
         ),
     )
     version: int | None = Field(default=None, description="a version number; the most recent render's when left out")
@@ -51,22 +66,46 @@ def _target(args: FeedbackArgs, ctx: ToolContext) -> RenderRun | str:
     """The run to rate, or a refusal."""
     if not ctx.package_id:
         return "there is no piece bound to this conversation; ask the owner which piece they mean"
-    if args.render is not None and args.render not in storage.RENDER_KEYS:
-        return f"unknown render {args.render!r}; use one of {', '.join(storage.RENDER_KEYS)}"
+    fixed = args.render is None or args.render in storage.RENDER_KEYS
     query = select(RenderRun).where(
         RenderRun.package_id == ctx.package_id, RenderRun.outcome == "succeeded"
     )
     if args.version is not None:
         query = query.where(RenderRun.version == args.version)
     if args.render is not None:
-        query = query.where(RenderRun.render_key == args.render)
+        query = query.where(
+            RenderRun.render_key == args.render
+            if fixed
+            else RenderRun.render_key.startswith(storage.VARIANT_KEY_PREFIX)
+        )
     with Session(ctx.deps.engine) as session:
-        run = session.scalars(query.order_by(RenderRun.started_at.desc()).limit(1)).first()
-        if run is not None:
-            session.expunge(run)
+        runs = list(session.scalars(query.order_by(RenderRun.started_at.desc())))
+        for found in runs:
+            session.expunge(found)
+    run = next((found for found in runs if _rateable(found, args, ctx)), None)
     if run is None:
+        if not fixed:
+            return (
+                f"unknown render {args.render!r}; use one of {', '.join(storage.RENDER_KEYS)} "
+                "or the name of a restyle variant of this piece"
+            )
         return "there is no finished render of this piece to rate yet"
     return run
+
+
+def _rateable(run: RenderRun, args: FeedbackArgs, ctx: ToolContext) -> bool:
+    """A fixed render always; a variant only while its version holds it, and, when the model
+    named one, only the variant it named."""
+    variant = storage.variant_of(run.render_key)
+    if variant is None:
+        return True
+    root = ctx.deps.render_root
+    if not ratings.variant_published(root, run.package_id, run.version, variant):
+        return False
+    if args.render is None:
+        return True
+    label = ratings.variant_label(root, run.package_id, run.version, variant)
+    return _variant_matches(args.render, variant, label)
 
 
 def _checked(arguments: dict[str, Any], ctx: ToolContext) -> tuple[FeedbackArgs, RenderRun] | str:
@@ -88,7 +127,7 @@ def preview(arguments: dict[str, Any], ctx: ToolContext):
     if isinstance(checked, str):
         return checked
     args, run = checked
-    what = f"{ctx.package_id} version {run.version} {LABELS[run.render_key]} ({run.tier})"
+    what = f"{ctx.package_id} version {run.version} {label_of(run.render_key)} ({run.tier})"
     said = f' with the comment "{args.comment.strip()}"' if args.comment and args.comment.strip() else ""
     return Confirmation(
         subject="render_feedback",
@@ -120,6 +159,7 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
                 render_key=target.render_key,
                 rating=args.rating,
                 comment=args.comment,
+                render_root=ctx.deps.render_root,
             )
     except FeedbackRefused as error:
         return error.reason
@@ -132,7 +172,7 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
         )
     return (
         f"Recorded a {FACES[rated.rating]} on {rated.package_id} version {rated.version} "
-        f"{LABELS[rated.render_key]} ({rated.tier})."
+        f"{label_of(rated.render_key)} ({rated.tier})."
     )
 
 

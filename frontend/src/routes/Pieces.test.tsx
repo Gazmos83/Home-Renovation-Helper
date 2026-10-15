@@ -7,14 +7,18 @@ import { stubFetch } from "../test/fetchStub";
 import Pieces from "./Pieces";
 
 const turntable = {
-  render: "turntable", label: "Turntable", tier: "draft", can_rate: true, rating: null, comment: null,
+  render: "turntable", label: "Turntable", tier: "draft", finished_at: null, frames: 12, can_rate: true, rating: null, comment: null,
   preview: "/packages/bench/versions/2/files/frames/0", viewer: "/packages/bench/versions/2/files/viewer.html",
 };
 const still = {
-  render: "still", label: "Still", tier: "draft", can_rate: true, rating: null, comment: null,
+  render: "still", label: "Still", tier: "draft", finished_at: null, frames: 0, can_rate: true, rating: null, comment: null,
   preview: "/packages/bench/versions/2/files/still.png", viewer: null,
 };
 const legacy = { ...still, can_rate: false };
+const variant = {
+  render: "variant:walnut-draft", label: "Walnut", tier: "draft", finished_at: null, frames: 12, can_rate: true,
+  rating: null, comment: null, preview: "/packages/bench/versions/2/files/variants/walnut-draft/frames/0", viewer: null,
+};
 
 function summary(name: string) {
   return {
@@ -73,12 +77,13 @@ function serve(
   });
 }
 
-test("a still shows its preview and tier, and turntable cards are omitted", async () => {
-  serve([turntable, still]);
+test("a still shows its preview and tier, and turntable and variant cards are omitted", async () => {
+  serve([turntable, still, variant]);
   show();
   expect(await screen.findByRole("img", { name: "Still of bench version 2" })).toHaveAttribute("src", still.preview);
   expect(screen.getByText("draft")).toBeInTheDocument();
   expect(screen.queryByRole("img", { name: /Turntable/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Walnut" })).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /viewer/ })).not.toBeInTheDocument();
 });
 

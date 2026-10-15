@@ -103,7 +103,7 @@ Each tool is a folder under `backend/plugins/<name>/` with `manifest.yaml` (name
 | — | `catalog_research` | Researcher | port | `search_catalog_knowledge`, `check_live_listing`, `compare_products` |
 | 7 | `revision_review` | Reviewer | port | render vs spec vs brief; discrepancy list; no write tool |
 | 8 | `photoreal_detail` | Lighting | built | detail pass on a copy of `model.blend` over the socket, allow-listed; its render is `final` tier only |
-| — | `restyle_render` | Builder | built | draft or preview stills of a piece's look or a room's style from `config/looks.yaml` and `config/styles.yaml`; in-memory override, nothing saved, appearance only; one guard ticket per variant, never `final` |
+| — | `restyle_render` | Builder | built | draft turntables of a piece's look or a room's style from `config/looks.yaml` and `config/styles.yaml`; in-memory override, nothing saved, appearance only; one guard ticket per variant, never `final`; a piece's variant is rateable |
 
 ### 5a. Pricing (kept, reworked)
 
@@ -118,9 +118,8 @@ Per-render approval, no daily cap. A `final` may run on the render server instea
 
 | Tier | Frames | Resolution | Engine | Behaviour |
 |---|---|---|---|---|
-| draft | 12 | 600×600 | Eevee | runs, reports estimate |
-| preview | 24 | 1000×1000 | Eevee | runs, reports estimate |
-| final | 36 | 1500×1500 | Cycles | `interrupt()`, explicit "yes" required |
+| draft | 12 | 800×800 | Eevee | runs on the laptop, reports estimate; a piece's draft is a turntable |
+| final | 36 | 1500×1500 | Cycles | `interrupt()`, explicit "yes" required; a detail render is a still on the laptop, a turntable only on the render server |
 
 `seconds ≈ frames × megapixels × engine_multiplier × benchmark_seconds_per_megapixel`. The benchmark is a one-off approved first-launch Eevee frame stored under `benchmark`, re-runnable from the dev panel; Cycles multiplier starts at 30 and is calibrated from the first approved final. Show the estimate in human terms before every run. The tool signature **requires** `tier`; raw frame or resolution values are refused. Log tier, estimate and actual to Langfuse. Unit tests: tier parsing, estimate maths, interrupt on final, refusal on bypass.
 

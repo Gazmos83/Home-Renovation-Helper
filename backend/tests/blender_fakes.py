@@ -210,7 +210,9 @@ def fake_pipeline_launch(
                 write_frames(out, frames=int(arg_value(argv, "--tier-frames")), size=size)
             return
         if script == "render_restyle.py":
-            write_still(out, size=int(arg_value(argv, "--tier-resolution")))
+            # A restyle is a draft turntable with its first frame as the still (two-tier-renders).
+            write_frames(out, frames=int(arg_value(argv, "--tier-frames")), size=int(arg_value(argv, "--tier-resolution")))
+            (out / "still.png").write_bytes((out / "frames" / "frame_000.png").read_bytes())
             return
         if script == "check_model.py":
             out.mkdir(parents=True, exist_ok=True)

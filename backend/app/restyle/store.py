@@ -1,7 +1,9 @@
 """Where variants live: `variants/<variant-id>/` inside a version folder (restyle-variants).
 
-Files only, no table. A variant holds `still.png` and `scene.json`; a version holds at
-most `MAX_VARIANTS` and a further one replaces the oldest. Nothing here touches the
+Files only, no table. A variant holds `frames/`, `viewer.html`, `scene.json` and a
+`still.png` copy of its first frame (two-tier-renders; one published before restyles were
+turntables holds only `still.png` and `scene.json`); a version holds at most `MAX_VARIANTS`
+and a further one replaces the oldest. Nothing here touches the
 version's own `still.png`, `frames/`, `viewer.html`, `spec.json` or `model.blend`.
 """
 
@@ -68,6 +70,9 @@ def allocate_ids(version_folder: Path, base_ids: list[str], tier: str) -> list[s
         while candidate in taken:
             counter += 1
             candidate = f"{stem}-{counter}"
+        # A piece variant's render run is keyed `variant:<id>`; the id must fit that key.
+        if not VARIANT_ID_PATTERN.match(candidate):
+            raise ValueError(f"{candidate!r} is not a variant id")
         taken.add(candidate)
         allocated.append(candidate)
     return allocated

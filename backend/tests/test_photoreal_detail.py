@@ -114,14 +114,26 @@ def test_a_screenshot_is_for_the_owner_and_the_agent_gets_text_only(bound, live,
 
 
 def final(**fields):
-    return {"tier": "final", "kind": "turntable", **fields}
+    """A detail render at `final`; with no kind it is a still, the laptop's detail render."""
+    return {"tier": "final", **fields}
 
 
-@pytest.mark.parametrize("tier", ["draft", "preview"])
-def test_a_detail_render_below_final_is_refused_naming_why(bound, live, tier) -> None:
+def test_a_detail_render_below_final_is_refused_naming_why(bound, live) -> None:
     started(bound)
-    shown = render_detail.preview({"tier": tier}, bound())
+    shown = render_detail.preview({"tier": "draft"}, bound())
     assert isinstance(shown, str) and "final only" in shown
+    shown = render_detail.preview({"tier": "preview"}, bound())
+    assert isinstance(shown, str) and "the tiers are draft, final" in shown
+
+
+def test_a_local_detail_turntable_is_refused_without_asking(bound, live, tool_state) -> None:
+    started(bound)
+    shown = render_detail.preview(final(kind="turntable"), bound())
+    assert isinstance(shown, str)
+    assert "on the laptop a detail render is a still" in shown and "only on the render server" in shown
+    result = render_detail.run(final(kind="turntable"), replace(bound(), approved=True))
+    assert "only on the render server" in result
+    assert not any("render_turntable.py" in " ".join(c) for c in tool_state.launched)
 
 
 def test_a_missing_tier_and_raw_values_are_refused(bound, live) -> None:
@@ -146,26 +158,26 @@ def test_the_final_pauses_with_the_estimate_and_does_not_run_unapproved(bound, l
     assert isinstance(shown, Confirmation) and shown.subject == "detail_render"
     assert shown.proposal["tier"] == "final" and shown.proposal["source"] == "detail"
     assert "tier final" in shown.summary and "detailed copy" in shown.summary
+    assert shown.proposal["kind"] == "still" and "a still" in shown.summary
     declined = render_detail.run(final(), bound())
     assert "approval" in declined
-    assert not any("render_turntable.py" in " ".join(c) for c in tool_state.launched)
+    assert not any("render_still.py" in " ".join(c) for c in tool_state.launched)
 
 
 def test_an_approved_final_saves_the_live_file_then_renders_the_detail_copy(bound, live, tool_state) -> None:
     started(bound)
     folder = folder_of(tool_state)
     result = render_detail.run(final(), replace(bound(), approved=True))
-    assert result.startswith("Started a final turntable of the detailed bench version 1")
+    assert result.startswith("Started a final still of the detailed bench version 1")
     assert result.endswith("When it finishes, a Review button appears in this chat.")
     assert "viewer.html" not in result
-    job = wait_job(folder, "detail-turntable")
+    job = wait_job(folder, "detail-still")
     assert job["tier"] == "final"
-    frames = sorted((storage.detail_dir(folder) / "frames").iterdir())
-    assert len(frames) == 36 and png_size(frames[0]) == (1500, 1500)
+    assert png_size(storage.detail_dir(folder) / "still.png") == (1500, 1500)
     assert SAVE_TEMPLATE in live.scripts
-    argv = next(c for c in tool_state.launched if any("render_turntable.py" in p for p in c))
+    argv = next(c for c in tool_state.launched if any("render_still.py" in p for p in c))
     assert argv[argv.index("--blend") + 1] == str(storage.detail_blend_path(folder))
-    assert not (folder / "frames").exists() and not (folder / "viewer.html").exists()
+    assert not (folder / "still.png").exists()
 
 
 def test_a_closed_blender_does_not_stop_the_final(bound, live, tool_state) -> None:

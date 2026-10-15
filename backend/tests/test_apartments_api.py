@@ -104,7 +104,7 @@ def test_a_draft_shell_turntable_runs_with_its_estimate_and_is_served(
     response = client.post(f"{BASE}/versions/1/renders", json={"kind": "turntable", "tier": "draft"})
     assert response.status_code == 202
     body = response.json()
-    assert body["tier"] == "draft" and body["frames"] == 12 and body["estimate"] == "about 11 seconds"
+    assert body["tier"] == "draft" and body["frames"] == 12 and body["estimate"] == "about 19 seconds"
     assert client.get(f"{BASE}/versions/1/files/frames/11").status_code == 200
     assert client.get(f"{BASE}/versions/1/files/viewer.html").status_code == 200
     job = client.get(f"{BASE}/versions/1").json()["jobs"]["turntable"]

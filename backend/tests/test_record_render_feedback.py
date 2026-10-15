@@ -60,7 +60,7 @@ def test_an_approved_rating_is_stored_with_the_comment(make_ctx, tool_state) -> 
 
 def test_the_default_target_is_the_most_recent_succeeded_render(make_ctx, tool_state) -> None:
     add_run(tool_state, key="turntable", version=1, age_minutes=30)
-    newest = add_run(tool_state, key="still", version=2, tier="preview", age_minutes=5)
+    newest = add_run(tool_state, key="still", version=2, tier="draft", age_minutes=5)
     add_run(tool_state, key="turntable", version=2, age_minutes=1, outcome="failed")
     add_run(tool_state, key="still", version=3, age_minutes=0, package="other")
     shown = preview({"rating": "up"}, make_ctx(package_id="bench"))
@@ -168,3 +168,53 @@ def test_both_builder_and_lighting_may_name_it() -> None:
     assert "record_render_feedback" in loaded["builder"].tools
     assert "record_render_feedback" in loaded["lighting"].tools
     assert record_render_feedback.name == "record_render_feedback"
+
+
+# --- restyle variants (two-tier-renders) -----------------------------------------------------------
+
+
+def publish_variant(tool_state, variant: str = "walnut-draft", label: str = "Walnut", version: int = 1) -> None:
+    import json
+
+    from app.blender import storage
+    from app.restyle import store
+
+    folder = store.variant_dir(storage.version_dir(tool_state.settings.render_root, "bench", version), variant)
+    folder.mkdir(parents=True)
+    (folder / "still.png").write_bytes(b"png")
+    (folder / "scene.json").write_text(json.dumps({"label": label, "tier": "draft"}), encoding="utf-8")
+
+
+def test_a_variant_rated_in_chat_is_proposed_by_default_and_stored_only_on_yes(make_ctx, tool_state) -> None:
+    add_run(tool_state, key="turntable", version=1, age_minutes=30)
+    publish_variant(tool_state)
+    variant = add_run(tool_state, key="variant:walnut-draft", version=1, tier="draft", age_minutes=1)
+    args = {"rating": "up", "comment": "the walnut one is great"}
+    shown = preview(args, make_ctx(package_id="bench"))
+    assert shown.proposal["render"] == "variant:walnut-draft"
+    assert 'bench version 1 restyle walnut-draft (draft) with the comment "the walnut one is great"' in shown.summary
+    assert stored(tool_state) == []
+    result = run(args, replace(make_ctx(package_id="bench"), approved=True))
+    assert result == "Recorded a thumbs up on bench version 1 restyle walnut-draft (draft)."
+    [(rated_run, feedback)] = stored(tool_state)
+    assert rated_run.id == variant and feedback.comment == "the walnut one is great"
+
+
+def test_a_variant_named_by_its_look_or_label_is_found(make_ctx, tool_state) -> None:
+    publish_variant(tool_state)
+    publish_variant(tool_state, "sage-green-draft", "Sage green")
+    walnut = add_run(tool_state, key="variant:walnut-draft", version=1, age_minutes=5)
+    add_run(tool_state, key="variant:sage-green-draft", version=1, age_minutes=1)
+    for name in ("walnut", "Walnut", "variant:walnut-draft", "walnut-draft"):
+        shown = preview({"rating": "up", "render": name}, make_ctx(package_id="bench"))
+        assert shown.proposal["render"] == "variant:walnut-draft", name
+    run({"rating": "up", "render": "walnut"}, replace(make_ctx(package_id="bench"), approved=True))
+    assert stored(tool_state)[0][0].id == walnut
+    assert "unknown render 'teak'" in preview({"rating": "up", "render": "teak"}, make_ctx(package_id="bench"))
+
+
+def test_a_replaced_variant_is_not_the_default_target(make_ctx, tool_state) -> None:
+    add_run(tool_state, key="turntable", version=1, age_minutes=30)
+    add_run(tool_state, key="variant:oak-draft", version=1, age_minutes=1)  # its folder is gone
+    shown = preview({"rating": "down"}, make_ctx(package_id="bench"))
+    assert shown.proposal["render"] == "turntable"

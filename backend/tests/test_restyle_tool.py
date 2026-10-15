@@ -29,16 +29,21 @@ def wait_variants(folder, count: int, seconds: float = 10.0) -> list[dict]:
     raise AssertionError(f"only {len(found)} variants appeared")
 
 
-def test_two_looks_start_one_batch_with_one_estimate_and_publish_two_stills(make_ctx, tool_state) -> None:
+def test_two_looks_start_one_batch_with_one_estimate_and_publish_two_turntables(make_ctx, tool_state) -> None:
     made(make_ctx, tool_state)
     slot = slot_of(tool_state)
     args = {"package_id": "bench", "tier": "draft", "slots": [slot], "looks": ["walnut", "oak"]}
     assert restyle_preview(args, make_ctx()) is None
     result = restyle_run(args, make_ctx())
-    assert result.startswith("Started 2 draft restyle stills of bench version 1 (Walnut, Natural oak): about")
+    assert result.startswith("Started 2 draft restyle turntables of bench version 1 (Walnut, Natural oak): about")
     assert "appearance only, not a priced material" in result and "design itself is unchanged" in result
     found = wait_variants(folder_of(tool_state), 2)
     assert {item["tier"] for item in found} == {"draft"} and {item["source"] for item in found} == {"restyle"}
+    for item in found:
+        variant = store.variant_dir(folder_of(tool_state), item["id"])
+        assert sorted(p.name for p in (variant / "frames").iterdir()) == [f"frame_{i:03d}.png" for i in range(12)]
+        assert (variant / "viewer.html").is_file()
+        assert (variant / "still.png").read_bytes() == (variant / "frames" / "frame_000.png").read_bytes()
     assert (folder_of(tool_state) / "spec.json").is_file()
 
 
@@ -47,7 +52,7 @@ def test_all_expands_to_every_look(make_ctx, tool_state) -> None:
     result = restyle_run(
         {"package_id": "bench", "tier": "draft", "slots": [slot_of(tool_state)], "looks": ["all"]}, make_ctx()
     )
-    assert result.startswith("Started 6 draft restyle stills")
+    assert result.startswith("Started 6 draft restyle turntables")
     wait_variants(folder_of(tool_state), 6)
 
 
@@ -105,11 +110,20 @@ def test_a_piece_takes_looks_and_a_room_takes_styles(make_ctx, tool_deps, tool_s
 
 def test_a_composed_room_restyles_with_styles(make_ctx, tool_deps, tool_state) -> None:
     composed(make_ctx, tool_deps, tool_state)
-    result = restyle_run({"composition": "Wohnen", "tier": "preview", "styles": ["japandi", "industrial"]}, make_ctx())
-    assert result.startswith("Started 2 preview restyle stills of wohnen version 1 (Japandi, Industrial)")
+    result = restyle_run({"composition": "Wohnen", "tier": "draft", "styles": ["japandi", "industrial"]}, make_ctx())
+    assert result.startswith("Started 2 draft restyle turntables of wohnen version 1 (Japandi, Industrial)")
     folder = storage.composition_version_dir(tool_state.settings.render_root, "wohnen", 1)
     found = wait_variants(folder, 2)
-    assert {item["tier"] for item in found} == {"preview"}
+    assert {item["tier"] for item in found} == {"draft"}
+
+
+def test_a_restyle_at_preview_is_refused_as_an_unknown_tier(make_ctx, tool_state) -> None:
+    made(make_ctx, tool_state)
+    launched = len(tool_state.launched)
+    args = {"package_id": "bench", "tier": "preview", "slots": [slot_of(tool_state)], "looks": ["walnut"]}
+    result = restyle_run(args, make_ctx())
+    assert "preview" in result and "the tiers are draft, final" in result
+    assert len(tool_state.launched) == launched
 
 
 def test_a_full_version_says_the_oldest_will_be_replaced(make_ctx, tool_state) -> None:
@@ -137,3 +151,55 @@ def test_a_restyle_changes_no_spec_and_makes_no_new_version(make_ctx, tool_state
     wait_variants(folder, 1)
     assert {name: (folder / name).read_bytes() for name in before} == before
     assert storage.versions(tool_state.settings.render_root, "bench") == versions
+
+
+# --- variant render runs (two-tier-renders) ------------------------------------------------------
+
+
+def _variant_runs(tool_state, package_id: str) -> list:
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from app.db.models import RenderRun
+
+    with Session(tool_state.engine) as session:
+        rows = list(session.scalars(select(RenderRun).where(
+            RenderRun.package_id == package_id, RenderRun.render_key.startswith("variant:"),
+        )))
+        for row in rows:
+            session.expunge(row)
+    return rows
+
+
+def _wait_finished(tool_state, package_id: str, count: int, seconds: float = 10.0) -> list:
+    deadline = time.monotonic() + seconds
+    rows: list = []
+    while time.monotonic() < deadline:
+        rows = [row for row in _variant_runs(tool_state, package_id) if row.outcome != "queued"]
+        if len(rows) >= count:
+            return rows
+        time.sleep(0.05)
+    raise AssertionError(f"only {len(rows)} variant runs finished")
+
+
+def test_each_piece_variant_is_recorded_as_a_rateable_run(make_ctx, tool_state) -> None:
+    from uuid import uuid4
+
+    made(make_ctx, tool_state)
+    thread = uuid4()
+    ctx = make_ctx(thread_id=thread, slot="builder", model="m", last_message="show it in walnut and oak")
+    restyle_run(
+        {"package_id": "bench", "tier": "draft", "slots": [slot_of(tool_state)], "looks": ["walnut", "oak"]}, ctx
+    )
+    found = wait_variants(folder_of(tool_state), 2)
+    runs = _wait_finished(tool_state, "bench", 2)
+    assert {row.render_key for row in runs} == {f"variant:{item['id']}" for item in found}
+    assert {(row.tier, row.outcome, row.thread_id, row.slot) for row in runs} == {("draft", "succeeded", thread, "builder")}
+
+
+def test_a_composition_restyle_records_no_run(make_ctx, tool_deps, tool_state) -> None:
+    composed(make_ctx, tool_deps, tool_state)
+    restyle_run({"composition": "Wohnen", "tier": "draft", "styles": ["japandi"]}, make_ctx(slot="builder"))
+    folder = storage.composition_version_dir(tool_state.settings.render_root, "wohnen", 1)
+    wait_variants(folder, 1)
+    assert _variant_runs(tool_state, "wohnen") == []

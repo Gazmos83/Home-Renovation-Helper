@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import Any, Final
 
 from app.agent.revise import describe_front, describe_fronts, describe_hardware
+from app.blender import storage
 from app.blender.custom_build.derive import (
     GAP_MM,
     DeriveError,
@@ -26,6 +27,7 @@ from app.blender.custom_build.derive import (
     shelf_centres,
     span_words,
 )
+from app.restyle.presets import APPEARANCE_NOTE
 
 # Both delimiters start with this, so neutralising it neutralises both.
 SENTINEL: Final = "[[["
@@ -216,7 +218,12 @@ def render_feedback_note(items: Sequence[Mapping[str, Any]]) -> str:
         return ""
     lines = [RENDER_FEEDBACK_PREAMBLE, "Recent render feedback:"]
     for item in items:
-        line = f"- v{item['version']} · {item['render_key']} · {item['tier']} · {item['rating']}"
+        key = str(item["render_key"])
+        # A restyle variant is a look, never a material (two-tier-renders).
+        variant = storage.variant_of(key)
+        if variant is not None:
+            key = f"restyle {variant} ({APPEARANCE_NOTE})"
+        line = f"- v{item['version']} · {key} · {item['tier']} · {item['rating']}"
         if item.get("comment"):
             line += f' — "{neutralise(str(item["comment"]))}"'
         lines.append(line)

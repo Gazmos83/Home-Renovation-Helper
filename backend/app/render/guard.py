@@ -38,8 +38,9 @@ FORBIDDEN_FIELDS: Final[tuple[str, ...]] = (
 KINDS: Final[tuple[str, ...]] = ("still", "turntable")
 # What a render reads: the built model, the detail pass's copy of it
 # (photoreal-detail), or the built model restyled in memory (restyle-variants). A detail
-# render is `final` only and never placed in a room; a restyle is a still at `draft` or
-# `preview` only.
+# render is `final` only, never placed in a room, and a still on the laptop: a detail
+# turntable runs only on the render server. A restyle is a `draft` turntable
+# (two-tier-renders).
 SOURCES: Final[tuple[str, ...]] = ("model", "detail", "restyle")
 
 _MINT: Final = object()
@@ -186,7 +187,9 @@ def quote(
                 field=name,
             )
     if tier is None or tier == "":
-        raise RenderRefused("a tier is required: choose draft, preview or final", field="tier")
+        raise RenderRefused(
+            f"a tier is required: choose {' or '.join(t for t, _ in tiers.items())}", field="tier"
+        )
     try:
         chosen = tiers.get(tier)
     except TierError as error:
@@ -203,8 +206,8 @@ def quote(
                 "a restyle is a concept picture; a final is rendered from a real revision",
                 field="tier",
             )
-        if kind != "still":
-            raise RenderRefused("a restyle is a still", field="kind")
+        if kind != "turntable":
+            raise RenderRefused("a restyle is a draft turntable", field="kind")
         if not variant:
             raise RenderRefused("a restyle ticket is for one named variant", field="variant")
     if source == "detail":
@@ -216,6 +219,12 @@ def quote(
             raise RenderRefused(
                 "a detail render is final only; check progress with a screenshot instead",
                 field="tier",
+            )
+        if kind == "turntable" and target == "local":
+            raise RenderRefused(
+                "on the laptop a detail render is a still; a detail turntable runs only on the "
+                "render server",
+                field="kind",
             )
     if target not in ("local", "remote"):
         raise RenderRefused(f"unknown render target {target!r}; use local or remote", field="target")

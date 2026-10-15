@@ -7,11 +7,12 @@ import { cardClass } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { CutListTables } from "@/components/inspector/CutListTables";
+import { RendersTab } from "@/components/inspector/RendersTab";
 
 /**
  * One piece version, inspected (piece-inspector): its model in 3D with the camera
  * buttons, modes, explode, layer switches and overall dimensions, its straight-on
- * views, and its cut list. Every figure comes from the version's own files. The 3D
+ * views, its cut list, and its renders (two-tier-renders). Every figure comes from the version's own files. The 3D
  * stage is a lazy import, so three.js loads only when a model is shown. The inspector
  * page and the conversation's split view both render this one component.
  *
@@ -83,6 +84,16 @@ function stateWord(status: string | null): string {
   return "not built";
 }
 
+export type InspectorTab = "model" | "cutlist" | "renders";
+
+/** The open tab and the render chosen on the Renders tab, as the address keeps them. */
+export type InspectorPlace = { tab: InspectorTab; render: string | null };
+
+/** `?tab=` as the address spelled it: one of the tabs, else the Model tab. */
+export function parseTab(value: string | null): InspectorTab {
+  return value === "cutlist" || value === "renders" ? value : "model";
+}
+
 /** Polls the piece's versions while open; how often, in milliseconds. */
 const VERSION_POLL_MS = 3000;
 
@@ -97,6 +108,9 @@ export function InspectorView({
   compact = false,
   versionLabel = String(version),
   onChoose,
+  place,
+  tierHint = null,
+  onPlace,
 }: {
   packageId: string;
   version: number;
@@ -105,8 +119,22 @@ export function InspectorView({
   versionLabel?: string;
   /** Show another version: the owner's choice in the switcher, or a newer version followed. */
   onChoose?: (version: number) => void;
+  /** Where the view stands when the address keeps it; without `onPlace` the view keeps its own. */
+  place?: InspectorPlace;
+  /** The tier a notice's Review button asked for: the Renders tab shows its newest render. */
+  tierHint?: string | null;
+  onPlace?: (place: InspectorPlace) => void;
 }) {
-  const [tab, setTab] = useState<"model" | "cutlist">("model");
+  const [ownPlace, setOwnPlace] = useState<InspectorPlace>({ tab: "model", render: null });
+  const current = onPlace ? (place ?? { tab: "model", render: null }) : ownPlace;
+  const tab = current.tab;
+  function setPlace(next: InspectorPlace) {
+    if (onPlace) onPlace(next);
+    else setOwnPlace(next);
+  }
+  function setTab(next: InspectorTab) {
+    setPlace({ tab: next, render: next === "renders" ? current.render : null });
+  }
   const [mode, setMode] = useState<ViewMode>("workshop");
   const [camera, setCamera] = useState<CameraPreset>("iso");
   const [explode, setExplode] = useState(0.6);
@@ -198,12 +226,21 @@ export function InspectorView({
           options={[
             { id: "model", label: "Model" },
             { id: "cutlist", label: "Cut list" },
+            { id: "renders", label: "Renders" },
           ]}
           value={tab}
           onChange={setTab}
         />
         {tab === "cutlist" ? (
           <CutListTables spec={spec.data} baseline={priorSpec.data ?? null} />
+        ) : tab === "renders" ? (
+          <RendersTab
+            packageId={packageId}
+            version={version}
+            selected={current.render}
+            tierHint={current.render ? null : tierHint}
+            onSelect={(render) => setPlace({ tab: "renders", render })}
+          />
         ) : (
           <>
             <p className="text-sm">

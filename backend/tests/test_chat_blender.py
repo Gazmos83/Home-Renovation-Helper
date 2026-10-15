@@ -1,7 +1,7 @@
 """One real turn chain in the pinned Blender, driven by scripted models.
 
 brief → `create_piece` builds the fold-down desk for real → the Builder renders a
-`draft` turntable (tier `draft`: 12 frames, 600 × 600, Eevee).
+`draft` turntable (tier `draft`: 12 frames, 800 × 800, Eevee).
 """
 
 from __future__ import annotations
@@ -87,4 +87,4 @@ def test_a_chat_builds_the_desk_and_renders_a_draft_turntable(client: TestClient
     assert job["tier"] == "draft"
     frames = sorted((folder / "frames").glob("frame_*.png"))
     assert len(frames) == 12
-    assert png_size(frames[0]) == (600, 600)
+    assert png_size(frames[0]) == (800, 800)

@@ -1,6 +1,7 @@
 """restyle-variants: render_restyle.py inside the pinned Blender (run with --blender).
 
-A piece restyle recolours the named material and leaves `model.blend` byte-identical; a
+A restyle is a draft turntable whose first frame is its still (two-tier-renders). A piece
+restyle recolours the named material and leaves `model.blend` byte-identical; a
 room restyle recolours walls, floor, ceiling and the stand-in, and leaves the placed piece
 and the library model as built.
 """
@@ -44,7 +45,16 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def test_a_piece_restyle_renders_a_still_and_leaves_the_built_model_alone(
+def _turntable_published(out: Path) -> None:
+    """12 frames at 800 × 800, a viewer naming them, and `still.png` equal to frame 0."""
+    frames = sorted(p.name for p in (out / "frames").iterdir())
+    assert frames == [f"frame_{i:03d}.png" for i in range(12)]
+    assert png_size(out / "frames" / "frame_000.png") == (800, 800)
+    assert (out / "viewer.html").is_file()
+    assert (out / "still.png").read_bytes() == (out / "frames" / "frame_000.png").read_bytes()
+
+
+def test_a_piece_restyle_renders_a_turntable_and_leaves_the_built_model_alone(
     scene, blender_bin: Path, tmp_path: Path  # noqa: F811
 ) -> None:
     root, _models, _folder, _out, _overall = scene
@@ -54,9 +64,9 @@ def test_a_piece_restyle_renders_a_still_and_leaves_the_built_model_alone(
     [plan] = piece_variants(STARTER, [{slot: "sage-green"}], PRESETS)
     result = _restyle(blender_bin, plan.payload, tmp_path / "walnut", "--blend", str(piece / "model.blend"))
     assert result.returncode == 0, result.stderr[-1500:]
-    assert png_size(tmp_path / "walnut" / "still.png") == (600, 600)
+    _turntable_published(tmp_path / "walnut")
     record = json.loads((tmp_path / "walnut" / "scene.json").read_text(encoding="utf-8"))
-    assert record["source"] == "restyle" and record["materials_changed"]
+    assert record["source"] == "restyle" and record["materials_changed"] and record["frames"] == 12
     assert _digest(piece / "model.blend") == before
 
 
@@ -79,7 +89,7 @@ def test_a_grain_look_renders(scene, blender_bin: Path, tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr[-1500:]
 
 
-def test_a_room_restyle_renders_a_still_from_the_stored_document(
+def test_a_room_restyle_renders_a_turntable_from_the_stored_document(
     scene, blender_bin: Path, tmp_path: Path  # noqa: F811
 ) -> None:
     root, models, folder, _out, _overall = scene
@@ -89,7 +99,7 @@ def test_a_room_restyle_renders_a_still_from_the_stored_document(
         "--spec", str(folder / "input.json"), "--pieces", str(root), "--models", str(models),
     )
     assert result.returncode == 0, result.stderr[-1500:]
-    assert png_size(tmp_path / "room" / "still.png") == (600, 600)
+    _turntable_published(tmp_path / "room")
 
 
 def test_a_room_style_changes_the_shell_and_stand_in_but_not_the_piece_or_the_model(

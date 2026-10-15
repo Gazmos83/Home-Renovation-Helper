@@ -73,7 +73,7 @@ def test_a_draft_shell_turntable_publishes_twelve_frames_in_the_shell_folder(ren
     entry = storage.read_status(folder)["renders"]["turntable"]
     assert entry["status"] == "succeeded" and entry["tier"] == "draft"
     assert arg_value(calls[0], "--blend").endswith("/shells/flat/v1/model.blend")
-    assert (arg_value(calls[0], "--tier-frames"), arg_value(calls[0], "--tier-resolution")) == ("12", "600")
+    assert (arg_value(calls[0], "--tier-frames"), arg_value(calls[0], "--tier-resolution")) == ("12", "800")
 
 
 def test_a_shell_ticket_never_matches_a_piece_of_the_same_id(render_root: Path) -> None:

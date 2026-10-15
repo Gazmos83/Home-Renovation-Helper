@@ -18,7 +18,7 @@ from app.blender.runner import (
     run_render,
     shows_dimensions,
 )
-from app.render.benchmark_store import Benchmark
+from app.render.benchmark_store import Benchmark, RemoteBenchmark
 from app.render.guard import RenderNotAuthorised, authorise
 from app.render.tiers import load_tiers
 from tests.blender_fakes import (
@@ -193,7 +193,7 @@ def test_a_draft_still_publishes_and_records_its_tier(render_root: Path) -> None
     assert record["tier"] == "draft"
     argv = calls[0]
     assert (arg_value(argv, "--tier-frames"), arg_value(argv, "--tier-resolution"),
-            arg_value(argv, "--tier-engine")) == ("12", "600", "BLENDER_EEVEE")
+            arg_value(argv, "--tier-engine")) == ("12", "800", "BLENDER_EEVEE")
 
 
 def test_a_draft_turntable_publishes_exactly_twelve_frames_and_a_viewer(render_root: Path) -> None:
@@ -208,8 +208,8 @@ def test_a_draft_turntable_publishes_exactly_twelve_frames_and_a_viewer(render_r
 def test_a_new_turntable_replaces_the_old_one_whole(render_root: Path) -> None:
     folder = new_version(render_root, built=True)
     run(render(render_root, ticket("turntable", "draft"), fake_success_launch(render_writer)))
-    run(render(render_root, ticket("turntable", "preview"), fake_success_launch(render_writer)))
-    assert len(list((folder / "frames").iterdir())) == 24
+    run(render(render_root, ticket("turntable", "final"), fake_success_launch(render_writer)))
+    assert len(list((folder / "frames").iterdir())) == 36
 
 
 def test_still_and_turntable_records_are_both_kept(render_root: Path) -> None:
@@ -223,7 +223,7 @@ def test_a_missing_frame_fails_naming_it_and_publishes_nothing(render_root: Path
     folder = new_version(render_root, built=True)
 
     def hole(out: Path, argv: list[str]) -> None:
-        write_frames(out, frames=12, size=600, skip_empty=7)
+        write_frames(out, frames=12, size=800, skip_empty=7)
 
     run(render(render_root, ticket("turntable"), fake_success_launch(hole)))
     entry = storage.read_status(folder)["renders"]["turntable"]
@@ -295,9 +295,11 @@ def test_dimension_lines_are_never_asked_of_a_room_shell_composition_or_detail_r
     assert not shows_dimensions(quote(room=True))
     assert not shows_dimensions(quote(record="shell"))
     assert not shows_dimensions(quote(record="room"))
+    # A detail turntable runs only on the render server (two-tier-renders).
     assert not shows_dimensions(
         authorise(package_id="desk", version=1, kind="turntable", tier="final", tiers=TIERS,
-                  benchmark=BENCH, approval="yes", source="detail").quote
+                  benchmark=BENCH, approval="yes", source="detail", target="remote",
+                  remote_benchmark=RemoteBenchmark(0.2, 40.0, "t")).quote
     )
 
 
@@ -311,8 +313,8 @@ def test_the_timeout_scales_with_the_tier(render_root: Path) -> None:
         return LaunchResult(0, "", False)
 
     run(render(render_root, ticket("still", "draft"), spy, timeout=100))
-    run(render(render_root, ticket("still", "preview"), spy, timeout=100))
-    assert seen == [100, 200]
+    run(render(render_root, ticket("still", "final"), spy, timeout=100))
+    assert seen == [100, 2400]
 
 
 def test_on_finished_runs_after_a_success_only(render_root: Path) -> None:
@@ -371,7 +373,7 @@ def test_a_render_launch_without_a_ticket_is_refused(render_root: Path) -> None:
 # --- detail renders (photoreal-detail) -----------------------------------------------------------
 
 
-def detail_ticket(kind="turntable", *, version=1, package_id="desk"):
+def detail_ticket(kind="still", *, version=1, package_id="desk"):
     return authorise(
         package_id=package_id, version=version, kind=kind, tier="final", tiers=TIERS,
         benchmark=BENCH, approval="yes", source="detail",
@@ -385,29 +387,25 @@ def with_detail_copy(folder: Path) -> Path:
     return copy
 
 
-def test_a_final_detail_turntable_renders_the_copy_and_publishes_under_detail(render_root: Path) -> None:
+def test_a_final_detail_still_renders_the_copy_and_publishes_under_detail(render_root: Path) -> None:
+    # On the laptop a detail render is a still (two-tier-renders).
     folder = new_version(render_root, built=True)
     copy = with_detail_copy(folder)
-    own_frames = folder / "frames"
-    own_frames.mkdir()
-    (own_frames / "frame_000.png").write_bytes(b"own")
+    (folder / "still.png").write_bytes(b"own")
     calls: list[list[str]] = []
     run(render(render_root, detail_ticket(), fake_success_launch(render_writer, calls=calls)))
     argv = calls[0]
     assert arg_value(argv, "--blend") == str(copy)
     assert "--dimensions" not in argv
-    assert (arg_value(argv, "--tier-frames"), arg_value(argv, "--tier-resolution"),
-            arg_value(argv, "--tier-engine")) == ("36", "1500", "CYCLES")
+    assert (arg_value(argv, "--tier-resolution"), arg_value(argv, "--tier-engine")) == ("1500", "CYCLES")
     detail = storage.detail_dir(folder)
-    assert sorted(p.name for p in (detail / "frames").iterdir()) == [f"frame_{i:03d}.png" for i in range(36)]
-    assert (detail / "viewer.html").is_file()
-    assert [p.name for p in own_frames.iterdir()] == ["frame_000.png"]
-    assert not (folder / "viewer.html").exists()
-    record = json.loads((detail / "scene.json").read_text(encoding="utf-8"))["turntable"]
+    assert (detail / "still.png").is_file()
+    assert (folder / "still.png").read_bytes() == b"own"
+    record = json.loads((detail / "scene.json").read_text(encoding="utf-8"))["still"]
     assert record["source"] == "detail" and record["tier"] == "final"
-    entry = storage.read_status(folder)["renders"]["detail-turntable"]
+    entry = storage.read_status(folder)["renders"]["detail-still"]
     assert entry["status"] == "succeeded" and entry["tier"] == "final"
-    assert "turntable" not in storage.read_status(folder)["renders"]
+    assert "still" not in storage.read_status(folder)["renders"]
     assert [p for p in folder.iterdir() if p.name.startswith(".")] == []
 
 
@@ -423,7 +421,7 @@ def test_a_detail_render_without_the_copy_fails_and_launches_nothing(render_root
     folder = new_version(render_root, built=True)
     calls: list[list[str]] = []
     run(render(render_root, detail_ticket(), fake_success_launch(render_writer, calls=calls)))
-    entry = storage.read_status(folder)["renders"]["detail-turntable"]
+    entry = storage.read_status(folder)["renders"]["detail-still"]
     assert entry["status"] == "failed" and "detail.blend" in entry["error"]
     assert calls == []
 
@@ -538,7 +536,7 @@ def test_a_composition_turntable_renders_through_its_own_script_into_the_version
     argv = calls[0]
     assert Path(argv[argv.index("--python") + 1]).name == "render_composition.py"
     assert arg_value(argv, "--kind") == "turntable"
-    assert (arg_value(argv, "--tier-frames"), arg_value(argv, "--tier-resolution")) == ("12", "600")
+    assert (arg_value(argv, "--tier-frames"), arg_value(argv, "--tier-resolution")) == ("12", "800")
 
 
 def test_the_composition_renderer_is_a_render_script_a_build_cannot_launch() -> None:

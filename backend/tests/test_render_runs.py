@@ -81,9 +81,9 @@ def test_a_render_started_over_http_records_no_origin(client, launched) -> None:
 def test_a_failed_render_is_recorded_as_failed(make_ctx, tool_state) -> None:
     made(make_ctx, tool_state)
     tool_state.blender_launch = fake_failure_launch
-    render_run({"package_id": "bench", "tier": "draft", "kind": "still"}, agent_ctx(make_ctx))
+    render_run({"package_id": "bench", "tier": "draft", "kind": "turntable"}, agent_ctx(make_ctx))
     run = wait_for_outcome(tool_state.engine, "failed")
-    assert run.render_key == "still" and run.finished_at is not None
+    assert run.render_key == "turntable" and run.finished_at is not None
 
 
 def test_a_database_failure_does_not_stop_the_render(make_ctx, tool_state, monkeypatch) -> None:
@@ -129,8 +129,10 @@ def test_finishing_an_unknown_or_missing_run_never_raises(tool_state) -> None:
 @pytest.mark.parametrize("key", ["still", "turntable"])
 def test_the_latest_succeeded_run_is_the_one_the_owner_sees(make_ctx, tool_state, key) -> None:
     made(make_ctx, tool_state)
+    # A piece's own still is a final (a draft of a piece is a turntable, two-tier-renders).
+    tier = "final" if key == "still" else "draft"
     for _ in range(2):
-        render_run({"package_id": "bench", "tier": "draft", "kind": key}, agent_ctx(make_ctx))
+        render_run({"package_id": "bench", "tier": tier, "kind": key}, replace(agent_ctx(make_ctx), approved=True))
         wait_job(folder_of(tool_state), key)
         time.sleep(0.2)
     runs = [r for r in runs_of(tool_state.engine) if r.outcome == "succeeded"]

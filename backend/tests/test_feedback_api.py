@@ -100,8 +100,8 @@ def test_a_re_rendered_render_starts_unrated_and_the_old_rating_stays_with_the_o
 ) -> None:
     render(client, tier="draft")
     rate(client)
-    render(client, tier="preview")
-    assert item(client, "still")["rating"] is None and item(client, "still")["tier"] == "preview"
+    render(client, tier="draft")
+    assert item(client, "still")["rating"] is None and item(client, "still")["tier"] == "draft"
     assert len(feedback_rows(client)) == 1
     assert rate(client, rating="up", comment=None).status_code == 200
     assert len(feedback_rows(client)) == 2
@@ -286,3 +286,70 @@ def test_the_run_count_helper_is_sane(client: TestClient) -> None:
     render(client)
     with Session(client.app.state.engine) as session:
         assert session.scalar(select(func.count()).select_from(RenderRun)) == 1
+
+
+# --- restyle variants are rateable renders (two-tier-renders) ---------------------------------
+
+
+def published_variant(client: TestClient, render_root: Path, variant: str = "walnut-draft") -> None:
+    """A published draft turntable variant of hall-bench v1 and its succeeded run."""
+    from app.blender import storage
+    from app.restyle import store as restyle_store
+
+    folder = restyle_store.variant_dir(storage.version_dir(render_root, "hall-bench", 1), variant)
+    (folder / "frames").mkdir(parents=True)
+    for index in range(12):
+        (folder / "frames" / f"frame_{index:03d}.png").write_bytes(png_bytes(800, 800))
+    (folder / "still.png").write_bytes(png_bytes(800, 800))
+    (folder / "viewer.html").write_text("<html></html>", encoding="utf-8")
+    (folder / "scene.json").write_text(
+        json.dumps({"source": "restyle", "label": "Walnut", "tier": "draft", "created_at": "2026-10-15T10:00:00+00:00"}),
+        encoding="utf-8",
+    )
+    with Session(client.app.state.engine) as session:
+        session.add(RenderRun(
+            package_id="hall-bench", version=1, render_key=f"variant:{variant}", tier="draft",
+            outcome="succeeded", slot="builder", model=BUILDER_MODEL,
+        ))
+        session.commit()
+
+
+def test_a_variant_is_listed_with_its_frames_and_rated(client: TestClient, render_root: Path) -> None:
+    published_variant(client, render_root)
+    listed = item(client, "variant:walnut-draft")
+    assert (listed["label"], listed["tier"], listed["frames"]) == ("Walnut", "draft", 12)
+    assert listed["preview"] == f"{BASE}/files/variants/walnut-draft/frames/0"
+    assert listed["can_rate"] is True and listed["finished_at"] == "2026-10-15T10:00:00+00:00"
+    response = rate(client, key="variant:walnut-draft", rating="up", comment="love this")
+    assert response.status_code == 200
+    assert (response.json()["rating"], response.json()["comment"]) == ("up", "love this")
+    [row] = feedback_rows(client)
+    assert (row.rating, row.comment) == ("up", "love this")
+    assert client.delete(f"{BASE}/renders/variant:walnut-draft/feedback").json()["rating"] is None
+
+
+def test_an_unknown_variant_is_refused_as_not_rendered_yet(client: TestClient, render_root: Path) -> None:
+    published_variant(client, render_root)
+    response = rate(client, key="variant:sage-green-draft", rating="up")
+    assert response.status_code == 409
+    assert "does not exist yet" in response.json()["detail"]["reason"]
+    assert feedback_rows(client) == []
+
+
+def test_a_variant_frame_is_served_by_index_and_an_unknown_variant_is_not_found(
+    client: TestClient, render_root: Path
+) -> None:
+    published_variant(client, render_root)
+    frame = client.get(f"{BASE}/files/variants/walnut-draft/frames/5")
+    assert frame.status_code == 200 and frame.headers["content-type"] == "image/png"
+    assert client.get(f"{BASE}/files/variants/walnut-draft/frames/frame_005.png").status_code == 200
+    assert client.get(f"{BASE}/files/variants/oak-draft/frames/0").status_code == 404
+    assert client.get(f"{BASE}/files/variants/walnut-draft/frames/12").status_code == 404
+
+
+def test_the_render_list_carries_frame_counts_and_finish_times(client: TestClient) -> None:
+    render(client, kind="turntable")
+    listed = item(client, "turntable")
+    assert listed["frames"] == 12 and listed["finished_at"]
+    render(client, kind="still")
+    assert item(client, "still")["frames"] == 0

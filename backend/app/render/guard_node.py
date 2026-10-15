@@ -2,7 +2,7 @@
 
 For `final`, the node pauses with LangGraph's `interrupt()` carrying the
 estimate; the run resumes only with the owner's answer, and only an exact "yes"
-mints a ticket. Draft and preview run straight through.
+mints a ticket. A draft runs straight through.
 
 A `RenderTicket` is deliberately not serialisable (it is a live, single-use
 capability), so it never enters checkpointed state: the node stores it in the

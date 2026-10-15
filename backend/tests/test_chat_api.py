@@ -1076,8 +1076,8 @@ def test_a_render_notice_follows_the_reply_that_started_the_render(client: TestC
             package_id="hall-bench", version=1,
         )
         house_file.add_notice(
-            session, UUID(thread), after_messages=2, outcome="failed", tier="preview",
-            text="The preview still of the flat shell version 1 did not finish, so nothing new was published. You can ask for it again.",
+            session, UUID(thread), after_messages=2, outcome="failed", tier="draft",
+            text="The draft still of the flat shell version 1 did not finish, so nothing new was published. You can ask for it again.",
         )
         house_file.add_notice(
             session, UUID(thread), after_messages=2, outcome="succeeded", kind="build", tier=None,
@@ -1091,7 +1091,7 @@ def test_a_render_notice_follows_the_reply_that_started_the_render(client: TestC
     assert [m["kind"] for m in messages[2:]] == ["render", "render", "build"]
     assert "tier" not in built and (built["package_id"], built["version"]) == ("hall-bench", 2)
     assert (done["outcome"], done["tier"], done["package_id"], done["version"]) == ("succeeded", "draft", "hall-bench", 1)
-    assert (failed["outcome"], failed["tier"]) == ("failed", "preview")
+    assert (failed["outcome"], failed["tier"]) == ("failed", "draft")
     assert "package_id" not in failed and "version" not in failed and "package_id" not in messages[0]
     body = json.dumps(messages).lower()
     assert "/home/" not in body and "openai/" not in body and "token" not in body

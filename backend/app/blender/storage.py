@@ -433,6 +433,20 @@ def write_status(version_folder: Path, **fields: Any) -> dict[str, Any]:
 RENDER_KEYS: Final = (
     "still", "turntable", "room-still", "room-turntable", "detail-still", "detail-turntable",
 )
+# A restyle variant of a piece is a rateable render too, keyed by its variant id
+# (two-tier-renders): `variant:<id>`.
+VARIANT_KEY_PREFIX: Final = "variant:"
+
+
+def variant_key(variant_id: str) -> str:
+    return f"{VARIANT_KEY_PREFIX}{variant_id}"
+
+
+def variant_of(render_key: str) -> str | None:
+    """The variant id a `variant:<id>` render key names, or `None` for any other key."""
+    if render_key.startswith(VARIANT_KEY_PREFIX):
+        return render_key[len(VARIANT_KEY_PREFIX):] or None
+    return None
 
 # The detail pass (photoreal-detail): a copy of the model the live Blender edits, and what it makes.
 DETAIL_DIRNAME: Final = "detail"
@@ -486,15 +500,9 @@ def merge_scene_record(target: Path, key: str, record: dict[str, Any]) -> None:
     os.replace(temp, path)
 
 
-def sweep_orphaned_statuses(root: Path, *, reason: str = "the service restarted") -> int:
-    """Mark every `queued`/`running` build or render under `root` as `failed`.
-
-    No job queue survives a restart, so a status still `queued` or `running`
-    from a previous process is not actually running. Returns how many entries
-    were changed. Never raises for one unreadable folder.
-    """
-    changed = 0
-    folders = [
+def _all_version_folders(root: Path) -> list[Path]:
+    """Every version folder under the render root: pieces, apartment shells and compositions."""
+    return [
         version_dir(root, package_id, number)
         for package_id, found in list_packages(root)
         for number in found
@@ -507,7 +515,17 @@ def sweep_orphaned_statuses(root: Path, *, reason: str = "the service restarted"
         for slug, found in list_compositions(root)
         for number in found
     ]
-    for folder in folders:
+
+
+def sweep_orphaned_statuses(root: Path, *, reason: str = "the service restarted") -> int:
+    """Mark every `queued`/`running` build or render under `root` as `failed`.
+
+    No job queue survives a restart, so a status still `queued` or `running`
+    from a previous process is not actually running. Returns how many entries
+    were changed. Never raises for one unreadable folder.
+    """
+    changed = 0
+    for folder in _all_version_folders(root):
         status = read_status(folder)
         if status is None:
             continue
@@ -519,4 +537,57 @@ def sweep_orphaned_statuses(root: Path, *, reason: str = "the service restarted"
             if entry.get("status") in ("queued", "running"):
                 write_render_status(folder, key, status="failed", finished_at=now, error=reason)
                 changed += 1
+    return changed
+
+
+# The tier removed by two-tier-renders, and what a render recorded at it is now called.
+REMOVED_TIER: Final = "preview"
+RELABELLED_TIER: Final = "draft"
+
+
+def _relabelled(value: Any) -> tuple[Any, bool]:
+    """`value` with every `"tier": "preview"` set to `"draft"`, and whether anything changed."""
+    if isinstance(value, dict):
+        changed = False
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            if key == "tier" and item == REMOVED_TIER:
+                out[key], changed = RELABELLED_TIER, True
+                continue
+            out[key], inner = _relabelled(item)
+            changed = changed or inner
+        return out, changed
+    if isinstance(value, list):
+        items = [_relabelled(item) for item in value]
+        return [item for item, _ in items], any(inner for _, inner in items)
+    return value, False
+
+
+def relabel_preview_files(root: Path) -> int:
+    """Rewrite a `preview` tier to `draft` in the render records under the render root.
+
+    Covers each version folder's `status.json` and every `scene.json` beneath it (the
+    version's own, `room/`, `detail/` and `variants/*/`), for pieces, shells and
+    compositions. Folder names and images are left alone, a hidden staging folder is
+    skipped, and a file that cannot be read is skipped. Idempotent: returns how many
+    files were rewritten, 0 once relabelled.
+    """
+    changed = 0
+    for folder in _all_version_folders(root):
+        records = [folder / STATUS_FILE, *sorted(folder.rglob("scene.json"))]
+        for path in records:
+            relative = path.relative_to(folder).parts[:-1]
+            if any(part.startswith(".") for part in relative) or not path.is_file():
+                continue
+            try:
+                document = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            relabelled, touched = _relabelled(document)
+            if not touched:
+                continue
+            temp = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+            temp.write_text(json.dumps(relabelled, indent=2, ensure_ascii=False), encoding="utf-8")
+            os.replace(temp, path)
+            changed += 1
     return changed

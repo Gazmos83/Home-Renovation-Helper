@@ -5,7 +5,8 @@
 sends one allow-listed script and answers with the scene as text.
 `detail_screenshot` is for the owner: the agent is text-only. `render_detail`
 renders the detail copy at tier `final` through the render guard, behind the
-owner's typed yes. Nothing here reads or writes the spec.
+owner's typed yes; on the laptop that is a still, and a turntable runs only on the
+render server (two-tier-renders). Nothing here reads or writes the spec.
 
 The package always comes from the conversation's bound piece, never from an
 argument the model supplied (CLAUDE.md §8).
@@ -71,7 +72,10 @@ class RenderDetailArgs(VersionArgs):
     # Extra fields are accepted here only so the guard can refuse them by name.
     model_config = ConfigDict(extra="allow")
 
-    kind: str = Field(default="turntable", description="'turntable' or 'still'")
+    kind: str = Field(
+        default="still",
+        description="'still', or 'turntable' only when finals run on the render server",
+    )
     tier: str | None = Field(default=None, description="required; a detail render is 'final' only")
 
 
@@ -385,9 +389,10 @@ def render_run(arguments: dict[str, Any], ctx: ToolContext) -> str:
 render_detail = AgentTool(
     name="render_detail",
     description=(
-        "Render a still or turntable of the detailed copy of the bound piece. The tier is "
-        "required and must be final (check progress with a screenshot instead); never pass "
-        "frames, resolution or engine. Waits for the owner's yes and shows the estimate."
+        "Render a still of the detailed copy of the bound piece, or a turntable when finals run "
+        "on the render server (on the laptop a detail render is a still). The tier is required "
+        "and must be final (check progress with a screenshot instead); never pass frames, "
+        "resolution or engine. Waits for the owner's yes and shows the estimate."
     ),
     schema=RenderDetailArgs,
     run=render_run,

@@ -1,10 +1,11 @@
-"""`restyle_render` (Builder): draft pictures of a built version in other looks or styles.
+"""`restyle_render` (Builder): draft turntables of a built version in other looks or styles.
 
 Appearance only (restyle-variants): a piece is shown with other colours and finishes on its
 own material slots, a composed room in other styles. The spec, cut list and prices never
-change, and a variant is never a final. The tier is required and only `draft` and `preview`
-are accepted; one estimate covers the whole batch, then one still per variant is rendered
-on the app loop, never waited for.
+change, and a variant is never a final. The tier is required and only `draft` is accepted;
+one estimate covers the whole batch, then one draft turntable per variant is rendered on
+the app loop, never waited for (two-tier-renders). Each variant of a piece is recorded as a
+render run, so the owner can rate it like any render.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from app.agent import notices
 from app.agent.tools.base import AgentTool, ToolContext, parse_args
 from app.agent.tools.shared import builds_unavailable, read_input
 from app.blender import restyle_runner, storage
+from app.feedback import runs as feedback_runs
 from app.render import benchmark_store
 from app.render.estimate import describe
 from app.render.guard import (
@@ -57,7 +59,7 @@ class RestyleArgs(BaseModel):
     package_id: str | None = Field(default=None, description="the piece's package id")
     composition: str | None = Field(default=None, description="a composed room's name")
     version: int | None = Field(default=None, description="a version number; the latest when left out")
-    tier: str | None = Field(default=None, description="required: draft or preview")
+    tier: str | None = Field(default=None, description="required: draft")
     looks: list[Any] | None = Field(
         default=None, description="piece: look preset ids (or 'all'); each becomes one variant on `slots`"
     )
@@ -116,7 +118,7 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext):
         return refusal.reason
     ids = store.allocate_ids(folder, [plan.base_id for plan in plans], str(args.tier))
     price = {
-        "package_id": target_id, "version": number, "kind": "still", "tier": args.tier,
+        "package_id": target_id, "version": number, "kind": "turntable", "tier": args.tier,
         "tiers": ctx.deps.tiers, "benchmark": benchmark_store.read_benchmark(ctx.deps.engine),
         "cycles_multiplier": benchmark_store.read_cycles_multiplier(ctx.deps.engine),
         "raw_fields": list((args.model_extra or {}).keys()), "record": record, "source": "restyle",
@@ -146,7 +148,7 @@ def _reply(
         if overflow > 0 else ""
     )
     return (
-        f"Started {len(plans)} {tier} restyle still{'s' if len(plans) != 1 else ''} of {target_id} "
+        f"Started {len(plans)} {tier} restyle turntable{'s' if len(plans) != 1 else ''} of {target_id} "
         f"version {number} ({labels}): {describe(seconds)} in all. A notice appears in this chat when "
         f"they finish; they are {APPEARANCE_NOTE}, and the design itself is unchanged.{note}"
     )
@@ -166,8 +168,11 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
         return refusal.reason
     deps = ctx.deps
     settings = deps.settings
+    origin = feedback_runs.origin_from(ctx)
     jobs = [
-        restyle_runner.RestyleJob(ticket, plan, variant)
+        restyle_runner.RestyleJob(
+            ticket, plan, variant, run_id=feedback_runs.record_run(deps.engine, ticket.quote, origin)
+        )
         for ticket, plan, variant in zip(tickets, plans, ids, strict=True)
     ]
     first = tickets[0].quote
@@ -182,6 +187,7 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
             models_root=settings.upload_root / "models",
             tracing=deps.tracing,
             on_outcome=lambda outcome: notices.post(deps, ctx.thread_id, first, outcome),
+            on_variant=lambda job, outcome: feedback_runs.finish_run(deps.engine, job.run_id, outcome),
         ),
         deps.loop,
     )
@@ -192,10 +198,10 @@ restyle_render = AgentTool(
     name="restyle_render",
     description=(
         "Show a built piece in other colours and finishes, or a composed room in other styles, as "
-        "draft pictures. Appearance only: the design, materials, cut list and prices never change. "
+        "draft turntables. Appearance only: the design, materials, cut list and prices never change. "
         "A piece (package_id): pass `slots` (its material slot names) with `looks` (preset ids or "
         "'all'), or explicit `variants`. A composed room (composition): pass `styles` (preset ids or "
-        "'all'). A tier is required and is draft or preview; never pass frame counts, resolutions or "
+        "'all'). A tier is required and is draft; never pass frame counts, resolutions or "
         "engines. One estimate covers the whole batch."
     ),
     schema=RestyleArgs,

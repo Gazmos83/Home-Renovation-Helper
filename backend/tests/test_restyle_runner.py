@@ -1,4 +1,4 @@
-"""restyle-variants: a batch renders one still per variant behind the guard, with fake launchers."""
+"""restyle-variants: a batch renders one draft turntable per variant behind the guard, with fake launchers."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def _run(coro):
 def _tickets(plans, ids, *, record="piece", package_id="desk", tier="draft"):
     return [
         RestyleJob(
-            authorise(package_id=package_id, version=1, kind="still", tier=tier, tiers=TIERS,
+            authorise(package_id=package_id, version=1, kind="turntable", tier=tier, tiers=TIERS,
                       benchmark=BENCH, record=record, source="restyle", variant=variant),
             plan, variant,
         )
@@ -59,7 +59,7 @@ def _plans(*looks: str):
     return piece_variants(SPEC, [{"carcass": look} for look in looks], PRESETS)
 
 
-def test_three_variants_publish_one_still_each_and_leave_the_version_alone(tmp_path: Path) -> None:
+def test_three_variants_publish_one_turntable_each_and_leave_the_version_alone(tmp_path: Path) -> None:
     folder = new_version(tmp_path, built=True)
     (folder / "spec.json").write_text(json.dumps(SPEC), encoding="utf-8")
     (folder / "still.png").write_bytes(b"own-still")
@@ -75,8 +75,12 @@ def test_three_variants_publish_one_still_each_and_leave_the_version_alone(tmp_p
         assert record["source"] == "restyle" and record["tier"] == "draft"
         assert record["note"] == "appearance only, not a priced material"
         assert (store.variant_dir(folder, variant) / "still.png").stat().st_size > 0
+        frames = sorted(p.name for p in (store.variant_dir(folder, variant) / "frames").iterdir())
+        assert frames == [f"frame_{i:03d}.png" for i in range(12)]
+        assert (store.variant_dir(folder, variant) / "viewer.html").is_file()
     assert _digest(folder) == before, "the version's own files are unchanged"
-    assert [arg_value(a, "--tier-resolution") for a in calls] == ["600"] * 3
+    assert [arg_value(a, "--tier-resolution") for a in calls] == ["800"] * 3
+    assert [arg_value(a, "--tier-frames") for a in calls] == ["12"] * 3
     assert all(Path(a[a.index("--python") + 1]).name == "render_restyle.py" for a in calls)
     assert not [p for p in store.variants_dir(folder).iterdir() if p.name.startswith(".")]
 
@@ -95,11 +99,33 @@ def test_one_failed_variant_is_named_and_the_others_stay(tmp_path: Path) -> None
         return await good(argv, cwd, timeout)
 
     outcomes = []
-    result = _go(tmp_path, _tickets(plans, ids), flaky, on_outcome=outcomes.append)
+    per_variant: list[tuple[str, str]] = []
+    result = _go(
+        tmp_path, _tickets(plans, ids), flaky, on_outcome=outcomes.append,
+        on_variant=lambda job, outcome: per_variant.append((job.variant_id, outcome)),
+    )
     assert [o.variant_id for o in result.failed] == [ids[1]]
     assert "boom" in result.failed[0].error
     assert {item["id"] for item in store.list_variants(folder)} == {ids[0], ids[2]}
     assert outcomes == ["failed"]
+    assert per_variant == [(ids[0], "succeeded"), (ids[1], "failed"), (ids[2], "succeeded")]
+
+
+def test_a_variant_missing_a_frame_fails_and_publishes_nothing(tmp_path: Path) -> None:
+    folder = new_version(tmp_path, built=True)
+    plans = _plans("walnut")
+    ids = store.allocate_ids(folder, [p.base_id for p in plans], "draft")
+    good = fake_pipeline_launch()
+
+    async def short(argv, cwd, timeout):
+        reply = await good(argv, cwd, timeout)
+        out = Path(arg_value(argv, "--out"))
+        (out / "frames" / "frame_011.png").unlink()
+        return reply
+
+    result = _go(tmp_path, _tickets(plans, ids), short)
+    assert result.failed and "frame_011.png" in result.failed[0].error
+    assert store.list_variants(folder) == []
 
 
 def test_the_thirteenth_variant_replaces_the_oldest(tmp_path: Path) -> None:
@@ -166,9 +192,11 @@ def test_a_room_restyle_passes_the_composition_inputs_and_the_style(tmp_path: Pa
 
 def test_allocated_ids_are_unique_and_built_from_presets_only(tmp_path: Path) -> None:
     folder = new_version(tmp_path, built=True)
-    assert store.allocate_ids(folder, ["walnut", "walnut"], "preview") == ["walnut-preview", "walnut-preview-2"]
-    target = store.variants_dir(folder) / "walnut-preview"
+    assert store.allocate_ids(folder, ["walnut", "walnut"], "draft") == ["walnut-draft", "walnut-draft-2"]
+    target = store.variants_dir(folder) / "walnut-draft"
     target.mkdir(parents=True)
     (target / "still.png").write_bytes(b"x")
     (target / "scene.json").write_text("{}", encoding="utf-8")
-    assert store.allocate_ids(folder, ["walnut"], "preview") == ["walnut-preview-2"]
+    assert store.allocate_ids(folder, ["walnut"], "draft") == ["walnut-draft-2"]
+    # Every id fits a variant render key, `variant:<id>` (two-tier-renders).
+    assert all(len(f"variant:{i}") <= 96 for i in store.allocate_ids(folder, ["x" * 90], "draft"))

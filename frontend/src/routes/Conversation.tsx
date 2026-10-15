@@ -31,7 +31,7 @@ import { Rail } from "@/components/chat/Rail";
 import { Reply } from "@/components/chat/Reply";
 import { ROLE_LABELS } from "@/components/chat/roles";
 import { WaitingBubble } from "@/components/chat/WaitingBubble";
-import { InspectorView } from "@/components/inspector/InspectorView";
+import { InspectorView, parseTab, type InspectorPlace } from "@/components/inspector/InspectorView";
 import { RoomView, VersionSelect } from "@/components/inspector/RoomView";
 import { BriefPanel } from "@/components/chat/BriefPanel";
 import { DecisionsNote } from "@/components/chat/DecisionsNote";
@@ -608,6 +608,10 @@ export function useConversation(threadId: string, showPane: (pane: "piece" | "ro
   const stream = useRef<AbortController | null>(null);
   const [params, setParams] = useSearchParams();
   const inspected = parseInspect(params.get("inspect"));
+  // `?tab=` and `?render=`: the inspector's tab and the render chosen on its Renders tab;
+  // `?tier=`: the tier a notice's Review button asked for (two-tier-renders).
+  const place: InspectorPlace = { tab: parseTab(params.get("tab")), render: params.get("render") };
+  const tierHint = params.get("tier");
 
   // The progress runs here so a finished build or render is noticed with the panel closed.
   const progress = useQuery({
@@ -658,17 +662,60 @@ export function useConversation(threadId: string, showPane: (pane: "piece" | "ro
   }
 
   // `?inspect=<id>/<n>`: the version in the piece pane; with none, the pane shows the piece's latest version.
+  // Another version keeps the open tab; the chosen render belongs to the version it was chosen on.
   function inspect(packageId: string | null, version?: number) {
     setParams(
       (current) => {
         const next = new URLSearchParams(current);
         if (packageId && version) next.set("inspect", `${packageId}/${version}`);
-        else next.delete("inspect");
+        else {
+          next.delete("inspect");
+          next.delete("tab");
+        }
+        next.delete("render");
+        next.delete("tier");
         return next;
       },
       { replace: true },
     );
     if (packageId && version) showPane("piece");
+  }
+
+  // A notice's Review button: the version's Renders tab, showing the newest render of that tier.
+  function review(packageId: string, version: number, tier?: string) {
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.set("inspect", `${packageId}/${version}`);
+        next.delete("render");
+        if (tier) {
+          next.set("tab", "renders");
+          next.set("tier", tier);
+        } else {
+          next.delete("tab");
+          next.delete("tier");
+        }
+        return next;
+      },
+      { replace: true },
+    );
+    showPane("piece");
+  }
+
+  // The inspector's tab and chosen render, kept in the address so a reload shows them again.
+  function placeInspector(next: InspectorPlace) {
+    setParams(
+      (current) => {
+        const params = new URLSearchParams(current);
+        if (next.tab === "model") params.delete("tab");
+        else params.set("tab", next.tab);
+        if (next.render) params.set("render", next.render);
+        else params.delete("render");
+        params.delete("tier");
+        return params;
+      },
+      { replace: true },
+    );
   }
 
   // `?room=<slug>[/<n>]`: the room and version in the room pane; with none, the pane shows the room's latest.
@@ -797,6 +844,10 @@ export function useConversation(threadId: string, showPane: (pane: "piece" | "ro
     uploadById,
     deleted,
     inspect,
+    review,
+    place,
+    tierHint,
+    placeInspector,
     inspectRoom,
     send,
     answer,
@@ -900,7 +951,7 @@ export function ChatPane({ c }: { c: ConversationState }) {
               </p>
             );
           }
-          if (m.role === "notice") return <Notice key={index} m={m} onReview={c.inspect} />;
+          if (m.role === "notice") return <Notice key={index} m={m} onReview={c.review} />;
           if (m.kind === "answers") {
             return (
               <div key={index} className="mx-auto w-full max-w-xl" data-role="answers">
@@ -1017,6 +1068,9 @@ export function PiecePane({ c }: { c: ConversationState }) {
         version={shown.version}
         compact
         onChoose={(next) => c.inspect(shown.packageId, next)}
+        place={c.place}
+        tierHint={c.tierHint}
+        onPlace={c.placeInspector}
       />
     </aside>
   );

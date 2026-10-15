@@ -54,7 +54,7 @@ def renders_launched(launched: list[list[str]]) -> list[list[str]]:
     return [argv for argv in launched if not any(a.endswith("build_custom_build.py") for a in argv)]
 
 
-# --- draft and preview ------------------------------------------------------------------------
+# --- draft ------------------------------------------------------------------------------------
 
 
 def test_a_draft_still_runs_with_its_estimate_and_is_served(client: TestClient, render_root: Path) -> None:
@@ -62,10 +62,10 @@ def test_a_draft_still_runs_with_its_estimate_and_is_served(client: TestClient, 
     assert response.status_code == 202
     body = response.json()
     assert body["tier"] == "draft" and body["frames"] == 1 and body["status"] == "queued"
-    assert body["estimate"] == "about 1 second"  # 1 frame × 0.36 MP × 2.5 s/MP = 0.9 s
+    assert body["estimate"] == "about 2 seconds"  # 1 frame × 0.64 MP × 2.5 s/MP = 1.6 s
     still = client.get(f"{BASE}/files/still.png")
     assert still.status_code == 200 and still.headers["content-type"] == "image/png"
-    assert png_size(render_root / "hall-bench/v1/still.png") == (600, 600)
+    assert png_size(render_root / "hall-bench/v1/still.png") == (800, 800)
     job = client.get(BASE).json()["jobs"]["still"]
     assert job["status"] == "succeeded" and job["tier"] == "draft"
 
@@ -73,7 +73,7 @@ def test_a_draft_still_runs_with_its_estimate_and_is_served(client: TestClient, 
 def test_a_draft_turntable_is_twelve_frames(client: TestClient, render_root: Path) -> None:
     response = render(client, kind="turntable", tier="draft")
     assert response.status_code == 202 and response.json()["frames"] == 12
-    assert response.json()["estimate"] == "about 11 seconds"
+    assert response.json()["estimate"] == "about 19 seconds"
     assert client.get(f"{BASE}/files/frames/11").status_code == 200
     assert client.get(f"{BASE}/files/frames/12").status_code == 404
     assert client.get(f"{BASE}/files/viewer.html").status_code == 200
@@ -135,9 +135,10 @@ def test_a_missing_tier_is_refused(client: TestClient, launched) -> None:
     assert renders_launched(launched) == []
 
 
-def test_an_unknown_tier_is_refused_listing_the_three(client: TestClient) -> None:
-    reason = render(client, kind="still", tier="ultra").json()["detail"]["reason"]
-    assert "ultra" in reason and all(t in reason for t in ("draft", "preview", "final"))
+@pytest.mark.parametrize("tier", ["ultra", "preview"])
+def test_an_unknown_tier_is_refused_listing_the_two(client: TestClient, tier: str) -> None:
+    reason = render(client, kind="still", tier=tier).json()["detail"]["reason"]
+    assert tier in reason and "the tiers are draft, final" in reason
 
 
 def test_no_benchmark_refuses_every_render(client: TestClient, launched) -> None:
@@ -279,6 +280,6 @@ def test_a_missing_binary_refuses_renders(client: TestClient, tmp_path: Path) ->
 
 
 def test_the_storage_status_carries_the_render_jobs(client: TestClient, render_root: Path) -> None:
-    render(client, kind="still", tier="preview")
+    render(client, kind="still", tier="draft")
     status = storage.read_status(render_root / "hall-bench/v1")
-    assert status["renders"]["still"]["tier"] == "preview"
+    assert status["renders"]["still"]["tier"] == "draft"

@@ -1,9 +1,11 @@
-"""Run a batch of restyle stills (restyle-variants).
+"""Run a batch of restyle turntables (restyle-variants; two-tier-renders).
 
 One guard ticket per variant, issued together after one batch estimate. Each variant is a
 headless Blender process under the one-process rule: the built version is opened (or the
-composition rebuilt), the look or style applied in memory, one still rendered, and nothing
-saved. A variant that fails is reported by id and the finished ones stay published.
+composition rebuilt), the look or style applied in memory, a draft turntable rendered with
+its first frame as the variant's `still.png`, and nothing saved. A variant that fails is
+reported by id and the finished ones stay published. Each variant's own outcome goes to
+`on_variant`, which finishes its render run.
 """
 
 from __future__ import annotations
@@ -16,11 +18,12 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from uuid import UUID
 
 from app.blender import storage
 from app.blender.launch import Launch, subprocess_launch
 from app.blender.runner import RESTYLE_RENDERER, launch_guarded, safe_error
-from app.blender.verify import VerificationError, verify_png
+from app.blender.verify import VerificationError, verify_frames, verify_png
 from app.observability.langfuse import Tracing
 from app.render.guard import RenderNotAuthorised, RenderTicket
 from app.render.records import log_render_finished, log_render_started
@@ -36,6 +39,8 @@ class RestyleJob:
     ticket: RenderTicket
     plan: VariantPlan
     variant_id: str
+    # The variant's render run (a piece's variant is rateable); `None` when none was recorded.
+    run_id: UUID | None = None
 
 
 @dataclass(slots=True)
@@ -83,6 +88,7 @@ async def run_restyle(
     models_root: Path | None = None,
     tracing: Tracing | None = None,
     on_outcome: Callable[[str], None] | None = None,
+    on_variant: Callable[[RestyleJob, str], None] | None = None,
 ) -> RestyleResult:
     """Render each job in turn; never raises (a failure is recorded in the result)."""
     result = RestyleResult()
@@ -124,6 +130,7 @@ async def run_restyle(
             if outcome.exit_code != 0 or outcome.timed_out:
                 error = safe_error(outcome.stderr_tail, root)
             else:
+                verify_frames(stage, quote.frames, quote.tier.resolution)
                 verify_png(stage / "still.png", (quote.tier.resolution, quote.tier.resolution))
                 result.replaced += store.make_room(folder, 1)
                 store.publish(
@@ -149,6 +156,11 @@ async def run_restyle(
             tracing=tracing,
         )
         result.outcomes.append(VariantOutcome(job.variant_id, job.plan.label, error))
+        if on_variant is not None:
+            try:
+                on_variant(job, "failed" if error else "succeeded")
+            except Exception:  # noqa: BLE001 - a finished variant must stay finished
+                logger.warning("restyle.variant_callback_failed")
     if on_outcome is not None:
         try:
             on_outcome(result.outcome)

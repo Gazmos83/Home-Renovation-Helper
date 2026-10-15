@@ -1,15 +1,15 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Armchair, Info, ThumbsDown, ThumbsUp } from "lucide-react";
+import { Armchair, Info } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { PieceVariants } from "../components/Variants";
-import { api, ApiError, downloads, versionFile, type PieceSummary, type Pricing, type RenderItem, type VersionInfo } from "../lib/api";
+import { RenderRating } from "@/components/RenderRating";
+import { api, downloads, versionFile, type PieceSummary, type Pricing, type RenderItem, type VersionInfo } from "../lib/api";
 import { pictureVersion } from "../lib/pieces";
 import { euros } from "../lib/money";
 import { FieldError } from "../lib/form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { cardClass } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -23,36 +23,6 @@ function message(error: unknown): string | null {
 }
 
 function RenderCard({ packageId, version, item }: { packageId: string; version: number; item: RenderItem }) {
-  const queryClient = useQueryClient();
-  const key = ["renders", packageId, version];
-  const [comment, setComment] = useState(item.comment ?? "");
-  const rate = useMutation({
-    mutationFn: ({ rating, text }: { rating: "up" | "down"; text: string | null }) =>
-      api.rateRender(packageId, version, item.render, rating, text),
-    onMutate: async ({ rating, text }) => {
-      await queryClient.cancelQueries({ queryKey: key });
-      const before = queryClient.getQueryData<RenderItem[]>(key);
-      queryClient.setQueryData<RenderItem[]>(key, (items) =>
-        (items ?? []).map((i) => (i.render === item.render ? { ...i, rating, comment: text } : i)),
-      );
-      return { before };
-    },
-    onError: (_error, _vars, context) => queryClient.setQueryData(key, context?.before),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
-  });
-  const clear = useMutation({
-    mutationFn: () => api.clearRating(packageId, version, item.render),
-    onSuccess: () => {
-      setComment("");
-      queryClient.invalidateQueries({ queryKey: key });
-    },
-  });
-  const failure = rate.error ?? clear.error;
-
-  function give(rating: "up" | "down") {
-    rate.mutate({ rating, text: comment.trim() || null });
-  }
-
   return (
     <section className={cardClass} aria-label={item.label}>
       <div className="flex items-center gap-2">
@@ -60,48 +30,7 @@ function RenderCard({ packageId, version, item }: { packageId: string; version: 
         {item.tier && <Badge variant="secondary">{item.tier}</Badge>}
       </div>
       <img src={item.preview} alt={`${item.label} of ${packageId} version ${version}`} className="max-h-72 rounded-md border" />
-      {item.can_rate ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant={item.rating === "up" ? "default" : "outline"}
-            aria-pressed={item.rating === "up"}
-            aria-label={`Thumbs up ${item.label}`}
-            onClick={() => give("up")}
-          >
-            <ThumbsUp aria-hidden size={16} />
-          </Button>
-          <Button
-            type="button"
-            variant={item.rating === "down" ? "default" : "outline"}
-            aria-pressed={item.rating === "down"}
-            aria-label={`Thumbs down ${item.label}`}
-            onClick={() => give("down")}
-          >
-            <ThumbsDown aria-hidden size={16} />
-          </Button>
-          <Input
-            aria-label={`Comment on ${item.label}`}
-            value={comment}
-            placeholder="What did you think?"
-            onChange={(event) => setComment(event.target.value)}
-            onBlur={() => item.rating && comment.trim() !== (item.comment ?? "") && give(item.rating)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && item.rating) give(item.rating);
-            }}
-          />
-          {item.rating && (
-            <Button type="button" variant="ghost" onClick={() => clear.mutate()}>
-              Clear rating of {item.label}
-            </Button>
-          )}
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          Rendered before ratings existed — render it again to rate it.
-        </p>
-      )}
-      <FieldError message={failure instanceof ApiError || failure instanceof Error ? failure.message : null} />
+      <RenderRating packageId={packageId} version={version} item={item} />
     </section>
   );
 }
@@ -285,9 +214,12 @@ function Downloads({ packageId, version }: { packageId: string; version: number 
   );
 }
 
-/** Turntable cards are gone from Pieces; the inspector replaced that view. Stills stay for rating. */
+/**
+ * Turntables and restyle variants are watched and rated on the inspector's Renders tab
+ * (two-tier-renders); Pieces keeps the stills for rating.
+ */
 function isTurntableRender(render: string): boolean {
-  return render === "turntable" || render.endsWith("-turntable");
+  return render === "turntable" || render.endsWith("-turntable") || render.startsWith("variant:");
 }
 
 function Version({ packageId, version }: { packageId: string; version: number }) {

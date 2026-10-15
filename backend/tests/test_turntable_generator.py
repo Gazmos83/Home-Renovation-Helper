@@ -29,9 +29,9 @@ def test_a_draft_still_is_600_square_on_eevee(blender_bin: Path, built: Path, tm
         "--out", str(out), *tier_args(),
     )
     assert result.returncode == 0, result.stderr[-800:]
-    assert png_size(out / "still.png") == (600, 600)
+    assert png_size(out / "still.png") == (800, 800)
     scene = json.loads((out / "scene.json").read_text(encoding="utf-8"))
-    assert scene["engine"] == "BLENDER_EEVEE" and scene["resolution"] == 600
+    assert scene["engine"] == "BLENDER_EEVEE" and scene["resolution"] == 800
 
 
 def test_a_draft_turntable_is_exactly_twelve_frames_with_a_viewer(
@@ -45,7 +45,7 @@ def test_a_draft_turntable_is_exactly_twelve_frames_with_a_viewer(
     assert result.returncode == 0, result.stderr[-800:]
     frames = sorted(entry.name for entry in (out / "frames").iterdir())
     assert frames == [f"frame_{i:03d}.png" for i in range(12)]
-    assert all(png_size(out / "frames" / name) == (600, 600) for name in frames)
+    assert all(png_size(out / "frames" / name) == (800, 800) for name in frames)
     assert "const frameCount = 12;" in (out / "viewer.html").read_text(encoding="utf-8")
     scene = json.loads((out / "scene.json").read_text(encoding="utf-8"))
     assert scene["frames"] == 12 and len(scene["cameras"]) == 12

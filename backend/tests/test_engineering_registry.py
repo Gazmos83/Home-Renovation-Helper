@@ -168,7 +168,7 @@ def test_migration_is_separate_from_legacy_chunks(db_session):
     assert "german" in str(Chunk.__table__.c.search_vector.computed.sqltext)
     assert (
         db_session.scalar(text("SELECT version_num FROM alembic_version"))
-        == "0024_render_pod_sessions"
+        == "0025_relabel_preview_tier"
     )
 
 

@@ -64,8 +64,8 @@ def test_the_start_and_finish_records_carry_the_required_fields(
     for record in (started, finished):
         assert record["package_id"] == "desk" and record["version"] == 2
         assert record["tier"] == "draft" and record["frames"] == 12
-        assert record["resolution"] == 600 and record["engine"] == "eevee"
-        assert record["estimate_seconds"] == pytest.approx(10.8)
+        assert record["resolution"] == 800 and record["engine"] == "eevee"
+        assert record["estimate_seconds"] == pytest.approx(19.2)
     assert "actual_seconds" not in started
     assert finished["actual_seconds"] == 9.5 and finished["outcome"] == "succeeded"
 

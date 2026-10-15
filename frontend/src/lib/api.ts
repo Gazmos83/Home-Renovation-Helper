@@ -573,6 +573,10 @@ export type RenderItem = {
   render: string;
   label: string;
   tier: string | null;
+  /** When the render last finished, for the newest-first order of the Renders tab. */
+  finished_at: string | null;
+  /** A turntable's frame count; 0 for a still. */
+  frames: number;
   preview: string;
   viewer: string | null;
   can_rate: boolean;
@@ -1014,12 +1018,12 @@ export const api = {
   renders: (packageId: string, version: number) =>
     request<RenderItem[]>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/renders`),
   rateRender: (packageId: string, version: number, render: string, rating: "up" | "down", comment: string | null) =>
-    request<RenderItem>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/renders/${render}/feedback`, {
+    request<RenderItem>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/renders/${encodeURIComponent(render)}/feedback`, {
       method: "PUT",
       body: JSON.stringify(comment ? { rating, comment } : { rating }),
     }),
   clearRating: (packageId: string, version: number, render: string) =>
-    request<RenderItem>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/renders/${render}/feedback`, {
+    request<RenderItem>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/renders/${encodeURIComponent(render)}/feedback`, {
       method: "DELETE",
     }),
   feedbackSummary: (days = 30) => request<FeedbackRow[]>(`/admin/feedback?days=${days}`),

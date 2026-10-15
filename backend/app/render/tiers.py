@@ -1,6 +1,7 @@
 """Render tiers from configuration (render-guard; CLAUDE.md §6).
 
-Three tiers, fixed by `config/render.yaml`: `draft`, `preview`, `final`. A
+Two tiers, fixed by `config/render.yaml`: `draft` and `final` (two-tier-renders
+removed `preview`, so a configuration still naming it is refused as unknown). A
 missing, duplicated or unknown tier, an unknown key, an unknown engine or a
 non-positive value stops startup by name — the same posture as model routing.
 """
@@ -16,7 +17,7 @@ import yaml
 
 from app.config import ConfigurationError
 
-TIER_NAMES: Final[tuple[str, ...]] = ("draft", "preview", "final")
+TIER_NAMES: Final[tuple[str, ...]] = ("draft", "final")
 
 # The engines a tier may name, mapped to Blender 5.2.1's RNA identifiers.
 # `bpy.types.RenderSettings...enum_items` under-reports in background mode (it
@@ -30,7 +31,7 @@ DEFAULT_TIERS_PATH: Final = Path(__file__).resolve().parents[2] / "config" / "re
 
 
 class TierError(ConfigurationError):
-    """The render configuration cannot produce the three tiers."""
+    """The render configuration cannot produce the two tiers."""
 
 
 @dataclass(frozen=True, slots=True)

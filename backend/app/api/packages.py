@@ -413,6 +413,8 @@ def frame_index(match: re.Match[str]) -> int:
 
 _VARIANT_FILES: Final = {"still.png": "image/png", "scene.json": "application/json"}
 _VARIANT: Final = re.compile(r"^variants/([a-z0-9][a-z0-9-]{0,63})/(still\.png|scene\.json)$")
+# A restyle variant's turntable frames, by index like the version's own (two-tier-renders).
+_VARIANT_FRAME: Final = re.compile(r"^variants/([a-z0-9][a-z0-9-]{0,63})/frames/(?:(\d{1,4})|frame_(\d{3,4})\.png)$")
 
 
 def describe_variants(base: str, folder: Path) -> list[dict[str, Any]]:
@@ -442,6 +444,10 @@ def _file_for(folder: Path, name: str) -> tuple[Path, str] | None:
     variant = _VARIANT.match(name)
     if variant:
         return folder / "variants" / variant.group(1) / variant.group(2), _VARIANT_FILES[variant.group(2)]
+    variant_frame = _VARIANT_FRAME.match(name)
+    if variant_frame:
+        index = int(variant_frame.group(2) or variant_frame.group(3))
+        return folder / "variants" / variant_frame.group(1) / "frames" / f"frame_{index:03d}.png", "image/png"
     frame = _FRAME.match(name)
     if frame:
         return folder / "frames" / f"frame_{frame_index(frame):03d}.png", "image/png"

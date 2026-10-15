@@ -93,8 +93,26 @@ def test_a_draft_turntable_is_enqueued_with_its_estimate_and_viewer(make_ctx, to
     state = wait_for_status(folder_of(tool_state), "succeeded")
     job = wait_job(folder_of(tool_state), "turntable")
     assert job["tier"] == "draft"
-    assert png_size(folder_of(tool_state) / "frames" / "frame_000.png") == (600, 600)
+    assert png_size(folder_of(tool_state) / "frames" / "frame_000.png") == (800, 800)
+    assert len(list((folder_of(tool_state) / "frames").iterdir())) == 12
     assert state["status"] == "succeeded"
+
+
+def test_a_draft_still_of_a_piece_alone_is_refused_as_a_turntable(make_ctx, tool_state) -> None:
+    made(make_ctx, tool_state)
+    launched = len(tool_state.launched)
+    shown, result = render(make_ctx, kind="still")
+    assert shown == result == "a draft of a piece is a turntable; ask for a draft turntable, or a final still"
+    assert len(tool_state.launched) == launched
+    assert not (folder_of(tool_state) / "still.png").exists()
+
+
+def test_a_preview_render_is_refused_as_an_unknown_tier(make_ctx, tool_state) -> None:
+    made(make_ctx, tool_state)
+    launched = len(tool_state.launched)
+    _shown, result = render(make_ctx, tier="preview")
+    assert "preview" in result and "the tiers are draft, final" in result
+    assert len(tool_state.launched) == launched
 
 
 def wait_job(folder, key: str, seconds: float = 10.0) -> dict:
@@ -248,7 +266,7 @@ def test_a_draft_shell_turntable_is_enqueued_with_its_estimate_and_viewer(make_c
     folder = storage.shell_version_dir(tool_state.settings.render_root, "flat", 1)
     job = wait_job(folder, "turntable")
     assert job["tier"] == "draft"
-    assert png_size(folder / "frames" / "frame_000.png") == (600, 600)
+    assert png_size(folder / "frames" / "frame_000.png") == (800, 800)
 
 
 def test_a_shell_render_needs_a_tier_refuses_raw_frames_and_pauses_for_final(make_ctx, tool_deps, tool_state) -> None:
@@ -304,7 +322,7 @@ def test_a_draft_turntable_of_a_composition_starts_with_its_estimate(make_ctx, t
     folder = storage.composition_version_dir(tool_state.settings.render_root, "wohnen", 1)
     job = wait_job(folder, "turntable")
     assert job["tier"] == "draft"
-    assert png_size(folder / "frames" / "frame_000.png") == (600, 600)
+    assert png_size(folder / "frames" / "frame_000.png") == (800, 800)
 
 
 def test_a_composition_final_pauses_and_raw_values_are_refused(make_ctx, tool_deps, tool_state) -> None:
@@ -368,7 +386,7 @@ def test_a_draft_turntable_started_in_a_thread_posts_one_succeeded_notice(make_c
     assert wait_notices(tool_deps, thread) == [("succeeded", "draft", "bench", 1)]
 
 
-def test_a_failing_preview_posts_one_failed_notice_and_stays_failed(make_ctx, tool_deps, tool_state) -> None:
+def test_a_failing_draft_posts_one_failed_notice_and_stays_failed(make_ctx, tool_deps, tool_state) -> None:
     from tests.blender_fakes import fake_failure_launch
     from tests.graph_helpers import make_harness
 
@@ -377,8 +395,8 @@ def test_a_failing_preview_posts_one_failed_notice_and_stays_failed(make_ctx, to
     thread = harness.thread
     made(make_ctx, tool_state)
     tool_state.blender_launch = fake_failure_launch
-    render_run({"package_id": "bench", "tier": "preview", "kind": "turntable"}, make_ctx(thread_id=thread))
-    assert wait_notices(tool_deps, thread) == [("failed", "preview", "bench", 1)]
+    render_run({"package_id": "bench", "tier": "draft", "kind": "turntable"}, make_ctx(thread_id=thread))
+    assert wait_notices(tool_deps, thread) == [("failed", "draft", "bench", 1)]
     jobs = (storage.read_status(folder_of(tool_state)) or {}).get("renders", {})
     assert jobs["turntable"]["status"] == "failed"
 

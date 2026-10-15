@@ -210,3 +210,88 @@ test("choosing an older version shows it and puts it in the address", async () =
   await waitFor(async () => expect((await canvasProps()).url).toBe("/packages/murphy-bed/versions/1/files/model.glb"));
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
+
+
+// --- the Renders tab (two-tier-renders) ---------------------------------------------------------
+
+const RENDERS = [
+  {
+    render: "still", label: "Still", tier: "draft", finished_at: "2026-10-15T09:00:00+00:00", frames: 0,
+    preview: "/packages/murphy-bed/versions/1/files/still.png", viewer: null, can_rate: true, rating: null, comment: null,
+  },
+  {
+    render: "detail-turntable", label: "Detailed turntable", tier: "final", finished_at: "2026-10-15T12:00:00+00:00",
+    frames: 36, preview: "/packages/murphy-bed/versions/1/files/detail/frames/0",
+    viewer: "/packages/murphy-bed/versions/1/files/detail/viewer.html", can_rate: true, rating: null, comment: null,
+  },
+  {
+    render: "variant:walnut-draft", label: "Walnut", tier: "draft", finished_at: "2026-10-15T10:00:00+00:00",
+    frames: 12, preview: "/packages/murphy-bed/versions/1/files/variants/walnut-draft/frames/0", viewer: null,
+    can_rate: true, rating: null, comment: null,
+  },
+];
+
+function serveRenders(renders: unknown[] = RENDERS) {
+  let current = renders as (typeof RENDERS)[number][];
+  return stubFetch((call, init) => {
+    if (call === "GET /packages/murphy-bed/versions/1")
+      return { body: { package_id: "murphy-bed", version: 1, status: "succeeded", approved_at: null, files: FILES_WITH_VIEWS } };
+    if (call === "GET /packages/murphy-bed/versions/1/files/spec.json") return { body: SPEC };
+    if (call === "GET /packages/murphy-bed/versions/1/renders") return { body: current };
+    if (call === "PUT /packages/murphy-bed/versions/1/renders/variant%3Awalnut-draft/feedback") {
+      const rating = JSON.parse(String(init.body)).rating;
+      current = current.map((item) => (item.render === "variant:walnut-draft" ? { ...item, rating } : item));
+      return { body: current.find((item) => item.render === "variant:walnut-draft") };
+    }
+    return undefined;
+  });
+}
+
+test("the Renders tab opens on the newest render and plays a detail turntable's 36 frames", async () => {
+  const user = userEvent.setup();
+  serveRenders();
+  show();
+  await user.click(await screen.findByRole("button", { name: "Renders" }));
+  const first = await screen.findByRole("img", { name: "Detailed turntable, frame 1 of 36" });
+  expect(first).toHaveAttribute("src", "/packages/murphy-bed/versions/1/files/detail/frames/0");
+  expect(screen.getByRole("button", { name: /Detailed turntable/, pressed: true })).toBeInTheDocument();
+  screen.getByRole("group", { name: "Detailed turntable frames" }).focus();
+  await user.keyboard("{ArrowLeft}");
+  expect(screen.getByRole("img", { name: "Detailed turntable, frame 36 of 36" })).toHaveAttribute(
+    "src", "/packages/murphy-bed/versions/1/files/detail/frames/35",
+  );
+});
+
+test("a restyle variant plays in the scrubber and keeps its rating after a refetch", async () => {
+  const user = userEvent.setup();
+  const calls = serveRenders();
+  show("/pieces/murphy-bed/versions/1?tab=renders");
+  await user.click(await screen.findByRole("button", { name: /Walnut/ }));
+  expect(await screen.findByRole("img", { name: "Walnut, frame 1 of 12" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Thumbs up Walnut" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Thumbs up Walnut" })).toHaveAttribute("aria-pressed", "true"));
+  expect(calls.some(([method, url]) => method === "PUT" && url.endsWith("variant%3Awalnut-draft/feedback"))).toBe(true);
+  await waitFor(() => expect(calls.filter(([, url]) => url.endsWith("/renders")).length).toBeGreaterThan(1));
+  expect(screen.getByRole("button", { name: "Thumbs up Walnut" })).toHaveAttribute("aria-pressed", "true");
+});
+
+test("the Model tab fetches no render and no frame", async () => {
+  const calls = serveRenders();
+  show();
+  await screen.findByTestId("canvas");
+  expect(calls.some(([, url]) => url.includes("/renders") || url.includes("/frames/"))).toBe(false);
+});
+
+test("the address keeps the Renders tab and the chosen render across a reload", async () => {
+  serveRenders();
+  show("/pieces/murphy-bed/versions/1?tab=renders&render=still");
+  expect(await screen.findByRole("img", { name: "Still of murphy-bed version 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Renders", pressed: true })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^Still/, pressed: true })).toBeInTheDocument();
+});
+
+test("a version with no renders says so on the Renders tab", async () => {
+  serveRenders([]);
+  show("/pieces/murphy-bed/versions/1?tab=renders");
+  expect(await screen.findByText("No renders of this version yet.")).toBeInTheDocument();
+});

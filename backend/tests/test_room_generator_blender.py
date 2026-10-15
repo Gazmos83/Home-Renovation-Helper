@@ -1,5 +1,5 @@
 """build_room_scene.py inside the pinned Blender. Every render is a `draft`
-(12 frames, 600 × 600, Eevee)."""
+(12 frames, 800 × 800, Eevee)."""
 
 from __future__ import annotations
 
@@ -39,13 +39,13 @@ def _room(blender_bin: Path, package: Path, tmp_path: Path, scene: Path, **kwarg
     return result, out
 
 
-def test_a_draft_room_still_is_600_square(blender_bin: Path, package: Path, tmp_path: Path) -> None:
+def test_a_draft_room_still_is_800_square(blender_bin: Path, package: Path, tmp_path: Path) -> None:
     result, out = _room(blender_bin, package, tmp_path, _scene_file(tmp_path, "still"))
     assert result.returncode == 0, result.stderr[-800:]
     assert {entry.name for entry in out.iterdir()} == {"still.png", "scene.json"}
-    assert png_size(out / "still.png") == (600, 600)
+    assert png_size(out / "still.png") == (800, 800)
     scene = json.loads((out / "scene.json").read_text(encoding="utf-8"))
-    assert scene["output"]["resolution"] == 600 and scene["output"]["engine"] == "BLENDER_EEVEE"
+    assert scene["output"]["resolution"] == 800 and scene["output"]["engine"] == "BLENDER_EEVEE"
     assert scene["input"]["output"] == {"kind": "still"}
 
 
@@ -57,7 +57,7 @@ def test_a_draft_room_turntable_is_twelve_frames_with_walls_hidden_per_frame(
     assert sorted(entry.name for entry in (out / "frames").iterdir()) == [
         f"frame_{i:03d}.png" for i in range(12)
     ]
-    assert all(png_size(frame) == (600, 600) for frame in (out / "frames").iterdir())
+    assert all(png_size(frame) == (800, 800) for frame in (out / "frames").iterdir())
     assert "const frameCount = 12;" in (out / "viewer.html").read_text(encoding="utf-8")
     scene = json.loads((out / "scene.json").read_text(encoding="utf-8"))
     assert scene["output"]["frame_count"] == 12 and scene["output"]["tier_frames"] == 12
@@ -127,7 +127,7 @@ def test_a_draft_still_of_an_l_shaped_room_renders_with_the_camera_inside_it(
     result, out = _room(blender_bin, package, tmp_path, scene)
 
     assert result.returncode == 0, result.stderr[-800:]
-    assert png_size(out / "still.png") == (600, 600)
+    assert png_size(out / "still.png") == (800, 800)
     produced = json.loads((out / "scene.json").read_text(encoding="utf-8"))
     camera = produced["output"]["camera"]["location_mm"]
     assert _point_in_polygon((camera[0], camera[1]), [tuple(map(float, c)) for c in L_SHAPE])

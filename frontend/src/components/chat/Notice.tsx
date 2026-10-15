@@ -1,19 +1,26 @@
 import { Button } from "@/components/ui/button";
 import type { ChatMessage } from "@/lib/api";
 
-/** The button's words: "Review draft v1", "Review preview revision 2". */
+/** The button's words: "Review draft v1", "Review final revision 2". */
 export function reviewLabel(tier: string, version: number): string {
   return `Review ${tier} ${version === 1 ? "v1" : `revision ${version}`}`;
 }
 
 /**
  * A notice the service posted when a render or a build started in this conversation ended.
- * A finished render of a piece version has a Review button, and a finished build an
- * "Inspect version N" button, both opening the inspector beside the chat; a failed one, a
+ * A finished render of a piece version has a Review button, opening the inspector beside the
+ * chat on its Renders tab, and a finished build an "Inspect version N" button opening it; a failed one, a
  * shell, a composition or a deleted version has none. A revision notice (revision-link-button)
  * is posted when the version is created and always has an "Open version N" button.
  */
-export function Notice({ m, onReview }: { m: ChatMessage; onReview: (packageId: string, version: number) => void }) {
+export function Notice({
+  m,
+  onReview,
+}: {
+  m: ChatMessage;
+  /** Open the version beside the chat; a render's tier opens its Renders tab on that render (two-tier-renders). */
+  onReview: (packageId: string, version: number, tier?: string) => void;
+}) {
   const build = m.kind === "build";
   const revision = m.kind === "revision";
   const linked = m.outcome === "succeeded" && m.package_id !== undefined && m.version !== undefined;
@@ -27,7 +34,9 @@ export function Notice({ m, onReview }: { m: ChatMessage; onReview: (packageId: 
     >
       <p>{m.text}</p>
       {canOpen && (
-        <Button type="button" size="sm" variant="outline" onClick={() => onReview(m.package_id as string, m.version as number)}>
+        <Button type="button" size="sm" variant="outline" onClick={() =>
+            onReview(m.package_id as string, m.version as number, build || revision ? undefined : (m.tier as string))
+          }>
           {revision
             ? `Open version ${m.version}`
             : build

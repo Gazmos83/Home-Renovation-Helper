@@ -749,6 +749,23 @@ def test_recent_render_feedback_reaches_the_designer_and_lighting_but_not_intake
     assert "Recent render feedback" not in models["intake"].last_prompt_text()
 
 
+def test_a_variant_rating_reaches_the_designer_and_lighting_as_appearance_only(tool_state, make_ctx) -> None:
+    _build_piece(tool_state, make_ctx)
+    _rate(tool_state, "love this", key="variant:walnut-draft")
+    models = fake_models(
+        foreman={"decisions": [decision("designer"), decision("lighting")]},
+        designer={"replies": ["Noted."]},
+        lighting={"replies": ["Noted."]},
+    )
+    harness = make_harness(tool_state, models)
+    harness.start(package_id="bench")
+    for _ in range(2):
+        harness.turn("anything")
+    line = '- v1 · restyle walnut-draft (appearance only, not a priced material) · draft · down — "love this"'
+    assert line in models["designer"].last_prompt_text()
+    assert line in models["lighting"].last_prompt_text()
+
+
 def test_only_the_five_newest_ratings_are_given(tool_state, make_ctx) -> None:
     _build_piece(tool_state, make_ctx)
     for index in range(7):

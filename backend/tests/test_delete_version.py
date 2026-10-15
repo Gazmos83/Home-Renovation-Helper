@@ -193,6 +193,25 @@ def test_the_records_of_the_deleted_version_go_and_the_others_stay(session, rend
     assert not list((render_root / "hall-bench").glob(".deleting-*"))
 
 
+def test_a_rated_restyle_variant_goes_with_its_version(session, render_root: Path) -> None:
+    # two-tier-renders: a variant is a render run like any other, removed with its version.
+    _piece(session, render_root, versions=(1, 2))
+    house_file.approve_version(session, "hall-bench", 2)
+    for version in (1, 2):
+        run = RenderRun(
+            id=uuid4(), package_id="hall-bench", version=version, render_key="variant:walnut-draft",
+            tier="draft", outcome="succeeded", slot="builder", model="m", started_at=datetime.now(UTC),
+        )
+        session.add(run)
+        session.flush()
+        session.add(RenderFeedback(run_id=run.id, rating="up", comment="love this"))
+    session.commit()
+    house_file.delete_version(session, render_root, "hall-bench", 1)
+    session.expire_all()
+    assert _count(session, RenderRun, 1) == 0 and _count(session, RenderRun, 2) == 1
+    assert _count(session, RenderFeedback) == 1
+
+
 def test_a_notice_naming_the_version_keeps_its_text_and_loses_the_piece(session, render_root: Path) -> None:
     _piece(session, render_root)
     thread = house_file.create_thread(session, "Hall bench", package_id="hall-bench")

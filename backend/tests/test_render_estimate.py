@@ -23,8 +23,8 @@ TIERS = load_tiers()
 
 def test_a_draft_estimate_matches_the_spec_example() -> None:
     seconds = estimate_seconds(TIERS.get("draft"), 2.5)
-    assert seconds == pytest.approx(12 * 0.36 * 1 * 2.5)
-    assert describe(seconds) == "about 11 seconds"
+    assert seconds == pytest.approx(12 * 0.64 * 1 * 2.5)
+    assert describe(seconds) == "about 19 seconds"
 
 
 def test_a_final_estimate_uses_the_cycles_multiplier() -> None:
@@ -33,8 +33,8 @@ def test_a_final_estimate_uses_the_cycles_multiplier() -> None:
     assert describe(seconds) == "about 101 minutes"
 
 
-def test_preview_is_eevee_so_the_multiplier_does_not_apply() -> None:
-    assert estimate_seconds(TIERS.get("preview"), 2.0, 99) == pytest.approx(24 * 1.0 * 1 * 2.0)
+def test_draft_is_eevee_so_the_multiplier_does_not_apply() -> None:
+    assert estimate_seconds(TIERS.get("draft"), 2.0, 99) == pytest.approx(12 * 0.64 * 1 * 2.0)
 
 
 @pytest.mark.parametrize(
@@ -139,12 +139,11 @@ def test_a_remote_final_without_a_remote_benchmark_is_refused() -> None:
     assert caught.value.failure_class == "benchmark_missing"
 
 
-@pytest.mark.parametrize("tier", ["draft", "preview"])
-def test_only_a_final_can_go_to_the_server(tier: str) -> None:
+def test_only_a_final_can_go_to_the_server() -> None:
     from app.render.guard import RenderRefused
 
     with pytest.raises(RenderRefused, match="only a final") as caught:
-        _remote_quote(tier=tier)
+        _remote_quote(tier="draft")
     assert caught.value.field == "tier"
 
 

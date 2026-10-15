@@ -52,13 +52,16 @@ def origin_from(ctx: ToolContext) -> Origin:
 
 
 def render_key_of(quote: RenderQuote) -> str:
+    if quote.source == "restyle":
+        return storage.variant_key(quote.variant)
     return storage.render_key(quote.kind, quote.room, quote.source)
 
 
 def record_run(engine: Engine, quote: RenderQuote, origin: Origin | None = None) -> UUID | None:
     """Insert the run for a quoted render; `None` when it cannot or need not be recorded.
 
-    Only furniture renders are recorded (an apartment shell has no Pieces entry).
+    Only furniture renders are recorded (an apartment shell has no Pieces entry, and a
+    composition's restyle variant belongs to no piece).
     """
     if quote.record != "piece":
         return None

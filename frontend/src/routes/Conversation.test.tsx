@@ -156,6 +156,25 @@ beforeEach(() => {
       if (call === "GET /packages/hall-bench/versions/1/files/spec.json") return json({ body: SPEC });
       if (call === "GET /packages/hall-bench/versions/2")
         return json({ body: { package_id: "hall-bench", version: 2, status: "queued", approved_at: null, files: [] } });
+      if (call === "GET /packages/hall-bench/versions/4")
+        return json({ body: { package_id: "hall-bench", version: 4, status: "succeeded", approved_at: null, files: ["model.glb", "spec.json"] } });
+      if (call === "GET /packages/hall-bench/versions/4/files/spec.json") return json({ body: SPEC });
+      const rendersOf = /^GET \/packages\/hall-bench\/versions\/(\d)\/renders$/.exec(call);
+      if (rendersOf) {
+        const base = `/packages/hall-bench/versions/${rendersOf[1]}/files`;
+        return json({
+          body: [
+            { render: "turntable", label: "Turntable", tier: "draft", finished_at: "2026-10-15T09:00:00+00:00", frames: 12,
+              preview: `${base}/frames/0`, viewer: null, can_rate: true, rating: null, comment: null },
+            { render: "detail-still", label: "Detailed still", tier: "final", finished_at: "2026-10-15T10:00:00+00:00", frames: 0,
+              preview: `${base}/detail/still.png`, viewer: null, can_rate: true, rating: null, comment: null },
+            { render: "detail-turntable", label: "Detailed turntable", tier: "final", finished_at: "2026-10-15T12:00:00+00:00", frames: 36,
+              preview: `${base}/detail/frames/0`, viewer: null, can_rate: true, rating: null, comment: null },
+            { render: "still", label: "Still", tier: "draft", finished_at: "2026-10-15T13:00:00+00:00", frames: 0,
+              preview: `${base}/still.png`, viewer: null, can_rate: true, rating: null, comment: null },
+          ],
+        });
+      }
       if (call === "GET /chat/threads/t1/uploads")
         return json({ body: [{ upload_id: "u1", kind: "jpeg", size_bytes: 3, original_name: "blueprint.jpeg" }] });
       const approval = /^(PUT|DELETE) \/packages\/hall-bench\/versions\/(\d)\/approval$/.exec(call);
@@ -874,32 +893,47 @@ test("a malformed inspect address is ignored and the piece pane shows the piece'
   expect(calls.map(([, url]) => url).filter((url) => url.includes("passwd"))).toEqual([]);
 });
 
-test("a render notice names the tier on its Review button and opens the inspector", async () => {
+test("a render notice names the tier on its Review button and opens the inspector on its Renders tab", async () => {
   const user = userEvent.setup();
   messages = [
     reply("Started a draft turntable of hall-bench version 1."),
     notice({}),
-    notice({ text: "The preview still is ready.", tier: "preview", version: 2 }),
+    notice({ text: "The draft still is ready.", tier: "draft", version: 2 }),
     notice({ text: "The final still is ready.", tier: "final", version: 3 }),
   ];
   show();
   const list = within(await screen.findByRole("region", { name: "Messages" }));
   expect(list.getByRole("button", { name: "Review draft v1" })).toBeInTheDocument();
-  expect(list.getByRole("button", { name: "Review preview revision 2" })).toBeInTheDocument();
+  expect(list.getByRole("button", { name: "Review draft revision 2" })).toBeInTheDocument();
   expect(list.getByRole("button", { name: "Review final revision 3" })).toBeInTheDocument();
 
+  // The newest draft render of version 1 is its still.
   await user.click(list.getByRole("button", { name: "Review draft v1" }));
   const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
-  expect(await inspector.findByText("Overall: W 1200 mm × H 450 mm × D 400 mm")).toBeInTheDocument();
+  expect(await inspector.findByRole("img", { name: "Still of hall-bench version 1" })).toBeInTheDocument();
+  expect(inspector.getByRole("button", { name: "Renders", pressed: true })).toBeInTheDocument();
 
   // Another notice replaces the version shown; one not built yet is named in words.
-  await user.click(list.getByRole("button", { name: "Review preview revision 2" }));
+  await user.click(list.getByRole("button", { name: "Review draft revision 2" }));
   expect(await inspector.findByText(/Version 2 is building/)).toBeInTheDocument();
+});
+
+test("Review final opens the Renders tab on the newest final render, a detailed turntable that plays", async () => {
+  const user = userEvent.setup();
+  messages = [notice({ text: "The final turntable of hall-bench version 4 is ready.", tier: "final", version: 4 })];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  await user.click(await list.findByRole("button", { name: "Review final revision 4" }));
+  const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
+  expect(await inspector.findByRole("img", { name: "Detailed turntable, frame 1 of 36" })).toHaveAttribute(
+    "src", "/packages/hall-bench/versions/4/files/detail/frames/0",
+  );
+  expect(inspector.getByRole("button", { name: /Detailed turntable/, pressed: true })).toBeInTheDocument();
 });
 
 test("a failed, shell or composition notice has no button", async () => {
   messages = [
-    notice({ outcome: "failed", text: "The preview turntable of hall-bench version 2 did not finish, so nothing new was published. You can ask for it again.", tier: "preview", version: 2 }),
+    notice({ outcome: "failed", text: "The draft turntable of hall-bench version 2 did not finish, so nothing new was published. You can ask for it again.", tier: "draft", version: 2 }),
     notice({ text: "The draft turntable of the flat shell version 1 is ready.", package_id: undefined, version: undefined }),
   ];
   show();

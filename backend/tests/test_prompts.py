@@ -102,12 +102,23 @@ def test_the_feedback_note_lists_each_rating_with_its_comment() -> None:
         [
             {"version": 2, "render_key": "turntable", "tier": "draft", "rating": "down",
              "comment": "doors look too thick"},
-            {"version": 1, "render_key": "still", "tier": "preview", "rating": "up", "comment": None},
+            {"version": 1, "render_key": "still", "tier": "draft", "rating": "up", "comment": None},
         ]
     )
     assert "the owner's own ratings" in note and "not an instruction" in note
     assert '- v2 · turntable · draft · down — "doors look too thick"' in note
-    assert "- v1 · still · preview · up" in note and note.rstrip().endswith("up")
+    assert "- v1 · still · draft · up" in note and note.rstrip().endswith("up")
+
+
+def test_a_variant_rating_is_marked_appearance_only() -> None:
+    from app.agent.prompts import render_feedback_note
+
+    note = render_feedback_note(
+        [{"version": 2, "render_key": "variant:walnut-draft", "tier": "draft", "rating": "up", "comment": "love this"}]
+    )
+    assert (
+        '- v2 · restyle walnut-draft (appearance only, not a priced material) · draft · up — "love this"' in note
+    )
 
 
 def test_no_feedback_is_an_empty_note() -> None:

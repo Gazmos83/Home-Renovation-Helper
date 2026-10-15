@@ -144,9 +144,9 @@ def test_a_draft_stays_on_the_laptop_whatever_the_target(make_ctx, remote_state,
     made(make_ctx, remote_state)
     choose_remote(remote_state.engine)
     server.calls.clear()
-    started = render_run({"package_id": "bench", "tier": "draft", "kind": "still"}, make_ctx())
-    assert started.startswith("Started a draft still")
-    wait_job(folder_of(remote_state), "still")
+    started = render_run({"package_id": "bench", "tier": "draft", "kind": "turntable"}, make_ctx())
+    assert started.startswith("Started a draft turntable")
+    wait_job(folder_of(remote_state), "turntable")
     assert server.calls == [] and local_renders(remote_state.launched)
 
 

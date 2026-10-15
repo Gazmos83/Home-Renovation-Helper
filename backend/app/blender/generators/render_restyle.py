@@ -1,17 +1,18 @@
-"""Render one restyled still of a built version, in memory (restyle-variants).
+"""Render one restyled draft turntable of a built version, in memory (restyle-variants).
 
 Run only by the runner behind the render guard: the three `--tier-*` values come from a
 guard ticket and nothing else decides frames, resolution or engine. The built
 `model.blend` is opened (a piece) or the composition is rebuilt from its stored document,
-the look or style is applied to the open scene, one still is rendered, and nothing is
-saved: the version's files are never touched.
+the look or style is applied to the open scene, and a turntable is rendered with the same
+cameras as the version's own (two-tier-renders). Its first frame is copied to `still.png`
+as the variant's picture. Nothing is saved: the version's files are never touched.
 
     blender --background --python render_restyle.py -- \
       --restyle looks.json --out /absolute/new-dir --blend model.blend \
-      --tier-frames 12 --tier-resolution 600 --tier-engine BLENDER_EEVEE
+      --tier-frames 12 --tier-resolution 800 --tier-engine BLENDER_EEVEE
     blender --background --python render_restyle.py -- \
       --restyle style.json --out /absolute/new-dir --spec input.json --pieces <root> --models <dir> \
-      --tier-frames 12 --tier-resolution 600 --tier-engine BLENDER_EEVEE
+      --tier-frames 12 --tier-resolution 800 --tier-engine BLENDER_EEVEE
 
 The restyle file is validated by the backend before it gets here (`app.restyle.request`).
 """
@@ -35,9 +36,9 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.blender.cli import InputError, TierArguments, parse_restyle_arguments
 from app.blender.generators import _composition as composition
 from app.blender.generators import build_room_scene as room_gen
-from app.blender.generators import render_composition, render_still
+from app.blender.generators import render_composition, render_turntable
 from app.blender.generators._scene import GeneratorError
-from app.blender.verify import VerificationError, verify_png
+from app.blender.verify import VerificationError, verify_frames, verify_png
 
 # Blender names a data block with at most this many bytes of the material string.
 _NAME_LIMIT = 63
@@ -172,6 +173,7 @@ def _write_scene(out: Path, tier: TierArguments, kind: str, extra: dict[str, Any
             {
                 "kind": f"restyle_{kind}",
                 "source": "restyle",
+                "frames": tier.frames,
                 "resolution": tier.resolution,
                 "engine": tier.engine,
                 "blender_version": bpy.app.version_string,
@@ -183,10 +185,18 @@ def _write_scene(out: Path, tier: TierArguments, kind: str, extra: dict[str, Any
     )
 
 
+def _poster(stage: Path, tier: TierArguments) -> None:
+    """Check the turntable and copy its first frame to `still.png`, the variant's picture."""
+    verify_frames(stage, tier.frames, tier.resolution)
+    shutil.copyfile(stage / "frames" / "frame_000.png", stage / "still.png")
+    verify_png(stage / "still.png", (tier.resolution, tier.resolution))
+
+
 def _piece(arguments, payload: dict[str, Any], stage: Path) -> None:
     bpy.ops.wm.open_mainfile(filepath=str(arguments.blend))
     changed = apply_piece(payload)
-    render_still.fill(stage, arguments.tier)
+    render_turntable.fill(stage, arguments.tier)
+    _poster(stage, arguments.tier)
     _write_scene(stage, arguments.tier, "piece", {"materials_changed": changed})
 
 
@@ -195,8 +205,9 @@ def _room(arguments, payload: dict[str, Any], stage: Path) -> None:
     scene = composition.build_scene(document, pieces_root=arguments.pieces, models_root=arguments.models)
     apply_room(scene, payload["style"])
     room_gen._configure_render(arguments.tier)
-    render_composition._still(scene, stage)
-    verify_png(stage / "still.png", (arguments.tier.resolution, arguments.tier.resolution))
+    # Walls between the camera and the room are hidden per frame, as in the room's own turntable.
+    render_composition._turntable(scene, stage, arguments.tier.frames)
+    _poster(stage, arguments.tier)
     _write_scene(stage, arguments.tier, "room", {"items": scene.report})
 
 

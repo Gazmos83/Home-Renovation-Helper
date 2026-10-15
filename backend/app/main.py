@@ -180,6 +180,19 @@ async def _lifespan(app: FastAPI):
         )
 
     # A RunPod pod left running by an earlier process is still billed: delete it
+    # The `preview` tier was removed (two-tier-renders): render records still naming it
+    # read `draft`. The database rows are relabelled by migration 0025; the files here.
+    try:
+        relabelled = storage.relabel_preview_files(settings.render_root)
+        if relabelled:
+            app_logging.logger.info(
+                "preview render records relabelled draft", extra={"context": {"count": relabelled}}
+            )
+    except Exception as error:  # noqa: BLE001 - reported, not fatal
+        app_logging.logger.warning(
+            "preview relabel failed at startup: %s", type(error).__name__
+        )
+
     # before anything else can create one (render-pod-lifecycle).
     pod = app.state.offload.pod if app.state.offload is not None else None
     if pod is not None:

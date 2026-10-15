@@ -826,7 +826,7 @@ def test_a_failed_commit_leaves_the_folder_and_the_rows(db_session, render_root:
 def test_notices_are_listed_by_position_then_time_and_a_missing_thread_is_a_no_op(db_session) -> None:
     thread = house_file.create_thread(db_session, "renders")
     later = house_file.add_notice(db_session, thread.id, after_messages=4, outcome="succeeded", tier="draft", text="b")
-    first = house_file.add_notice(db_session, thread.id, after_messages=2, outcome="failed", tier="preview", text="a")
+    first = house_file.add_notice(db_session, thread.id, after_messages=2, outcome="failed", tier="final", text="a")
     same = house_file.add_notice(
         db_session, thread.id, after_messages=4, outcome="succeeded", tier="final", text="c", package_id="hall-bench", version=2
     )
