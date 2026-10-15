@@ -18,7 +18,7 @@ The service SHALL treat the render server as configured only when all of these a
 - **THEN** startup fails naming the key-file setting
 
 ### Requirement: Only finals offload, and only when chosen
-Only `final` renders SHALL run remotely, and only when offload is configured and the developer has set the final target to `remote`. The default target SHALL be `local`. Draft renders (including restyles), builds, screenshots and the local benchmark SHALL always run locally. A detail turntable SHALL run only remotely; with the target `local` it SHALL be refused, never run on the laptop.
+Only `final` renders SHALL run remotely, and only when offload is configured and the developer has set the final target to `remote`. The default target SHALL be `local`. Draft renders (including restyles), builds, screenshots and the local benchmark SHALL always run locally. A detail still or turntable SHALL run where finals run, like any `final`.
 
 #### Scenario: Draft with target remote
 - **WHEN** the target is `remote` and a `draft` turntable is requested
@@ -29,8 +29,8 @@ Only `final` renders SHALL run remotely, and only when offload is configured and
 - **THEN** it runs on the render server
 
 #### Scenario: Detail turntable with target local
-- **WHEN** the target is `local` and a `final` detail turntable is requested
-- **THEN** it is refused saying a detail turntable runs only on the render server, and nothing runs on the laptop
+- **WHEN** the target is `local` and the owner approves a `final` detail turntable after its long-render warning
+- **THEN** it runs on the laptop and nothing is sent to the render server
 
 ### Requirement: The server is checked before approval and there is no fallback
 Before a remote `final` is quoted, the service SHALL check within ten seconds that the server answers over SSH with the pinned host key and that its Blender reports version 5.2.1. When the check fails, the request SHALL be refused before any approval, with a reason saying the render server is unreachable or runs another Blender version, and suggesting the owner start it or switch finals to the laptop. It SHALL NOT run the render locally instead. A remote job that fails after approval SHALL be recorded as failed with its reason and SHALL NOT be retried locally.
