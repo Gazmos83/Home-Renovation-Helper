@@ -31,6 +31,8 @@ BOOT_SECONDS_KEY: Final = "offload:boot_seconds"
 DEFAULT_IDLE_MINUTES: Final = 10
 IDLE_MINUTES_RANGE: Final = (1, 120)
 DEFAULT_BOOT_SECONDS: Final = 180.0
+# render-gpu-availability: background stock sampling, on unless the developer switched it off.
+STOCK_SAMPLING_KEY: Final = "offload:stock_sampling"
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,3 +247,15 @@ def write_boot_seconds(engine: Engine, seconds: float) -> None:
         _put(session, BOOT_SECONDS_KEY, repr(float(seconds)))
         session.commit()
 
+
+def read_stock_sampling(engine: Engine) -> bool:
+    """Whether the background stock sampler stores samples: on unless switched off."""
+    with Session(engine) as session:
+        row = session.get(OperatorSetting, STOCK_SAMPLING_KEY)
+    return row is None or row.value != "off"
+
+
+def write_stock_sampling(engine: Engine, on: bool) -> None:
+    with Session(engine) as session:
+        _put(session, STOCK_SAMPLING_KEY, "on" if on else "off")
+        session.commit()

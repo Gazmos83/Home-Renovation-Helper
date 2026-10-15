@@ -21,7 +21,7 @@ from app.api.gate import require_dev
 from app.api.packages import launcher, refused, require_generation
 from app.render import benchmark_store
 from app.render.benchmark import BenchmarkFailed
-from app.render.offload import jobs, sessions
+from app.render.offload import availability, jobs, sessions
 from app.render.offload.benchmark import run_remote_benchmark
 from app.render.offload.check import (
     CHECK_SECONDS,
@@ -59,6 +59,11 @@ class IdleIn(BaseModel):
     idle_minutes: int
 
 
+class SamplingIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    on: bool
+
+
 def _summary(request: Request) -> dict[str, Any]:
     state = request.app.state
     engine = state.engine
@@ -70,6 +75,12 @@ def _summary(request: Request) -> dict[str, Any]:
     with Session(engine) as session:
         recent = jobs.recent_jobs(session, rate)
         pod_sessions = sessions.recent_sessions(session) if pod is not None else []
+        # render-gpu-availability: start and stock history, pod mode only.
+        history = (
+            {str(days): availability.history(session, days) for days in availability.PERIODS}
+            if pod is not None
+            else None
+        )
     return {
         "configured": runtime is not None,
         "mode": None if runtime is None else "pod" if pod is not None else "host",
@@ -100,6 +111,8 @@ def _summary(request: Request) -> dict[str, Any]:
             **pod.status(),
         },
         "pod_sessions": pod_sessions,
+        "availability": history,
+        "stock_sampling": benchmark_store.read_stock_sampling(engine) if pod is not None else None,
     }
 
 
@@ -214,3 +227,9 @@ def set_idle(body: IdleIn, request: Request) -> dict[str, Any]:
         raise refused(422, "refused", str(error), field="idle_minutes") from None
     return _summary(request)
 
+
+@router.put("/sampling")
+def set_sampling(body: SamplingIn, request: Request) -> dict[str, Any]:
+    """Switch the background stock sampling on or off; the next interval follows it."""
+    benchmark_store.write_stock_sampling(request.app.state.engine, body.on)
+    return _summary(request)

@@ -258,3 +258,49 @@ def test_no_homeowner_response_names_the_server_or_the_target(client: TestClient
     for text_ in texts:
         for secret in (HOST, "render@", "gpu.", "cost_eur", "hourly", "OPTIX", "id_ed25519"):
             assert secret not in text_, secret
+
+
+# --- no render GPU in stock (render-gpu-availability) ---------------------------------------------------
+
+
+def sold_out_runtime():
+    """Pod mode with no pod running and nothing in stock in the volume's data centre."""
+    from dataclasses import replace as replaced
+
+    from pydantic import SecretStr
+
+    from app.render.offload.pod import PodManager, PodSettings
+    from app.render.offload.runpod import RunPodClient
+    from tests.offload_fakes import FakeRunPod
+
+    fake = FakeRunPod(catalog={"NVIDIA RTX A4500": {"EU-RO-1": "NONE"}})
+    runtime = OffloadRuntime(replaced(CONFIG, host="", host_key_alias="hra-render-pod"))
+    runtime.pod = PodManager(
+        client=RunPodClient(SecretStr("rpa_SECRETKEYVALUE"), transport=fake.transport),
+        settings=PodSettings(("NVIDIA RTX A4500", "NVIDIA GeForce RTX 4090"), "runpod/base:0.6.2", "vol123"),
+        template=runtime.config, semaphore=runtime.semaphore,
+    )
+    return fake, runtime
+
+
+def test_a_final_with_no_render_gpu_in_stock_is_refused_by_the_tool_before_approval(
+    make_ctx, remote_state
+) -> None:
+    made(make_ctx, remote_state)
+    fake, remote_state.offload = sold_out_runtime()
+    choose_remote(remote_state.engine)
+    shown = render_preview(final_args(), make_ctx())
+    assert isinstance(shown, str)
+    assert "none of NVIDIA RTX A4500, NVIDIA GeForce RTX 4090 is in stock in EU-RO-1 right now" in shown
+    assert fake.created == [] and local_renders(remote_state.launched) == []
+
+
+def test_a_final_with_no_render_gpu_in_stock_is_503_over_http(client: TestClient) -> None:
+    fake, client.app.state.offload = sold_out_runtime()
+    choose_remote(client.app.state.engine)
+    response = client.post(f"{BASE}/renders", json={"kind": "turntable", "tier": "final"})
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["failure_class"] == "offload_no_stock" and "EU-RO-1" in detail["reason"]
+    assert "approval_token" not in response.text and "rpa_" not in response.text
+    assert fake.created == [] and local_renders(client.app.state.local_calls) == []

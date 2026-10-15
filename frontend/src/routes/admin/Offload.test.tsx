@@ -223,3 +223,50 @@ test("a failed benchmark with no reason still shows its status", async () => {
   await user.click(await screen.findByRole("button", { name: "Run the remote benchmark" }));
   expect(await screen.findByText("the server answered 504")).toBeInTheDocument();
 });
+
+const week = {
+  starts: 4, started_share: 0.75, median_startup_seconds: 90, placed: { "NVIDIA RTX A4500": 2, "NVIDIA GeForce RTX 4090": 1 },
+  failed_starts: 1, samples: 100, any_in_stock_share: 0.62,
+  per_type_share: { "NVIDIA GeForce RTX 4090": 0.24, "NVIDIA RTX A4500": 0.5 }, last_sample_at: "2026-10-15T16:00:00+00:00",
+};
+const empty = {
+  starts: 0, started_share: null, median_startup_seconds: null, placed: {}, failed_starts: 0, samples: 0,
+  any_in_stock_share: null, per_type_share: {}, last_sample_at: null,
+};
+
+test("availability shows both periods with starts and stock", async () => {
+  stubFetch((call) => (call === "GET /admin/offload" ? { body: { ...podBase, availability: { "7": week, "30": empty }, stock_sampling: true } } : undefined));
+  show();
+  expect(await screen.findByText("Last 7 days")).toBeInTheDocument();
+  expect(screen.getByText(/4 pod starts · 75% started · median start-up 90 s · 1 failed · placed: NVIDIA RTX A4500 ×2, NVIDIA GeForce RTX 4090 ×1/)).toBeInTheDocument();
+  expect(screen.getByText(/62% of samples had at least one render GPU in stock \(100 samples, last 2026-10-15 16:00\)/)).toBeInTheDocument();
+  expect(screen.getByText("NVIDIA GeForce RTX 4090: 24% · NVIDIA RTX A4500: 50%")).toBeInTheDocument();
+  expect(screen.getByText("Last 30 days")).toBeInTheDocument();
+  expect(screen.getByText("No pod starts yet.")).toBeInTheDocument();
+  expect(screen.getByText("No stock samples yet.")).toBeInTheDocument();
+});
+
+test("stock sampling can be switched off", async () => {
+  const user = userEvent.setup();
+  let on = true;
+  stubFetch((call, init) => {
+    if (call === "PUT /admin/offload/sampling") {
+      on = JSON.parse(String(init?.body)).on;
+      return { body: { ...podBase, availability: { "7": empty, "30": empty }, stock_sampling: on } };
+    }
+    if (call === "GET /admin/offload") return { body: { ...podBase, availability: { "7": empty, "30": empty }, stock_sampling: on } };
+  });
+  show();
+  const select = await screen.findByLabelText("Stock sampling every 15 minutes");
+  expect(select).toHaveValue("on");
+  await user.selectOptions(select, "off");
+  expect(on).toBe(false);
+  expect(await screen.findByLabelText("Stock sampling every 15 minutes")).toHaveValue("off");
+});
+
+test("host mode shows no availability section", async () => {
+  stubFetch((call) => (call === "GET /admin/offload" ? { body: { ...base, availability: null, stock_sampling: null } } : undefined));
+  show();
+  await screen.findByText(/render@gpu.example.org/);
+  expect(screen.queryByText("Availability")).not.toBeInTheDocument();
+});

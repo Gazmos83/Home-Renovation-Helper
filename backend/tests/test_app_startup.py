@@ -184,9 +184,34 @@ def test_a_pod_left_running_is_deleted_at_startup_and_the_pod_at_shutdown(
         assert fake.deleted == [left_over] and other in fake.pods
         current = fake.add_pod("hra-render")
         pod.pod_id, pod.state = current, "running"
+        # The stock sampler runs in pod mode, with the pod's own client (render-gpu-availability).
+        assert app.state.stock_sampler is not None and app.state.stock_sampler.client is pod.client
+        assert app.state.stock_sampler._task is not None and not app.state.stock_sampler._task.done()
     assert fake.deleted == [left_over, current] and other in fake.pods
+    assert app.state.stock_sampler._task is None  # stopped with the app
     engine = make_engine(migrated_database)
-    with engine.begin() as connection:  # the recorded pod sessions
+    with engine.begin() as connection:  # the sampler's first sample, and the recorded pod sessions
+        connection.execute(text("DELETE FROM gpu_stock_samples"))
         connection.execute(text("DELETE FROM render_pod_sessions"))
     engine.dispose()
 
+
+def test_no_stock_sampler_without_pod_mode(migrated_database: str) -> None:
+    app = create_app(_settings(migrated_database))
+    with TestClient(app):
+        assert app.state.stock_sampler is None
+
+
+def test_no_stock_sampler_in_fixed_host_mode(migrated_database: str, tmp_path: Path) -> None:
+    key, known = tmp_path / "id_ed25519", tmp_path / "known_hosts"
+    key.write_text("PRIVATE", encoding="utf-8")
+    known.write_text("gpu.example.org ssh-ed25519 AAAA", encoding="utf-8")
+    settings = _settings(migrated_database).model_copy(update={
+        "render_offload_host": "gpu.example.org", "render_offload_user": "render",
+        "render_offload_key_path": key, "render_offload_known_hosts_path": known,
+        "render_offload_blender": "/opt/blender-5.2.1/blender",
+    })
+    app = create_app(settings)
+    assert app.state.offload is not None and app.state.offload.pod is None
+    with TestClient(app):
+        assert app.state.stock_sampler is None

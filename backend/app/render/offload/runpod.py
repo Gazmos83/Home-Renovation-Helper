@@ -22,6 +22,9 @@ import httpx
 from pydantic import SecretStr
 
 RUNPOD_API: Final = "https://rest.runpod.io/v1"
+# The v2 catalog: live stock per GPU type and data centre (render-gpu-availability).
+RUNPOD_CATALOG_GPUS: Final = "https://api.runpod.io/v2/catalog/gpus"
+STOCK_LEVELS: Final = ("NONE", "LOW", "MEDIUM", "HIGH")
 TIMEOUT_SECONDS: Final = 15.0
 POD_NAME: Final = "hra-render"
 VOLUME_MOUNT: Final = "/workspace"
@@ -151,6 +154,33 @@ class RunPodClient:
             return response.json()
         except ValueError:
             raise RunPodError("RunPod returned an answer that could not be read") from None
+
+    async def gpu_stock(self, gpu_types: Sequence[str], data_center: str) -> dict[str, str]:
+        """Each type's pod stock (Secure Cloud) in `data_center`: `NONE`, `LOW`, `MEDIUM` or `HIGH`.
+
+        A type the catalog does not list, or does not list for that data centre, or lists
+        with an unknown level, reads `NONE`. Creates nothing.
+        """
+        response = await self._request(
+            "GET",
+            RUNPOD_CATALOG_GPUS,
+            params={"include": "AVAILABILITY", "product": "POD", "cloud": "SECURE"},
+        )
+        if response.status_code != 200:
+            raise RunPodError(f"RunPod answered {response.status_code}", status=response.status_code)
+        data = self._json(response)
+        entries = data.get("gpus") if isinstance(data, dict) else None
+        if not isinstance(entries, list):
+            raise RunPodError("RunPod returned a GPU catalog it could not read")
+        levels: dict[str, str] = {}
+        for entry in entries:
+            if not isinstance(entry, dict) or entry.get("id") not in gpu_types:
+                continue
+            for centre in entry.get("dataCenters") or []:
+                if isinstance(centre, dict) and centre.get("id") == data_center:
+                    level = centre.get("availability")
+                    levels[entry["id"]] = level if level in STOCK_LEVELS else "NONE"
+        return {gpu: levels.get(gpu, "NONE") for gpu in gpu_types}
 
     async def get_network_volume(self, volume_id: str) -> VolumeInfo:
         response = await self._request("GET", f"/networkvolumes/{volume_id}")

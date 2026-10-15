@@ -154,3 +154,37 @@ def test_the_types_go_to_runpod_in_order_and_the_placed_one_is_read() -> None:
     assert fake.created[0]["gpuTypePriority"] == "custom"
     assert pod.gpu_type == "NVIDIA GeForce RTX 5090"
 
+
+# --- live stock (render-gpu-availability) ------------------------------------------------------------
+
+A4500, R4090, R5090 = "NVIDIA RTX A4500", "NVIDIA GeForce RTX 4090", "NVIDIA GeForce RTX 5090"
+
+
+def test_stock_is_read_per_type_in_the_data_centre() -> None:
+    fake = FakeRunPod(catalog={R4090: {"EU-RO-1": "LOW"}, R5090: {"US-IL-1": "HIGH"}, A4500: {"EU-RO-1": "SOLD"}})
+    levels = run(client(fake).gpu_stock([A4500, R4090, R5090, "NVIDIA B200"], "EU-RO-1"))
+    # 4090 listed here; 5090 only elsewhere; A4500 with an unknown level; B200 not in the catalog.
+    assert levels == {A4500: "NONE", R4090: "LOW", R5090: "NONE", "NVIDIA B200": "NONE"}
+    [request] = fake.requests
+    assert str(request.url).startswith("https://api.runpod.io/v2/catalog/gpus?")
+    assert dict(request.url.params) == {"include": "AVAILABILITY", "product": "POD", "cloud": "SECURE"}
+    assert request.headers["Authorization"] == f"Bearer {KEY}"
+
+
+@pytest.mark.parametrize(
+    ("fake", "reason"),
+    [
+        (FakeRunPod(catalog_status=500), "RunPod answered 500"),
+        (FakeRunPod(catalog_times_out=True), "RunPod could not be reached"),
+    ],
+)
+def test_a_failed_stock_read_is_an_error_without_the_key(fake: FakeRunPod, reason: str) -> None:
+    with pytest.raises(RunPodError) as caught:
+        run(client(fake).gpu_stock([A4500], "EU-RO-1"))
+    assert caught.value.reason.startswith(reason) and "rpa_" not in caught.value.reason
+
+
+def test_a_rejected_key_on_the_catalog_is_named() -> None:
+    with pytest.raises(RunPodError) as caught:
+        run(client(FakeRunPod(), key="rpa_WRONGKEYVALUE").gpu_stock([A4500], "EU-RO-1"))
+    assert caught.value.reason == KEY_REJECTED

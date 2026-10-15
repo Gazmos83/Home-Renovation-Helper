@@ -77,7 +77,7 @@ async def ensure_server(runtime: OffloadRuntime | None, launch: Launch) -> None:
         await runtime.checker.check(pod.connection, launch)
     else:
         # No pod yet: it is created only after the owner approves the render.
-        await runtime.checker.check_runpod(pod.client, pod.settings.volume_id)
+        await runtime.checker.check_runpod(pod.client, pod.settings.volume_id, pod.settings.gpu_types)
 
 
 def confirm_server_sync(

@@ -8,9 +8,10 @@ fallback: the render is not run on the laptop instead.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Final
 
 from app.blender.launch import Launch, LaunchResult
@@ -18,6 +19,8 @@ from app.render.guard import RenderRefused
 from app.render.offload.runpod import UNREACHABLE as RUNPOD_UNREACHABLE
 from app.render.offload.runpod import RunPodClient, RunPodError
 from app.render.offload.transport import OffloadConfig, Transport, quoted
+
+logger = logging.getLogger("app")
 
 PINNED_VERSION: Final = "5.2.1"
 CHECK_SECONDS: Final = 10.0
@@ -87,13 +90,17 @@ class OffloadChecker:
             )
         self._ok_until = self._clock() + CACHE_SECONDS
 
-    async def check_runpod(self, client: RunPodClient, volume_id: str) -> None:
+    async def check_runpod(
+        self, client: RunPodClient, volume_id: str, gpu_types: Sequence[str] = ()
+    ) -> None:
         """Pod mode with no pod running (render-pod-lifecycle): RunPod accepts the key and
-        knows the volume. Creates nothing, so nothing is billed before approval."""
+        knows the volume, and at least one render GPU is in stock in the volume's data centre
+        (render-gpu-availability). Creates nothing, so nothing is billed before approval."""
         if self._clock() < self._ok_until:
             return
+        started = self._clock()
         try:
-            await asyncio.wait_for(client.get_network_volume(volume_id), CHECK_SECONDS)
+            volume = await asyncio.wait_for(client.get_network_volume(volume_id), CHECK_SECONDS)
         except TimeoutError:
             raise RenderRefused(
                 f"{RUNPOD_UNREACHABLE}; try again, or {SWITCH_TO_LAPTOP}", failure_class="offload_unreachable"
@@ -102,7 +109,27 @@ class OffloadChecker:
             raise RenderRefused(
                 f"{error.reason}; fix it, or {SWITCH_TO_LAPTOP}", failure_class="offload_unreachable"
             ) from None
+        if gpu_types:
+            await self._require_stock(client, gpu_types, volume.data_center_id, started)
         self._ok_until = self._clock() + CACHE_SECONDS
+
+    async def _require_stock(
+        self, client: RunPodClient, gpu_types: Sequence[str], data_center: str, started: float
+    ) -> None:
+        """Refuse when every render GPU reads `NONE` there. An unread stock never refuses:
+        the create decides then, and it fails safely."""
+        left = max(CHECK_SECONDS - (self._clock() - started), 1.0)
+        try:
+            levels = await asyncio.wait_for(client.gpu_stock(gpu_types, data_center), left)
+        except (TimeoutError, RunPodError) as error:
+            logger.warning("offload.stock_unread", extra={"context": {"error_type": type(error).__name__}})
+            return
+        if all(level == "NONE" for level in levels.values()):
+            raise RenderRefused(
+                f"none of {', '.join(gpu_types)} is in stock in {data_center} right now; "
+                f"try again later, or {SWITCH_TO_LAPTOP}",
+                failure_class="offload_no_stock",
+            )
 
     def forget(self) -> None:
         self._ok_until = 0.0

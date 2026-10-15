@@ -67,6 +67,7 @@ _STATUS_FOR: Final = {
     "offload_unreachable": status.HTTP_503_SERVICE_UNAVAILABLE,
     "offload_version": status.HTTP_503_SERVICE_UNAVAILABLE,
     "offload_not_configured": status.HTTP_503_SERVICE_UNAVAILABLE,
+    "offload_no_stock": status.HTTP_503_SERVICE_UNAVAILABLE,
 }
 
 

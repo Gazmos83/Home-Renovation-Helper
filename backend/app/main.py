@@ -76,6 +76,7 @@ from app.plugins.executor import PluginExecutor
 from app.plugins.loader import load_plugins
 from app.render.approvals import ApprovalStore
 from app.render.benchmark_store import read_benchmark
+from app.render.offload.availability import StockSampler
 from app.render.offload.runtime import OffloadRuntime
 from app.render.tiers import load_tiers
 
@@ -179,7 +180,6 @@ async def _lifespan(app: FastAPI):
             "orphaned job sweep failed at startup: %s", type(error).__name__
         )
 
-    # A RunPod pod left running by an earlier process is still billed: delete it
     # The `preview` tier was removed (two-tier-renders): render records still naming it
     # read `draft`. The database rows are relabelled by migration 0025; the files here.
     try:
@@ -193,6 +193,7 @@ async def _lifespan(app: FastAPI):
             "preview relabel failed at startup: %s", type(error).__name__
         )
 
+    # A RunPod pod left running by an earlier process is still billed: delete it
     # before anything else can create one (render-pod-lifecycle).
     pod = app.state.offload.pod if app.state.offload is not None else None
     if pod is not None:
@@ -200,6 +201,16 @@ async def _lifespan(app: FastAPI):
             await pod.startup_cleanup()
         except Exception as error:  # noqa: BLE001 - reported, not fatal
             app_logging.logger.warning("render pod cleanup failed at startup: %s", type(error).__name__)
+    # Every 15 minutes, the render GPUs' stock in the volume's data centre (render-gpu-availability).
+    app.state.stock_sampler = None
+    if pod is not None:
+        app.state.stock_sampler = StockSampler(
+            client=pod.client,
+            gpu_types=pod.settings.gpu_types,
+            volume_id=pod.settings.volume_id,
+            engine=app.state.engine,
+        )
+        app.state.stock_sampler.start()
 
     # Per-agent model routing, validated against the registry (CLAUDE.md §4).
     # Developer-panel overrides in operator_settings resolve over the file.
@@ -282,6 +293,8 @@ async def _lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if app.state.stock_sampler is not None:
+            await app.state.stock_sampler.stop()
         # The pod is never left running after the app exits (render-pod-lifecycle).
         pod = app.state.offload.pod if app.state.offload is not None else None
         if pod is not None:

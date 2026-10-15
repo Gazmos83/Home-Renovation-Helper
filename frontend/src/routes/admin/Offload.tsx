@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { api, type OffloadJob, type OffloadPod, type OffloadPodSession } from "../../lib/api";
+import { api, type OffloadAvailability, type OffloadJob, type OffloadPod, type OffloadPodSession } from "../../lib/api";
 import { FieldError, fieldError, formError } from "../../lib/form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,41 @@ const dollars = (row: OffloadPodSession) => (row.cost_usd === null ? "—" : `$$
 const clock = (iso: string) => iso.slice(11, 16);
 const stamp = (iso: string) => iso.slice(0, 16).replace("T", " ");
 const lifetime = (total: number) => `${Math.floor(total / 60)} min ${total % 60} s`;
+
+const percent = (share: number | null) => (share === null ? null : `${Math.round(share * 100)}%`);
+
+function AvailabilityPeriod({ days, figures }: { days: string; figures: OffloadAvailability }) {
+  const placed = Object.entries(figures.placed);
+  const perType = Object.entries(figures.per_type_share);
+  return (
+    <div>
+      <h3>Last {days} days</h3>
+      {figures.starts === 0 ? (
+        <p>No pod starts yet.</p>
+      ) : (
+        <p>
+          {figures.starts} pod starts · {percent(figures.started_share)} started
+          {figures.median_startup_seconds !== null && ` · median start-up ${figures.median_startup_seconds} s`}
+          {` · ${figures.failed_starts} failed`}
+          {placed.length > 0 && ` · placed: ${placed.map(([gpu, n]) => `${gpu} ×${n}`).join(", ")}`}
+        </p>
+      )}
+      {figures.samples === 0 ? (
+        <p>No stock samples yet.</p>
+      ) : (
+        <>
+          <p>
+            {percent(figures.any_in_stock_share)} of samples had at least one render GPU in stock ({figures.samples}{" "}
+            samples, last {figures.last_sample_at ? stamp(figures.last_sample_at) : "—"})
+          </p>
+          <p className="text-sm text-muted-foreground">
+            {perType.map(([gpu, share]) => `${gpu}: ${percent(share) ?? "—"}`).join(" · ")}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
 
 function podState(pod: OffloadPod): string {
   switch (pod.state) {
@@ -42,6 +77,7 @@ export default function Offload() {
   const benchmark = useMutation({ mutationFn: api.offloadBenchmark, onSuccess: reload });
   const target = useMutation({ mutationFn: api.setOffloadTarget, onSuccess: reload });
   const deletePod = useMutation({ mutationFn: api.deleteOffloadPod, onSuccess: reload });
+  const sampling = useMutation({ mutationFn: api.setOffloadSampling, onSuccess: reload });
   const saveIdle = useMutation({
     mutationFn: (value: number) => api.setOffloadIdle(value),
     onSuccess: () => {
@@ -128,6 +164,26 @@ export default function Offload() {
               Save the idle time
             </Button>
           </p>
+        </section>
+      )}
+
+      {pod && data.availability && (
+        <section className={cardClass} aria-label="Availability">
+          <h2>Availability</h2>
+          <div className="grid gap-4 md:grid-cols-2">
+            <AvailabilityPeriod days="7" figures={data.availability["7"]} />
+            <AvailabilityPeriod days="30" figures={data.availability["30"]} />
+          </div>
+          <Label htmlFor="stock-sampling">Stock sampling every 15 minutes</Label>
+          <Select
+            id="stock-sampling"
+            value={data.stock_sampling ? "on" : "off"}
+            onChange={(event) => sampling.mutate(event.target.value === "on")}
+          >
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </Select>
+          <FieldError message={formError(sampling.error, [])} />
         </section>
       )}
 

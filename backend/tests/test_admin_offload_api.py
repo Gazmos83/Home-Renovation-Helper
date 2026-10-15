@@ -231,6 +231,7 @@ def runpod(client: TestClient) -> Iterator:
     def clear_records() -> None:
         with Session(client.app.state.engine) as session:
             session.execute(text("DELETE FROM render_pod_sessions"))
+            session.execute(text("DELETE FROM gpu_stock_samples"))
             session.commit()
 
     clear_records()
@@ -314,3 +315,33 @@ def test_pod_sessions_are_listed_with_their_cost(client: TestClient, runpod) -> 
     assert listed["pod_id"] == "pod7" and listed["jobs"] == 1 and listed["outcome"] == "deleted_idle"
     assert listed["cost_usd"] is not None
 
+
+# --- availability (render-gpu-availability) ---------------------------------------------------------------
+
+
+def test_pod_mode_summary_carries_both_periods_and_the_sampling_switch(client: TestClient, runpod) -> None:
+    body = client.get("/admin/offload").json()
+    assert set(body["availability"]) == {"7", "30"}
+    assert body["availability"]["7"]["samples"] == 0 and body["availability"]["7"]["any_in_stock_share"] is None
+    assert body["stock_sampling"] is True
+
+
+def test_the_sampling_switch_is_stored(client: TestClient, runpod) -> None:
+    response = client.put("/admin/offload/sampling", json={"on": False})
+    assert response.status_code == 200 and response.json()["stock_sampling"] is False
+    assert client.get("/admin/offload").json()["stock_sampling"] is False
+    assert client.put("/admin/offload/sampling", json={"on": "maybe"}).status_code == 422
+
+
+def test_host_mode_has_no_availability(client: TestClient) -> None:
+    configure(client)
+    body = client.get("/admin/offload").json()
+    assert body["availability"] is None and body["stock_sampling"] is None
+
+
+def test_the_sampling_switch_needs_the_developer_gate(migrated_database: str, render_root: Path, fake_blender: Path) -> None:
+    c = dev_client(migrated_database, render_root, fake_blender, dev=True)
+    try:
+        assert c.put("/admin/offload/sampling", json={"on": False}).status_code == 401
+    finally:
+        c.__exit__(None, None, None)

@@ -71,6 +71,16 @@ On the developer panel's **Render Offload** tab:
 
 After that, the estimate for a remote final includes the start-up time while no pod is running. **Render pod** shows when an idle pod will be deleted, and **Delete pod now** ends it early. **Pod sessions** lists each pod's lifetime and cost at RunPod's hourly price.
 
+## Stock and availability
+
+While no pod is running, the app reads Runpod's live stock for your GPU list in the volume's data centre before it asks you to approve a final. If every GPU on the list is sold out there, the final is refused at once ("none of … is in stock in EU-RO-1 right now"). Nothing is created or billed. Try again later, or switch finals to the laptop. If the stock read itself fails, the app goes ahead, and creating the pod decides.
+
+The Render Offload tab's **Availability** section shows the last 7 and 30 days:
+- pod starts, the share that started, the median start-up time, which GPU was placed, and failed starts;
+- from a free stock read every 15 minutes, the share of samples in which at least one of your GPUs was in stock, per GPU too.
+
+Samples are kept 90 days. Sampling can be switched off there. A week or two of samples shows whether a second volume in another data centre is worth it.
+
 ## When something goes wrong
 
 - **"the render pod's host key does not match"**: the known-hosts line is not the volume's key. Re-run the script and copy the printed line again.

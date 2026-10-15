@@ -125,12 +125,15 @@ def pod_runtime(fake_runpod, key: str = "rpa_SECRETKEYVALUE") -> OffloadRuntime:
     return runtime
 
 
+IN_STOCK = {"NVIDIA GeForce RTX 4090": {"EU-RO-1": "LOW"}}
+
+
 def test_pod_mode_with_nothing_running_checks_runpod_and_creates_nothing(tmp_path: Path) -> None:
     from tests.offload_fakes import FakeRunPod
 
-    fake, server = FakeRunPod(), FakeServer(tmp_path)
+    fake, server = FakeRunPod(catalog=IN_STOCK), FakeServer(tmp_path)
     asyncio.run(ensure_server(pod_runtime(fake), server.launch))
-    assert [request.url.path for request in fake.requests] == ["/v1/networkvolumes/vol123"]
+    assert [request.url.path for request in fake.requests] == ["/v1/networkvolumes/vol123", "/v2/catalog/gpus"]
     assert fake.created == [] and server.calls == []
 
 
@@ -164,3 +167,50 @@ def test_a_running_pod_is_checked_over_ssh(tmp_path: Path) -> None:
     assert "HostKeyAlias=hra-render-pod" in argv and "render@203.0.113.7" in argv
     assert argv[argv.index("-p") + 1] == "10341" and fake.requests == []
 
+
+# --- stock before approval (render-gpu-availability) ---------------------------------------------------
+
+
+def stock_runtime(catalog=None, **fake_options):
+    from dataclasses import replace
+
+    from tests.offload_fakes import FakeRunPod
+
+    fake = FakeRunPod(catalog=catalog, **fake_options)
+    runtime = pod_runtime(fake)
+    runtime.pod.settings = replace(
+        runtime.pod.settings, gpu_types=("NVIDIA RTX A4500", "NVIDIA GeForce RTX 4090")
+    )
+    return fake, runtime
+
+
+def test_nothing_in_stock_is_refused_before_approval_naming_the_gpus(tmp_path: Path) -> None:
+    fake, runtime = stock_runtime({"NVIDIA RTX A4500": {"EU-RO-1": "NONE"}, "NVIDIA GeForce RTX 4090": {"US-IL-1": "LOW"}})
+    with pytest.raises(RenderRefused) as caught:
+        asyncio.run(ensure_server(runtime, FakeServer(tmp_path).launch))
+    assert caught.value.failure_class == "offload_no_stock"
+    assert caught.value.reason.startswith(
+        "none of NVIDIA RTX A4500, NVIDIA GeForce RTX 4090 is in stock in EU-RO-1 right now"
+    )
+    assert "laptop" in caught.value.reason and fake.created == []
+
+
+def test_one_gpu_in_stock_passes(tmp_path: Path) -> None:
+    fake, runtime = stock_runtime({"NVIDIA RTX A4500": {"EU-RO-1": "NONE"}, "NVIDIA GeForce RTX 4090": {"EU-RO-1": "LOW"}})
+    asyncio.run(ensure_server(runtime, FakeServer(tmp_path).launch))
+    assert fake.created == []
+
+
+@pytest.mark.parametrize("options", [{"catalog_status": 500}, {"catalog_times_out": True}])
+def test_an_unread_stock_does_not_refuse(tmp_path: Path, options: dict) -> None:
+    fake, runtime = stock_runtime(None, **options)
+    asyncio.run(ensure_server(runtime, FakeServer(tmp_path).launch))
+    assert fake.created == []
+
+
+def test_with_a_pod_running_no_stock_is_read(tmp_path: Path) -> None:
+    fake, runtime = stock_runtime({})
+    runtime.pod.state = "running"
+    runtime.pod.connection = runtime.config.for_pod("203.0.113.7", 10341)
+    asyncio.run(ensure_server(runtime, FakeServer(tmp_path).launch))
+    assert fake.requests == []

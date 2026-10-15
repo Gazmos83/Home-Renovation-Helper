@@ -654,6 +654,19 @@ export type OffloadPod = {
   error: string | null;
 };
 
+/** One period of render GPU availability (render-gpu-availability); shares are 0–1, or null with nothing recorded. */
+export type OffloadAvailability = {
+  starts: number;
+  started_share: number | null;
+  median_startup_seconds: number | null;
+  placed: Record<string, number>;
+  failed_starts: number;
+  samples: number;
+  any_in_stock_share: number | null;
+  per_type_share: Record<string, number | null>;
+  last_sample_at: string | null;
+};
+
 export type OffloadSummary = {
   configured: boolean;
   mode: "host" | "pod" | null;
@@ -674,6 +687,8 @@ export type OffloadSummary = {
   jobs: OffloadJob[];
   pod: OffloadPod | null;
   pod_sessions: OffloadPodSession[];
+  availability: { "7": OffloadAvailability; "30": OffloadAvailability } | null;
+  stock_sampling: boolean | null;
 };
 
 export type OffloadTest = {
@@ -1038,6 +1053,8 @@ export const api = {
     request<OffloadSummary>("/admin/offload/target", { method: "PUT", body: JSON.stringify({ target }) }),
   setOffloadRate: (hourly_rate_eur: number) =>
     request<OffloadSummary>("/admin/offload/rate", { method: "PUT", body: JSON.stringify({ hourly_rate_eur }) }),
+  setOffloadSampling: (on: boolean) =>
+    request<OffloadSummary>("/admin/offload/sampling", { method: "PUT", body: JSON.stringify({ on }) }),
   deleteOffloadPod: () => request<OffloadSummary>("/admin/offload/pod/delete", { method: "POST" }),
   setOffloadIdle: (idle_minutes: number) =>
     request<OffloadSummary>("/admin/offload/idle", { method: "PUT", body: JSON.stringify({ idle_minutes }) }),

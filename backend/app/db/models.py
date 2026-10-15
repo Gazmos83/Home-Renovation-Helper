@@ -870,6 +870,26 @@ class RenderPodSession(Base):
     )
 
 
+class GpuStockSample(Base):
+    """One render GPU type's pod stock in the volume's data centre at one sample time
+    (render-gpu-availability). Kept 90 days."""
+
+    __tablename__ = "gpu_stock_samples"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    data_center: Mapped[str] = mapped_column(String(32), nullable=False)
+    gpu_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    availability: Mapped[str] = mapped_column(String(8), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "availability IN ('NONE', 'LOW', 'MEDIUM', 'HIGH')", name="ck_gpu_stock_samples_level_known"
+        ),
+        Index("ix_gpu_stock_samples_taken_at", "taken_at"),
+    )
+
+
 # --- pricing, stores and the corpus (pricing-researcher) -----------------------------------
 
 

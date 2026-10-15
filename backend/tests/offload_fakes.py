@@ -163,6 +163,9 @@ class FakeRunPod:
         delete_fails: int = 0,
         down: bool = False,
         stock: set[str] | None = None,
+        catalog: dict[str, dict[str, str]] | None = None,
+        catalog_status: int = 200,
+        catalog_times_out: bool = False,
     ) -> None:
         self.key = key
         self.volume_id = volume_id
@@ -173,6 +176,10 @@ class FakeRunPod:
         self.delete_fails = delete_fails
         self.down = down
         self.stock = stock  # GPU types that can be placed; `None` means any
+        # The v2 catalog: GPU type -> {data centre: level}; types absent are not listed.
+        self.catalog = catalog or {}
+        self.catalog_status = catalog_status
+        self.catalog_times_out = catalog_times_out
         self.pods: dict[str, dict] = {}
         self.reads: dict[str, int] = {}
         self.requests: list[httpx.Request] = []
@@ -202,6 +209,8 @@ class FakeRunPod:
             raise httpx.ConnectError("down", request=request)
         if request.headers.get("Authorization") != f"Bearer {self.key}":
             return httpx.Response(401, json={"error": "unauthorized"})
+        if request.url.path == "/v2/catalog/gpus":
+            return self._catalog(request)
         path = request.url.path.removeprefix("/v1")
         if request.method == "GET" and path.startswith("/networkvolumes/"):
             if path.rsplit("/", 1)[-1] != self.volume_id:
@@ -237,6 +246,17 @@ class FakeRunPod:
             return httpx.Response(204)
         return httpx.Response(405)
 
+    def _catalog(self, request: httpx.Request) -> httpx.Response:
+        if self.catalog_times_out:
+            raise httpx.ReadTimeout("slow", request=request)
+        if self.catalog_status != 200:
+            return httpx.Response(self.catalog_status, json={"error": "catalog down"})
+        gpus = []
+        for gpu, centres in self.catalog.items():
+            listed = [{"id": dc, "name": dc, "availability": level} for dc, level in centres.items()]
+            best = next((c["availability"] for c in listed if c["availability"] != "NONE"), "NONE")
+            gpus.append({"id": gpu, "availability": best, "dataCenters": listed or None})
+        return httpx.Response(200, json={"gpus": gpus})
 
 
 __all__ = ["OK", "FakeRunPod", "FakeServer", "png_bytes"]
