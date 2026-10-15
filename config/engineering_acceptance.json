@@ -4,7 +4,8 @@
   "backend_evidence": "Broad serial pytest -m not slow: 2303 passed, 39 skipped, 21 deselected; after final conflict/unit/reviewer refinements: 183 focused engineering/Foreman/instruction/summary tests passed; ruff check passed. Designated test database only; no real model call or render.",
   "frontend_checks": "passed",
   "frontend_evidence": "237 tests; pnpm lint; pnpm build",
-  "browser_checks": "pending_connection",
+  "browser_checks": "passed",
+  "browser_evidence": "2026-10-15, headless Chromium (Playwright 1.63) on the Engineering Knowledge view /admin/design-knowledge/engineering against a scratch database: pending (link-only, rights pending, unverified), rights-approved (link-only, unverified) and technically-reviewed (published blocks, rights approved, verified) sources shown distinctly; Approved only / Verified only filters; retrieval preview returned only eligible evidence; 360 x 780 without sideways scroll. 9 of 9 checks passed.",
   "retrieval_checks": "passed",
   "retrieval_evidence": "26 synthetic bilingual cases; real BGE-M3; hybrid held-out Recall@5 0.9259; citation/conditions 1.0; zero denied returns and false verified claims",
   "real_document_review": "Required per actual source/version; no real source content approved by this receipt"

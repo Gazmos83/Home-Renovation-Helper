@@ -35,7 +35,14 @@
 ## 6. Developer controls and initial sources
 
 - [x] 6.1 Add developer-gated source, rights, ingestion and property APIs; verify unauthenticated/disabled gates, rejection of unsupported approvals and unchanged legacy upload behaviour outside engineering registration.
-- [ ] 6.2 Add the knowledge admin page and eligible retrieval preview using existing UI patterns; verify pending/link-only/rights-approved/technically-reviewed states remain distinct in browser checks.
+- [x] 6.2 Add the knowledge admin page and eligible retrieval preview using existing UI patterns, shown as the Engineering Knowledge view of the Design Studio's Design Knowledge tab (`/admin/design-knowledge/engineering`); verify pending/link-only/rights-approved/technically-reviewed states remain distinct in browser checks on that view.
+  Browser pass 2026-10-15: headless Chromium through Python Playwright 1.63 on `/admin/design-knowledge/engineering`. Scratch database `home_renovation_dk_check` and scratch guideline, upload and render folders, dropped and deleted afterwards. Backend on 8132 (scratch owner login, developer panel on, gateway probe and Langfuse off, a scratch OpenRouter key, RunPod settings blank) and the current `vite build` on 5212; the owner's 8000 and 5173 were untouched. No model call, no render. 9 of 9 checks passed, no page errors (only the 401 before sign-in).
+  - Three sources registered from the view as metadata only. **Pending:** "Link-only / pending", "Rights pending / revoked / expired", "unverified". **Rights-approved** (Local use preset, reviewer and evidence entered): "Link-only / pending", "Rights approved", "unverified". **Technically reviewed** (approved, one-page PDF staged, authorised ingestion published 1 block, source review "verified"): "1 blocks (published)", "Rights approved", "verified by Owner check". Each row reads differently.
+  - "Approved only" hides the pending source; "Verified only" shows only the reviewed one. A reload keeps all three states.
+  - The retrieval preview returned the reviewed source as eligible evidence and neither the pending nor the rights-approved-only source.
+  - At 360 × 780 the view and the states show with the page 360 px wide.
+  - **Finding (not changed):** registering a source before the source list's first load finishes (about 1–3 s on a cold backend) leaves the new row unlisted until the next refresh: the post-registration refetch joins the still-running first request. Not seen when the list has loaded first; left for the owner.
+  - `config/engineering_acceptance.json` now records `browser_checks: passed` with this evidence (owner's go-ahead, 2026-10-15). The engineering plugin stays off until enabled by hand.
 - [x] 6.3 Register the brief's initial source metadata/official links and document rights-review inputs; verify registration alone causes no content download, extraction or vector insertion.
 - [x] 6.4 Add bounded reviewed local-file/CLI ingestion for large authorised documents; verify the normal upload limit remains intact and mixed-rights source blocks are selectively excluded. Real source ingestion requires recorded rights evidence first.
 

@@ -4,7 +4,7 @@ Onboarding one engineering source takes six hand-typed steps: catalogue YAML and
 
 ## What Changes
 
-- Depend on the [RAG foundation](../furniture-engineering-rag-foundation/proposal.md); it owns rights, verification and ingestion rules, and none of them change.
+- Depend on the [RAG foundation](../archive/2026-10-15-furniture-engineering-rag-foundation/proposal.md); it owns rights, verification and ingestion rules, and none of them change.
 - Show catalogue entries from `config/engineering_sources.yaml` that are not yet registered on the Knowledge page, each with a **Register** button. Registration stays metadata-only and unverified.
 - Prefill the rights form: reviewer name, a draft evidence sentence built from the source's own metadata, and a grant **preset** chosen by the owner ("Local use": extraction, local embedding, local retrieval and retention, which ingestion requires; "Local use plus cloud excerpts": adds remote model use). The preset lists the exact operations before **Record approval** is pressed. No preset is selected by default and nothing is recorded without the click.
 - Prefill the technical-review form with reviewer and status; it still needs an explicit click after the owner has inspected extracted blocks and properties.

@@ -4,7 +4,7 @@ The RAG foundation can retrieve authorised engineering evidence but cannot calcu
 
 ## What Changes
 
-- Depend on the [RAG foundation](../furniture-engineering-rag-foundation/proposal.md). Keep this a later, separately applicable change; the foundation remains useful without calculators. Production use does not depend on promoting the quarantine experiment.
+- Depend on the [RAG foundation](../archive/2026-10-15-furniture-engineering-rag-foundation/proposal.md). Keep this a later, separately applicable change; the foundation remains useful without calculators. Production use does not depend on promoting the quarantine experiment.
 - Add a closed calculator registry for bending/deflection, long-term creep, joint resistance, exact hardware capacity, anchorage and tipping. Each implemented method declares supported geometry/load cases, mandatory inputs, units, cited method revision and reviewed reference cases.
 - Use SI units and explicit mass-to-force conversion (`F_N = mass_kg × 9.81`). Distinguish mean/test strength from allowable design resistance, and retain ranges, duration, moisture, orientation and load conditions. No guessed safety factors or acceptance limits.
 - Support ordinary rectangular shelf cases first; compound folded geometry, unknown joint/load paths and out-of-domain cases return `NOT VERIFIED` rather than being simplified silently. Family-by-family review gates define when each method can be enabled.

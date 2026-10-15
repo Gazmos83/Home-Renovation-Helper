@@ -90,7 +90,7 @@ Current dimensions, parts and prices still derive from stored spec/house data. E
 
 ### 8. Privacy, memory and developer controls
 
-Add `/admin/knowledge` for source metadata, rights decisions, ingestion/review state, property editing and eligible retrieval previews. Reuse the existing gate (401 without session, 404 when disabled). Keep the legacy `/admin/guidelines` workflow until the separate experiment; an engineering registration/upload never takes that immediate-index path.
+Add the Engineering Knowledge view of the Design Studio's Design Knowledge tab (`/admin/design-knowledge/engineering`; the old page address `/admin/knowledge` redirects there, see `merge-guideline-pages`) for source metadata, rights decisions, ingestion/review state, property editing and eligible retrieval previews. The API routes stay under `/admin/knowledge`. Reuse the existing gate (401 without session, 404 when disabled). Keep the legacy guideline upload on the Guidelines view (`/admin/design-knowledge/guidelines`) until the separate experiment; an engineering registration/upload never takes that immediate-index path.
 
 Engineering excerpt text is excluded from Langfuse at the export boundary, not merely by omitting one tool span. Suppress content-bearing inputs/outputs for the entire engineering turn and any future summary/title/other call whose context carries engineering excerpts, including copied answers. Export only opaque evidence IDs, outcomes, timings and usage. Local metering and trace links continue. Tests use a fake exporter to inspect prompts, tools, outputs, errors and summary calls. Existing email masking remains.
 

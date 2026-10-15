@@ -5,7 +5,7 @@ The current guideline corpus can contain uploaded or checked-in PDFs indexed wit
 ## What Changes
 
 - Implement this experiment only on `test/guideline-quarantine`, in a separate worktree created from a coherent foundation baseline. Use a dedicated experiment database, separate automated-test database, copied guideline files and separate render/upload roots. A Git branch alone does not isolate PostgreSQL or files.
-- Depend on the [RAG foundation](../furniture-engineering-rag-foundation/proposal.md) registry and rights decisions; do not create a competing source registry.
+- Depend on the [RAG foundation](../archive/2026-10-15-furniture-engineering-rag-foundation/proposal.md) registry and rights decisions; do not create a competing source registry.
 - Audit legacy guideline publications, uploads, owner-note provenance and hardware-sheet mirrors. Map them to source versions where possible; mark unmatched or undocumented content `pending_review`, with a reason. Do not treat a citation, a PDF purchase or the word "personal" as permission.
 - Exclude quarantined text/vectors from vector, keyword and hybrid retrieval and from onward model/trace exports. Preserve copied files, metadata and existing rows for inspection; the quarantine operation does not delete them.
 - Show links/metadata and the reason when an affected source has no usable content. Release a source only after a documented rights decision and successful provenance-preserving re-ingestion; release does not make technical values verified automatically.

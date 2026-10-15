@@ -302,7 +302,7 @@ def test_api_tracing_suppresses_content_and_later_calls_keep_local_usage(
 
 
 def test_developer_method_controls_cannot_enable_unimplemented_unreviewed_equations(
-    client,
+    client, monkeypatch
 ):
     methods = client.get("/admin/engineering-methods")
     assert methods.status_code == 200
@@ -343,6 +343,7 @@ def test_developer_method_controls_cannot_enable_unimplemented_unreviewed_equati
         ).status_code
         == 404
     )
+    monkeypatch.setattr("app.engineering.release.release_ready", lambda: False)
     assert (
         client.put(
             "/admin/plugins/engineering_knowledge", json={"enabled": True}
