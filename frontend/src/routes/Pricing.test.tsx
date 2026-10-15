@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
-import { afterEach, expect, test } from "vitest";
+import { Link, MemoryRouter, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { expect, test } from "vitest";
 import { stubFetch } from "../test/fetchStub";
-import Pricing from "./Pricing";
+import { PRICING_VIEWS, PricingTab } from "./Pricing";
 
 const entry = {
   key: "foam", label: "Foam", category: "panel", unit: "per_piece", base_cents: 999,
@@ -16,10 +16,21 @@ const snapshot = {
   specification: "5 cm", captured_on: "2026-10-01", availability: null, store_name: null,
 };
 
-afterEach(() => window.localStorage.clear());
-
 function Address() {
   return <output aria-label="address">{useLocation().pathname}</output>;
+}
+
+/** The tab body with plain links standing in for the Design Studio sub-menu. */
+function Tab() {
+  const { view } = useParams();
+  return (
+    <>
+      {PRICING_VIEWS.map((v) => (
+        <Link key={v.id} to={`/studio/pricing/${v.id}`}>{v.label}</Link>
+      ))}
+      <PricingTab view={view} />
+    </>
+  );
 }
 
 function show(path: string) {
@@ -28,8 +39,8 @@ function show(path: string) {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/pricing" element={<Pricing />} />
-          <Route path="/pricing/:tab" element={<Pricing />} />
+          <Route path="/studio/pricing" element={<Tab />} />
+          <Route path="/studio/pricing/:view" element={<Tab />} />
         </Routes>
         <Address />
       </MemoryRouter>
@@ -45,41 +56,37 @@ function stubAll(priceList: unknown[] = []) {
   });
 }
 
-test("the page opens on the Prices tab", async () => {
+test("the views are Prices, Snapshots and Remnants, and the tab opens on Prices", async () => {
   stubAll();
-  show("/pricing");
-  expect(screen.getByRole("heading", { level: 1, name: "Pricing Overview" })).toBeInTheDocument();
-  const tabs = screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-label"));
-  expect(tabs).toEqual(["Prices", "Snapshots", "Remnants"]);
-  expect(screen.getByRole("tab", { name: "Prices" })).toHaveAttribute("aria-selected", "true");
+  show("/studio/pricing");
+  expect(PRICING_VIEWS.map((v) => v.label)).toEqual(["Prices", "Snapshots", "Remnants"]);
   expect(screen.getByRole("table")).toBeInTheDocument();
+  expect(screen.queryByRole("form", { name: "Record a snapshot" })).not.toBeInTheDocument();
 });
 
-test("choosing a tab changes the address and shows only that tab", async () => {
+test("choosing a view changes the address and shows only that view", async () => {
   const user = userEvent.setup();
   stubAll();
-  show("/pricing/prices");
-  await user.click(screen.getByRole("tab", { name: "Remnants" }));
-  expect(screen.getByLabelText("address")).toHaveTextContent("/pricing/remnants");
-  expect(screen.getByRole("tab", { name: "Remnants" })).toHaveAttribute("aria-selected", "true");
-  expect(screen.getByRole("tab", { name: "Prices" })).toHaveAttribute("aria-selected", "false");
+  show("/studio/pricing/prices");
+  await user.click(screen.getByRole("link", { name: "Remnants" }));
+  expect(screen.getByLabelText("address")).toHaveTextContent("/studio/pricing/remnants");
   expect(await screen.findByText("The rack is empty.")).toBeInTheDocument();
   expect(screen.queryByRole("table")).not.toBeInTheDocument();
   expect(screen.queryByRole("form", { name: "Record a snapshot" })).not.toBeInTheDocument();
 });
 
-test("a tab address opens that tab", () => {
+test("a view address opens that view", () => {
   stubAll();
-  show("/pricing/snapshots");
-  expect(screen.getByRole("tab", { name: "Snapshots" })).toHaveAttribute("aria-selected", "true");
+  show("/studio/pricing/snapshots");
   expect(screen.getByRole("form", { name: "Record a snapshot" })).toBeInTheDocument();
+  expect(screen.queryByRole("table")).not.toBeInTheDocument();
 });
 
-test("an unknown tab opens Prices", async () => {
+test("an unknown view opens Prices", async () => {
   stubAll();
-  show("/pricing/quotes");
-  await waitFor(() => expect(screen.getByLabelText("address")).toHaveTextContent("/pricing/prices"));
-  expect(screen.getByRole("tab", { name: "Prices" })).toHaveAttribute("aria-selected", "true");
+  show("/studio/pricing/quotes");
+  await waitFor(() => expect(screen.getByLabelText("address")).toHaveTextContent("/studio/pricing/prices"));
+  expect(screen.getByRole("table")).toBeInTheDocument();
 });
 
 test("an entry prefilled from a snapshot is listed on the Prices tab without a reload", async () => {
@@ -93,8 +100,8 @@ test("an entry prefilled from a snapshot is listed on the Prices tab without a r
       return { status: 201, body: snapshot };
     }
   });
-  show("/pricing/prices");
-  await user.click(screen.getByRole("tab", { name: "Snapshots" }));
+  show("/studio/pricing/prices");
+  await user.click(screen.getByRole("link", { name: "Snapshots" }));
   await user.type(await screen.findByLabelText("Page URL"), "https://toom.de/p/y");
   await user.type(screen.getByLabelText("Product name"), "Foam");
   await user.type(screen.getByLabelText("Price (€)"), "9,99");
@@ -104,30 +111,6 @@ test("an entry prefilled from a snapshot is listed on the Prices tab without a r
   await user.type(screen.getByLabelText("Entry key"), "foam");
   await user.click(screen.getByRole("button", { name: "Record snapshot" }));
   expect(await screen.findByRole("button", { name: "Delete Foam" })).toBeInTheDocument();
-  await user.click(screen.getByRole("tab", { name: "Prices" }));
+  await user.click(screen.getByRole("link", { name: "Prices" }));
   expect(await screen.findByText("Foam")).toBeInTheDocument();
-});
-
-test("the tabs sit in a rail of icons that shows and hides its labels like the conversation's", async () => {
-  const user = userEvent.setup();
-  stubAll();
-  show("/pricing/prices");
-  const list = screen.getByRole("tablist", { name: "Pricing Overview" });
-  expect(list).toHaveAttribute("aria-orientation", "vertical");
-  expect(within(list).queryByText("Snapshots")).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Show labels" }));
-  expect(within(list).getByText("Snapshots")).toBeInTheDocument();
-  expect(window.localStorage.getItem("studio.rail.expanded")).toBe("true");
-  await user.click(screen.getByRole("button", { name: "Hide labels" }));
-  expect(within(list).queryByText("Snapshots")).not.toBeInTheDocument();
-  expect(window.localStorage.getItem("studio.rail.expanded")).toBe("false");
-});
-
-test("the labels follow the choice made on the conversation's rail", () => {
-  window.localStorage.setItem("studio.rail.expanded", "true");
-  stubAll();
-  show("/pricing/remnants");
-  const list = screen.getByRole("tablist", { name: "Pricing Overview" });
-  expect(within(list).getByText("Prices")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Hide labels" })).toBeInTheDocument();
 });

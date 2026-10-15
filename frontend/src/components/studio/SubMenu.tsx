@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -18,6 +19,7 @@ export function SubMenu({
   current,
   layout,
   empty,
+  lead,
 }: {
   label: string;
   items: SubMenuItem[];
@@ -25,6 +27,8 @@ export function SubMenu({
   layout: "column" | "row";
   /** Shown in place of the entries when there are none. */
   empty?: string;
+  /** An action shown before the entries, e.g. "New conversation". */
+  lead?: ReactNode;
 }) {
   return (
     <nav
@@ -35,6 +39,7 @@ export function SubMenu({
           : "-mx-1 flex gap-2 overflow-x-auto border-b px-1 pb-2 md:hidden"
       }
     >
+      {lead}
       {items.length === 0 && empty && <p className="px-2 py-1.5 text-sm text-muted-foreground">{empty}</p>}
       {items.map((item) => (
         <Link

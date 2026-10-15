@@ -25,14 +25,23 @@ function writeExpanded(value: boolean) {
   }
 }
 
+// Every mounted rail, so a switch on one shows or hides the labels on the others at once.
+const labelListeners = new Set<(expanded: boolean) => void>();
+
 /** Whether a rail shows its labels, remembered in the browser and shared by every rail. */
 export function useRailLabels(): [boolean, () => void] {
   const [expanded, setExpanded] = useState(readExpanded);
+  useEffect(() => {
+    labelListeners.add(setExpanded);
+    return () => {
+      labelListeners.delete(setExpanded);
+    };
+  }, []);
   return [
     expanded,
     () => {
       writeExpanded(!expanded);
-      setExpanded(!expanded);
+      for (const listener of labelListeners) listener(!expanded);
     },
   ];
 }
@@ -75,8 +84,22 @@ export function RailLabelsToggle({ expanded, onToggle }: { expanded: boolean; on
  * opens its panel as a flyout beside the rail; choosing it again, choosing another,
  * Escape or the close button closes or switches it. Focus moves into the flyout and back
  * to its icon.
+ *
+ * `row` is the same icons in a row, for the Workspace's chat pane header
+ * (studio-pricing-and-agent-settings-tabs): each icon names itself on hover, its labels follow the
+ * other rails' switch, and its flyout opens over the pane, which must be `relative`.
  */
-export function Rail({ panels, open, onOpen }: { panels: Panel[]; open: string | null; onOpen: (id: string | null) => void }) {
+export function Rail({
+  panels,
+  open,
+  onOpen,
+  variant = "column",
+}: {
+  panels: Panel[];
+  open: string | null;
+  onOpen: (id: string | null) => void;
+  variant?: "column" | "row";
+}) {
   const flyout = useRef<HTMLElement>(null);
   const icons = useRef<Record<string, HTMLButtonElement | null>>({});
   const last = useRef<string | null>(null);
@@ -105,7 +128,7 @@ export function Rail({ panels, open, onOpen }: { panels: Panel[]; open: string |
     <>
       <nav
         aria-label="Panels"
-        className={railClass(expanded)}
+        className={variant === "row" ? "flex flex-wrap items-center gap-1" : railClass(expanded)}
       >
         {panels.map((panel) => {
           const Icon = ICONS[panel.icon];
@@ -118,8 +141,12 @@ export function Rail({ panels, open, onOpen }: { panels: Panel[]; open: string |
               type="button"
               variant="ghost"
               size="sm"
-              className={cn(railItemClass(expanded), open === panel.id && "bg-accent")}
+              className={cn(
+                variant === "row" ? (expanded ? "h-8 gap-1.5 px-2" : "size-8 p-0") : railItemClass(expanded),
+                open === panel.id && "bg-accent",
+              )}
               aria-label={panel.label}
+              title={variant === "row" ? panel.label : undefined}
               aria-expanded={open === panel.id}
               onClick={() => onOpen(open === panel.id ? null : panel.id)}
             >
@@ -128,7 +155,7 @@ export function Rail({ panels, open, onOpen }: { panels: Panel[]; open: string |
             </Button>
           );
         })}
-        <RailLabelsToggle expanded={expanded} onToggle={toggleLabels} />
+        {variant === "column" && <RailLabelsToggle expanded={expanded} onToggle={toggleLabels} />}
       </nav>
       {shown && (
         <section
@@ -137,8 +164,10 @@ export function Rail({ panels, open, onOpen }: { panels: Panel[]; open: string |
           aria-label={shown.label}
           tabIndex={-1}
           className={cn(
-            "fixed top-[calc(var(--header-h)+0.5rem)] z-30 max-h-[calc(100vh-var(--header-h)-1rem)] w-[min(26rem,calc(100vw-5rem))] space-y-3 overflow-y-auto rounded-xl border bg-card p-4 shadow-lg focus:outline-none",
-            expanded ? "left-[9.5rem]" : "left-14",
+            "z-30 w-[min(26rem,calc(100vw-5rem))] space-y-3 overflow-y-auto rounded-xl border bg-card p-4 shadow-lg focus:outline-none",
+            variant === "row"
+              ? "absolute top-14 left-2 max-h-[calc(100%-4rem)] max-w-[calc(100%-1rem)]"
+              : cn("fixed top-[calc(var(--header-h)+0.5rem)] max-h-[calc(100vh-var(--header-h)-1rem)]", expanded ? "left-[9.5rem]" : "left-14"),
           )}
         >
           <div className="flex items-center justify-between">

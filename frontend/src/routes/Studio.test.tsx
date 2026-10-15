@@ -14,14 +14,16 @@ function Address() {
   return <output aria-label="address">{location.pathname + location.search}</output>;
 }
 
-function show(path: string) {
+function show(path: string, dev = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/studio" element={<Studio />} />
-          <Route path="/studio/:tab/*" element={<Studio />} />
+          <Route path="/studio" element={<Studio dev={dev} />} />
+          <Route path="/studio/:tab/*" element={<Studio dev={dev} />} />
+          <Route path="/admin/agents" element={<Studio dev fixedTab="agents" />} />
+          <Route path="/admin/agents/:tab" element={<Studio dev fixedTab="agents" />} />
         </Routes>
         <Address />
       </MemoryRouter>
@@ -35,15 +37,30 @@ function stubAll() {
     if (call === "GET /rooms") return { body: [] };
     if (call === "GET /compositions") return { body: [] };
     if (call === "GET /models") return { body: [] };
+    if (call.startsWith("GET /price-list")) return { body: [] };
+    if (call === "GET /snapshots") return { body: [] };
+    if (call === "GET /remnants") return { body: [] };
+    if (call === "GET /admin/memory") return { body: memory };
   });
 }
+
+const memoryDefaults = {
+  trigger_percent: 100, keep_turns: 0, note_tokens: 400, note_instructions: "You keep the notes.", tool_result_chars: 300,
+  reviews: "auto", save_preferences: true, other_builds: "line", include_preferences: true,
+  include_review_items: true, render_ratings: 5, include_extension_requests: true,
+};
+const memory = { settings: memoryDefaults, defaults: memoryDefaults, fixed_rules: ["Generator-extension requests are always saved."] };
+
+const AGENT_LABELS = [
+  "Agent Memory", "Agent Workflow", "Agent Calls", "Render Offload", "Agent Score", "Token Usage", "Plugins", "Models and Routing",
+];
 
 test("the page opens on the Pieces tab", async () => {
   stubAll();
   show("/studio");
   expect(screen.getByRole("heading", { level: 1, name: "Design Studio" })).toBeInTheDocument();
   const tabs = screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-label"));
-  expect(tabs).toEqual(["Pieces", "Measured Rooms", "Model Library"]);
+  expect(tabs).toEqual(["Workspace", "Pieces", "Measured Rooms", "Model Library", "Pricing"]);
   expect(screen.getByRole("tab", { name: "Pieces" })).toHaveAttribute("aria-selected", "true");
   expect(await screen.findByRole("button", { name: "Create A New Piece" })).toBeInTheDocument();
   const [column] = screen.getAllByRole("navigation", { name: "Pieces" });
@@ -245,4 +262,101 @@ test("on a phone the names are one row that scrolls sideways (Names on a phone)"
   expect(row).toHaveClass("overflow-x-auto", "md:hidden");
   expect(row).not.toHaveClass("flex-col");
   expect(screen.getByRole("tablist", { name: "Design Studio" })).toBeInTheDocument();
+});
+
+test("the owner's rail has no divider and no AI & Agent Settings tab (Owner rail)", () => {
+  stubAll();
+  show("/studio/pieces");
+  expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-label"))).toEqual([
+    "Workspace", "Pieces", "Measured Rooms", "Model Library", "Pricing",
+  ]);
+  expect(document.querySelector("[data-rail-divider]")).toBeNull();
+});
+
+test("the developer's rail ends with a divider and AI & Agent Settings (Developer rail)", () => {
+  stubAll();
+  show("/studio/pieces", true);
+  const list = screen.getByRole("tablist", { name: "Design Studio" });
+  expect(within(list).getAllByRole("tab").map((tab) => tab.getAttribute("aria-label"))).toEqual([
+    "Workspace", "Pieces", "Measured Rooms", "Model Library", "Pricing", "AI & Agent Settings",
+  ]);
+  const divider = list.querySelector("[data-rail-divider]");
+  expect(divider?.nextElementSibling).toBe(screen.getByRole("tab", { name: "AI & Agent Settings" }));
+  expect(screen.getByRole("tab", { name: "AI & Agent Settings" })).toHaveAttribute("href", "/admin/agents");
+});
+
+test("Pricing opens on Prices with its three views in the sub-menu (Prices first)", async () => {
+  const user = userEvent.setup();
+  stubAll();
+  show("/studio/pieces");
+  await user.click(screen.getByRole("tab", { name: "Pricing" }));
+  expect(screen.getByLabelText("address")).toHaveTextContent("/studio/pricing");
+  expect(screen.getByRole("heading", { level: 1, name: "Design Studio" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Pricing" })).toHaveAttribute("aria-selected", "true");
+  const [column] = screen.getAllByRole("navigation", { name: "Pricing views" });
+  expect(within(column).getAllByRole("link").map((l) => l.textContent)).toEqual(["Prices", "Snapshots", "Remnants"]);
+  expect(within(column).getByRole("link", { name: "Prices" })).toHaveAttribute("aria-current", "page");
+  expect(screen.getByRole("table")).toBeInTheDocument();
+});
+
+test("choosing a Pricing view shows only that view (View chosen)", async () => {
+  const user = userEvent.setup();
+  stubAll();
+  show("/studio/pricing/prices");
+  const [column] = screen.getAllByRole("navigation", { name: "Pricing views" });
+  await user.click(within(column).getByRole("link", { name: "Remnants" }));
+  expect(screen.getByLabelText("address")).toHaveTextContent("/studio/pricing/remnants");
+  expect(await screen.findByText("The rack is empty.")).toBeInTheDocument();
+  expect(within(column).getByRole("link", { name: "Remnants" })).toHaveAttribute("aria-current", "page");
+  expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  expect(screen.queryByRole("form", { name: "Record a snapshot" })).not.toBeInTheDocument();
+});
+
+test("a Pricing view address opens that view (View address reloaded)", () => {
+  stubAll();
+  show("/studio/pricing/snapshots");
+  expect(screen.getByRole("tab", { name: "Pricing" })).toHaveAttribute("aria-selected", "true");
+  const [column] = screen.getAllByRole("navigation", { name: "Pricing views" });
+  expect(within(column).getByRole("link", { name: "Snapshots" })).toHaveAttribute("aria-current", "page");
+  expect(screen.getByRole("form", { name: "Record a snapshot" })).toBeInTheDocument();
+});
+
+test("on a phone the Pricing views are a row above the price list (Pricing on a phone)", () => {
+  setScreenWidth(360);
+  stubAll();
+  show("/studio/pricing/prices");
+  const [, row] = screen.getAllByRole("navigation", { name: "Pricing views" });
+  expect(within(row).getAllByRole("link").map((l) => l.textContent)).toEqual(["Prices", "Snapshots", "Remnants"]);
+  expect(row).toHaveClass("overflow-x-auto", "md:hidden");
+  expect(screen.getByRole("tablist", { name: "Design Studio" })).toBeInTheDocument();
+});
+
+test("the developer tab opens on Agent Memory inside the Design Studio (Agent Memory first)", async () => {
+  stubAll();
+  show("/admin/agents");
+  expect(screen.getByRole("heading", { level: 1, name: "Design Studio" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "AI & Agent Settings" })).toHaveAttribute("aria-selected", "true");
+  const [column] = screen.getAllByRole("navigation", { name: "AI & Agent Settings views" });
+  expect(within(column).getAllByRole("link").map((l) => l.textContent)).toEqual(AGENT_LABELS);
+  expect(within(column).getByRole("link", { name: "Agent Memory" })).toHaveAttribute("aria-current", "page");
+  expect(await screen.findByText("Generator-extension requests are always saved.")).toBeInTheDocument();
+});
+
+test("a developer view address keeps the developer route tree (View address reloaded)", async () => {
+  const calls = stubFetch((call) => (call === "GET /admin/offload" ? { status: 503, body: { detail: "down" } } : undefined));
+  show("/admin/agents/offload");
+  const [column] = screen.getAllByRole("navigation", { name: "AI & Agent Settings views" });
+  expect(within(column).getByRole("link", { name: "Render Offload" })).toHaveAttribute("aria-current", "page");
+  expect(within(column).getByRole("link", { name: "Token Usage" })).toHaveAttribute("href", "/admin/agents/usage");
+  await waitFor(() => expect(calls.map(([method, url]) => `${method} ${url}`)).toContain("GET /admin/offload"));
+});
+
+test("on a phone the eight developer views are a sideways-scrolling row (Sub-menu on a phone)", () => {
+  setScreenWidth(360);
+  stubAll();
+  show("/admin/agents/models");
+  const [, row] = screen.getAllByRole("navigation", { name: "AI & Agent Settings views" });
+  expect(within(row).getAllByRole("link").map((l) => l.textContent)).toEqual(AGENT_LABELS);
+  expect(within(row).getByRole("link", { name: "Models and Routing" })).toHaveAttribute("aria-current", "page");
+  expect(row).toHaveClass("overflow-x-auto", "md:hidden");
 });

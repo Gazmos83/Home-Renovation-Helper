@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { expect, test, vi } from "vitest";
 import App from "./App";
@@ -26,7 +26,8 @@ test("a 401 from any call returns the owner to sign-in", async () => {
     if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
     if (call === "GET /remnants") return { status: 401, body: { detail: "session expired" } };
   });
-  show("/pricing/remnants");
+  // The current address: an old one redirects, and the redirect re-checks the session, which this stub answers.
+  show("/studio/pricing/remnants");
   expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
 });
 
@@ -124,8 +125,8 @@ test("without a session the model library is the sign-in page", async () => {
   expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
 });
 
-test("a conversation deep link still opens the conversation view", async () => {
-  stubFetch((call) => {
+test("a conversation deep link opens it in the Workspace, keeping its piece version (Deep link still works)", async () => {
+  const calls = stubFetch((call) => {
     if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
     if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
     if (call === "GET /chat/threads/t1") {
@@ -164,37 +165,72 @@ test("a conversation deep link still opens the conversation view", async () => {
     }
     if (call === "GET /chat/threads/t1/tools") return { body: [] };
     if (call === "GET /chat/threads/t1/uploads") return { body: [] };
+    if (call === "GET /chat/threads") return { body: [{ thread_id: "t1", title: "Hall bench", package_id: "hall-bench", created_at: "", last_turn_at: "" }] };
   });
-  show("/conversations/t1");
-  expect(await screen.findByRole("heading", { name: "Hall bench" })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "All pieces" })).toHaveAttribute("href", "/pieces");
+  show("/conversations/t1?inspect=hall-bench/2");
+  expect(await screen.findByRole("heading", { level: 2, name: "Hall bench" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Workspace" })).toHaveAttribute("aria-selected", "true");
+  const [column] = screen.getAllByRole("navigation", { name: "Conversations" });
+  expect(await within(column).findByRole("link", { name: "Hall bench" })).toHaveAttribute("aria-current", "page");
+  // The piece pane shows the version the old address named.
+  await waitFor(() => expect(calls.map(([, url]) => url)).toContain("/packages/hall-bench/versions/2"));
 });
 
-test("the nav has one Pricing Overview item and no Price list, Snapshots or Remnants", async () => {
+test("the old conversations list opens the Workspace", async () => {
+  stubFetch((call) => {
+    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+    if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+    if (call === "GET /chat/threads") return { body: [] };
+  });
+  show("/conversations");
+  expect(await screen.findByText("No conversations yet.")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Workspace" })).toHaveAttribute("aria-selected", "true");
+});
+
+test("pricing is a Design Studio tab and the nav has no Pricing Overview, Price list, Snapshots or Remnants (Navigation)", async () => {
   stubFetch((call) => {
     if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
     if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
     if (call === "GET /remnants") return { body: [] };
   });
-  show("/pricing/remnants");
+  show("/studio/pricing/remnants");
   const nav = await screen.findByRole("navigation", { name: "Main" });
-  const pricing = within(nav).getByRole("link", { name: "Pricing Overview" });
-  expect(pricing).toHaveAttribute("href", "/pricing");
-  expect(pricing).toHaveAttribute("aria-current", "page");
-  for (const old of ["Price list", "Snapshots", "Remnants"]) {
+  expect(within(nav).getByRole("link", { name: "Design Studio" })).toHaveAttribute("aria-current", "page");
+  for (const old of ["Pricing Overview", "Price list", "Snapshots", "Remnants", "AI & Agent Settings"]) {
     expect(within(nav).queryByRole("link", { name: old })).not.toBeInTheDocument();
   }
+  expect(screen.getByRole("tab", { name: "Pricing" })).toHaveAttribute("aria-selected", "true");
 });
 
-test("an old address opens its tab on the Pricing Overview page", async () => {
-  stubFetch((call) => {
-    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
-    if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
-    if (call === "GET /snapshots") return { body: [] };
+for (const [old, view] of [
+  ["/snapshots", "snapshots"],
+  ["/pricing/snapshots", "snapshots"],
+  ["/pricing", "prices"],
+  ["/price-list", "prices"],
+  ["/remnants", "remnants"],
+  ["/pricing/quotes", "prices"],
+] as const) {
+  test(`the old address ${old} opens the ${view} view of the Pricing tab (Old address)`, async () => {
+    stubFetch((call) => {
+      if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+      if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+      if (call.startsWith("GET /price-list")) return { body: [] };
+      if (call === "GET /snapshots") return { body: [] };
+      if (call === "GET /remnants") return { body: [] };
+    });
+    show(old);
+    expect(await screen.findByRole("heading", { level: 1, name: "Design Studio" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Pricing" })).toHaveAttribute("aria-selected", "true");
+    const [column] = await screen.findAllByRole("navigation", { name: "Pricing views" });
+    const label = { prices: "Prices", snapshots: "Snapshots", remnants: "Remnants" }[view];
+    await waitFor(() => expect(within(column).getByRole("link", { name: label })).toHaveAttribute("aria-current", "page"));
   });
-  show("/snapshots");
-  expect(await screen.findByRole("heading", { level: 1, name: "Pricing Overview" })).toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: "Snapshots" })).toHaveAttribute("aria-selected", "true");
+}
+
+test("a signed-out visit to a Pricing view goes to sign-in (Signed out)", async () => {
+  stubFetch((call) => (call === "GET /auth/me" ? { status: 401, body: { detail: "Not authenticated" } } : undefined));
+  show("/studio/pricing/remnants");
+  expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
 });
 
 function stubDeveloper() {
@@ -208,38 +244,41 @@ function stubDeveloper() {
   });
 }
 
-test("the developer nav has one AI & Agent Settings item in place of the eight agent pages", async () => {
+test("the developer header keeps Guidelines, Knowledge and Rules and has no AI & Agent Settings entry (Navigation)", async () => {
   stubDeveloper();
   show("/pieces");
   const nav = await screen.findByRole("navigation", { name: "Main" });
-  const settings = await within(nav).findByRole("link", { name: "AI & Agent Settings" });
-  expect(settings).toHaveAttribute("href", "/admin/agents");
+  const rules = await within(nav).findByRole("link", { name: "Rules" });
+  expect(rules).toBeInTheDocument();
   const labels = within(nav).getAllByRole("link").map((link) => link.textContent);
-  expect(labels.slice(labels.indexOf("AI & Agent Settings"))).toEqual(["AI & Agent Settings", "Guidelines", "Knowledge", "Rules"]);
-  for (const old of ["Models", "Plugins", "Usage", "Feedback", "Offload", "Calls", "Workflow", "Memory"]) {
+  expect(labels.slice(labels.lastIndexOf("Guidelines"))).toEqual(["Guidelines", "Knowledge", "Rules"]);
+  for (const old of ["AI & Agent Settings", "Pricing Overview", "Models", "Plugins", "Usage", "Feedback", "Offload", "Calls", "Workflow", "Memory"]) {
     expect(within(nav).queryByRole("link", { name: old })).not.toBeInTheDocument();
   }
+  expect(await screen.findByRole("tab", { name: "AI & Agent Settings" })).toHaveAttribute("href", "/admin/agents");
 });
 
-test("an old developer address opens its tab on the AI & Agent Settings page", async () => {
+test("an old developer address opens its view of the Design Studio's developer tab (Old address)", async () => {
   stubDeveloper();
   show("/admin/conversations");
-  expect(await screen.findByRole("heading", { level: 1, name: "AI & Agent Settings" })).toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: "Agent Calls" })).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByRole("heading", { level: 1, name: "Design Studio" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "AI & Agent Settings" })).toHaveAttribute("aria-selected", "true");
+  const [column] = screen.getAllByRole("navigation", { name: "AI & Agent Settings views" });
+  expect(within(column).getByRole("link", { name: "Agent Calls" })).toHaveAttribute("aria-current", "page");
   const nav = screen.getByRole("navigation", { name: "Main" });
-  expect(within(nav).getByRole("link", { name: "AI & Agent Settings" })).toHaveAttribute("aria-current", "page");
+  expect(within(nav).getByRole("link", { name: "Design Studio" })).toHaveAttribute("aria-current", "page");
 });
 
-test("without the developer gate the AI & Agent Settings page is not shown", async () => {
+test("without the developer gate a developer address opens Pieces and the rail has no developer tab (Not a developer)", async () => {
   stubFetch((call) => {
     if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
     if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
     if (call === "GET /packages") return { body: [] };
   });
   show("/admin/agents/models");
-  expect(await screen.findByRole("navigation", { name: "Main" })).toBeInTheDocument();
-  expect(screen.queryByRole("heading", { name: "AI & Agent Settings" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  expect(await screen.findByRole("tab", { name: "Pieces" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.queryByRole("tab", { name: "AI & Agent Settings" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("navigation", { name: "AI & Agent Settings views" })).not.toBeInTheDocument();
 });
 
 test("a reloaded developer tab waits for the developer check instead of leaving the page", async () => {
@@ -251,6 +290,7 @@ test("a reloaded developer tab waits for the developer check instead of leaving 
     return stubbed(input, init);
   });
   show("/admin/agents/usage");
-  expect(await screen.findByRole("heading", { level: 1, name: "AI & Agent Settings" })).toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: "Token Usage" })).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByRole("tab", { name: "AI & Agent Settings" })).toHaveAttribute("aria-selected", "true");
+  const [column] = screen.getAllByRole("navigation", { name: "AI & Agent Settings views" });
+  expect(within(column).getByRole("link", { name: "Token Usage" })).toHaveAttribute("aria-current", "page");
 });

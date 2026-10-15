@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { Check, Circle, Pencil, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Check, Circle, Pencil } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   api,
   type ChatMessage,
@@ -21,7 +21,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cardClass } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Page } from "@/components/Page";
 import { Attachment } from "@/components/chat/Attachment";
 import { Bubble } from "@/components/chat/Bubble";
 import { Notice } from "@/components/chat/Notice";
@@ -451,7 +450,7 @@ function Title({ threadId, title }: { threadId: string; title: string }) {
   if (editing === null) {
     return (
       <div className="flex items-center gap-2">
-        <h1>{title || "Untitled"}</h1>
+        <h2>{title || "Untitled"}</h2>
         <Button type="button" variant="ghost" size="sm" aria-label="Rename" onClick={() => setEditing(title)}>
           <Pencil aria-hidden size={16} />
         </Button>
@@ -560,21 +559,20 @@ function OwnerMessage({ m, uploadById, onEdit, onAddDecision }: {
   );
 }
 
-/** The side pane beside the chat: a piece version or the conversation's room. */
 // "Add to decisions": bold, framed, light green.
 const ADD_DECISION_CLASS =
   "mt-1 border-2 border-green-600 bg-green-100 font-bold text-green-900 hover:bg-green-200";
-const paneClass =
-  "min-w-0 space-y-2 lg:sticky lg:top-[calc(var(--header-h)+1rem)] lg:max-h-(--chat-h) lg:overflow-y-auto";
+/** A piece or room pane of the Workspace: it scrolls on its own. */
+const paneClass = "h-full min-w-0 space-y-2 overflow-y-auto p-3";
 
-/** `?room=<slug>` or `?room=<slug>/<n>`: the room shown beside the chat and its version, or `null`. */
+/** `?room=<slug>` or `?room=<slug>/<n>`: the room shown in the room pane and its version, or `null`. */
 function parseRoom(value: string | null): { slug: string; version: number | null } | null {
   const found = value?.match(/^([a-z0-9][a-z0-9-]*)(?:\/(\d+))?$/i);
   if (!found) return null;
   return { slug: found[1], version: found[2] ? Number(found[2]) : null };
 }
 
-/** `?inspect=<package-id>/<n>`: the version shown beside the chat, or `null`. */
+/** `?inspect=<package-id>/<n>`: the version shown in the piece pane, or `null`. */
 function parseInspect(value: string | null): { packageId: string; version: number } | null {
   const found = value?.match(/^([a-z0-9][a-z0-9-]*)\/(\d+)$/i);
   if (!found || Number(found[2]) < 1) return null;
@@ -586,8 +584,15 @@ type Running = { working: string | null; tool: string | null };
 /** How close to the end of the messages box still counts as being at the last message. */
 const AT_BOTTOM_PX = 32;
 
-export default function Conversation() {
-  const { threadId = "" } = useParams();
+/** The conversation's state and actions, shared by its chat, piece and room panes in the Workspace. */
+export type ConversationState = ReturnType<typeof useConversation>;
+
+/**
+ * One conversation: its thread, progress, running turn and the piece and room shown beside it
+ * (studio-pricing-and-agent-settings-tabs moved this out of the conversation page unchanged).
+ * `showPane` is told when a piece version or the room is opened, so the Workspace can show its pane.
+ */
+export function useConversation(threadId: string, showPane: (pane: "piece" | "room") => void) {
   const queryClient = useQueryClient();
   const [specialists, setSpecialists] = useState<string[]>([]);
   const [running, setRunning] = useState<Running | null>(null);
@@ -630,17 +635,7 @@ export default function Conversation() {
   // The messages box scrolls by itself and follows new items only while the owner is at its end.
   const list = useRef<HTMLElement>(null);
   const atBottom = useRef(true);
-  const column = useRef<HTMLDivElement>(null);
-  const [columnTop, setColumnTop] = useState(0);
   const loaded = thread.data !== undefined;
-  useLayoutEffect(() => {
-    function measure() {
-      if (column.current) setColumnTop(column.current.getBoundingClientRect().top + window.scrollY);
-    }
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, [loaded]);
   useEffect(() => {
     atBottom.current = true;
   }, [threadId]);
@@ -648,19 +643,11 @@ export default function Conversation() {
   const lastLength = thread.data?.messages.at(-1)?.text.length ?? 0;
   useLayoutEffect(() => {
     if (list.current && atBottom.current) list.current.scrollTop = list.current.scrollHeight;
-    // `columnTop` too: measuring the column shortens the box after its first scroll.
-  }, [loaded, columnTop, messageCount, lastLength, optimistic, running?.working, running?.tool, kept.length]);
+  }, [loaded, messageCount, lastLength, optimistic, running?.working, running?.tool, kept.length]);
   function onScroll() {
     const box = list.current;
     if (box) atBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight <= AT_BOTTOM_PX;
   }
-
-  const inspectedSpec = useQuery({
-    queryKey: ["spec", inspected?.packageId, inspected?.version],
-    queryFn: () => api.pieceSpec(inspected?.packageId as string, inspected?.version as number),
-    enabled: inspected !== null,
-    retry: false,
-  });
 
   function deleted(packageId: string, version: number) {
     queryClient.removeQueries({ queryKey: ["version", packageId, version] });
@@ -670,34 +657,32 @@ export default function Conversation() {
     if (inspected?.packageId === packageId && inspected.version === version) inspect(null);
   }
 
-  // One side pane at a time: opening a piece version closes the room view (project-room-inspection).
+  // `?inspect=<id>/<n>`: the version in the piece pane; with none, the pane shows the piece's latest version.
   function inspect(packageId: string | null, version?: number) {
     setParams(
       (current) => {
         const next = new URLSearchParams(current);
-        if (packageId && version) {
-          next.set("inspect", `${packageId}/${version}`);
-          next.delete("room");
-        } else next.delete("inspect");
+        if (packageId && version) next.set("inspect", `${packageId}/${version}`);
+        else next.delete("inspect");
         return next;
       },
       { replace: true },
     );
+    if (packageId && version) showPane("piece");
   }
 
-  // `?room=<slug>[/<n>]`: the conversation's room beside the chat; opening it closes the piece inspector.
+  // `?room=<slug>[/<n>]`: the room and version in the room pane; with none, the pane shows the room's latest.
   function inspectRoom(slug: string | null, version?: number) {
     setParams(
       (current) => {
         const next = new URLSearchParams(current);
-        if (slug) {
-          next.set("room", version ? `${slug}/${version}` : slug);
-          next.delete("inspect");
-        } else next.delete("room");
+        if (slug) next.set("room", version ? `${slug}/${version}` : slug);
+        else next.delete("room");
         return next;
       },
       { replace: true },
     );
+    if (slug) showPane("room");
   }
   const sentFiles = Boolean(thread.data?.messages.some((m) => m.upload_ids?.length));
   const uploads = useQuery({ queryKey: ["uploads", threadId], queryFn: () => api.uploads(threadId), enabled: sentFiles });
@@ -789,15 +774,51 @@ export default function Conversation() {
     setAnswerError(await follow((onEvent) => api.streamResume(threadId, pending.confirmation_id, value, onEvent)));
   }
 
+  return {
+    threadId,
+    thread,
+    progress,
+    params,
+    inspected,
+    list,
+    onScroll,
+    panel,
+    setPanel,
+    decisionText,
+    setDecisionText,
+    compressing,
+    editing,
+    setEditing,
+    kept,
+    running,
+    specialists,
+    optimistic,
+    answerError,
+    uploadById,
+    deleted,
+    inspect,
+    inspectRoom,
+    send,
+    answer,
+    stop,
+    addDecision,
+  };
+}
+
+/**
+ * The Workspace's chat pane: a header with the conversation's title, its panel icons and its delete
+ * action, the messages scrolling in their own box, and the composer or the pending question below.
+ */
+export function ChatPane({ c }: { c: ConversationState }) {
+  const { threadId, thread, progress, running, optimistic, editing, specialists, decisionText } = c;
   if (thread.error) {
     return (
-      <Page>
+      <div className="p-3">
         <FieldError message={message(thread.error)} />
-        <Link to="/pieces" className="underline">All pieces</Link>
-      </Page>
+      </div>
     );
   }
-  if (!thread.data) return <Page>Loading…</Page>;
+  if (!thread.data) return <p className="p-3">Loading…</p>;
   const { messages, pending } = thread.data;
   // Once a refetch brings the sent message in, the saved copy replaces the optimistic one.
   const lastSaved = messages.filter((m) => m.role === "owner" && m.message_id).at(-1)?.message_id;
@@ -805,229 +826,270 @@ export default function Conversation() {
   const lastReply = messages.reduce((found, m, index) => (m.role === "assistant" && m.kind !== "answers" ? index : found), -1);
   const lastOwner = messages.reduce((found, m, index) => (m.role === "owner" && m.message_id ? index : found), -1);
   const canEdit = running === null && !pending && !optimistic;
-  // Shown only for the conversation's current room with a 3D model; a stale address shows nothing.
-  const room = progress.data?.room;
-  const roomAddress = parseRoom(params.get("room"));
-  const roomShown =
-    !inspected && room?.slug && room.model && room.surfaces && roomAddress?.slug === room.slug ? room : null;
-  // The chosen version, or the latest when the address names none or one no longer listed.
-  const roomVersions = roomShown?.versions ?? [];
-  const roomVersion = roomVersions.find((v) => v.version === roomAddress?.version) ?? roomVersions[0];
-  const roomModel = roomVersion
-    ? { model: roomVersion.model, surfaces: roomVersion.surfaces, dimensions: roomVersion.dimensions }
-    : { model: roomShown?.model ?? null, surfaces: roomShown?.surfaces ?? null, dimensions: null };
 
   return (
-    <div className="flex">
-      <Rail
-        open={panel}
-        onOpen={setPanel}
-        panels={[
-          { id: "tools", label: "Tools", icon: "tools", content: <Tools threadId={threadId} /> },
-          { id: "notes", label: "Decisions so far", icon: "notes", content: (
-              <DecisionsNote
-                key={decisionText?.id ?? "none"}
-                threadId={threadId}
-                prefill={decisionText ?? undefined}
-                compressing={compressing}
-                onPrefillUsed={() => setDecisionText(null)}
-              />
-            ),
-          },
-          { id: "brief", label: "Brief", icon: "brief", content: <BriefPanel threadId={threadId} /> },
-          { id: "project", label: "Project", icon: "project", content: <ProjectPanel progress={progress} /> },
-          {
-            id: "piece",
-            label: "Piece",
-            icon: "piece",
-            content: (
-              <PiecePanel
-                threadId={threadId}
-                progress={progress}
-                onInspect={(packageId, version) => {
-                  inspect(packageId, version);
-                  setPanel(null);
-                }}
-                onDeleted={deleted}
-                onUseLook={(text) => void send(text, [])}
-              />
-            ),
-          },
-          {
-            id: "room",
-            label: "Room",
-            icon: "room",
-            content: (
-              <RoomPanel
-                threadId={threadId}
-                progress={progress}
-                onInspectRoom={(slug) => {
-                  inspectRoom(slug);
-                  setPanel(null);
-                }}
-              />
-            ),
-          },
-        ]}
-      />
-      <Page wide>
-        <p><Link to="/pieces" className="underline">All pieces</Link></p>
+    <div className="relative flex h-full min-w-0 flex-col gap-3 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Title key={thread.data.title} threadId={threadId} title={thread.data.title} />
-        <DeleteConversation threadId={threadId} title={thread.data.title} />
-        <div
-          className={inspected || roomShown ? "grid gap-4 lg:grid-cols-2 lg:items-start" : "mx-auto max-w-5xl"}
-          // The window height left under the header and the title, less the page's bottom padding:
-          // the chat column's height, and the inspector's at most beside it.
-          style={{ "--chat-h": `calc(100vh - ${columnTop}px - 2rem)` } as CSSProperties}
-        >
-          <div
-            ref={column}
-            className="flex h-(--chat-h) min-w-0 flex-col gap-4"
-          >
-            <section
-              ref={list}
-              onScroll={onScroll}
-              className={`${cardClass} min-h-48 flex-1 space-y-4 overflow-y-auto`}
-              aria-label="Messages"
-            >
-              {messages.length === 0 && !showOptimistic && <p className="text-muted-foreground">Nothing said yet. Describe the piece you want.</p>}
-              {messages.map((m, index) => {
-                if (m.role === "confirmation") {
-                  return (
-                    <p key={index} className="mx-auto w-fit rounded-md border px-3 py-2 text-sm text-muted-foreground" data-role="confirmation">
-                      Answered: {m.text}
-                    </p>
-                  );
-                }
-                if (m.role === "notice") return <Notice key={index} m={m} onReview={inspect} />;
-                if (m.kind === "answers") {
-                  return (
-                    <div key={index} className="mx-auto w-full max-w-xl" data-role="answers">
-                      <AnswersTable rows={m.rows ?? []} />
-                    </div>
-                  );
-                }
-                if (m.role === "owner") {
-                  const editable = canEdit && index === lastOwner && editing === null;
-                  return (
-                    <OwnerMessage
-                      key={index}
-                      m={m}
-                      uploadById={uploadById}
-                      onEdit={editable ? () => setEditing({ messageId: m.message_id as string, text: m.text }) : undefined}
-                      onAddDecision={m.message_id ? () => addDecision(m.text) : undefined}
-                    />
-                  );
-                }
-                return (
-                  <Bubble key={index} side="left" speaker="Foreman">
-                    <Reply text={m.text} />
-                    <Button type="button" variant="outline" size="sm" className={ADD_DECISION_CLASS} onClick={() => addDecision(m.text)}>
-                      Add to decisions
-                    </Button>
-                    {index === lastReply && specialists.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1" aria-label="Specialists in this turn">
-                        {specialists.map((role) => (
-                          <Badge key={role} variant="outline">{ROLE_LABELS[role] ?? role}</Badge>
-                        ))}
-                      </div>
-                    )}
-                  </Bubble>
-                );
-              })}
-              {optimistic && showOptimistic && (
-                <OwnerMessage m={{ role: "owner", text: optimistic.text, upload_ids: optimistic.uploads.map((u) => u.upload_id) }} uploadById={new Map(optimistic.uploads.map((u) => [u.upload_id, u]))} />
-              )}
-              {running && <WaitingBubble working={running.working} tool={running.tool} />}
-              {kept.length > 0 && (
-                <p role="status" className="text-sm text-muted-foreground">
-                  Kept from the replaced message: {kept.join("; ")}.
-                </p>
-              )}
-            </section>
-            {pending ? (
-              <>
-                {pending.kind === "questions" ? (
-                  <QuestionForm
-                    key={pending.confirmation_id}
-                    questions={pending.questions ?? []}
-                    disabled={running !== null}
-                    onAnswer={(value) => void answer(pending, value)}
-                  />
-                ) : (
-                  <ConfirmationCard
-                    key={pending.confirmation_id}
-                    pending={pending}
-                    disabled={running !== null}
-                    onAnswer={(value) => void answer(pending, value)}
-                  />
-                )}
-                <FieldError message={answerError} />
-              </>
-            ) : (
-              <Composer
-                threadId={threadId}
-                running={running !== null}
-                onSend={send}
-                onStop={() => void stop()}
-                editing={editing}
-                onCancelEdit={() => setEditing(null)}
-              />
-            )}
-          </div>
-          {inspected && (
-            <aside aria-label="Inspector" className={paneClass}>
-              <div className="flex items-center justify-between gap-2">
-                <h2>{inspectedSpec.data?.name || inspected.packageId}</h2>
-                <Button type="button" variant="ghost" size="sm" aria-label="Close inspector" onClick={() => inspect(null)}>
-                  <X aria-hidden size={16} />
-                </Button>
-              </div>
-              {/* Keyed by piece only: following a new version keeps the view and its notice. */}
-              <InspectorView
-                key={inspected.packageId}
-                packageId={inspected.packageId}
-                version={inspected.version}
-                compact
-                onChoose={(next) => inspect(inspected.packageId, next)}
-              />
-            </aside>
-          )}
-          {roomShown && (
-            <aside aria-label="Room view" className={paneClass}>
-              <div className="flex items-center justify-between gap-2">
-                <h2>{roomShown.name}</h2>
-                <Button type="button" variant="ghost" size="sm" aria-label="Close room view" onClick={() => inspectRoom(null)}>
-                  <X aria-hidden size={16} />
-                </Button>
-              </div>
-              {roomVersions.length > 0 && roomVersion && (
-                <VersionSelect
-                  name={roomShown.name}
-                  versions={roomVersions}
-                  value={roomVersion.version}
-                  onChange={(next) => inspectRoom(roomShown.slug, next)}
+        <Rail
+          variant="row"
+          open={c.panel}
+          onOpen={c.setPanel}
+          panels={[
+            { id: "tools", label: "Tools", icon: "tools", content: <Tools threadId={threadId} /> },
+            { id: "notes", label: "Decisions so far", icon: "notes", content: (
+                <DecisionsNote
+                  key={decisionText?.id ?? "none"}
+                  threadId={threadId}
+                  prefill={decisionText ?? undefined}
+                  compressing={c.compressing}
+                  onPrefillUsed={() => c.setDecisionText(null)}
                 />
-              )}
-              {roomModel.model && roomModel.surfaces ? (
-                <RoomView
-                  key={roomModel.model}
-                  name={roomShown.name}
-                  model={roomModel.model}
-                  report={roomModel.surfaces}
-                  dimensions={roomModel.dimensions}
-                  apartment={roomShown.scope === "apartment"}
+              ),
+            },
+            { id: "brief", label: "Brief", icon: "brief", content: <BriefPanel threadId={threadId} /> },
+            { id: "project", label: "Project", icon: "project", content: <ProjectPanel progress={progress} /> },
+            {
+              id: "piece",
+              label: "Piece",
+              icon: "piece",
+              content: (
+                <PiecePanel
+                  threadId={threadId}
+                  progress={progress}
+                  onInspect={(packageId, version) => {
+                    c.inspect(packageId, version);
+                    c.setPanel(null);
+                  }}
+                  onDeleted={c.deleted}
+                  onUseLook={(text) => void c.send(text, [])}
                 />
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Version {roomVersion?.version} of {roomShown.name} has no 3D view. Composing {roomShown.name} again
-                  adds it.
-                </p>
+              ),
+            },
+            {
+              id: "room",
+              label: "Room",
+              icon: "room",
+              content: (
+                <RoomPanel
+                  threadId={threadId}
+                  progress={progress}
+                  onInspectRoom={(slug) => {
+                    c.inspectRoom(slug);
+                    c.setPanel(null);
+                  }}
+                />
+              ),
+            },
+          ]}
+        />
+      </div>
+      <DeleteConversation threadId={threadId} title={thread.data.title} />
+      <section
+        ref={c.list}
+        onScroll={c.onScroll}
+        className={`${cardClass} min-h-24 flex-1 space-y-4 overflow-y-auto`}
+        aria-label="Messages"
+      >
+        {messages.length === 0 && !showOptimistic && <p className="text-muted-foreground">Nothing said yet. Describe the piece you want.</p>}
+        {messages.map((m, index) => {
+          if (m.role === "confirmation") {
+            return (
+              <p key={index} className="mx-auto w-fit rounded-md border px-3 py-2 text-sm text-muted-foreground" data-role="confirmation">
+                Answered: {m.text}
+              </p>
+            );
+          }
+          if (m.role === "notice") return <Notice key={index} m={m} onReview={c.inspect} />;
+          if (m.kind === "answers") {
+            return (
+              <div key={index} className="mx-auto w-full max-w-xl" data-role="answers">
+                <AnswersTable rows={m.rows ?? []} />
+              </div>
+            );
+          }
+          if (m.role === "owner") {
+            const editable = canEdit && index === lastOwner && editing === null;
+            return (
+              <OwnerMessage
+                key={index}
+                m={m}
+                uploadById={c.uploadById}
+                onEdit={editable ? () => c.setEditing({ messageId: m.message_id as string, text: m.text }) : undefined}
+                onAddDecision={m.message_id ? () => c.addDecision(m.text) : undefined}
+              />
+            );
+          }
+          return (
+            <Bubble key={index} side="left" speaker="Foreman">
+              <Reply text={m.text} />
+              <Button type="button" variant="outline" size="sm" className={ADD_DECISION_CLASS} onClick={() => c.addDecision(m.text)}>
+                Add to decisions
+              </Button>
+              {index === lastReply && specialists.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1" aria-label="Specialists in this turn">
+                  {specialists.map((role) => (
+                    <Badge key={role} variant="outline">{ROLE_LABELS[role] ?? role}</Badge>
+                  ))}
+                </div>
               )}
-            </aside>
+            </Bubble>
+          );
+        })}
+        {optimistic && showOptimistic && (
+          <OwnerMessage m={{ role: "owner", text: optimistic.text, upload_ids: optimistic.uploads.map((u) => u.upload_id) }} uploadById={new Map(optimistic.uploads.map((u) => [u.upload_id, u]))} />
+        )}
+        {running && <WaitingBubble working={running.working} tool={running.tool} />}
+        {c.kept.length > 0 && (
+          <p role="status" className="text-sm text-muted-foreground">
+            Kept from the replaced message: {c.kept.join("; ")}.
+          </p>
+        )}
+      </section>
+      {pending ? (
+        <>
+          {pending.kind === "questions" ? (
+            <QuestionForm
+              key={pending.confirmation_id}
+              questions={pending.questions ?? []}
+              disabled={running !== null}
+              onAnswer={(value) => void c.answer(pending, value)}
+            />
+          ) : (
+            <ConfirmationCard
+              key={pending.confirmation_id}
+              pending={pending}
+              disabled={running !== null}
+              onAnswer={(value) => void c.answer(pending, value)}
+            />
           )}
-        </div>
-      </Page>
+          <FieldError message={c.answerError} />
+        </>
+      ) : (
+        <Composer
+          threadId={threadId}
+          running={running !== null}
+          onSend={c.send}
+          onStop={() => void c.stop()}
+          editing={editing}
+          onCancelEdit={() => c.setEditing(null)}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * The Workspace's piece pane: the inspector for the version named in the address, or else for the
+ * latest version of the conversation's piece, or in plain words that there is no piece yet.
+ */
+export function PiecePane({ c }: { c: ConversationState }) {
+  const p = c.progress.data;
+  const shown =
+    c.inspected ??
+    (p?.package_id && p.latest_version !== null ? { packageId: p.package_id, version: p.latest_version } : null);
+  const spec = useQuery({
+    queryKey: ["spec", shown?.packageId, shown?.version],
+    queryFn: () => api.pieceSpec(shown?.packageId as string, shown?.version as number),
+    enabled: shown !== null,
+    retry: false,
+  });
+  if (!shown) {
+    return (
+      <div className={paneClass}>
+        {c.progress.error ? (
+          <FieldError message={message(c.progress.error)} />
+        ) : p ? (
+          <p className="text-muted-foreground">No piece has been designed yet in this conversation.</p>
+        ) : (
+          <p>Loading piece…</p>
+        )}
+      </div>
+    );
+  }
+  return (
+    <aside aria-label="Inspector" className={paneClass}>
+      <h2>{spec.data?.name || shown.packageId}</h2>
+      {/* Keyed by piece only: following a new version keeps the view and its notice. */}
+      <InspectorView
+        key={shown.packageId}
+        packageId={shown.packageId}
+        version={shown.version}
+        compact
+        onChoose={(next) => c.inspect(shown.packageId, next)}
+      />
+    </aside>
+  );
+}
+
+/**
+ * The Workspace's room pane: the 3D view of the conversation's room at the version named in the
+ * address, or else at its latest; or in plain words why there is none. An address naming another room
+ * is ignored.
+ */
+export function RoomPane({ c }: { c: ConversationState }) {
+  const p = c.progress.data;
+  if (!p) {
+    return (
+      <div className={paneClass}>
+        {c.progress.error ? <FieldError message={message(c.progress.error)} /> : <p>Loading room…</p>}
+      </div>
+    );
+  }
+  const room = p.room;
+  if (!room) {
+    return (
+      <div className={paneClass}>
+        <p className="text-muted-foreground">No room is confirmed yet in this conversation.</p>
+      </div>
+    );
+  }
+  if (!room.slug || !room.model || !room.surfaces) {
+    const what = room.scope === "apartment" ? "the apartment" : "the room";
+    return (
+      <div className={paneClass}>
+        <h2>{room.name}</h2>
+        <p className="text-sm text-muted-foreground">
+          {room.slug
+            ? `Composing ${room.name} again adds the 3D view.`
+            : `${room.name} has no 3D view yet. Ask the Designer to compose ${what}.`}
+        </p>
+      </div>
+    );
+  }
+  const address = parseRoom(c.params.get("room"));
+  // The chosen version, or the latest when the address names none, another room, or one no longer listed.
+  const versions = room.versions ?? [];
+  const chosen = versions.find((v) => address?.slug === room.slug && v.version === address.version) ?? versions[0];
+  const shown = chosen
+    ? { model: chosen.model, surfaces: chosen.surfaces, dimensions: chosen.dimensions }
+    : { model: room.model, surfaces: room.surfaces, dimensions: null };
+  const slug = room.slug;
+  return (
+    <aside aria-label="Room view" className={paneClass}>
+      <h2>{room.name}</h2>
+      {versions.length > 0 && chosen && (
+        <VersionSelect
+          name={room.name}
+          versions={versions}
+          value={chosen.version}
+          onChange={(next) => c.inspectRoom(slug, next)}
+        />
+      )}
+      {shown.model && shown.surfaces ? (
+        <RoomView
+          key={shown.model}
+          name={room.name}
+          model={shown.model}
+          report={shown.surfaces}
+          dimensions={shown.dimensions}
+          apartment={room.scope === "apartment"}
+        />
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Version {chosen?.version} of {room.name} has no 3D view. Composing {room.name} again adds it.
+        </p>
+      )}
+    </aside>
   );
 }

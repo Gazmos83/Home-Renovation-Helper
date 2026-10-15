@@ -1,48 +1,66 @@
 import { useEffect, useState } from "react";
-import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { api, onUnauthorized } from "./lib/api";
 import { Page } from "@/components/Page";
-import Conversation from "./routes/Conversation";
-import Conversations from "./routes/Conversations";
 import GuidelineNotes from "./routes/GuidelineNotes";
 import Help from "./routes/Help";
 import Login from "./routes/Login";
 import PieceInspector from "./routes/PieceInspector";
-import Pricing from "./routes/Pricing";
 import Studio from "./routes/Studio";
-import AgentSettings from "./routes/admin/AgentSettings";
 import AdminGuidelines from "./routes/admin/Guidelines";
 import Knowledge from "./routes/admin/Knowledge";
 import Rules from "./routes/admin/Rules";
 
 const links = [
   ["/studio", "Design Studio"],
-  ["/pricing", "Pricing Overview"],
   ["/guidelines", "Guidelines"],
   ["/help", "Help"],
 ] as const;
 const adminLinks = [
-  ["/admin/agents", "AI & Agent Settings"],
   ["/admin/guidelines", "Guidelines"],
   ["/admin/knowledge", "Knowledge"],
   ["/admin/rules", "Rules"],
 ] as const;
 
+/** The Design Studio's developer tab keeps the developer route tree, so its entry is current there too. */
+const ALSO_CURRENT: Record<string, string> = { "/studio": "/admin/agents" };
+
+const navItemClass = (active: boolean) =>
+  cn(
+    "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors hover:bg-accent",
+    active ? "bg-accent text-accent-foreground" : "text-muted-foreground",
+  );
+
 function NavItem({ to, label }: { to: string; label: string }) {
+  const { pathname } = useLocation();
+  const also = ALSO_CURRENT[to];
+  // NavLink marks only its own path current, so the other path gets a plain link marked by hand.
+  if (also !== undefined && (pathname === also || pathname.startsWith(`${also}/`))) {
+    return (
+      <Link to={to} aria-current="page" className={navItemClass(true)}>
+        {label}
+      </Link>
+    );
+  }
   return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        cn(
-          "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors hover:bg-accent",
-          isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground",
-        )
-      }
-    >
+    <NavLink to={to} className={({ isActive }) => navItemClass(isActive)}>
       {label}
     </NavLink>
   );
+}
+
+/** `/pricing/<tab>`, the Pricing Overview page's old address, opens that view of the Design Studio's Pricing tab. */
+function PricingRedirect() {
+  const { tab = "prices" } = useParams();
+  return <Navigate to={`/studio/pricing/${tab}`} replace />;
+}
+
+/** `/conversations/<id>`, the conversation page's old address, opens it in the Workspace with its pane choices. */
+function ConversationRedirect() {
+  const { threadId = "" } = useParams();
+  const { search } = useLocation();
+  return <Navigate to={`/studio/workspace/${threadId}${search}`} replace />;
 }
 
 export default function App() {
@@ -97,16 +115,10 @@ export default function App() {
       )}
       <Routes>
         <Route path="/login" element={<Login onSignedIn={() => setSignedIn(true)} />} />
-        <Route
-          path="/conversations"
-          element={signedIn ? <Conversations /> : <Navigate to="/login" replace />}
-        />
-        <Route
-          path="/conversations/:threadId"
-          element={signedIn ? <Conversation /> : <Navigate to="/login" replace />}
-        />
-        <Route path="/studio" element={signedIn ? <Studio /> : <Navigate to="/login" replace />} />
-        <Route path="/studio/:tab/*" element={signedIn ? <Studio /> : <Navigate to="/login" replace />} />
+        <Route path="/conversations" element={<Navigate to="/studio/workspace" replace />} />
+        <Route path="/conversations/:threadId" element={<ConversationRedirect />} />
+        <Route path="/studio" element={signedIn ? <Studio dev={dev ?? false} /> : <Navigate to="/login" replace />} />
+        <Route path="/studio/:tab/*" element={signedIn ? <Studio dev={dev ?? false} /> : <Navigate to="/login" replace />} />
         <Route path="/pieces" element={<Navigate to="/studio/pieces" replace />} />
         <Route
           path="/pieces/:packageId/versions/:version"
@@ -114,20 +126,20 @@ export default function App() {
         />
         <Route path="/rooms" element={<Navigate to="/studio/rooms" replace />} />
         <Route path="/models" element={<Navigate to="/studio/models" replace />} />
-        <Route path="/pricing" element={signedIn ? <Pricing /> : <Navigate to="/login" replace />} />
-        <Route path="/pricing/:tab" element={signedIn ? <Pricing /> : <Navigate to="/login" replace />} />
-        <Route path="/price-list" element={<Navigate to="/pricing/prices" replace />} />
-        <Route path="/snapshots" element={<Navigate to="/pricing/snapshots" replace />} />
-        <Route path="/remnants" element={<Navigate to="/pricing/remnants" replace />} />
+        <Route path="/pricing" element={<Navigate to="/studio/pricing/prices" replace />} />
+        <Route path="/pricing/:tab" element={<PricingRedirect />} />
+        <Route path="/price-list" element={<Navigate to="/studio/pricing/prices" replace />} />
+        <Route path="/snapshots" element={<Navigate to="/studio/pricing/snapshots" replace />} />
+        <Route path="/remnants" element={<Navigate to="/studio/pricing/remnants" replace />} />
         <Route path="/guidelines" element={signedIn ? <GuidelineNotes /> : <Navigate to="/login" replace />} />
         <Route path="/help" element={signedIn ? <Help /> : <Navigate to="/login" replace />} />
         <Route
           path="/admin/agents"
-          element={signedIn && dev ? <AgentSettings /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Studio dev fixedTab="agents" /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/agents/:tab"
-          element={signedIn && dev ? <AgentSettings /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Studio dev fixedTab="agents" /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/models"

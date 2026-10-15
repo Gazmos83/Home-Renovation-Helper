@@ -371,12 +371,12 @@ function PieceConversation({ id, threadId }: { id: string; threadId: string | nu
   const navigate = useNavigate();
   const start = useMutation({
     mutationFn: () => api.createThread(undefined, id),
-    onSuccess: (thread) => navigate(`/conversations/${thread.thread_id}`),
+    onSuccess: (thread) => navigate(`/studio/workspace/${thread.thread_id}`),
   });
   if (threadId) {
     return (
       <Button asChild variant="outline" size="lg" className="w-fit font-semibold">
-        <Link to={`/conversations/${threadId}`}>Open conversation</Link>
+        <Link to={`/studio/workspace/${threadId}`}>Open conversation</Link>
       </Button>
     );
   }
@@ -556,7 +556,7 @@ export default function Pieces() {
     mutationFn: () => api.createThread(),
     onSuccess: (thread) => {
       queryClient.invalidateQueries({ queryKey: ["threads"] });
-      navigate(`/conversations/${thread.thread_id}`);
+      navigate(`/studio/workspace/${thread.thread_id}`);
     },
   });
   const wanted = dialog.segments.length === 1 ? dialog.segments[0] : null;

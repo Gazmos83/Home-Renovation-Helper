@@ -1,17 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import Conversation from "./Conversation";
+import { setWorkspaceLayout } from "../lib/workspaceLayout";
+import Workspace from "./Workspace";
 import type { Brief } from "../lib/api";
 
-// No WebGL in jsdom: the 3D stage is a stub that counts how often its module is loaded.
-const canvas = vi.hoisted(() => ({ loaded: 0 }));
-vi.mock("@/components/inspector/InspectorCanvas", () => {
-  canvas.loaded += 1;
-  return { default: () => <div data-testid="canvas" /> };
-});
+// No WebGL in jsdom: the 3D stage is a stub.
+vi.mock("@/components/inspector/InspectorCanvas", () => ({ default: () => <div data-testid="canvas" /> }));
 
 const SPEC = {
   name: "Hall bench", units: "mm", overall: { w: 1200, h: 450, d: 400 }, modules: {},
@@ -204,13 +201,18 @@ async function openTools(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole("button", { name: "Tools" }));
 }
 
-function show(path = "/conversations/t1") {
+/** The Workspace tab's body, as the Design Studio renders it for `/studio/workspace/<id>`. */
+function Conversation() {
+  return <Workspace threadId={useParams().threadId} />;
+}
+
+function show(path = "/studio/workspace/t1") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/conversations/:threadId" element={<Conversation />} />
+          <Route path="/studio/workspace/:threadId" element={<Conversation />} />
           <Route path="/pieces" element={<p>the pieces page</p>} />
         </Routes>
       </MemoryRouter>
@@ -230,12 +232,22 @@ test("the history is shown in order", async () => {
   expect(list.getByText("How wide?")).toBeInTheDocument();
 });
 
-test("the 3D stage is not loaded while no inspector is open", async () => {
+test("with no piece yet the piece pane says so and no 3D stage is loaded (No piece yet)", async () => {
+  progressNow = progress([], { package_id: null, name: null, latest_version: null, build_status: null, version_count: 0 });
   messages = [owner("a hall bench"), reply("How wide?")];
   show();
   await screen.findByText("How wide?");
-  expect(canvas.loaded).toBe(0);
+  expect(await screen.findByText("No piece has been designed yet in this conversation.")).toBeInTheDocument();
+  expect(screen.queryByTestId("canvas")).not.toBeInTheDocument();
   expect(screen.queryByRole("complementary", { name: "Inspector" })).not.toBeInTheDocument();
+});
+
+test("the piece pane shows the conversation's piece at its latest version by default (Bound piece by default)", async () => {
+  messages = [reply("Hello")];
+  show();
+  const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
+  expect(await inspector.findByText("Overall: W 1200 mm × H 450 mm × D 400 mm")).toBeInTheDocument();
+  expect(calls.map(([, url]) => url)).toContain("/packages/hall-bench/versions/1");
 });
 
 test("sending shows the message on the right, a waiting bubble naming the Foreman then Intake, then the reply", async () => {
@@ -790,7 +802,7 @@ test("the heading is renamed in place and an empty title is refused in words", a
 
   await user.type(field, "Listening wall");
   await user.click(screen.getByRole("button", { name: "Save" }));
-  expect(await screen.findByRole("heading", { level: 1, name: "Listening wall" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { level: 2, name: "Listening wall" })).toBeInTheDocument();
   expect(calls).toContainEqual(["PATCH", "/chat/threads/t1", { title: "Listening wall" }]);
 });
 
@@ -800,13 +812,13 @@ test("a title event updates the heading without a reload", async () => {
   const live = controlledStream();
   turn = () => ({ events: live.stream });
   show();
-  expect(await screen.findByRole("heading", { level: 1, name: "Untitled" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { level: 2, name: "Untitled" })).toBeInTheDocument();
   await user.type(screen.getByLabelText("Message"), "I want a listening wall");
   await user.click(screen.getByRole("button", { name: "Send" }));
   live.send({ event: "specialist", data: { role: "intake" } });
   live.send({ event: "reply", data: { reply: "How wide?", specialists: ["intake"] } });
   live.send({ event: "title", data: { title: "Listening wall for records" } });
-  expect(await screen.findByRole("heading", { level: 1, name: "Listening wall for records" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { level: 2, name: "Listening wall for records" })).toBeInTheDocument();
   title = "Listening wall for records";
   messages = [owner("I want a listening wall"), reply("How wide?")];
   live.send({ event: "done", data: {} });
@@ -837,26 +849,29 @@ const notice = (extra: Partial<Msg>): Msg => ({
   outcome: "succeeded", tier: "draft", package_id: "hall-bench", version: 1, ...extra,
 });
 
-test("the inspector opens from the address beside the chat, keeps the composer, and closes", async () => {
+test("the inspector opens from the address beside the chat, keeps the composer, and a layout without a piece hides it (Close)", async () => {
   const user = userEvent.setup();
   messages = [owner("a hall bench"), reply("How wide?")];
-  show("/conversations/t1?inspect=hall-bench/1");
+  show("/studio/workspace/t1?inspect=hall-bench/1");
   const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
   expect(await inspector.findByText("Overall: W 1200 mm × H 450 mm × D 400 mm")).toBeInTheDocument();
   expect(screen.getByRole("region", { name: "Messages" })).toBeInTheDocument();
   await user.type(screen.getByRole("textbox"), "two metres");
   expect(screen.getByRole("textbox")).toHaveValue("two metres");
 
-  await user.click(inspector.getByRole("button", { name: "Close inspector" }));
+  expect(inspector.queryByRole("button", { name: "Close inspector" })).not.toBeInTheDocument();
+  act(() => setWorkspaceLayout("chat-room"));
   expect(screen.queryByRole("complementary", { name: "Inspector" })).not.toBeInTheDocument();
   expect(screen.getByRole("textbox")).toHaveValue("two metres");
 });
 
-test("a malformed inspect address opens nothing", async () => {
+test("a malformed inspect address is ignored and the piece pane shows the piece's latest version", async () => {
   messages = [reply("Hello")];
-  show("/conversations/t1?inspect=../etc/passwd");
+  show("/studio/workspace/t1?inspect=../etc/passwd");
   await screen.findByText("Hello");
-  expect(screen.queryByRole("complementary", { name: "Inspector" })).not.toBeInTheDocument();
+  const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
+  expect(await inspector.findByText("Overall: W 1200 mm × H 450 mm × D 400 mm")).toBeInTheDocument();
+  expect(calls.map(([, url]) => url).filter((url) => url.includes("passwd"))).toEqual([]);
 });
 
 test("a render notice names the tier on its Review button and opens the inspector", async () => {
@@ -911,14 +926,29 @@ test("a notice appears without a reload once the running render ends", async () 
   expect(await list.findByText(/The draft turntable of hall-bench version 1 is ready/)).toBeInTheDocument();
 });
 
-test("the rail sits at the screen's edge, outside the page's centred content", async () => {
+test("the panel icons sit in the chat pane's header and name themselves on hover (Icons named)", async () => {
   messages = [reply("Hello")];
   show();
   await screen.findByText("Hello");
-  const rail = screen.getByRole("navigation", { name: "Panels" });
-  expect(rail.closest("main")).toBeNull();
-  expect(rail).toHaveClass("sticky");
-  expect(screen.getByRole("main")).not.toHaveClass("max-w-5xl");
+  const icons = screen.getByRole("navigation", { name: "Panels" });
+  expect(icons).not.toHaveClass("sticky");
+  expect(within(icons).getAllByRole("button").map((b) => b.getAttribute("title"))).toEqual([
+    "Tools", "Decisions so far", "Brief", "Project", "Piece", "Room",
+  ]);
+  // In the header with the title, above the messages.
+  const header = icons.parentElement!;
+  expect(within(header).getByRole("heading", { level: 2, name: "Hall bench" })).toBeInTheDocument();
+  expect(header).not.toContainElement(screen.getByRole("region", { name: "Messages" }));
+});
+
+test("the panel icons show their labels while the rails do (Expanded)", async () => {
+  window.localStorage.setItem("studio.rail.expanded", "true");
+  messages = [reply("Hello")];
+  show();
+  await screen.findByText("Hello");
+  const icons = screen.getByRole("navigation", { name: "Panels" });
+  expect(within(icons).getByText("Brief")).toBeInTheDocument();
+  expect(within(icons).queryByRole("button", { name: "Hide labels" })).not.toBeInTheDocument();
 });
 
 
@@ -936,7 +966,7 @@ test("the split view follows a version created while it is open", async () => {
     if (call === "GET /packages/hall-bench/versions/2/files/spec.json") return { body: SPEC };
   };
   messages = [owner("one more shelf"), reply("Revised.")];
-  show("/conversations/t1?inspect=hall-bench/1");
+  show("/studio/workspace/t1?inspect=hall-bench/1");
   const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
   expect(await inspector.findByRole("combobox", { name: "Version" })).toHaveValue("1");
 
@@ -1111,7 +1141,7 @@ test("the latest version is deleted from the panel after Are you sure, and its i
       return { body: {} };
     }
   };
-  show("/conversations/t1?inspect=hall-bench/1");
+  show("/studio/workspace/t1?inspect=hall-bench/1");
   await screen.findByRole("complementary", { name: "Inspector" });
   const panel = within(await openPiece());
   await user.click(await panel.findByRole("button", { name: "Delete version 1" }));
@@ -1216,13 +1246,13 @@ test("the messages scroll in their own box with the composer below it", async ()
   messages = [owner("a hall bench"), reply("How wide?")];
   show();
   const box = await screen.findByRole("region", { name: "Messages" });
-  expect(box).toHaveClass("overflow-y-auto", "flex-1", "min-h-48");
+  expect(box).toHaveClass("overflow-y-auto", "flex-1", "min-h-24");
   const composer = screen.getByLabelText("Message");
   expect(box).not.toContainElement(composer);
   const column = box.parentElement!;
-  expect(column).toHaveClass("flex", "flex-col", "h-(--chat-h)");
+  // The chat pane fills its pane of the layout; the panes fill the window below them.
+  expect(column).toHaveClass("flex", "flex-col", "h-full");
   expect(column).toContainElement(composer);
-  expect(column.parentElement!.style.getPropertyValue("--chat-h")).toMatch(/^calc\(100vh /);
 });
 
 test("a conversation opens at its last message", async () => {
@@ -1323,7 +1353,7 @@ function serveRoom() {
       : undefined;
 }
 
-test("the Project panel opens the conversation's room beside the chat and closes it", async () => {
+test("the Room panel opens the conversation's room in the room pane, switching the layout, and a layout change hides it (Inspect the room, Close the room view)", async () => {
   const user = userEvent.setup();
   progressNow = progress(["brief", "piece", "built"], { room: HALL });
   serveRoom();
@@ -1336,36 +1366,46 @@ test("the Project panel opens the conversation's room beside the chat and closes
   expect(pane.getByRole("heading", { name: "Hall" })).toBeInTheDocument();
   const switches = within(await pane.findByRole("group", { name: "Surfaces" }));
   expect(switches.getByRole("button", { name: "ceiling" })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.queryByRole("complementary", { name: "Inspector" })).not.toBeInTheDocument();
+  expect(window.localStorage.getItem("studio.workspace.layout")).toBe("chat-room");
   await user.type(screen.getByRole("textbox"), "lower the shelf");
   expect(screen.getByRole("textbox")).toHaveValue("lower the shelf");
 
-  await user.click(pane.getByRole("button", { name: "Close room view" }));
+  act(() => setWorkspaceLayout("chat-piece"));
   expect(screen.queryByRole("complementary", { name: "Room view" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("complementary", { name: "Inspector" })).toBeInTheDocument();
+  // The chat kept its half-typed message across the layout change.
+  expect(screen.getByRole("textbox")).toHaveValue("lower the shelf");
 });
 
 test("the room view opens again from the address", async () => {
+  // The layout is remembered, as after the owner chose it before the reload.
+  setWorkspaceLayout("chat-room");
   progressNow = progress(["brief", "piece", "built"], { room: HALL });
   serveRoom();
   messages = [reply("Hello")];
-  show("/conversations/t1?room=room-hall");
+  show("/studio/workspace/t1?room=room-hall");
   expect(await screen.findByRole("complementary", { name: "Room view" })).toBeInTheDocument();
 });
 
-test("a room address that is not the conversation's room shows no pane", async () => {
+test("a room address that is not the conversation's room is ignored and the room pane shows the current room", async () => {
   progressNow = progress(["brief", "piece", "built"], { room: HALL });
+  serveRoom();
+  setWorkspaceLayout("chat-room");
   messages = [reply("Hello")];
-  show("/conversations/t1?room=room-kitchen");
+  show("/studio/workspace/t1?room=room-kitchen");
   await screen.findByText("Hello");
-  await openRoom();
-  expect(screen.queryByRole("complementary", { name: "Room view" })).not.toBeInTheDocument();
+  const pane = within(await screen.findByRole("complementary", { name: "Room view" }));
+  expect(pane.getByRole("heading", { name: "Hall" })).toBeInTheDocument();
 });
 
-test("only one side pane is shown: the room and the piece inspector replace each other", async () => {
+test("in a layout with one side pane, opening the piece or the room switches to the layout that shows it (One pane at a time)", async () => {
   const user = userEvent.setup();
   progressNow = progress(["brief", "piece", "built"], { room: HALL });
   serveRoom();
+  setWorkspaceLayout("chat-room");
   messages = [reply("Hello")];
-  show("/conversations/t1?room=room-hall");
+  show("/studio/workspace/t1?room=room-hall");
   await screen.findByRole("complementary", { name: "Room view" });
   const panel = within(await openPiece());
   await user.click(await panel.findByRole("button", { name: "Inspect version 1" }));
@@ -1396,6 +1436,25 @@ test("a room without a 3D view says why, and no room confirmed shows no room sec
   panel = within(await openRoom());
   await panel.findByText("No room selected yet.");
   expect(panel.queryByRole("group", { name: "Room" })).not.toBeInTheDocument();
+});
+
+test("the room pane says in words why it shows no 3D view (No 3D view yet, No room confirmed)", async () => {
+  setWorkspaceLayout("chat-room");
+  progressNow = progress(["brief", "piece", "built"], { room: { ...HALL, slug: null, model: null, surfaces: null } });
+  show();
+  expect(await screen.findByText("Hall has no 3D view yet. Ask the Designer to compose the room.")).toBeInTheDocument();
+  expect(screen.queryByRole("complementary", { name: "Room view" })).not.toBeInTheDocument();
+  cleanup();
+
+  progressNow = progress(["brief", "piece", "built"], { room: { ...HALL, model: null, surfaces: null } });
+  show();
+  expect(await screen.findByText("Composing Hall again adds the 3D view.")).toBeInTheDocument();
+  cleanup();
+
+  progressNow = progress(["brief", "piece", "built"], { room: null });
+  show();
+  expect(await screen.findByText("No room is confirmed yet in this conversation.")).toBeInTheDocument();
+  expect(screen.queryByTestId("canvas")).not.toBeInTheDocument();
 });
 
 // --- room versions and the panel heading (project-room-inspection, after the owner's check) ---
@@ -1431,11 +1490,13 @@ test("the room section is headed Selected room above the room's name", async () 
 });
 
 test("the room pane offers its versions, keeps the chosen one in the address, and names one without 3D", async () => {
+  // The layout is remembered, as after the owner chose it before the reload.
+  setWorkspaceLayout("chat-room");
   const user = userEvent.setup();
   progressNow = progress(["brief", "piece", "built"], { room: VERSIONED_HALL });
   serveHallVersions();
   messages = [reply("Hello")];
-  show("/conversations/t1?room=room-hall");
+  show("/studio/workspace/t1?room=room-hall");
   const pane = within(await screen.findByRole("complementary", { name: "Room view" }));
   const select = pane.getByRole("combobox", { name: "Version of Hall" });
   expect(select).toHaveValue("3");
@@ -1451,15 +1512,17 @@ test("the room pane offers its versions, keeps the chosen one in the address, an
 });
 
 test("a room address with a version shows it after a reload, and an unlisted one shows the latest", async () => {
+  // The layout is remembered, as after the owner chose it before the reload.
+  setWorkspaceLayout("chat-room");
   progressNow = progress(["brief", "piece", "built"], { room: VERSIONED_HALL });
   serveHallVersions();
   messages = [reply("Hello")];
-  show("/conversations/t1?room=room-hall/2");
+  show("/studio/workspace/t1?room=room-hall/2");
   let pane = within(await screen.findByRole("complementary", { name: "Room view" }));
   expect(pane.getByRole("combobox", { name: "Version of Hall" })).toHaveValue("2");
   cleanup();
 
-  show("/conversations/t1?room=room-hall/9");
+  show("/studio/workspace/t1?room=room-hall/9");
   pane = within(await screen.findByRole("complementary", { name: "Room view" }));
   expect(pane.getByRole("combobox", { name: "Version of Hall" })).toHaveValue("3");
 });
@@ -1528,12 +1591,6 @@ test("unapproving a piece placed in an approved room shows the refusal in the pr
 });
 
 // --- delete conversation (piece-conversation-link) ---------------------------------------
-
-test("the conversation links back to Pieces", async () => {
-  messages = [reply("Hello")];
-  show();
-  expect(await screen.findByRole("link", { name: "All pieces" })).toHaveAttribute("href", "/pieces");
-});
 
 test("a confirmed delete removes the conversation and lands on Pieces", async () => {
   const user = userEvent.setup();

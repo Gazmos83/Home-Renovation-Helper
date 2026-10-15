@@ -36,7 +36,7 @@ function show(path = "/studio/pieces/bench") {
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/studio/:tab/*" element={<Pieces />} />
-          <Route path="/conversations/:threadId" element={<p>the conversation</p>} />
+          <Route path="/studio/workspace/:threadId" element={<p>the conversation</p>} />
         </Routes>
         <Address />
       </MemoryRouter>
@@ -538,7 +538,7 @@ test("Open conversation links to the piece's existing thread", async () => {
   show();
   const card = await screen.findByRole("dialog", { name: "bench" });
   const link = within(card).getByRole("link", { name: "Open conversation" });
-  expect(link).toHaveAttribute("href", "/conversations/t-bench");
+  expect(link).toHaveAttribute("href", "/studio/workspace/t-bench");
 });
 
 test("Start conversation binds the piece and opens the new thread", async () => {
