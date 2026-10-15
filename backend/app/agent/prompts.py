@@ -17,7 +17,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Final
 
-from app.agent.revise import describe_front, describe_fronts, describe_hardware
+from app.agent.revise import (
+    describe_end_cuts,
+    describe_front,
+    describe_fronts,
+    describe_hardware,
+    describe_placements,
+)
 from app.blender import storage
 from app.blender.custom_build.derive import (
     GAP_MM,
@@ -477,9 +483,12 @@ def piece_note(package_id: str, version: int | None, document: Mapping[str, Any]
             f"material {shelf['material']}, bracket {shelf['bracket']}, {brackets}"
         )
     for part in document.get("extra_parts") or []:
+        cuts = f", ends cut {describe_end_cuts(part['end_cuts'])}" if part.get("end_cuts") else ""
+        placed = part.get("placements")
+        where = f"placed at {describe_placements(placed)}" if placed else "beside the build"
         lines.append(
             f'- extra part {part["id"]} "{part.get("name", "")}": {part["qty"]} × '
-            f"{part['length']}×{part['width']} mm, material {part['material']}"
+            f"{part['length']}×{part['width']} mm, material {part['material']}{cuts}, {where}"
         )
     materials = document.get("materials") or {}
     if materials:

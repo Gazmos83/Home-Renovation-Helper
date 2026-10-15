@@ -335,3 +335,82 @@ def test_other_overflow_is_still_refused(boxed: dict) -> None:
     revised, _ = revise_spec(boxed, PackageChanges(modules={"cabinet": {"width": 1200}}))
     with pytest.raises(Exception, match="lies outside the envelope"):
         CustomBuildSpec.model_validate(revised)
+
+
+# --- extra-part placement (extra-part-placement) --------------------------------------
+
+
+def _with_extra(desk: dict, **part) -> dict:
+    desk["extra_parts"] = [{"id": "top-frame", "name": "Top frame", "qty": 1, "length": 1000, "width": 60,
+                            "material": "carcass", **part}]
+    return desk
+
+
+_AT = {"x": 0, "y": 0, "z": 1450, "length_along": "x", "width_along": "y"}
+
+
+def test_an_extra_part_is_placed_with_a_before_and_after_line(desk: dict) -> None:
+    revised, lines = revise_spec(_with_extra(desk), PackageChanges(extra_parts={"top-frame": {"placements": [_AT]}}))
+
+    assert lines == ["top-frame: placements beside the build → x0 y0 z1450, length along x, width along y"]
+    assert revised["extra_parts"][0]["placements"] == [_AT]
+
+
+def test_an_empty_placement_list_lays_the_part_beside_the_build_again(desk: dict) -> None:
+    revised, lines = revise_spec(
+        _with_extra(desk, placements=[_AT]), PackageChanges(extra_parts={"top-frame": {"placements": []}})
+    )
+
+    assert lines == ["top-frame: placements x0 y0 z1450, length along x, width along y → beside the build"]
+    assert "placements" not in revised["extra_parts"][0]
+
+
+def test_a_placement_count_that_disagrees_with_the_quantity_is_refused(desk: dict) -> None:
+    with pytest.raises(ReviseError, match=r"'top-frame' needs 2 placements, one per piece; 1 were given"):
+        revise_spec(_with_extra(desk, qty=2), PackageChanges(extra_parts={"top-frame": {"placements": [_AT]}}))
+
+
+def test_placing_an_unknown_extra_part_is_refused_listing_the_known_ones(desk: dict) -> None:
+    with pytest.raises(ReviseError) as error:
+        revise_spec(_with_extra(desk), PackageChanges(extra_parts={"rail": {"placements": [_AT]}}))
+    assert "extra part 'rail'" in str(error.value) and "top-frame" in str(error.value)
+
+
+def test_a_tilted_and_cut_brace_reads_its_turn_and_its_cuts(desk: dict) -> None:
+    tilted = _AT | {"z": 0, "width_along": "z", "tilt": {"towards": "z", "angle_deg": 30}}
+    _revised, lines = revise_spec(
+        _with_extra(desk),
+        PackageChanges(extra_parts={"top-frame": {
+            "placements": [tilted], "end_cuts": {"across": "width", "start_deg": 30, "end_deg": -30},
+        }}),
+    )
+
+    assert "tilt 30° towards z" in lines[0]
+    assert lines[1] == "top-frame: end cuts square → 30° / −30° across width"
+
+
+def test_an_unchanged_placement_gives_no_change_line(desk: dict) -> None:
+    _revised, lines = revise_spec(
+        _with_extra(desk, placements=[_AT]), PackageChanges(extra_parts={"top-frame": {"placements": [_AT]}})
+    )
+
+    assert lines == []
+
+
+def test_an_extra_part_change_must_state_a_field() -> None:
+    with pytest.raises(ValidationError, match="state placements or end_cuts"):
+        PackageChanges.model_validate({"extra_parts": {"top-frame": {}}})
+
+
+def test_a_protruding_shelf_fit_moves_placed_pieces_with_the_build(desk: dict) -> None:
+    desk = _with_extra(desk, placements=[_AT])
+    depth = desk["modules"][0]["depth"]
+    revised, lines = revise_spec(
+        desk,
+        PackageChanges(modules={"cabinet": {"shelves": 1, "shelf_depths_mm": [depth + 100]}}),
+    )
+
+    shift = revised["modules"][0]["y"]
+    assert shift > 0
+    assert revised["extra_parts"][0]["placements"][0]["y"] == shift
+    assert f"fit: top-frame: extra part pieces move back {shift} mm" in lines

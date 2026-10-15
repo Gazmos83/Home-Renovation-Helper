@@ -126,3 +126,71 @@ def test_an_invalid_document_publishes_nothing(blender_bin: Path, tmp_path: Path
     assert "kind must be 'custom_build'" in result.stderr
     assert not out.exists()
     assert [entry for entry in tmp_path.iterdir() if entry.name.startswith(".")] == []
+
+
+# --- extra-part placement (extra-part-placement) --------------------------------------
+
+
+def _placed_extras_spec() -> dict:
+    document = json.loads(TEMPLATE.read_text(encoding="utf-8"))
+    at = {"y": 0, "length_along": "x", "width_along": "y"}
+    document["extra_parts"] = [
+        {"id": "top-frame", "name": "Top frame", "qty": 1, "length": 1200, "width": 60, "material": "carcass",
+         "placements": [{**at, "x": 0, "z": 1450}]},
+        {"id": "post", "name": "Post", "qty": 1, "length": 900, "width": 45, "material": "carcass",
+         "placements": [{"x": 1100, "y": 0, "z": 0, "length_along": "z", "width_along": "y"}]},
+        {"id": "brace", "name": "Brace", "qty": 1, "length": 1000, "width": 60, "material": "carcass",
+         "placements": [{**at, "x": 100, "z": 0, "tilt": {"towards": "z", "angle_deg": 30}}]},
+        {"id": "brace-cut", "name": "Cut brace", "qty": 1, "length": 1000, "width": 60, "material": "carcass",
+         "end_cuts": {"across": "width", "start_deg": 30, "end_deg": -30},
+         "placements": [{"x": 100, "y": 200, "z": 0, "length_along": "x", "width_along": "z",
+                         "tilt": {"towards": "z", "angle_deg": 30}}]},
+        {"id": "spare-trim", "name": "Spare trim", "qty": 1, "length": 300, "width": 40, "material": "carcass"},
+    ]
+    return CustomBuildSpec.model_validate(document).model_dump(mode="json")
+
+
+@pytest.fixture(scope="module")
+def placed(blender_bin: Path, tmp_path_factory: pytest.TempPathFactory):
+    tmp = tmp_path_factory.mktemp("placed")
+    spec = _placed_extras_spec()
+    result, out = _build(blender_bin, spec, tmp)
+    assert result.returncode == 0, result.stderr[-800:]
+    objects = {o["name"]: o for o in _inspect(blender_bin, out / "model.blend")["objects"]}
+    return spec, out, objects
+
+
+def _mm(vertices: list[list[float]]) -> list[tuple[float, float, float]]:
+    return [tuple(round(v * 1000, 1) for v in vertex) for vertex in vertices]
+
+
+def test_placed_extras_are_drawn_where_the_helper_puts_them(placed) -> None:
+    spec, _out, objects = placed
+    top = _mm(objects["top-frame"]["vertices"])
+    # The scene is centred on x and y only, so heights are the build's own; the
+    # top frame's corner fixes the shift for the other pieces.
+    shift = (min(v[0] for v in top), min(v[1] for v in top))
+    assert min(v[2] for v in top) == 1450 and max(v[2] for v in top) == 1468
+    for part in spec["extra_parts"][:4]:
+        expected = rules.extra_piece_corners(part, part["placements"][0], 18)
+        drawn = sorted((round(x - shift[0], 1), round(y - shift[1], 1), z) for x, y, z in _mm(objects[part["id"]]["vertices"]))
+        assert drawn == sorted(tuple(round(v, 1) for v in corner) for corner in expected), part["id"]
+        assert objects[part["id"]]["parent"] == "MOD_extras"
+
+
+def test_a_tilted_brace_rises_866_by_500_and_a_cut_brace_stands_plumb(placed) -> None:
+    _spec, _out, objects = placed
+    brace = _mm(objects["brace"]["vertices"])
+    corner = min(brace, key=lambda v: (v[2], v[0]))
+    assert any(abs(v[0] - corner[0] - 866.0) < 0.1 and abs(v[2] - corner[2] - 500.0) < 0.1 for v in brace)
+    cut = _mm(objects["brace-cut"]["vertices"])
+    assert len({v[0] for v in cut}) == 2
+
+
+def test_an_unplaced_extra_still_lies_beside_the_build(placed) -> None:
+    _spec, out, objects = placed
+    trim = _mm(objects["spare-trim"]["vertices"])
+    right = max(max(v[0] for v in _mm(objects[name]["vertices"])) for name in ("top-frame", "post", "brace"))
+    assert min(v[0] for v in trim) >= right + 200 - 0.1
+    assert {v[2] for v in trim} == {0.0, 18.0}
+    assert png_size(out / "screenshot.png")[0] <= 800

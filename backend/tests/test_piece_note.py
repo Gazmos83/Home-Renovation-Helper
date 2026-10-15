@@ -172,3 +172,22 @@ def test_without_fronts_or_when_positions_cannot_be_derived_the_old_text_stays()
 def test_the_label_puts_built_positions_before_the_brief() -> None:
     note = piece_note("listening-wall", 17, _cabinet())
     assert "go by them, not by the brief or earlier messages" in note
+
+
+def test_extra_part_placements_and_end_cuts_are_listed() -> None:
+    document = _starter()
+    slat = {"id": "slat", "name": "Slat", "qty": 2, "length": 600, "width": 40, "material": "carcass",
+            "placements": [{"x": 0, "y": 0, "z": 400, "length_along": "x", "width_along": "y"},
+                           {"x": 0, "y": 0, "z": 500, "length_along": "x", "width_along": "y"}]}
+    brace = {"id": "brace", "name": "Brace", "qty": 1, "length": 1000, "width": 60, "material": "carcass",
+             "end_cuts": {"across": "width", "start_deg": 30, "end_deg": -30},
+             "placements": [{"x": 100, "y": 0, "z": 0, "length_along": "x", "width_along": "z",
+                             "tilt": {"towards": "z", "angle_deg": 30}}]}
+    trim = {"id": "trim", "name": "Trim", "qty": 1, "length": 300, "width": 20, "material": "carcass"}
+    document["extra_parts"] = [slat, brace, trim]
+    note = piece_note("hall-bench", 1, document)
+    lines = {line.split(" ")[3]: line for line in note.splitlines() if line.startswith("- extra part ")}
+    assert ("placed at x0 y0 z400, length along x, width along y; x0 y0 z500, length along x, width along y"
+            in lines["slat"])
+    assert "tilt 30° towards z" in lines["brace"] and "ends cut 30° / −30° across width" in lines["brace"]
+    assert lines["trim"].endswith("beside the build")

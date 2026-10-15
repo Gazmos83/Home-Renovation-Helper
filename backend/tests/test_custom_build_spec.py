@@ -23,7 +23,12 @@ from app.blender.custom_build.derive import (
     HINGE_ID,
     PUSH_LATCH_ID,
     derive,
+    drilling,
     emitted_spec,
+    end_cut_edges,
+    extra_piece_corners,
+    extra_piece_faces,
+    overall,
 )
 from app.blender.schemas import CustomBuildSpec
 from app.blender.schemas import describe_validation_error as _describe_validation_error
@@ -709,3 +714,172 @@ def test_a_change_can_set_spacing_and_refuses_an_unknown_field() -> None:
     with pytest.raises(ValidationError) as caught:
         PackageChanges.model_validate({"modules": {"cabinet": {"divider_material": "oak"}}})
     assert "divider_material" in _describe_validation_error(caught.value)
+
+
+# --- extra-part placement (extra-part-placement) --------------------------------------
+
+
+def _extra(**overrides) -> dict:
+    part = {"id": "brace", "name": "Brace", "qty": 1, "length": 1000, "width": 60, "material": "carcass"}
+    part.update(overrides)
+    return part
+
+
+def _at(x: int = 0, y: int = 0, z: int = 0, length_along: str = "x", width_along: str = "y", **turns) -> dict:
+    return {"x": x, "y": y, "z": z, "length_along": length_along, "width_along": width_along, **turns}
+
+
+def _rounded(corners) -> list[tuple[float, float, float]]:
+    return [tuple(round(value, 1) for value in corner) for corner in corners]
+
+
+def test_a_square_on_piece_sits_at_its_corner_along_its_axes() -> None:
+    corners = extra_piece_corners(_extra(length=1200), _at(0, 0, 900), 18)
+
+    assert min(c[0] for c in corners) == 0 and max(c[0] for c in corners) == 1200
+    assert max(c[1] for c in corners) == 60
+    assert min(c[2] for c in corners) == 900 and max(c[2] for c in corners) == 918
+
+
+def test_an_upright_piece_stands_on_its_length() -> None:
+    corners = extra_piece_corners(_extra(length=900, width=45), _at(length_along="z", width_along="y"), 18)
+
+    assert max(c[2] for c in corners) == 900 and max(c[1] for c in corners) == 45 and max(c[0] for c in corners) == 18
+
+
+def test_a_tilt_turns_the_length_towards_the_named_axis() -> None:
+    corners = _rounded(extra_piece_corners(_extra(), _at(100, tilt={"towards": "z", "angle_deg": 30}), 18))
+
+    assert corners[0] == (100.0, 0.0, 0.0)
+    assert corners[1] == (966.0, 0.0, 500.0)
+    assert {c[1] for c in corners} == {0.0, 60.0}
+
+
+def test_a_roll_turns_the_width_about_the_length() -> None:
+    corners = _rounded(extra_piece_corners(_extra(length=1200, width=40), _at(roll_deg=45), 18))
+
+    assert corners[3] == (0.0, 28.3, 28.3)
+    assert {c[0] for c in corners} == {0.0, 1200.0}
+
+
+def test_roll_then_tilt_keeps_the_piece_rigid() -> None:
+    corners = extra_piece_corners(_extra(), _at(roll_deg=20, tilt={"towards": "y", "angle_deg": -40}), 18)
+
+    def distance(a: int, b: int) -> float:
+        return sum((p - q) ** 2 for p, q in zip(corners[a], corners[b], strict=True)) ** 0.5
+
+    assert round(distance(0, 1), 6) == 1000 and round(distance(0, 3), 6) == 60 and round(distance(0, 4), 6) == 18
+
+
+def test_opposite_end_cuts_give_a_parallelogram_with_plumb_ends_on_a_tilted_brace() -> None:
+    brace = _extra(end_cuts={"across": "width", "start_deg": 30, "end_deg": -30})
+    corners = extra_piece_corners(brace, _at(width_along="z", tilt={"towards": "z", "angle_deg": 30}), 18)
+
+    assert round(corners[0][0], 6) == round(corners[3][0], 6)
+    assert round(corners[1][0], 6) == round(corners[2][0], 6)
+    assert end_cut_edges(brace, 18) == (pytest.approx(1000 - 60 * 0.57735, abs=0.01), pytest.approx(1000 - 60 * 0.57735, abs=0.01))
+
+
+def test_matching_end_cuts_give_a_mitred_trapezoid() -> None:
+    stile = _extra(length=600, width=50, end_cuts={"across": "width", "start_deg": 45, "end_deg": 45})
+
+    assert end_cut_edges(stile, 18) == (600, pytest.approx(500))
+
+
+def test_a_piece_on_a_left_handed_choice_of_axes_has_its_faces_reversed() -> None:
+    right = extra_piece_faces(_at(length_along="x", width_along="y"))
+    left = extra_piece_faces(_at(length_along="x", width_along="z"))
+
+    assert left == tuple(tuple(reversed(face)) for face in right)
+
+
+def test_placements_disagreeing_with_qty_are_refused(desk: dict) -> None:
+    desk["extra_parts"] = [_extra(id="slat", qty=4, placements=[_at(z=100 * n) for n in range(3)])]
+
+    refusal = _refusal(desk)
+    assert "extra_parts[0].placements" in refusal and "4 are needed" in refusal
+
+
+@pytest.mark.parametrize(
+    ("placement", "field"),
+    [
+        (_at(width_along="x"), "width_along"),
+        (_at(tilt={"towards": "x", "angle_deg": 30}), "tilt.towards"),
+        (_at(tilt={"towards": "z", "angle_deg": 0}), "angle_deg"),
+        (_at(roll_deg=0), "roll_deg"),
+        (_at(roll_deg=90), "roll_deg"),
+    ],
+)
+def test_an_impossible_placement_is_refused_naming_the_field(desk: dict, placement: dict, field: str) -> None:
+    desk["extra_parts"] = [_extra(placements=[placement])]
+
+    assert field in _refusal(desk)
+
+
+def test_end_cuts_that_leave_no_length_are_refused(desk: dict) -> None:
+    desk["extra_parts"] = [_extra(id="stub", length=80, end_cuts={"across": "width", "start_deg": 45, "end_deg": 45})]
+
+    refusal = _refusal(desk)
+    assert "stub" in refusal and "leave no length" in refusal
+
+
+def test_a_placed_piece_outside_the_envelope_is_refused(desk: dict) -> None:
+    desk["envelope"] = {"width": 1200, "height": 2000, "depth": 600}
+    desk["extra_parts"] = [_extra(id="rail", placements=[_at(300, 0, 100)])]
+
+    assert "part 'rail' lies outside the envelope" in _refusal(desk)
+
+
+def test_a_tilted_piece_leaving_the_envelope_is_refused(desk: dict) -> None:
+    desk["envelope"] = {"width": 1200, "height": 1000, "depth": 600}
+    desk["modules"][0]["z"] = 0
+    desk["extra_parts"] = [_extra(length=1200, placements=[_at(tilt={"towards": "z", "angle_deg": 60})])]
+
+    assert "part 'brace' lies outside the envelope" in _refusal(desk)
+
+
+def test_a_placed_piece_inside_the_envelope_is_accepted_and_kept(desk: dict) -> None:
+    desk["envelope"] = {"width": 1200, "height": 2000, "depth": 600}
+    desk["extra_parts"] = [_extra(placements=[_at(100, tilt={"towards": "z", "angle_deg": 30})])]
+
+    stored = CustomBuildSpec.model_validate(desk).model_dump(mode="json")
+    assert stored["extra_parts"][0]["placements"] == [_at(100, tilt={"towards": "z", "angle_deg": 30})]
+
+
+def test_an_unplaced_extra_part_serialises_as_before(desk: dict) -> None:
+    desk["extra_parts"] = [_extra()]
+
+    stored = CustomBuildSpec.model_validate(desk).model_dump(mode="json")
+    assert "placements" not in stored["extra_parts"][0] and "end_cuts" not in stored["extra_parts"][0]
+
+
+def test_placed_pieces_count_toward_the_overall_size_and_unplaced_do_not(desk: dict) -> None:
+    unplaced = copy.deepcopy(desk)
+    unplaced["extra_parts"] = [_extra()]
+    desk["extra_parts"] = [_extra(length=2000, placements=[_at(0, 0, 750, tilt={"towards": "z", "angle_deg": 30})])]
+
+    assert overall(unplaced) == overall({k: v for k, v in desk.items() if k != "extra_parts"})
+    # The far end rises 1000 mm and the board's thickness, turned with it, adds 18 × cos 30°
+    # above it and 18 × sin 30° behind the corner on x.
+    assert overall(desk)["h"] == round(1000 + 18 * 0.8660254)
+    assert overall(desk)["w"] == round(2000 * 0.8660254 + 9)
+
+
+def test_placement_leaves_the_shop_data_unchanged(desk: dict) -> None:
+    unplaced = copy.deepcopy(desk)
+    unplaced["extra_parts"] = [_extra(qty=2)]
+    desk["extra_parts"] = [_extra(qty=2, placements=[_at(z=750), _at(z=1300, roll_deg=10)])]
+
+    first = derive(CustomBuildSpec.model_validate(unplaced).model_dump(mode="json"))
+    second = derive(CustomBuildSpec.model_validate(desk).model_dump(mode="json"))
+    assert first == second
+    assert drilling(unplaced, {}) == drilling(desk, {})
+
+
+def test_end_cuts_are_noted_on_the_row_and_keep_its_size(desk: dict) -> None:
+    desk["extra_parts"] = [_extra(end_cuts={"across": "width", "start_deg": 30, "end_deg": -30})]
+
+    parts, _hardware, _assembly = derive(CustomBuildSpec.model_validate(desk).model_dump(mode="json"))
+    row = parts[-1]
+    assert "ends cut 30° / −30° across width" in row["notes"]
+    assert (row["qty"], row["l"], row["w"], row["t"]) == (1, 1000, 60, 18)

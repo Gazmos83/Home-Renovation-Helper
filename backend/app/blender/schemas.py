@@ -260,6 +260,67 @@ class WallShelfIn(BaseModel):
     bracket_positions_mm: Annotated[list[Position], Field(min_length=1, max_length=20)] | None = None
 
 
+Axis = Literal["x", "y", "z"]
+TurnDegrees = Annotated[int, Field(ge=-89, le=89)]
+
+
+class ExtraTiltIn(BaseModel):
+    """The piece's length turns towards `towards` by `angle_deg`, positive towards that axis's positive direction."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    towards: Axis
+    angle_deg: TurnDegrees
+
+    @model_validator(mode="after")
+    def _not_zero(self) -> ExtraTiltIn:
+        if self.angle_deg == 0:
+            raise ValueError("angle_deg: state a tilt other than 0, or leave tilt out")
+        return self
+
+
+class ExtraPlacementIn(BaseModel):
+    """Where one extra-part piece sits: its reference corner, its axes, then an optional roll and tilt."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    x: Position
+    y: Position
+    z: Position
+    length_along: Axis
+    width_along: Axis
+    roll_deg: TurnDegrees | None = None
+    tilt: ExtraTiltIn | None = None
+
+    @model_validator(mode="after")
+    def _axes(self) -> ExtraPlacementIn:
+        if self.length_along == self.width_along:
+            raise ValueError("width_along: must differ from length_along")
+        if self.roll_deg == 0:
+            raise ValueError("roll_deg: state a roll other than 0, or leave roll_deg out")
+        if self.tilt is not None and self.tilt.towards == self.length_along:
+            raise ValueError("tilt.towards: must differ from length_along")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_unstated_turns(self, handler: Any) -> dict[str, Any]:
+        dumped = handler(self)
+        for field in ("roll_deg", "tilt"):
+            if dumped.get(field) is None:
+                dumped.pop(field, None)
+        return dumped
+
+
+class ExtraEndCutsIn(BaseModel):
+    """Each end's cut from square; positive shortens the edge opposite the reference edge."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    across: Literal["width", "thickness"]
+    start_deg: TurnDegrees
+    end_deg: TurnDegrees
+
+
 class ExtraPartIn(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -273,6 +334,17 @@ class ExtraPartIn(BaseModel):
     notes: Note = ""
     hardware: Annotated[list[HardwareLineIn], Field(max_length=50)] = []
     supply: Literal["Personal_Supply"] | None = None
+    placements: Annotated[list[ExtraPlacementIn], Field(max_length=100)] | None = None
+    end_cuts: ExtraEndCutsIn | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unplaced(self, handler: Any) -> dict[str, Any]:
+        # An extra part without placements or end cuts serialises exactly as before.
+        dumped = handler(self)
+        for field in ("placements", "end_cuts"):
+            if dumped.get(field) is None:
+                dumped.pop(field, None)
+        return dumped
 
 
 class PartOverrideIn(BaseModel):
@@ -556,6 +628,7 @@ class CustomBuildSpec(BaseModel):
                 raise SpecValidationError(
                     f"extra_parts[{index}].material: undefined material slot {part.material!r}"
                 )
+            self._check_extra_part(index, part)
 
         self._check_wall_shelves(seen)
 
@@ -594,6 +667,27 @@ class CustomBuildSpec(BaseModel):
                 raise SpecValidationError(f"{where}.id: row {override.id!r} is overridden twice")
             overridden.add(override.id)
         return self
+
+    def _check_extra_part(self, index: int, part: ExtraPartIn) -> None:
+        where = f"extra_parts[{index}]"
+        thickness = self.materials[part.material].thickness_mm
+        document = part.model_dump(mode="json")
+        if part.end_cuts is not None and min(custom_derive.end_cut_edges(document, thickness)) <= 0:
+            raise SpecValidationError(f"{where}.end_cuts: the end cuts leave no length on part {part.id!r}")
+        if part.placements is None:
+            return
+        if len(part.placements) != part.qty:
+            raise SpecValidationError(
+                f"{where}.placements: {part.qty} are needed, one per piece, but {len(part.placements)} "
+                f"are given for part {part.id!r}"
+            )
+        if self.envelope is None:
+            return
+        limits = (self.envelope.width, self.envelope.depth, self.envelope.height)
+        for placement in document["placements"]:
+            for corner in custom_derive.extra_piece_corners(document, placement, thickness):
+                if any(value < -1e-6 or value > limit + 1e-6 for value, limit in zip(corner, limits, strict=True)):
+                    raise SpecValidationError(f"{where}: part {part.id!r} lies outside the envelope")
 
     def _check_wall_shelves(self, module_ids: set[str]) -> None:
         taken = module_ids | {part.id for part in self.extra_parts}
@@ -717,6 +811,19 @@ class WallShelfChange(BaseModel):
     bracket_positions_mm: Annotated[list[Position], Field(max_length=20)] | None = None
 
 
+class ExtraPartChange(BaseModel):
+    """Where an existing extra part's pieces sit, and how its ends are cut; at least one.
+
+    An empty `placements` unplaces the part, so it is laid beside the build again;
+    `end_cuts` of 0° at both ends makes the ends square again.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    placements: Annotated[list[ExtraPlacementIn], Field(max_length=100)] | None = None
+    end_cuts: ExtraEndCutsIn | None = None
+
+
 class PackageChanges(BaseModel):
     """A bounded set of changes to a stored `custom_build`; at least one."""
 
@@ -730,6 +837,7 @@ class PackageChanges(BaseModel):
     remove_modules: Annotated[list[Slug], Field(max_length=MAX_MODULES)] = []
     add_extra_parts: Annotated[list[ExtraPartIn], Field(max_length=100)] = []
     remove_extra_parts: Annotated[list[Slug], Field(max_length=100)] = []
+    extra_parts: dict[Slug, ExtraPartChange] = {}
     add_wall_shelves: Annotated[list[WallShelfIn], Field(max_length=MAX_WALL_SHELVES)] = []
     remove_wall_shelves: Annotated[list[Slug], Field(max_length=MAX_WALL_SHELVES)] = []
     wall_shelves: dict[Slug, WallShelfChange] = {}
@@ -747,6 +855,7 @@ class PackageChanges(BaseModel):
                 self.remove_modules,
                 self.add_extra_parts,
                 self.remove_extra_parts,
+                self.extra_parts,
                 self.add_wall_shelves,
                 self.remove_wall_shelves,
                 self.wall_shelves,
@@ -757,6 +866,9 @@ class PackageChanges(BaseModel):
         for slug, change in self.modules.items():
             if not change.model_dump(exclude_none=True):
                 raise ValueError(f"modules.{slug}: state at least one field to change")
+        for slug, part_change in self.extra_parts.items():
+            if not part_change.model_dump(exclude_none=True):
+                raise ValueError(f"extra_parts.{slug}: state placements or end_cuts to change")
         for slug, shelf_change in self.wall_shelves.items():
             if not shelf_change.model_dump(exclude_none=True):
                 raise ValueError(f"wall_shelves.{slug}: state at least one field to change")

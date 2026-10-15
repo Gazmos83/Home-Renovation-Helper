@@ -529,23 +529,44 @@ def _front_placement(module: Mapping[str, Any], leaf: Mapping[str, Any], t: int)
     )
 
 
-def _extra_boxes(spec: Mapping[str, Any], right_edge: float, front_edge: float) -> dict[str, tuple[str, list[Box]]]:
-    """Extra parts have no position in the specification: laid flat beside the build."""
-    pieces: dict[str, tuple[str, list[Box]]] = {}
+def _extra_boxes(spec: Mapping[str, Any], right_edge: float, front_edge: float) -> dict[str, tuple[str, list[Placement]]]:
+    """Placed extra parts sit at their stated corners and turns; the rest are laid flat beside the build."""
+    pieces: dict[str, tuple[str, list[Placement]]] = {}
     offset_y = front_edge
     for extra in spec.get("extra_parts") or []:
         t = spec["materials"][extra["material"]]["thickness_mm"]
-        boxes: list[Box] = []
-        for _ in range(extra["qty"]):
-            boxes.append(
-                (
-                    (extra["length"], extra["width"], t),
-                    (right_edge + 200 + extra["length"] / 2, offset_y + extra["width"] / 2, t / 2),
-                )
-            )
-            offset_y += extra["width"] + 20
-        pieces[extra["id"]] = ("extras", boxes)
+        placed: list[Placement] = []
+        if extra.get("placements"):
+            placed = [_extra_piece(extra, placement, t) for placement in extra["placements"]]
+        else:
+            for _ in range(extra["qty"]):
+                if extra.get("end_cuts") is not None:
+                    flat = {"x": right_edge + 200, "y": offset_y, "z": 0, "length_along": "x", "width_along": "y"}
+                    placed.append(_extra_piece(extra, flat, t))
+                else:
+                    placed.append(
+                        Placement(
+                            (extra["length"], extra["width"], t),
+                            (right_edge + 200 + extra["length"] / 2, offset_y + extra["width"] / 2, t / 2),
+                        )
+                    )
+                offset_y += extra["width"] + 20
+        pieces[extra["id"]] = ("extras", placed)
     return pieces
+
+
+def _extra_piece(extra: Mapping[str, Any], placement: Mapping[str, Any], t: int) -> Placement:
+    """One extra-part piece as a mesh from the corners `derive` gives the schema and the overall size."""
+    verts = rules.extra_piece_corners(extra, placement, t)
+    xs = [v[0] for v in verts]
+    ys = [v[1] for v in verts]
+    zs = [v[2] for v in verts]
+    return Placement(
+        (max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs)),
+        ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, (min(zs) + max(zs)) / 2),
+        verts=verts,
+        faces=rules.extra_piece_faces(placement),
+    )
 
 
 def _wall_shelf_boxes(spec: Mapping[str, Any]) -> dict[str, tuple[str, list[Box]]]:
@@ -670,6 +691,10 @@ def _frame(spec: Mapping[str, Any]) -> tuple[float, float, float, dict[str, int]
         xs.append(shelf["x"])
         ys.append(shelf["y"])
         zs.append(shelf["z"])
+    for corners in rules.placed_extra_corners(spec):
+        xs.extend(corner[0] for corner in corners)
+        ys.extend(corner[1] for corner in corners)
+        zs.extend(corner[2] for corner in corners)
     return float(min(xs)), float(min(ys)), float(min(zs)), overall
 
 
@@ -682,16 +707,19 @@ def _override_count(boxes: list[Placement], qty: int) -> list[Placement]:
     if qty <= len(boxes):
         return boxes[:qty]
     last = boxes[-1]
-    extra = [
-        Placement(
-            last.size,
-            (last.centre[0] + (n + 1) * (last.size[0] + 20), last.centre[1], last.centre[2]),
-            last.rotation_deg,
-            last.verts,
-            last.faces,
+    extra = []
+    for n in range(qty - len(boxes)):
+        dx = (n + 1) * (last.size[0] + 20)
+        verts = None if last.verts is None else tuple((vx + dx, vy, vz) for vx, vy, vz in last.verts)
+        extra.append(
+            Placement(
+                last.size,
+                (last.centre[0] + dx, last.centre[1], last.centre[2]),
+                last.rotation_deg,
+                verts,
+                last.faces,
+            )
         )
-        for n in range(qty - len(boxes))
-    ]
     return boxes + extra
 
 
@@ -729,8 +757,8 @@ def _build_scene(state: BuildState, parts: list[dict[str, Any]]) -> None:
         )
         for row_id, (layer, placements) in laid.items():
             pieces[row_id] = (module["id"], layer, placements)
-    for row_id, (layer, boxes) in _extra_boxes(spec, x0 + overall["w"], y0).items():
-        pieces[row_id] = (rules.EXTRAS_MODULE, layer, as_placements(boxes))
+    for row_id, (layer, placements) in _extra_boxes(spec, x0 + overall["w"], y0).items():
+        pieces[row_id] = (rules.EXTRAS_MODULE, layer, placements)
     for row_id, (layer, boxes) in _wall_shelf_boxes(spec).items():
         pieces[row_id] = (row_id, layer, as_placements(boxes))
 

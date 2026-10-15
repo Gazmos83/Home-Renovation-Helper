@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.blender.custom_build.derive import derive, module_bounds
+from app.blender.custom_build.derive import derive, module_bounds, signed_degrees
 from app.blender.schemas import CustomBuildSpec, PackageChanges
 from app.blender.spec_contract import SpecValidationError
 
@@ -98,6 +98,58 @@ def describe_spans(spans: list[dict[str, Any]] | None) -> str:
         high = "the top" if span["to_board"] == "top" else f"shelf {span['to_board']}"
         words.append(f"divider {number} from {low} to {high}")
     return "; ".join(words)
+
+
+def describe_placements(placements: list[dict[str, Any]] | None) -> str:
+    """An extra part's pieces in words, e.g. 'x0 y0 z900, length along x, width along y, tilt 30° towards z'."""
+    if not placements:
+        return "beside the build"
+    words = []
+    for placement in placements:
+        piece = (
+            f"x{placement['x']} y{placement['y']} z{placement['z']}, "
+            f"length along {placement['length_along']}, width along {placement['width_along']}"
+        )
+        if placement.get("roll_deg") is not None:
+            piece += f", roll {signed_degrees(placement['roll_deg'])}"
+        tilt = placement.get("tilt")
+        if tilt is not None:
+            piece += f", tilt {signed_degrees(tilt['angle_deg'])} towards {tilt['towards']}"
+        words.append(piece)
+    return "; ".join(words)
+
+
+def describe_end_cuts(cuts: dict[str, Any] | None) -> str:
+    """An extra part's end cuts in words, e.g. '30° / −30° across width', or 'square'."""
+    if not cuts or (cuts["start_deg"] == 0 and cuts["end_deg"] == 0):
+        return "square"
+    return f"{signed_degrees(cuts['start_deg'])} / {signed_degrees(cuts['end_deg'])} across {cuts['across']}"
+
+
+def _apply_extra_part_change(part: dict[str, Any], change: dict[str, Any], lines: list[str]) -> None:
+    if "placements" in change:
+        placements = change["placements"]
+        if placements and len(placements) != part["qty"]:
+            raise ReviseError(
+                f"extra part {part['id']!r} needs {part['qty']} placements, one per piece; "
+                f"{len(placements)} were given"
+            )
+        if not _same(part.get("placements") or [], placements):
+            lines.append(
+                f"{part['id']}: placements {describe_placements(part.get('placements'))} → {describe_placements(placements)}"
+            )
+            if placements:
+                part["placements"] = placements
+            else:
+                part.pop("placements", None)
+    if "end_cuts" in change:
+        before, after = describe_end_cuts(part.get("end_cuts")), describe_end_cuts(change["end_cuts"])
+        if before != after:
+            lines.append(f"{part['id']}: end cuts {before} → {after}")
+            if after == "square":
+                part.pop("end_cuts", None)
+            else:
+                part["end_cuts"] = change["end_cuts"]
 
 
 def _unknown(kind: str, slug: str, present: set[str]) -> ReviseError:
@@ -236,6 +288,11 @@ def fit_protruding_shelves(spec: dict[str, Any], lines: list[str]) -> None:
         before = shelf.get("y", 0)
         shelf["y"] = before + shift
         lines.append(f"{FIT_PREFIX}{shelf['id']}: wall shelf y {before} → {before + shift} mm")
+    for part in spec.get("extra_parts") or []:
+        for placement in part.get("placements") or []:
+            placement["y"] += shift
+        if part.get("placements"):
+            lines.append(f"{FIT_PREFIX}{part['id']}: extra part pieces move back {shift} mm")
     envelope = spec.get("envelope")
     if envelope is not None:
         lines.append(f"{FIT_PREFIX}envelope depth {envelope['depth']} → {envelope['depth'] + shift} mm")
@@ -285,6 +342,10 @@ def revise_spec(
         parts = [part for part in parts if part["id"] != slug]
         known_parts.discard(slug)
         lines.append(f"{slug}: extra part removed")
+    for slug, change in (requested.get("extra_parts") or {}).items():
+        if slug not in known_parts:
+            raise _unknown("extra part", slug, known_parts)
+        _apply_extra_part_change(next(part for part in parts if part["id"] == slug), change, lines)
     for part in requested.get("add_extra_parts") or []:
         parts.append(part)
         lines.append(f"{part['id']}: extra part added")

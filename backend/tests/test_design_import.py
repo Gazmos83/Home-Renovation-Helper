@@ -120,3 +120,11 @@ def test_the_guide_names_per_shelf_depths() -> None:
     guide = " ".join(load_template()["guide"])
     assert "shelf_depths_mm" in guide and "shelf_depth_align" in guide
     assert "null keeps the back-reduced depth" in guide
+
+
+def test_the_guide_names_extra_part_placements_and_end_cuts() -> None:
+    guide = " ".join(load_template()["guide"])
+    for field in ("placements", "length_along", "width_along", "roll_deg", "tilt", "end_cuts"):
+        assert field in guide, field
+    assert "An extra part without placements is laid flat beside the build" in guide
+    assert "only modules are drawn assembled" not in guide

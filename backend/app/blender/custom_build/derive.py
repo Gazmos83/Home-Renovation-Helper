@@ -860,8 +860,109 @@ def _carcass_tb(module: Mapping[str, Any], materials: Mapping[str, Mapping[str, 
     return t, b
 
 
+_AXIS_VECTORS: Final = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}
+
+Vector = tuple[float, float, float]
+
+
+def _combine(*terms: tuple[float, Vector]) -> Vector:
+    return (
+        sum(k * v[0] for k, v in terms),
+        sum(k * v[1] for k, v in terms),
+        sum(k * v[2] for k, v in terms),
+    )
+
+
+def _cross(a: Vector, b: Vector) -> Vector:
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def _end_trims(part: Mapping[str, Any], thickness: int) -> list[list[float]]:
+    """How much each end cut takes off: `[edge][end]`, edge 0 the reference edge, 1 the opposite."""
+    trims = [[0.0, 0.0], [0.0, 0.0]]
+    cuts = part.get("end_cuts")
+    if cuts is None:
+        return trims
+    size = part["width"] if cuts["across"] == "width" else thickness
+    for end, angle in enumerate((cuts["start_deg"], cuts["end_deg"])):
+        if angle != 0:
+            trims[1 if angle > 0 else 0][end] = size * math.tan(math.radians(abs(angle)))
+    return trims
+
+
+def end_cut_edges(part: Mapping[str, Any], thickness: int) -> tuple[float, float]:
+    """The reference edge's and the opposite edge's length after the end cuts, in mm."""
+    trims = _end_trims(part, thickness)
+    return part["length"] - sum(trims[0]), part["length"] - sum(trims[1])
+
+
+def end_cuts_note(cuts: Mapping[str, Any]) -> str:
+    """An extra part's end cuts in words, e.g. "ends cut 30° / −30° across width"."""
+    return f"ends cut {signed_degrees(cuts['start_deg'])} / {signed_degrees(cuts['end_deg'])} across {cuts['across']}"
+
+
+def signed_degrees(value: int) -> str:
+    return f"−{-value}°" if value < 0 else f"{value}°"
+
+
+def extra_piece_corners(
+    part: Mapping[str, Any], placement: Mapping[str, Any], thickness: int
+) -> tuple[Vector, ...]:
+    """The eight corners of one extra-part piece in the build's frame, after its end cuts and turns.
+
+    The piece is laid out on its own axes — length u from 0, width v, thickness w
+    — from its reference corner; its end cuts shorten the reference or opposite
+    edge; `roll_deg` turns v towards w about u; `tilt` then turns u towards the
+    named axis about u × towards. Order: on the reference face (w = 0) the
+    reference edge's start and end, then the opposite edge's end and start;
+    then the same four on the other face.
+    """
+    length_along, width_along = placement["length_along"], placement["width_along"]
+    thickness_along = next(axis for axis in "xyz" if axis not in (length_along, width_along))
+    eu, ev, ew = _AXIS_VECTORS[length_along], _AXIS_VECTORS[width_along], _AXIS_VECTORS[thickness_along]
+    roll = math.radians(placement.get("roll_deg") or 0)
+    ev, ew = (
+        _combine((math.cos(roll), ev), (math.sin(roll), ew)),
+        _combine((-math.sin(roll), ev), (math.cos(roll), ew)),
+    )
+    tilt = placement.get("tilt")
+    if tilt is not None:
+        axis = _cross(eu, _AXIS_VECTORS[tilt["towards"]])
+        angle = math.radians(tilt["angle_deg"])
+
+        def turn(v: Vector) -> Vector:
+            along = sum(a * b for a, b in zip(axis, v, strict=True))
+            return _combine((math.cos(angle), v), (math.sin(angle), _cross(axis, v)), (along * (1 - math.cos(angle)), axis))
+
+        eu, ev, ew = turn(eu), turn(ev), turn(ew)
+
+    trims = _end_trims(part, thickness)
+    across_width = (part.get("end_cuts") or {}).get("across", "width") == "width"
+    origin = (float(placement["x"]), float(placement["y"]), float(placement["z"]))
+    corners: list[Vector] = []
+    for wi in (0, 1):
+        for vi, end in ((0, 0), (0, 1), (1, 1), (1, 0)):
+            edge = vi if across_width else wi
+            u = trims[edge][0] if end == 0 else part["length"] - trims[edge][1]
+            corners.append(_combine((1.0, origin), (u, eu), (vi * part["width"], ev), (wi * thickness, ew)))
+    return tuple(corners)
+
+
+def extra_piece_faces(placement: Mapping[str, Any]) -> tuple[tuple[int, ...], ...]:
+    """The six faces over `extra_piece_corners`, wound outwards."""
+    faces = ((3, 2, 1, 0), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7))
+    length_along, width_along = placement["length_along"], placement["width_along"]
+    thickness_along = next(axis for axis in "xyz" if axis not in (length_along, width_along))
+    handed = _cross(_AXIS_VECTORS[length_along], _AXIS_VECTORS[width_along])
+    if handed != _AXIS_VECTORS[thickness_along]:
+        # Thickness runs along the remaining axis's positive direction, so a
+        # left-handed choice of axes mirrors the piece: reverse every face.
+        faces = tuple(tuple(reversed(face)) for face in faces)
+    return faces
+
+
 def overall(spec: Mapping[str, Any]) -> dict[str, int]:
-    """The build's overall width, height and depth: its envelope, or its modules' bounds."""
+    """The build's overall width, height and depth: its envelope, or the bounds of its modules, shelves and placed extra parts."""
     envelope = spec.get("envelope")
     if envelope is not None:
         return {"w": envelope["width"], "h": envelope["height"], "d": envelope["depth"]}
@@ -874,16 +975,31 @@ def overall(spec: Mapping[str, Any]) -> dict[str, int]:
     for shelf in spec.get("wall_shelves") or []:
         thickness = materials[shelf["material"]]["thickness_mm"]
         boxes.append((shelf["x"], shelf["y"], shelf["z"], shelf["length"], shelf["depth"], thickness))
+    for corners in placed_extra_corners(spec):
+        x0, y0, z0 = (min(corner[i] for corner in corners) for i in range(3))
+        x1, y1, z1 = (max(corner[i] for corner in corners) for i in range(3))
+        boxes.append((x0, y0, z0, x1 - x0, y1 - y0, z1 - z0))
     if not boxes:
         raise DeriveError("a build with no modules needs an envelope")
     x0 = min(b[0] for b in boxes)
     y0 = min(b[1] for b in boxes)
     z0 = min(b[2] for b in boxes)
     return {
-        "w": max(b[0] + b[3] for b in boxes) - x0,
-        "h": max(b[2] + b[5] for b in boxes) - z0,
-        "d": max(b[1] + b[4] for b in boxes) - y0,
+        "w": round(max(b[0] + b[3] for b in boxes) - x0),
+        "h": round(max(b[2] + b[5] for b in boxes) - z0),
+        "d": round(max(b[1] + b[4] for b in boxes) - y0),
     }
+
+
+def placed_extra_corners(spec: Mapping[str, Any]) -> list[tuple[Vector, ...]]:
+    """The corners of every placed extra-part piece, in the build's frame."""
+    materials = spec.get("materials") or {}
+    pieces = []
+    for part in spec.get("extra_parts") or []:
+        thickness = materials[part["material"]]["thickness_mm"]
+        for placement in part.get("placements") or []:
+            pieces.append(extra_piece_corners(part, placement, thickness))
+    return pieces
 
 
 def entry_heights(module: Mapping[str, Any]) -> list[int]:
@@ -1894,6 +2010,8 @@ def _rule_rows(
     for extra in spec.get("extra_parts") or []:
         slot = materials[extra["material"]]
         notes = extra.get("notes") or "Extra part as specified"
+        if extra.get("end_cuts") is not None:
+            notes += f"; {end_cuts_note(extra['end_cuts'])}"
         if extra.get("supply") is not None:
             notes += f" {supply_note(extra['supply'])}"
         parts.append(
