@@ -19,6 +19,9 @@ export default defineConfig({
       // socket and the SPA shows "NetworkError when attempting to fetch resource."
       "/chat": { target: API, timeout: 0, proxyTimeout: 0 },
       "/auth": API,
+      // Before "/admin": a remote benchmark or a pod start can run for over ten minutes, and the
+      // default proxy timeouts would drop the answer, leaving the panel without its message.
+      "/admin/offload": { target: API, timeout: 0, proxyTimeout: 0 },
       "/admin": page,
       "/health": API,
       // API-only: the Studio route is /pieces; without this proxy GET /packages

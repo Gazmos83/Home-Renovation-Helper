@@ -309,3 +309,85 @@ def test_a_local_draft_runs_while_a_remote_final_renders(render_root: Path, tmp_
     run(both())
     assert order == ["local draft", "draft done", "final done"]
     assert (local_folder / "still.png").is_file() and (remote_folder / "frames").is_dir()
+
+
+# --- pod mode (render-pod-lifecycle) ---------------------------------------------------------------
+
+
+def pod_runtime(fake_runpod):
+    import time
+    from dataclasses import replace
+
+    from pydantic import SecretStr
+
+    from app.render.offload.pod import PodManager, PodSettings
+    from app.render.offload.runpod import RunPodClient
+
+    async def short(seconds: float) -> None:  # start-up polls take a moment, the idle wait stays pending
+        await asyncio.sleep(0.05 if seconds <= 10 else seconds)
+
+    runtime = OffloadRuntime(CONFIG)
+    runtime.pod = PodManager(
+        client=RunPodClient(SecretStr("rpa_SECRETKEYVALUE"), transport=fake_runpod.transport),
+        settings=PodSettings(("NVIDIA GeForce RTX 4090",), "runpod/base:0.6.2", "vol123"),
+        template=replace(CONFIG, host="", host_key_alias="hra-render-pod"),
+        semaphore=runtime.semaphore,
+        sleep=short,
+    )
+    startup: list[float] = []
+    ensure = runtime.pod.ensure_pod
+
+    async def timed(launch):
+        began = time.perf_counter()
+        try:
+            return await ensure(launch)
+        finally:
+            startup.append(time.perf_counter() - began)
+
+    runtime.pod.ensure_pod = timed  # type: ignore[method-assign]
+    return runtime, startup
+
+
+def test_a_final_in_pod_mode_starts_a_pod_and_calibrates_without_the_start_up(
+    render_root: Path, tmp_path: Path
+) -> None:
+    from tests.offload_fakes import FakeRunPod
+
+    folder = new_version(render_root, built=True)
+    server, fake = FakeServer(tmp_path / "server"), FakeRunPod(ready_after=6)
+    runtime, startup = pod_runtime(fake)
+    finished: list[float] = []
+    jobs: list[dict] = []
+
+    async def scenario():
+        await go(render_root, final_ticket(), server, runtime=runtime,
+                 on_finished=lambda quote, seconds: finished.append(seconds), on_remote_job=jobs.append)
+        return runtime.pod.status()
+
+    status = run(scenario())
+    assert job_of(folder)["status"] == "succeeded"
+    assert len(sorted((folder / "frames").iterdir())) == 36
+    assert len(fake.created) == 1
+    assert status["state"] == "running" and status["delete_at"] is not None  # the idle time has begun
+    [started] = startup
+    assert started >= 0.2  # five address polls
+    [job] = jobs
+    assert finished and finished[0] <= job["actual_seconds"]
+    assert job["actual_seconds"] < started  # the start-up is not render time
+
+
+def test_a_pod_that_cannot_start_fails_the_final_and_nothing_runs_locally(
+    render_root: Path, tmp_path: Path
+) -> None:
+    from tests.offload_fakes import FakeRunPod
+
+    folder = new_version(render_root, built=True)
+    server, fake = FakeServer(tmp_path / "server"), FakeRunPod(no_capacity=True)
+    runtime, _ = pod_runtime(fake)
+    jobs: list[dict] = []
+    run(go(render_root, final_ticket(), server, runtime=runtime, on_remote_job=jobs.append))
+    assert job_of(folder)["status"] == "failed"
+    assert "no NVIDIA GeForce RTX 4090 is free on RunPod right now" in job_of(folder)["error"]
+    assert not (folder / "frames").exists() and fake.pods == {}
+    assert server.calls == []  # nothing ran on any machine, the laptop's launcher included
+    assert [job["outcome"] for job in jobs] == ["failed"]

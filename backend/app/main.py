@@ -179,6 +179,15 @@ async def _lifespan(app: FastAPI):
             "orphaned job sweep failed at startup: %s", type(error).__name__
         )
 
+    # A RunPod pod left running by an earlier process is still billed: delete it
+    # before anything else can create one (render-pod-lifecycle).
+    pod = app.state.offload.pod if app.state.offload is not None else None
+    if pod is not None:
+        try:
+            await pod.startup_cleanup()
+        except Exception as error:  # noqa: BLE001 - reported, not fatal
+            app_logging.logger.warning("render pod cleanup failed at startup: %s", type(error).__name__)
+
     # Per-agent model routing, validated against the registry (CLAUDE.md §4).
     # Developer-panel overrides in operator_settings resolve over the file.
     overrides = read_routing_overrides(app.state.engine)
@@ -260,6 +269,13 @@ async def _lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # The pod is never left running after the app exits (render-pod-lifecycle).
+        pod = app.state.offload.pod if app.state.offload is not None else None
+        if pod is not None:
+            try:
+                await pod.shutdown()
+            except Exception as error:  # noqa: BLE001 - shutting down regardless
+                app_logging.logger.warning("render pod not deleted at shutdown: %s", type(error).__name__)
         if app.state.checkpointer_pool is not None:
             app.state.checkpointer_pool.close()
         app.state.tracing.flush()
@@ -285,7 +301,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.blender_semaphore = asyncio.Semaphore(1)
     # The render server (render-offload): `None` unless it is configured. It has its own
     # one-job-at-a-time lock, so a laptop render can run beside a remote final.
-    app.state.offload = OffloadRuntime.from_settings(settings)
+    app.state.offload = OffloadRuntime.from_settings(settings, app.state.engine)
     # A test-only seam: `None` in production, always falling through to the real
     # `subprocess_launch`. Never read outside the render routes.
     app.state.blender_launch = None

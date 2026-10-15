@@ -103,3 +103,64 @@ def test_ensure_server_uses_the_runtimes_checker(tmp_path: Path) -> None:
     server = FakeServer(tmp_path, version="Blender 4.5.0")
     with pytest.raises(RenderRefused, match="4.5.0"):
         asyncio.run(ensure_server(OffloadRuntime(CONFIG), server.launch))
+
+
+# --- pod mode (render-pod-lifecycle) ---------------------------------------------------------------
+
+
+def pod_runtime(fake_runpod, key: str = "rpa_SECRETKEYVALUE") -> OffloadRuntime:
+    from dataclasses import replace
+
+    from pydantic import SecretStr
+
+    from app.render.offload.pod import PodManager, PodSettings
+    from app.render.offload.runpod import RunPodClient
+
+    runtime = OffloadRuntime(replace(CONFIG, host="", host_key_alias="hra-render-pod"))
+    runtime.pod = PodManager(
+        client=RunPodClient(SecretStr(key), transport=fake_runpod.transport),
+        settings=PodSettings(("NVIDIA GeForce RTX 4090",), "runpod/base:0.6.2", "vol123"),
+        template=runtime.config, semaphore=runtime.semaphore,
+    )
+    return runtime
+
+
+def test_pod_mode_with_nothing_running_checks_runpod_and_creates_nothing(tmp_path: Path) -> None:
+    from tests.offload_fakes import FakeRunPod
+
+    fake, server = FakeRunPod(), FakeServer(tmp_path)
+    asyncio.run(ensure_server(pod_runtime(fake), server.launch))
+    assert [request.url.path for request in fake.requests] == ["/v1/networkvolumes/vol123"]
+    assert fake.created == [] and server.calls == []
+
+
+def test_a_rejected_runpod_key_refuses_before_approval_without_the_key(tmp_path: Path) -> None:
+    from tests.offload_fakes import FakeRunPod
+
+    fake = FakeRunPod()
+    with pytest.raises(RenderRefused) as caught:
+        asyncio.run(ensure_server(pod_runtime(fake, key="rpa_WRONGKEYVALUE"), FakeServer(tmp_path).launch))
+    assert caught.value.reason.startswith("RunPod rejected the API key")
+    assert "laptop" in caught.value.reason and "rpa_" not in caught.value.reason
+    assert fake.created == []
+
+
+def test_a_missing_volume_refuses_before_approval(tmp_path: Path) -> None:
+    from tests.offload_fakes import FakeRunPod
+
+    with pytest.raises(RenderRefused, match="network volume was not found"):
+        asyncio.run(ensure_server(pod_runtime(FakeRunPod(volume_id="other")), FakeServer(tmp_path).launch))
+
+
+def test_a_running_pod_is_checked_over_ssh(tmp_path: Path) -> None:
+    from tests.offload_fakes import FakeRunPod
+
+    fake, server = FakeRunPod(), FakeServer(tmp_path)
+    runtime = pod_runtime(fake)
+    runtime.pod.state = "running"
+    runtime.pod.connection = runtime.config.for_pod("203.0.113.7", 10341)
+    asyncio.run(ensure_server(runtime, server.launch))
+    [argv] = server.calls
+    assert "HostKeyAlias=hra-render-pod" in argv and "render@203.0.113.7" in argv
+    assert argv[argv.index("-p") + 1] == "10341" and fake.requests == []
+

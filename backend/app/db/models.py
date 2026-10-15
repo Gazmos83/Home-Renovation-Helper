@@ -838,6 +838,38 @@ class RemoteRenderJob(Base):
     )
 
 
+POD_SESSION_OUTCOMES = (
+    "running", "deleted_idle", "deleted_manual", "deleted_shutdown", "orphaned", "start_failed", "delete_failed",
+)
+
+
+class RenderPodSession(Base):
+    """One RunPod pod the app created, from creation to deletion (render-pod-lifecycle), for the developer."""
+
+    __tablename__ = "render_pod_sessions"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    pod_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    gpu_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    cost_per_hr: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    jobs: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0", default=0)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "outcome IN (" + ", ".join(f"'{outcome}'" for outcome in POD_SESSION_OUTCOMES) + ")",
+            name="ck_render_pod_sessions_outcome_known",
+        ),
+        Index("ix_render_pod_sessions_created_at", "created_at"),
+    )
+
+
 # --- pricing, stores and the corpus (pricing-researcher) -----------------------------------
 
 

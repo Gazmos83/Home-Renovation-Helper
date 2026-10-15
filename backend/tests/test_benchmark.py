@@ -251,3 +251,92 @@ def test_the_remote_benchmark_ticket_is_the_guards_alone() -> None:
     assert (ticket.quote.frames, ticket.quote.tier.resolution) == (1, 1000)
     with pytest.raises(RenderNotAuthorised):
         RenderTicket(ticket.quote)
+
+
+# --- render-pod-lifecycle ---------------------------------------------------------------------------
+
+
+def test_the_idle_minutes_default_to_ten_and_stay_in_range(offload_engine) -> None:
+    assert store.read_idle_minutes(offload_engine) == 10
+    store.write_idle_minutes(offload_engine, 25)
+    assert store.read_idle_minutes(offload_engine) == 25
+    for bad in (0, 121, 2.5, True):
+        with pytest.raises(ValueError):
+            store.write_idle_minutes(offload_engine, bad)
+    assert store.read_idle_minutes(offload_engine) == 25
+
+
+def test_the_start_up_time_defaults_to_180_seconds(offload_engine) -> None:
+    assert store.read_boot_seconds(offload_engine) == 180.0
+    store.write_boot_seconds(offload_engine, 150.0)
+    assert store.read_boot_seconds(offload_engine) == 150.0
+    with pytest.raises(ValueError):
+        store.write_boot_seconds(offload_engine, 0)
+
+
+def _pod_offload(running: bool):
+    """A pod-mode runtime whose pod is running or not; nothing reaches RunPod."""
+    from pathlib import Path
+
+    from pydantic import SecretStr
+
+    from app.render.offload.pod import PodManager, PodSettings
+    from app.render.offload.runpod import RunPodClient
+    from app.render.offload.runtime import OffloadRuntime
+    from app.render.offload.transport import OffloadConfig
+
+    config = OffloadConfig(
+        host="", port=22, user="root", key_path=Path("/k"), known_hosts_path=Path("/h"),
+        blender="/workspace/blender-5.2.1-linux-x64/blender", device="OPTIX", host_key_alias="hra-render-pod",
+    )
+    runtime = OffloadRuntime(config)
+    runtime.pod = PodManager(
+        client=RunPodClient(SecretStr("rpa_x")), settings=PodSettings(("RTX",), "img:1", "vol"),
+        template=config, semaphore=runtime.semaphore,
+    )
+    if running:
+        runtime.pod.state, runtime.pod.connection = "running", config.for_pod("203.0.113.7", 10341)
+    return runtime
+
+
+def _remote_final(remote_benchmark):
+    from app.render.benchmark_store import Benchmark
+    from app.render.guard import authorise
+    from app.render.tiers import load_tiers
+
+    return authorise(
+        package_id="desk", version=1, kind="turntable", tier="final", tiers=load_tiers(),
+        benchmark=Benchmark(2.5, "t"), approval="yes", target="remote", remote_benchmark=remote_benchmark,
+    ).quote
+
+
+def test_a_remote_estimate_with_a_pod_running_has_no_start_up(offload_engine) -> None:
+    from app.render.offload.runtime import remote_benchmark_for
+
+    store.write_remote_benchmark(offload_engine, 0.2, 40.0)
+    store.write_boot_seconds(offload_engine, 150.0)
+    quote = _remote_final(remote_benchmark_for(offload_engine, "remote", _pod_offload(running=True)))
+    assert quote.estimate_seconds == pytest.approx(36 * 2.25 * 0.2 + 40)  # about 56 seconds
+
+
+def test_a_remote_estimate_with_no_pod_adds_the_last_start_up(offload_engine) -> None:
+    from app.render.offload.runtime import remote_benchmark_for
+
+    store.write_remote_benchmark(offload_engine, 0.2, 40.0)
+    store.write_boot_seconds(offload_engine, 150.0)
+    quote = _remote_final(remote_benchmark_for(offload_engine, "remote", _pod_offload(running=False)))
+    assert quote.estimate_seconds == pytest.approx(36 * 2.25 * 0.2 + 40 + 150)  # about 206 seconds
+    assert store.read_remote_benchmark(offload_engine).overhead_seconds == 40.0  # stored value unchanged
+    summary = quote.summary
+    assert "on the render server" in summary
+    for hidden in ("RunPod", "203.0.113.7", "pod", "$", "€", "EUR", "USD"):
+        assert hidden not in summary
+
+
+def test_before_any_start_up_is_measured_180_seconds_are_assumed(offload_engine) -> None:
+    from app.render.offload.runtime import remote_benchmark_for
+
+    store.write_remote_benchmark(offload_engine, 0.2, 40.0)
+    benchmark = remote_benchmark_for(offload_engine, "remote", _pod_offload(running=False))
+    assert benchmark.overhead_seconds == pytest.approx(220.0)
+    assert remote_benchmark_for(offload_engine, "local", _pod_offload(running=False)) is None

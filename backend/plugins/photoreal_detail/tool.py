@@ -308,7 +308,7 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext):
         if where == "remote":
             confirm_server_sync(ctx.deps.loop, ctx.deps.offload, ctx.deps.launch)
         price_args["target"] = where
-        price_args["remote_benchmark"] = remote_benchmark_for(ctx.deps.engine, where)
+        price_args["remote_benchmark"] = remote_benchmark_for(ctx.deps.engine, where, ctx.deps.offload)
         priced = quote(**price_args)
     except RenderRefused as error:
         return error.reason

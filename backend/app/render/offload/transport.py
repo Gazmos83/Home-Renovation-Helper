@@ -13,7 +13,7 @@ goes through `shlex.quote`.
 from __future__ import annotations
 
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final
 
@@ -23,6 +23,9 @@ from app.config import Settings
 CONNECT_TIMEOUT_SECONDS: Final = 10
 REMOTE_ROOT: Final = "hra-render"
 SSH_FAILED: Final = "the render server could not be reached"
+# Pod mode (render-pod-lifecycle design decision 4): every pod has a new address and
+# port but the same host key from the network volume, pinned under this name.
+POD_HOST_KEY_ALIAS: Final = "hra-render-pod"
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,10 +37,14 @@ class OffloadConfig:
     known_hosts_path: Path
     blender: str
     device: str
+    host_key_alias: str | None = None
 
     @classmethod
     def from_settings(cls, settings: Settings) -> OffloadConfig | None:
-        if not settings.render_offload_configured:
+        """The fixed host's connection; in pod mode a template without host or port,
+        completed per pod with `for_pod`."""
+        mode = settings.render_offload_mode
+        if mode == "off":
             return None
         return cls(
             host=settings.render_offload_host or "",
@@ -47,7 +54,11 @@ class OffloadConfig:
             known_hosts_path=settings.render_offload_known_hosts_path or Path(),
             blender=settings.render_offload_blender or "",
             device=settings.render_offload_cycles_device,
+            host_key_alias=POD_HOST_KEY_ALIAS if mode == "pod" else None,
         )
+
+    def for_pod(self, host: str, port: int) -> OffloadConfig:
+        return replace(self, host=host, port=port)
 
     @property
     def target(self) -> str:
@@ -60,10 +71,12 @@ class OffloadConfig:
 
 def _options(config: OffloadConfig) -> list[str]:
     """Key only, never a prompt, the pinned host key, no agent identities."""
+    alias = ["-o", f"HostKeyAlias={config.host_key_alias}"] if config.host_key_alias else []
     return [
         "-o", "BatchMode=yes",
         "-o", "StrictHostKeyChecking=yes",
         "-o", f"UserKnownHostsFile={config.known_hosts_path}",
+        *alias,
         "-o", "IdentitiesOnly=yes",
         "-o", f"ConnectTimeout={CONNECT_TIMEOUT_SECONDS}",
         "-i", str(config.key_path),

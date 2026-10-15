@@ -167,7 +167,8 @@ def _with_target(request: Request, args: dict[str, Any]) -> dict[str, Any]:
             getattr(request.app.state, "offload", None),
             launcher(request),
         )
-    return {**args, "target": where, "remote_benchmark": remote_benchmark_for(engine, where)}
+    offload = getattr(request.app.state, "offload", None)
+    return {**args, "target": where, "remote_benchmark": remote_benchmark_for(engine, where, offload)}
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)

@@ -7,6 +7,7 @@ fallback: the render is not run on the laptop instead.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from collections.abc import Callable
@@ -14,6 +15,8 @@ from typing import Final
 
 from app.blender.launch import Launch, LaunchResult
 from app.render.guard import RenderRefused
+from app.render.offload.runpod import UNREACHABLE as RUNPOD_UNREACHABLE
+from app.render.offload.runpod import RunPodClient, RunPodError
 from app.render.offload.transport import OffloadConfig, Transport, quoted
 
 PINNED_VERSION: Final = "5.2.1"
@@ -30,6 +33,7 @@ UNREACHABLE: Final = (
     "in the known-hosts file); start it, or switch final renders to the laptop in the "
     "developer panel"
 )
+SWITCH_TO_LAPTOP: Final = "switch final renders to the laptop in the developer panel"
 NOT_CONFIGURED: Final = (
     "final renders are set to run on the render server, but it is not configured; "
     "set it up, or switch final renders to the laptop in the developer panel"
@@ -81,6 +85,23 @@ class OffloadChecker:
                 "the developer panel",
                 failure_class="offload_version",
             )
+        self._ok_until = self._clock() + CACHE_SECONDS
+
+    async def check_runpod(self, client: RunPodClient, volume_id: str) -> None:
+        """Pod mode with no pod running (render-pod-lifecycle): RunPod accepts the key and
+        knows the volume. Creates nothing, so nothing is billed before approval."""
+        if self._clock() < self._ok_until:
+            return
+        try:
+            await asyncio.wait_for(client.get_network_volume(volume_id), CHECK_SECONDS)
+        except TimeoutError:
+            raise RenderRefused(
+                f"{RUNPOD_UNREACHABLE}; try again, or {SWITCH_TO_LAPTOP}", failure_class="offload_unreachable"
+            ) from None
+        except RunPodError as error:
+            raise RenderRefused(
+                f"{error.reason}; fix it, or {SWITCH_TO_LAPTOP}", failure_class="offload_unreachable"
+            ) from None
         self._ok_until = self._clock() + CACHE_SECONDS
 
     def forget(self) -> None:

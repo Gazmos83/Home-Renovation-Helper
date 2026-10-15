@@ -25,6 +25,12 @@ REMOTE_BENCHMARK_KEY: Final = "offload:benchmark"
 TARGET_KEY: Final = "offload:final_target"
 HOURLY_RATE_KEY: Final = "offload:hourly_rate_eur"
 TARGETS: Final = ("local", "remote")
+# render-pod-lifecycle: how long an idle pod lives, and how long the last one took to start.
+IDLE_MINUTES_KEY: Final = "offload:idle_minutes"
+BOOT_SECONDS_KEY: Final = "offload:boot_seconds"
+DEFAULT_IDLE_MINUTES: Final = 10
+IDLE_MINUTES_RANGE: Final = (1, 120)
+DEFAULT_BOOT_SECONDS: Final = 180.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,3 +202,46 @@ def write_hourly_rate(engine: Engine, euros: float) -> None:
     with Session(engine) as session:
         _put(session, HOURLY_RATE_KEY, repr(float(euros)))
         session.commit()
+
+
+def read_idle_minutes(engine: Engine) -> int:
+    """Minutes an idle pod lives: the developer's choice, else 10."""
+    with Session(engine) as session:
+        row = session.get(OperatorSetting, IDLE_MINUTES_KEY)
+    try:
+        value = int(row.value) if row is not None else DEFAULT_IDLE_MINUTES
+    except ValueError:
+        return DEFAULT_IDLE_MINUTES
+    low, high = IDLE_MINUTES_RANGE
+    return value if low <= value <= high else DEFAULT_IDLE_MINUTES
+
+
+def write_idle_minutes(engine: Engine, minutes: int) -> None:
+    low, high = IDLE_MINUTES_RANGE
+    if not isinstance(minutes, int) or isinstance(minutes, bool) or not low <= minutes <= high:
+        raise ValueError(f"the idle time must be a whole number of minutes from {low} to {high}")
+    with Session(engine) as session:
+        _put(session, IDLE_MINUTES_KEY, str(minutes))
+        session.commit()
+
+
+def read_boot_seconds(engine: Engine) -> float:
+    """How long the last pod took from creation until SSH answered, else 180 seconds."""
+    with Session(engine) as session:
+        row = session.get(OperatorSetting, BOOT_SECONDS_KEY)
+    if row is None:
+        return DEFAULT_BOOT_SECONDS
+    try:
+        value = float(row.value)
+    except ValueError:
+        return DEFAULT_BOOT_SECONDS
+    return value if value > 0 else DEFAULT_BOOT_SECONDS
+
+
+def write_boot_seconds(engine: Engine, seconds: float) -> None:
+    if seconds <= 0:
+        raise ValueError("the start-up time must be positive")
+    with Session(engine) as session:
+        _put(session, BOOT_SECONDS_KEY, repr(float(seconds)))
+        session.commit()
+

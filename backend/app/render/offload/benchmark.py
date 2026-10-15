@@ -55,16 +55,18 @@ async def run_remote_benchmark(
     storage.sweep_stale_siblings(stage)
 
     ticket = authorise_remote_benchmark()
-    started = time.perf_counter()
+    # Timed from the job's own start: in pod mode a pod's start-up comes before it and is
+    # estimated separately, so it must not land in the overhead.
+    started = [time.perf_counter()]
     try:
         result, times = await _run_on_server(
             ticket,
             expected=(BENCHMARK_PACKAGE_ID, 1, "still", False, "piece", "model"),
             offload=runtime, launch=launch, blend=build / "model.blend", folder=folder,
             scene_document=None, stage=stage, limit=timeout * REMOTE_BENCHMARK_TIER.timeout_multiplier,
-            begin=lambda: None,
+            begin=lambda: started.__setitem__(0, time.perf_counter()),
         )
-        elapsed = time.perf_counter() - started
+        elapsed = time.perf_counter() - started[0]
         if result.exit_code != 0 or result.timed_out or times is None:
             raise BenchmarkFailed(
                 f"the benchmark frame failed on the render server: {safe_error(result.stderr_tail, root)}"

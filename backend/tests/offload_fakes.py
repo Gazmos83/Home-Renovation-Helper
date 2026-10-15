@@ -9,11 +9,14 @@ by writing what the generator would, hand the output back, remove the folder.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import shlex
 import shutil
 import tarfile
 from pathlib import Path
+
+import httpx
 
 from app.blender.launch import LaunchResult
 from tests.blender_fakes import png_bytes, write_frames, write_still
@@ -141,4 +144,99 @@ class FakeServer:
             self.active -= 1
 
 
-__all__ = ["OK", "FakeServer", "png_bytes"]
+class FakeRunPod:
+    """RunPod's REST API, answered in memory (render-pod-lifecycle).
+
+    `transport` is an `httpx.MockTransport` for `RunPodClient`. A created pod gets an
+    address after `ready_after` reads of it, the way a booting pod does.
+    """
+
+    def __init__(
+        self,
+        *,
+        key: str = "rpa_SECRETKEYVALUE",
+        volume_id: str = "vol123",
+        data_center: str = "EU-RO-1",
+        ready_after: int = 1,
+        no_capacity: bool = False,
+        no_capacity_text: str = "There are no longer any instances available with the requested specifications.",
+        delete_fails: int = 0,
+        down: bool = False,
+        stock: set[str] | None = None,
+    ) -> None:
+        self.key = key
+        self.volume_id = volume_id
+        self.data_center = data_center
+        self.ready_after = ready_after
+        self.no_capacity = no_capacity
+        self.no_capacity_text = no_capacity_text
+        self.delete_fails = delete_fails
+        self.down = down
+        self.stock = stock  # GPU types that can be placed; `None` means any
+        self.pods: dict[str, dict] = {}
+        self.reads: dict[str, int] = {}
+        self.requests: list[httpx.Request] = []
+        self.created: list[dict] = []
+        self.deleted: list[str] = []
+        self._next = 0
+        self.transport = httpx.MockTransport(self._handle)
+
+    def add_pod(self, name: str, *, ready: bool = True, gpu: str = "NVIDIA GeForce RTX 4090") -> str:
+        self._next += 1
+        pod_id = f"pod{self._next}"
+        self.pods[pod_id] = {
+            "id": pod_id, "name": name, "desiredStatus": "RUNNING", "costPerHr": 0.69,
+            "gpu": {"id": gpu, "count": 1},
+        }
+        self.reads[pod_id] = self.ready_after if ready else 0
+        if ready:
+            self._make_ready(pod_id)
+        return pod_id
+
+    def _make_ready(self, pod_id: str) -> None:
+        self.pods[pod_id].update(publicIp="203.0.113.7", portMappings={"22": 10341})
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if self.down:
+            raise httpx.ConnectError("down", request=request)
+        if request.headers.get("Authorization") != f"Bearer {self.key}":
+            return httpx.Response(401, json={"error": "unauthorized"})
+        path = request.url.path.removeprefix("/v1")
+        if request.method == "GET" and path.startswith("/networkvolumes/"):
+            if path.rsplit("/", 1)[-1] != self.volume_id:
+                return httpx.Response(404, json={"error": "not found"})
+            return httpx.Response(
+                200, json={"id": self.volume_id, "name": "hra", "size": 5, "dataCenterId": self.data_center}
+            )
+        if request.method == "POST" and path == "/pods":
+            body = json.loads(request.content)
+            self.created.append(body)
+            placeable = [g for g in body["gpuTypeIds"] if self.stock is None or g in self.stock]
+            if self.no_capacity or not placeable:
+                return httpx.Response(500, json={"error": self.no_capacity_text, "status": 500})
+            pod_id = self.add_pod(body["name"], ready=False, gpu=placeable[0])
+            return httpx.Response(201, json=self.pods[pod_id])
+        if path == "/pods" and request.method == "GET":
+            name = request.url.params.get("name")
+            return httpx.Response(200, json=[pod for pod in self.pods.values() if name in (None, pod["name"])])
+        pod_id = path.rsplit("/", 1)[-1]
+        if request.method == "GET":
+            if pod_id not in self.pods:
+                return httpx.Response(404, json={"error": "not found"})
+            self.reads[pod_id] += 1
+            if self.reads[pod_id] >= self.ready_after:
+                self._make_ready(pod_id)
+            return httpx.Response(200, json=self.pods[pod_id])
+        if request.method == "DELETE":
+            if self.delete_fails:
+                self.delete_fails -= 1
+                return httpx.Response(500, json={"error": "try later"})
+            self.pods.pop(pod_id, None)
+            self.deleted.append(pod_id)
+            return httpx.Response(204)
+        return httpx.Response(405)
+
+
+
+__all__ = ["OK", "FakeRunPod", "FakeServer", "png_bytes"]

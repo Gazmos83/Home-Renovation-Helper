@@ -380,13 +380,23 @@ async def _run_on_server(
         dimensions=shows_dimensions(quote),
     )
     async with offload.semaphore:
+        config = offload.config
+        if offload.pod is not None:
+            # Pod mode: start-up happens here, before `begin`, so it is never render time.
+            try:
+                config = await offload.pod.ensure_pod(launch)
+            except RemoteFailed as failure:
+                return LaunchResult(1, failure.reason, False), None
         try:
             times = await run_remote(
-                config=offload.config, launch=launch, tier=quote.tier, kind=quote.kind,
+                config=config, launch=launch, tier=quote.tier, kind=quote.kind,
                 inputs=inputs, stage=stage, limit_seconds=limit, on_start=begin,
             )
         except RemoteFailed as failure:
             return LaunchResult(-1 if failure.timed_out else 1, failure.reason, failure.timed_out), None
+        finally:
+            if offload.pod is not None:
+                offload.pod.job_finished()
     return LaunchResult(0, "", False), times
 
 

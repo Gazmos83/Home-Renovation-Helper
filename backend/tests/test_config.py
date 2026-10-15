@@ -374,6 +374,93 @@ def test_the_known_gpu_devices_are_accepted(device: str) -> None:
     assert _settings(render_offload_cycles_device=device).render_offload_cycles_device == device
 
 
+# --- RunPod pod mode (render-pod-lifecycle) -------------------------------------------------------
+
+RUNPOD_KEY = "rpa_SECRETKEYVALUE"
+
+
+@pytest.fixture
+def pod_values(offload_files: dict) -> dict[str, object]:
+    values = {k: v for k, v in offload_files.items() if k != "render_offload_host"}
+    return {
+        **values,
+        "render_offload_runpod_api_key": RUNPOD_KEY,
+        "render_offload_runpod_network_volume_id": "agv6w2qcg7",
+        "render_offload_runpod_gpu_type": "NVIDIA GeForce RTX 4090",
+        "render_offload_runpod_image": "runpod/base:0.6.2-cuda12.4.1",
+    }
+
+
+def test_the_fixed_host_is_host_mode(offload_files: dict) -> None:
+    assert _settings(**offload_files).render_offload_mode == "host"
+
+
+def test_pod_mode_is_summarised_without_the_key(pod_values: dict) -> None:
+    settings = _settings(**pod_values)
+    assert settings.render_offload_mode == "pod"
+    assert settings.render_offload_configured is True
+    summary = settings.safe_summary()
+    assert summary["render_offload"] == "RunPod pod (NVIDIA GeForce RTX 4090)"
+    assert RUNPOD_KEY not in repr(summary) and RUNPOD_KEY not in repr(settings)
+
+
+def test_pod_mode_is_off_when_any_runpod_value_is_missing(pod_values: dict) -> None:
+    for missing in (
+        "render_offload_runpod_api_key",
+        "render_offload_runpod_network_volume_id",
+        "render_offload_runpod_gpu_type",
+        "render_offload_runpod_image",
+        "render_offload_user",
+    ):
+        values = {k: v for k, v in pod_values.items() if k != missing}
+        assert _settings(**values).render_offload_mode == "off", missing
+
+
+def test_a_blank_runpod_key_counts_as_unset(pod_values: dict) -> None:
+    assert _settings(**{**pod_values, "render_offload_runpod_api_key": "  "}).render_offload_mode == "off"
+
+
+def test_a_host_and_a_runpod_key_together_fail_startup(pod_values: dict) -> None:
+    with pytest.raises(ValidationError, match="only one offload mode"):
+        _settings(**{**pod_values, "render_offload_host": "gpu.example.org"})
+
+
+def test_pod_mode_takes_gpu_types_in_priority_order(pod_values: dict) -> None:
+    settings = _settings(
+        **{**pod_values, "render_offload_runpod_gpu_type": "NVIDIA RTX A4500, NVIDIA GeForce RTX 4090,NVIDIA GeForce RTX 5090"}
+    )
+    assert settings.render_offload_runpod_gpu_types == (
+        "NVIDIA RTX A4500", "NVIDIA GeForce RTX 4090", "NVIDIA GeForce RTX 5090",
+    )
+    assert settings.safe_summary()["render_offload"] == (
+        "RunPod pod (NVIDIA RTX A4500 > NVIDIA GeForce RTX 4090 > NVIDIA GeForce RTX 5090)"
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["A,B,C,D,E,F", "NVIDIA RTX A4500,NVIDIA RTX A4500", "NVIDIA RTX A4500,", "NVIDIA RTX A4500,RTX; id"],
+)
+def test_a_bad_gpu_list_is_refused_naming_the_field(value: str) -> None:
+    with pytest.raises(ValidationError, match="render_offload_runpod_gpu_type"):
+        _settings(render_offload_runpod_gpu_type=value)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("render_offload_runpod_image", "runpod/base"),
+        ("render_offload_runpod_image", "runpod/base:latest"),
+        ("render_offload_runpod_image", "runpod/base:1; id"),
+        ("render_offload_runpod_gpu_type", "RTX 4090; id"),
+        ("render_offload_runpod_network_volume_id", "../vol"),
+    ],
+)
+def test_an_unsafe_runpod_value_is_refused_naming_it(field: str, value: str) -> None:
+    with pytest.raises(ValidationError, match=field):
+        _settings(**{field: value})
+
+
 def test_the_design_upload_cap_defaults_to_256_kib_and_must_be_positive() -> None:
     import pytest
     from pydantic import ValidationError
@@ -408,3 +495,11 @@ def test_the_note_upload_cap_defaults_to_256_kib_and_must_be_positive() -> None:
     with pytest.raises(ValidationError) as caught:
         _settings(upload_max_note_bytes=0)
     assert "upload limits must be positive" in str(caught.value)
+
+
+def test_pod_mode_gives_a_connection_template_with_the_alias(pod_values: dict) -> None:
+    from app.render.offload.transport import OffloadConfig
+
+    config = OffloadConfig.from_settings(_settings(**pod_values))
+    assert config is not None and config.host == "" and config.host_key_alias == "hra-render-pod"
+    assert OffloadConfig.from_settings(_settings(**pod_values)).for_pod("203.0.113.7", 10341).port == 10341

@@ -159,6 +159,12 @@ class Settings(BaseSettings):
     render_offload_known_hosts_path: Path | None = None
     render_offload_blender: str | None = None
     render_offload_cycles_device: str = "OPTIX"
+    # The second mode (render-pod-lifecycle): the app creates a RunPod pod from a network
+    # volume after approval and deletes it when idle. No host or port then; the pod has them.
+    render_offload_runpod_api_key: SecretStr | None = None
+    render_offload_runpod_network_volume_id: str | None = None
+    render_offload_runpod_gpu_type: str | None = None
+    render_offload_runpod_image: str | None = None
 
     # --- Uploads (blueprints and photos attached to a conversation) -----------
     upload_root: Path = DEFAULT_UPLOAD_ROOT
@@ -272,7 +278,15 @@ class Settings(BaseSettings):
             raise ValueError("blender_live_timeout_seconds must be positive")
         return value
 
-    @field_validator("render_offload_host", "render_offload_user", "render_offload_blender", mode="after")
+    @field_validator(
+        "render_offload_host",
+        "render_offload_user",
+        "render_offload_blender",
+        "render_offload_runpod_network_volume_id",
+        "render_offload_runpod_gpu_type",
+        "render_offload_runpod_image",
+        mode="after",
+    )
     @classmethod
     def _blank_offload_value_is_unset(cls, value: str | None) -> str | None:
         return (value or "").strip() or None
@@ -300,6 +314,50 @@ class Settings(BaseSettings):
             )
         return value
 
+    @field_validator("render_offload_runpod_api_key", mode="after")
+    @classmethod
+    def _blank_runpod_key_is_unset(cls, value: SecretStr | None) -> SecretStr | None:
+        return value if value is not None and value.get_secret_value().strip() else None
+
+    @field_validator("render_offload_runpod_network_volume_id", mode="after")
+    @classmethod
+    def _runpod_volume_is_a_plain_id(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value):
+            raise ValueError("render_offload_runpod_network_volume_id must be a plain RunPod id")
+        return value
+
+    @field_validator("render_offload_runpod_gpu_type", mode="after")
+    @classmethod
+    def _runpod_gpus_are_plain_names(cls, value: str | None) -> str | None:
+        """One RunPod GPU type, or up to five in priority order, comma-separated."""
+        if value is None:
+            return value
+        names = [name.strip() for name in value.split(",")]
+        if not 1 <= len(names) <= 5 or len(set(names)) != len(names) or not all(
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,99}", name) for name in names
+        ):
+            raise ValueError(
+                "render_offload_runpod_gpu_type must be one RunPod GPU type name, or up to five "
+                "different ones in priority order, separated by commas"
+            )
+        return ",".join(names)
+
+    @property
+    def render_offload_runpod_gpu_types(self) -> tuple[str, ...]:
+        """The pod's GPU types, first choice first (render-pod-lifecycle design decision 11)."""
+        value = self.render_offload_runpod_gpu_type
+        return tuple(value.split(",")) if value else ()
+
+    @field_validator("render_offload_runpod_image", mode="after")
+    @classmethod
+    def _runpod_image_is_pinned(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        found = re.fullmatch(r"[a-z0-9][a-z0-9._/-]{0,199}:([A-Za-z0-9._-]{1,128})", value)
+        if found is None or found.group(1) == "latest":
+            raise ValueError("render_offload_runpod_image must be an image pinned to a tag other than latest")
+        return value
+
     @field_validator("render_offload_port", mode="after")
     @classmethod
     def _offload_port_in_range(cls, value: int) -> int:
@@ -315,20 +373,45 @@ class Settings(BaseSettings):
         return value
 
     @property
-    def render_offload_configured(self) -> bool:
-        """True only when every connection value is set; otherwise every render runs locally."""
-        return all(
-            (
-                self.render_offload_host,
-                self.render_offload_user,
-                self.render_offload_key_path,
-                self.render_offload_known_hosts_path,
-                self.render_offload_blender,
-            )
+    def render_offload_mode(self) -> str:
+        """`host` (a fixed SSH host), `pod` (a RunPod pod the app creates) or `off`.
+
+        A mode counts only when every one of its values is set; otherwise every
+        render runs locally.
+        """
+        shared = (
+            self.render_offload_user,
+            self.render_offload_key_path,
+            self.render_offload_known_hosts_path,
+            self.render_offload_blender,
         )
+        if not all(shared):
+            return "off"
+        if self.render_offload_host:
+            return "host"
+        if all(
+            (
+                self.render_offload_runpod_api_key,
+                self.render_offload_runpod_network_volume_id,
+                self.render_offload_runpod_gpu_type,
+                self.render_offload_runpod_image,
+            )
+        ):
+            return "pod"
+        return "off"
+
+    @property
+    def render_offload_configured(self) -> bool:
+        """True when either offload mode is complete; otherwise every render runs locally."""
+        return self.render_offload_mode != "off"
 
     @model_validator(mode="after")
     def _offload_files_exist_when_configured(self) -> Settings:
+        if self.render_offload_host and self.render_offload_runpod_api_key:
+            raise ValueError(
+                "only one offload mode may be configured: set RENDER_OFFLOAD_HOST or "
+                "RENDER_OFFLOAD_RUNPOD_API_KEY, not both"
+            )
         if not self.render_offload_configured:
             return self
         for variable, path in (
@@ -462,11 +545,7 @@ class Settings(BaseSettings):
             "blender_timeout_seconds": self.blender_timeout_seconds,
             "render_root": str(self.render_root),
             "blender_live": f"{self.blender_live_host}:{self.blender_live_port}",
-            "render_offload": (
-                f"{self.render_offload_user}@{self.render_offload_host}:{self.render_offload_port}"
-                if self.render_offload_configured
-                else "off"
-            ),
+            "render_offload": self._offload_summary(),
             "upload_root": str(self.upload_root),
             "guideline_root": str(self.guideline_root),
             "generation": "on" if self.generation_enabled else "off",
@@ -480,6 +559,14 @@ class Settings(BaseSettings):
             "langfuse_public_key": _REDACTED,
             "langfuse_secret_key": _REDACTED,
         }
+
+    def _offload_summary(self) -> str:
+        mode = self.render_offload_mode
+        if mode == "host":
+            return f"{self.render_offload_user}@{self.render_offload_host}:{self.render_offload_port}"
+        if mode == "pod":
+            return f"RunPod pod ({' > '.join(self.render_offload_runpod_gpu_types)})"
+        return "off"
 
 
 def _describe(error: ValidationError) -> str:

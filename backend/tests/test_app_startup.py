@@ -12,6 +12,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from app.config import Settings
 from app.db.migrate import head_revision
@@ -147,3 +148,46 @@ def test_the_app_registers_the_render_state_and_routes(migrated_database: str) -
     assert {"/packages", "/packages/{package_id}/spec",
             "/packages/{package_id}/versions/{version}/renders",
             "/admin/render/benchmark"} <= paths
+
+
+def test_a_pod_left_running_is_deleted_at_startup_and_the_pod_at_shutdown(
+    migrated_database: str, tmp_path: Path
+) -> None:
+    """render-pod-lifecycle: only app-named pods are touched, against an in-memory RunPod."""
+    from pydantic import SecretStr
+
+    from app.render.offload.runpod import RunPodClient
+    from tests.offload_fakes import FakeRunPod
+
+    key, known = tmp_path / "id_ed25519", tmp_path / "known_hosts"
+    key.write_text("PRIVATE", encoding="utf-8")
+    known.write_text("hra-render-pod ssh-ed25519 AAAA", encoding="utf-8")
+    settings = _settings(migrated_database).model_copy(
+        update={
+            "render_offload_user": "root",
+            "render_offload_key_path": key,
+            "render_offload_known_hosts_path": known,
+            "render_offload_blender": "/workspace/blender-5.2.1-linux-x64/blender",
+            "render_offload_runpod_api_key": SecretStr("rpa_SECRETKEYVALUE"),
+            "render_offload_runpod_network_volume_id": "vol123",
+            "render_offload_runpod_gpu_type": "NVIDIA GeForce RTX 4090",
+            "render_offload_runpod_image": "runpod/base:0.6.2",
+        }
+    )
+    app = create_app(settings)
+    pod = app.state.offload.pod
+    assert pod is not None
+    fake = FakeRunPod()
+    pod.client = RunPodClient(SecretStr("rpa_SECRETKEYVALUE"), transport=fake.transport)
+    left_over = fake.add_pod("hra-render")
+    other = fake.add_pod("someone-else")
+    with TestClient(app):
+        assert fake.deleted == [left_over] and other in fake.pods
+        current = fake.add_pod("hra-render")
+        pod.pod_id, pod.state = current, "running"
+    assert fake.deleted == [left_over, current] and other in fake.pods
+    engine = make_engine(migrated_database)
+    with engine.begin() as connection:  # the recorded pod sessions
+        connection.execute(text("DELETE FROM render_pod_sessions"))
+    engine.dispose()
+

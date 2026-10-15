@@ -625,8 +625,34 @@ export type OffloadJob = {
   cost_eur: number | null;
 };
 
+export type OffloadPodSession = {
+  pod_id: string;
+  gpu_type: string;
+  created_at: string;
+  ready_at: string | null;
+  deleted_at: string | null;
+  lifetime_seconds: number;
+  jobs: number;
+  outcome: string;
+  error: string | null;
+  cost_per_hr: number | null;
+  cost_usd: number | null;
+};
+
+export type OffloadPod = {
+  gpu_types: string[];
+  image: string;
+  volume_id: string;
+  idle_minutes: number;
+  state: "none" | "starting" | "running" | "delete_failed";
+  pod_id: string | null;
+  delete_at: string | null;
+  error: string | null;
+};
+
 export type OffloadSummary = {
   configured: boolean;
+  mode: "host" | "pod" | null;
   host: string | null;
   port: number | null;
   user: string | null;
@@ -642,6 +668,8 @@ export type OffloadSummary = {
     calibrated: boolean;
   } | null;
   jobs: OffloadJob[];
+  pod: OffloadPod | null;
+  pod_sessions: OffloadPodSession[];
 };
 
 export type OffloadTest = {
@@ -650,6 +678,14 @@ export type OffloadTest = {
   pinned_version: string;
   version_ok: boolean;
   gpus: string[];
+};
+
+/** Pod mode with no pod running: RunPod is asked about the key and the volume; no pod is created. */
+export type OffloadRunPodTest = {
+  runpod_ok: boolean;
+  volume_found: boolean;
+  data_center?: string;
+  reason: string | null;
 };
 
 type Unauthorized = () => void;
@@ -694,7 +730,8 @@ async function failure(response: Response): Promise<ApiError> {
   } catch {
     /* keep statusText */
   }
-  return new ApiError(response.status, field, message);
+  // An answer with neither a reason nor a status text (a dropped proxy, a bare 5xx) still says something.
+  return new ApiError(response.status, field, message || `the server answered ${response.status}`);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -991,12 +1028,15 @@ export const api = {
       `/admin/feedback/comments?tier=${encodeURIComponent(row.tier)}&slot=${encodeURIComponent(row.slot ?? "")}&model=${encodeURIComponent(row.model ?? "")}`,
     ),
   offload: () => request<OffloadSummary>("/admin/offload"),
-  testOffload: () => request<OffloadTest>("/admin/offload/test", { method: "POST" }),
+  testOffload: () => request<OffloadTest | OffloadRunPodTest>("/admin/offload/test", { method: "POST" }),
   offloadBenchmark: () => request<OffloadSummary>("/admin/offload/benchmark", { method: "POST" }),
   setOffloadTarget: (target: "local" | "remote") =>
     request<OffloadSummary>("/admin/offload/target", { method: "PUT", body: JSON.stringify({ target }) }),
   setOffloadRate: (hourly_rate_eur: number) =>
     request<OffloadSummary>("/admin/offload/rate", { method: "PUT", body: JSON.stringify({ hourly_rate_eur }) }),
+  deleteOffloadPod: () => request<OffloadSummary>("/admin/offload/pod/delete", { method: "POST" }),
+  setOffloadIdle: (idle_minutes: number) =>
+    request<OffloadSummary>("/admin/offload/idle", { method: "PUT", body: JSON.stringify({ idle_minutes }) }),
   usage: (days = 1) => request<UsageRow[]>(`/admin/usage?days=${days}`),
   usageSummary: (days: 7 | 30 | 90) => request<UsageSummary>(`/admin/usage/summary?days=${days}`),
   modelPrices: () => request<ModelPriceRow[]>("/admin/model-prices"),

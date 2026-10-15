@@ -88,3 +88,31 @@ def test_the_transport_runs_each_call_through_the_launcher() -> None:
     asyncio.run(go())
     assert [argv[0] for argv, _ in seen] == ["ssh", "scp", "scp"]
     assert [timeout for _, timeout in seen] == [5, 7, 9]
+
+
+# --- pod mode (render-pod-lifecycle) ---------------------------------------------------------------
+
+POD_TEMPLATE = OffloadConfig(
+    host="", port=22, user="root", key_path=Path("/keys/id"), known_hosts_path=Path("/keys/known_hosts"),
+    blender="/workspace/blender-5.2.1-linux-x64/blender", device="OPTIX", host_key_alias="hra-render-pod",
+)
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda c: ssh_argv(c, "true"),
+        lambda c: put_argv(c, Path("/tmp/a.tar"), "hra-render/j/a.tar"),
+        lambda c: get_argv(c, "hra-render/j/out", Path("/tmp/stage")),
+    ],
+)
+def test_a_pod_connection_pins_the_host_key_under_the_alias(build) -> None:
+    config = POD_TEMPLATE.for_pod("203.0.113.7", 10341)
+    argv = build(config)
+    assert options_of(argv) == [*REQUIRED[:3], "HostKeyAlias=hra-render-pod", *REQUIRED[3:]]
+    assert "10341" in argv
+    assert any(part.startswith("root@203.0.113.7") for part in argv)
+
+
+def test_the_fixed_host_has_no_alias() -> None:
+    assert not any("HostKeyAlias" in part for part in ssh_argv(CONFIG, "true"))

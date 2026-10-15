@@ -117,3 +117,19 @@ def test_a_failed_frame_stores_nothing_and_cleans_up(engine, render_root: Path, 
         measure(engine, render_root, server)
     assert store.read_remote_benchmark(engine) is None
     assert server.job_folders() == []
+
+
+def test_in_pod_mode_the_benchmark_starts_a_pod_and_keeps_its_start_up_out_of_the_overhead(
+    engine, render_root: Path, tmp_path: Path
+) -> None:
+    """render-pod-lifecycle: the pod's start-up is estimated on its own, not as job overhead."""
+    from tests.offload_fakes import FakeRunPod
+    from tests.test_offload_job import pod_runtime
+
+    fake = FakeRunPod(ready_after=8)  # seven address polls of 0.05 s each before SSH
+    runtime, startup = pod_runtime(fake)
+    result = measure(engine, render_root, FakeServer(tmp_path / "s"), runtime=runtime)
+    [started] = startup
+    assert len(fake.created) == 1
+    assert started >= 0.3
+    assert result.overhead_seconds < started

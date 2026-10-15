@@ -40,7 +40,7 @@ Read-only investigation, questions and work on a change already named in the con
 | Observability | Langfuse callback with user/session/project IDs; outages log and continue |
 | Store | PostgreSQL + pgvector; app tables, checkpointer and vectors in one database; local `BAAI/bge-m3` embeddings (1024) |
 | Memory | LangGraph Postgres checkpointer per thread; long-term **house file** (§9a) |
-| Render server | Optional: a rented GPU box reached with the system `ssh` (key only, pinned host key); runs `final` Cycles renders only, chosen from `/admin/offload`, never a fallback; off unless `RENDER_OFFLOAD_*` are set (§6) |
+| Render server | Optional: a rented GPU box reached with the system `ssh` (key only, pinned host key); runs `final` Cycles renders only, chosen from `/admin/offload`, never a fallback; off unless `RENDER_OFFLOAD_*` are set (§6). Either a fixed host the owner starts and stops, or a RunPod pod the app creates from a network volume after approval and deletes when idle (10 min default; `docs/runpod-setup.md`) |
 | Render output | `docs/renders/<package-id>/<version>/` holding `frames/`, `still.png`, `viewer.html`; contents gitignored, folder kept |
 
 Blender 5.x: read the Eevee engine identifier from `bpy.types.RenderSettings.bl_rna.properties['engine'].enum_items` (5.2 uses `BLENDER_EEVEE`); auto smooth is the Smooth by Angle modifier; look shader nodes up by type.
@@ -114,7 +114,7 @@ Each tool is a folder under `backend/plugins/<name>/` with `manifest.yaml` (name
 
 ## 6. Render guard (build first)
 
-Per-render approval, no daily cap. A `final` may run on the render server instead of the laptop (one job per machine); it is quoted from the server's own benchmark and still needs the typed "yes". Tiers in `config/render.yaml`:
+Per-render approval, no daily cap. A `final` may run on the render server instead of the laptop (one job per machine); it is quoted from the server's own benchmark and still needs the typed "yes". In RunPod pod mode nothing is created or billed before that "yes", and the quote includes the pod's start-up while no pod is running. Tiers in `config/render.yaml`:
 
 | Tier | Frames | Resolution | Engine | Behaviour |
 |---|---|---|---|---|
@@ -177,3 +177,4 @@ None open as of 2026-10-05.
 8. [x] `photoreal_detail` over the socket, allow-list, `final` tier — `openspec/changes/photoreal-detail`
 9. [x] Feedback capture → house file + Langfuse tags — `openspec/changes/feedback-capture`
 10. [x] Cloud render offload — asked for 2026-10-06 — `openspec/changes/render-offload`
+10a. [x] RunPod pod created after approval and deleted when idle — asked for 2026-10-15 — `openspec/changes/render-pod-lifecycle`

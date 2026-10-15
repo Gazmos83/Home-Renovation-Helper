@@ -204,3 +204,113 @@ def test_only_the_last_twenty_jobs_are_listed(client: TestClient) -> None:
     for minutes in range(25):
         add_job(client, age_minutes=minutes, actual=60.0)
     assert len(client.get("/admin/offload").json()["jobs"]) == 20
+
+
+# --- pod mode (render-pod-lifecycle) ---------------------------------------------------------------
+
+
+@pytest.fixture
+def runpod(client: TestClient) -> Iterator:
+    from dataclasses import replace
+
+    from pydantic import SecretStr
+
+    from app.render.offload.pod import PodManager, PodSettings
+    from app.render.offload.runpod import RunPodClient
+    from tests.offload_fakes import FakeRunPod
+
+    fake = FakeRunPod()
+    runtime = OffloadRuntime(replace(CONFIG, host="", host_key_alias="hra-render-pod"))
+    runtime.pod = PodManager(
+        client=RunPodClient(SecretStr("rpa_SECRETKEYVALUE"), transport=fake.transport),
+        settings=PodSettings(("NVIDIA GeForce RTX 4090",), "runpod/base:0.6.2", "vol123"),
+        template=runtime.config, semaphore=runtime.semaphore, engine=client.app.state.engine,
+    )
+    client.app.state.offload = runtime
+
+    def clear_records() -> None:
+        with Session(client.app.state.engine) as session:
+            session.execute(text("DELETE FROM render_pod_sessions"))
+            session.commit()
+
+    clear_records()
+    yield fake
+    clear_records()
+
+
+def test_pod_mode_summary_shows_the_pod_but_never_the_key(client: TestClient, runpod) -> None:
+    response = client.get("/admin/offload")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "pod" and body["host"] is None and body["port"] is None
+    pod = body["pod"]
+    assert pod["gpu_types"] == ["NVIDIA GeForce RTX 4090"] and pod["image"] == "runpod/base:0.6.2"
+    assert pod["volume_id"] == "vol123" and pod["state"] == "none" and pod["idle_minutes"] == 10
+    assert body["pod_sessions"] == []
+    assert "rpa_" not in response.text and "id_ed25519" not in response.text
+
+
+def test_pod_mode_connection_test_with_nothing_running_creates_no_pod(client: TestClient, runpod) -> None:
+    response = client.post("/admin/offload/test")
+    assert response.status_code == 200
+    assert response.json() == {"runpod_ok": True, "volume_found": True, "data_center": "EU-RO-1", "reason": None}
+    assert runpod.created == []
+
+
+def test_pod_mode_connection_test_reports_a_missing_volume(client: TestClient, runpod) -> None:
+    runpod.volume_id = "elsewhere"
+    body = client.post("/admin/offload/test").json()
+    assert body["runpod_ok"] is True and body["volume_found"] is False
+    assert "network volume was not found" in body["reason"]
+
+
+def test_delete_pod_now_deletes_it_and_shows_none(client: TestClient, runpod) -> None:
+    pod = client.app.state.offload.pod
+    pod.pod_id, pod.state = runpod.add_pod("hra-render"), "running"
+    response = client.post("/admin/offload/pod/delete")
+    assert response.status_code == 200
+    assert response.json()["pod"]["state"] == "none" and runpod.deleted == ["pod1"]
+
+
+def test_delete_pod_now_is_refused_during_a_render(client: TestClient, runpod) -> None:
+    import asyncio
+
+    runtime = client.app.state.offload
+    runtime.pod.pod_id, runtime.pod.state = runpod.add_pod("hra-render"), "running"
+    asyncio.run(runtime.semaphore.acquire())
+    try:
+        response = client.post("/admin/offload/pod/delete")
+    finally:
+        runtime.semaphore.release()
+    assert response.status_code == 409 and "a render is running on the pod" in response.text
+    assert runpod.deleted == []
+
+
+def test_delete_pod_now_outside_pod_mode_is_409(client: TestClient) -> None:
+    configure(client)
+    assert client.post("/admin/offload/pod/delete").status_code == 409
+
+
+@pytest.mark.parametrize("minutes", [0, 121, 2.5])
+def test_idle_minutes_out_of_range_are_refused_and_unchanged(client: TestClient, runpod, minutes) -> None:
+    response = client.put("/admin/offload/idle", json={"idle_minutes": minutes})
+    assert response.status_code == 422
+    assert store.read_idle_minutes(client.app.state.engine) == 10
+
+
+def test_idle_minutes_are_stored(client: TestClient, runpod) -> None:
+    response = client.put("/admin/offload/idle", json={"idle_minutes": 25})
+    assert response.status_code == 200 and response.json()["pod"]["idle_minutes"] == 25
+
+
+def test_pod_sessions_are_listed_with_their_cost(client: TestClient, runpod) -> None:
+    from app.render.offload import sessions
+
+    engine = client.app.state.engine
+    session_id = sessions.open_session(engine, "pod7", "NVIDIA GeForce RTX 4090", 0.69)
+    sessions.update_session(engine, session_id, jobs=1)
+    sessions.close_session(engine, session_id, "deleted_idle")
+    [listed] = client.get("/admin/offload").json()["pod_sessions"]
+    assert listed["pod_id"] == "pod7" and listed["jobs"] == 1 and listed["outcome"] == "deleted_idle"
+    assert listed["cost_usd"] is not None
+
