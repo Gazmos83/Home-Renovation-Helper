@@ -16,7 +16,7 @@ A still at a tier SHALL render one frame from the package's isometric studio cam
 
 #### Scenario: Draft still
 - **WHEN** a `draft` still is requested for a built version
-- **THEN** `still.png` exists at 600 × 600, and `scene.json` records tier `draft` and engine Eevee
+- **THEN** `still.png` exists at 800 × 800, and `scene.json` records tier `draft` and engine Eevee
 
 ### Requirement: A turntable of the piece
 A turntable at a tier SHALL:
@@ -31,7 +31,7 @@ A turntable of a piece's own `model.blend` SHALL show the version's dimension li
 
 #### Scenario: Draft turntable
 - **WHEN** a `draft` turntable is requested for a built version
-- **THEN** `frames/` holds exactly `frame_000.png` … `frame_011.png`, each 600 × 600, and `viewer.html` names 12 frames
+- **THEN** `frames/` holds exactly `frame_000.png` … `frame_011.png`, each 800 × 800, and `viewer.html` names 12 frames
 
 #### Scenario: Dimension lines turn with the camera
 - **WHEN** a `draft` turntable is rendered of a version built with dimension lines
@@ -69,7 +69,7 @@ A room render at a tier SHALL build the room shell and furnishings, import the v
 
 #### Scenario: Room draft turntable
 - **WHEN** a `draft` room turntable is requested with the rectangle room fixture
-- **THEN** `room/frames/` holds exactly 12 frames at 600 × 600 and `room/scene.json` records the room document, the placement and tier `draft`
+- **THEN** `room/frames/` holds exactly 12 frames at 800 × 800 and `room/scene.json` records the room document, the placement and tier `draft`
 
 ### Requirement: Output is verified and published atomically
 A render SHALL write into a staging folder and publish it in one rename only after every expected file exists, is non-empty and matches the tier's resolution. A missing or empty frame SHALL fail the job with a reason naming the frame, publish nothing, and leave no staging folder. A killed run's staging folder SHALL be removed before the next run of that version.
@@ -83,11 +83,15 @@ A render SHALL write into a staging folder and publish it in one rename only aft
 - **THEN** the next run removes it before starting
 
 ### Requirement: A detail render publishes beside the version
-A detail still or turntable SHALL render the version's `detail/detail.blend` with the same cameras as the built model's still or turntable. It SHALL publish into the version's `detail/` folder with the same `still.png`, `frames/`, `viewer.html` and `scene.json` layout, verification and atomic publish, and `scene.json` SHALL record source `detail`. Before the render starts, the live Blender's open detail file SHALL be saved when Blender is reachable. When Blender is not reachable, the copy on disk SHALL be rendered as it is. A detail render SHALL NOT replace or alter the version's own `still.png`, `frames/` or `viewer.html`.
+A detail still or turntable SHALL render the version's `detail/detail.blend` with the same cameras as the built model's still or turntable. A detail turntable SHALL be rendered only on the render server; on the laptop a detail render is a still. It SHALL publish into the version's `detail/` folder with the same `still.png`, `frames/`, `viewer.html` and `scene.json` layout, verification and atomic publish, and `scene.json` SHALL record source `detail`. Before the render starts, the live Blender's open detail file SHALL be saved when Blender is reachable. When Blender is not reachable, the copy on disk SHALL be rendered as it is. A detail render SHALL NOT replace or alter the version's own `still.png`, `frames/` or `viewer.html`.
 
 #### Scenario: Final detail turntable published
-- **WHEN** an approved `final` detail turntable completes
+- **WHEN** an approved `final` detail turntable completes on the render server
 - **THEN** `detail/frames/` holds exactly `frame_000.png` … `frame_035.png` at 1500 × 1500, `detail/viewer.html` names 36 frames, and the version's own `frames/` is unchanged
+
+#### Scenario: Final detail still on the laptop
+- **WHEN** an approved `final` detail still completes on the laptop
+- **THEN** `detail/still.png` exists at 1500 × 1500, `detail/scene.json` records source `detail`, and the version's own `still.png` is unchanged
 
 #### Scenario: Live Blender closed before the render
 - **WHEN** a `final` detail still is approved while the live Blender is closed
@@ -114,12 +118,16 @@ They SHALL be hidden whether the render runs on the laptop or on the render serv
 - **WHEN** a `final` turntable of a piece runs on the render server
 - **THEN** its frames show the dimension lines, the same as on the laptop
 
-### Requirement: A restyle still renders an in-memory override of the built model
-A restyle still SHALL open the version's built `model.blend`, apply the look or style in memory, render one still at the tier's resolution and engine, and close without saving. It SHALL publish into `variants/<variant-id>/` of the version, and SHALL NOT replace or alter the version's own `still.png`, `frames/`, `viewer.html` or `model.blend`. It SHALL be refused with a stated reason when the version has not succeeded or its `model.blend` is missing.
+### Requirement: A restyle turntable renders an in-memory override of the built model
+A restyle SHALL open the version's built `model.blend` (or, for a composition, rebuild the room from its stored document), apply the look or style in memory, render a turntable at the tier's frame count, resolution and engine with the same cameras as the version's own turntable, and close without saving. It SHALL publish into `variants/<variant-id>/` of the version, and SHALL NOT replace or alter the version's own `still.png`, `frames/`, `viewer.html` or `model.blend`. It SHALL be refused with a stated reason when the version has not succeeded or its `model.blend` is missing.
 
 #### Scenario: Built model untouched
-- **WHEN** a draft restyle still completes
-- **THEN** `model.blend` is byte-identical to before and the version's own `still.png` is unchanged
+- **WHEN** a draft restyle turntable completes
+- **THEN** `model.blend` is byte-identical to before, and the version's own `still.png` and `frames/` are unchanged
+
+#### Scenario: Composition restyle turntable
+- **WHEN** a draft restyle of the composition `Wohnen` v2 with one style completes
+- **THEN** its variant folder holds 12 frames at 800 × 800, with walls between the camera and the room hidden per frame, and the composition version's own files are unchanged
 
 #### Scenario: Version not built
 - **WHEN** a restyle is requested for a version whose build has not succeeded

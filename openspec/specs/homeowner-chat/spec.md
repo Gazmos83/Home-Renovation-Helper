@@ -255,7 +255,7 @@ When a render that a specialist's tool started in a thread ends, the service SHA
 - **THEN** the thread holds a notice with outcome `succeeded`, package `hall-bench` and version 3, naming the final still
 
 #### Scenario: Render failed
-- **WHEN** a preview turntable of `hall-bench` version 2 started from a conversation fails
+- **WHEN** a draft turntable of `hall-bench` version 2 started from a conversation fails
 - **THEN** the thread holds a notice with outcome `failed` saying it did not finish, and the notice contains no error text, host path or model slug
 
 #### Scenario: Started from the Studio
