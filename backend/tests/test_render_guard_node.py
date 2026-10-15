@@ -65,6 +65,9 @@ def test_a_final_interrupts_with_the_estimate_before_any_launch() -> None:
     assert pause.value["type"] == "render_approval"
     assert pause.value["tier"] == "final"
     assert pause.value["estimate"] == "about 101 minutes"
+    # A long final carries its time and the busy laptop (local-detail-turntable).
+    assert "This is a long render: about 1 h 41 min" in pause.value["warning"]
+    assert "laptop" in pause.value["warning"]
     assert launches == [], "nothing launched while waiting for approval"
 
 

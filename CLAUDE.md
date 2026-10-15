@@ -119,7 +119,7 @@ Per-render approval, no daily cap. A `final` may run on the render server instea
 | Tier | Frames | Resolution | Engine | Behaviour |
 |---|---|---|---|---|
 | draft | 12 | 800×800 | Eevee | runs on the laptop, reports estimate; a piece's draft is a turntable |
-| final | 36 | 1500×1500 | Cycles | `interrupt()`, explicit "yes" required; a detail render is a still on the laptop, a turntable only on the render server |
+| final | 36 | 1500×1500 | Cycles | `interrupt()`, explicit "yes" required; a detail render is a still or turntable on the laptop or the server; over 20 minutes the approval warns of the time and the busy laptop; up to 6 h |
 
 `seconds ≈ frames × megapixels × engine_multiplier × benchmark_seconds_per_megapixel`. The benchmark is a one-off approved first-launch Eevee frame stored under `benchmark`, re-runnable from the dev panel; Cycles multiplier starts at 30 and is calibrated from the first approved final. Show the estimate in human terms before every run. The tool signature **requires** `tier`; raw frame or resolution values are refused. Log tier, estimate and actual to Langfuse. Unit tests: tier parsing, estimate maths, interrupt on final, refusal on bypass.
 

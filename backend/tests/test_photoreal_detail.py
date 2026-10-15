@@ -126,14 +126,21 @@ def test_a_detail_render_below_final_is_refused_naming_why(bound, live) -> None:
     assert isinstance(shown, str) and "the tiers are draft, final" in shown
 
 
-def test_a_local_detail_turntable_is_refused_without_asking(bound, live, tool_state) -> None:
+def test_a_local_detail_turntable_asks_with_its_time_then_renders_on_yes(bound, live, tool_state) -> None:
+    # local-detail-turntable: allowed on the laptop behind the yes, with the long-render warning.
     started(bound)
     shown = render_detail.preview(final(kind="turntable"), bound())
-    assert isinstance(shown, str)
-    assert "on the laptop a detail render is a still" in shown and "only on the render server" in shown
-    result = render_detail.run(final(kind="turntable"), replace(bound(), approved=True))
-    assert "only on the render server" in result
+    assert isinstance(shown, Confirmation) and shown.proposal["kind"] == "turntable"
+    assert "This is a long render: about 1 h 41 min" in shown.summary
+    assert "A single detail still takes" in shown.summary and "builds, drafts and the live detail pass wait" in shown.summary
+    assert "approval" in render_detail.run(final(kind="turntable"), bound())
     assert not any("render_turntable.py" in " ".join(c) for c in tool_state.launched)
+    result = render_detail.run(final(kind="turntable"), replace(bound(), approved=True))
+    assert result.startswith("Started a final turntable of the detailed bench version 1")
+    folder = folder_of(tool_state)
+    wait_job(folder, "detail-turntable")
+    frames = sorted((storage.detail_dir(folder) / "frames").iterdir())
+    assert len(frames) == 36 and png_size(frames[0]) == (1500, 1500)
 
 
 def test_a_missing_tier_and_raw_values_are_refused(bound, live) -> None:
@@ -159,6 +166,7 @@ def test_the_final_pauses_with_the_estimate_and_does_not_run_unapproved(bound, l
     assert shown.proposal["tier"] == "final" and shown.proposal["source"] == "detail"
     assert "tier final" in shown.summary and "detailed copy" in shown.summary
     assert shown.proposal["kind"] == "still" and "a still" in shown.summary
+    assert "long render" not in shown.summary  # a still is quoted under 20 minutes
     declined = render_detail.run(final(), bound())
     assert "approval" in declined
     assert not any("render_still.py" in " ".join(c) for c in tool_state.launched)

@@ -135,6 +135,11 @@ def test_a_final_pauses_with_the_estimate_and_runs_only_on_approval(make_ctx, to
     assert shown.subject == "final_render"
     assert shown.proposal["tier"] == "final"
     assert "A final render needs your approval" in shown.summary
+    # local-detail-turntable: a long final on the laptop says how long and that the laptop is busy.
+    assert "This is a long render: about 1 h 41 min" in shown.summary
+    assert "builds, drafts and the live detail pass wait" in shown.summary
+    short = render_preview({"package_id": "bench", "tier": "final", "kind": "still"}, make_ctx())
+    assert isinstance(short, Confirmation) and "long render" not in short.summary
     assert not any("render_turntable" in " ".join(call) for call in tool_state.launched)
 
     declined = render_run(args, make_ctx())

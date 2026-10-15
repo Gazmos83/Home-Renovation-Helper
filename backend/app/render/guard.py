@@ -21,6 +21,7 @@ from app.render.benchmark_store import Benchmark, RemoteBenchmark
 from app.render.estimate import (
     DEFAULT_CYCLES_MULTIPLIER,
     describe,
+    describe_long,
     estimate_seconds,
     remote_estimate_seconds,
 )
@@ -38,10 +39,13 @@ FORBIDDEN_FIELDS: Final[tuple[str, ...]] = (
 KINDS: Final[tuple[str, ...]] = ("still", "turntable")
 # What a render reads: the built model, the detail pass's copy of it
 # (photoreal-detail), or the built model restyled in memory (restyle-variants). A detail
-# render is `final` only, never placed in a room, and a still on the laptop: a detail
-# turntable runs only on the render server. A restyle is a `draft` turntable
+# render is `final` only and never placed in a room; a detail turntable may run on the
+# laptop or the render server (local-detail-turntable). A restyle is a `draft` turntable
 # (two-tier-renders).
 SOURCES: Final[tuple[str, ...]] = ("model", "detail", "restyle")
+
+# Above this estimate, an approval warns of the render's length (local-detail-turntable).
+LONG_RENDER_SECONDS: Final = 20 * 60
 
 _MINT: Final = object()
 
@@ -90,10 +94,35 @@ class RenderQuote:
     target: str = "local"
     # A restyle ticket is for one variant; no other variant can use it.
     variant: str = ""
+    # A detail turntable's alternative: the same detail render as one still (local-detail-turntable).
+    still_seconds: float | None = None
 
     @property
     def estimate_text(self) -> str:
         return describe(self.estimate_seconds)
+
+    @property
+    def warning(self) -> str:
+        """What a long render costs in time, said before the owner's yes; empty at 20 minutes or less."""
+        if self.estimate_seconds <= LONG_RENDER_SECONDS:
+            return ""
+        parts = [
+            (
+                f"This is a long render: {describe_long(self.estimate_seconds)}. The estimate is rough until "
+                "the first final calibrates it, and heavy lighting can make it longer."
+            )
+        ]
+        if self.source == "detail" and self.kind == "turntable" and self.still_seconds is not None:
+            parts.append(
+                f"A single detail still takes {describe(self.still_seconds)}, and a render server, when "
+                "one is set up for finals, is much faster too."
+            )
+        if self.target == "local":
+            parts.append(
+                "While it runs it holds the laptop's one Blender process, so builds, drafts and the live "
+                "detail pass wait until it finishes."
+            )
+        return " ".join(parts)
 
     @property
     def summary(self) -> str:
@@ -220,12 +249,6 @@ def quote(
                 "a detail render is final only; check progress with a screenshot instead",
                 field="tier",
             )
-        if kind == "turntable" and target == "local":
-            raise RenderRefused(
-                "on the laptop a detail render is a still; a detail turntable runs only on the "
-                "render server",
-                field="kind",
-            )
     if target not in ("local", "remote"):
         raise RenderRefused(f"unknown render target {target!r}; use local or remote", field="target")
     if source == "restyle" and target == "remote":
@@ -244,8 +267,12 @@ def quote(
             chosen, remote_benchmark.seconds_per_megapixel, remote_benchmark.overhead_seconds,
             frames=frames,
         )
+        still = remote_estimate_seconds(
+            chosen, remote_benchmark.seconds_per_megapixel, remote_benchmark.overhead_seconds, frames=1,
+        )
         return RenderQuote(
-            package_id, version, kind, room, chosen, frames, seconds, record, source, "remote"
+            package_id, version, kind, room, chosen, frames, seconds, record, source, "remote",
+            still_seconds=still if source == "detail" and kind == "turntable" else None,
         )
     if benchmark is None:
         raise RenderRefused(
@@ -255,8 +282,10 @@ def quote(
     seconds = estimate_seconds(
         chosen, benchmark.seconds_per_megapixel, cycles_multiplier, frames=frames
     )
+    still = estimate_seconds(chosen, benchmark.seconds_per_megapixel, cycles_multiplier, frames=1)
     return RenderQuote(
-        package_id, version, kind, room, chosen, frames, seconds, record, source, variant=variant
+        package_id, version, kind, room, chosen, frames, seconds, record, source, variant=variant,
+        still_seconds=still if source == "detail" and kind == "turntable" else None,
     )
 
 

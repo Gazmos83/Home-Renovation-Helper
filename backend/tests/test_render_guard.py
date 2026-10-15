@@ -173,13 +173,33 @@ def test_a_local_detail_still_asks_with_the_cycles_estimate_then_runs_on_yes() -
     assert _call(kind="still", tier="final", source="detail", approval="yes").quote.source == "detail"
 
 
-def test_a_local_detail_turntable_is_refused_before_approval() -> None:
-    with pytest.raises(RenderRefused) as caught:
-        _call(tier="final", source="detail")
-    assert not isinstance(caught.value, ApprovalRequired)
-    assert caught.value.field == "kind"
-    assert "on the laptop a detail render is a still" in caught.value.reason
-    assert "only on the render server" in caught.value.reason
+LAPTOP = Benchmark(5.031, "2026-10-05T00:00:00+00:00", "5.2.1 LTS")
+
+
+def test_a_local_detail_turntable_asks_with_the_long_render_and_busy_laptop_warnings() -> None:
+    # local-detail-turntable: allowed on the laptop again, behind the yes and a stated time.
+    with pytest.raises(ApprovalRequired) as asked:
+        _call(tier="final", source="detail", benchmark=LAPTOP)
+    quoted = asked.value.quote
+    assert (quoted.frames, quoted.tier.resolution, quoted.tier.engine, quoted.target) == (36, 1500, "cycles", "local")
+    warning = quoted.warning
+    assert "about 3 h 24 min" in warning
+    assert "rough until the first final calibrates it" in warning and "heavy lighting" in warning
+    assert "A single detail still takes about 6 minutes" in warning and "render server" in warning
+    assert "builds, drafts and the live detail pass wait" in warning
+    assert _call(tier="final", source="detail", benchmark=LAPTOP, approval="yes").quote.frames == 36
+
+
+def test_a_short_final_has_no_warning() -> None:
+    quoted = _call(kind="still", tier="final", source="detail", benchmark=LAPTOP, approval="yes").quote
+    assert quoted.estimate_text == "about 6 minutes" and quoted.warning == ""
+
+
+def test_a_long_remote_final_warns_of_the_time_but_not_of_the_laptop() -> None:
+    remote = {"target": "remote", "remote_benchmark": RemoteBenchmark(20.0, 40.0, "t")}  # 36 × 2.25 × 20 + 40 s
+    quoted = _call(tier="final", approval="yes", **remote).quote
+    assert quoted.estimate_seconds > 20 * 60
+    assert "This is a long render" in quoted.warning and "laptop" not in quoted.warning
 
 
 def test_a_detail_turntable_on_the_render_server_is_quoted_at_36_frames() -> None:

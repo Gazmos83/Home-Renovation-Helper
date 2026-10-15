@@ -283,9 +283,10 @@ def start_shell_render(
         )
         raise refused(
             status.HTTP_409_CONFLICT, "approval_required",
-            f"a final render needs your approval: {priced.summary}",
+            " ".join(filter(None, [f"a final render needs your approval: {priced.summary}.", priced.warning])),
             tier=priced.tier.name, estimate_seconds=round(priced.estimate_seconds, 1),
-            estimate=priced.estimate_text, summary=priced.summary, approval_token=token,
+            estimate=priced.estimate_text, summary=priced.summary, warning=priced.warning,
+            approval_token=token,
         )
     try:
         ticket = authorise(**args)

@@ -312,9 +312,10 @@ def test_the_timeout_scales_with_the_tier(render_root: Path) -> None:
         render_writer(Path(arg_value(argv, "--out")), argv)
         return LaunchResult(0, "", False)
 
-    run(render(render_root, ticket("still", "draft"), spy, timeout=100))
-    run(render(render_root, ticket("still", "final"), spy, timeout=100))
-    assert seen == [100, 2400]
+    run(render(render_root, ticket("still", "draft"), spy, timeout=600))
+    run(render(render_root, ticket("still", "final"), spy, timeout=600))
+    # A final may run 6 hours at the 600 s default (local-detail-turntable).
+    assert seen == [600, 21_600]
 
 
 def test_on_finished_runs_after_a_success_only(render_root: Path) -> None:

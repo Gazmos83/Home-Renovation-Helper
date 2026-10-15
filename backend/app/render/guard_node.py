@@ -83,6 +83,8 @@ def make_guard_node(
                         "estimate_seconds": priced.estimate_seconds,
                         "estimate": priced.estimate_text,
                         "summary": priced.summary,
+                        # A long render's time and the busy laptop (local-detail-turntable).
+                        "warning": priced.warning,
                     }
                 )
             ticket = authorise(**common, approval=approval)

@@ -26,6 +26,7 @@ def test_the_shipped_tiers_load() -> None:
     draft, final = (tiers.get(n) for n in ("draft", "final"))
     assert (draft.frames, draft.resolution, draft.engine) == (12, 800, "eevee")
     assert (final.frames, final.resolution, final.engine) == (36, 1500, "cycles")
+    assert (draft.timeout_multiplier, final.timeout_multiplier) == (1, 36)
     assert [name for name, _ in tiers.items()] == ["draft", "final"]
     assert final.blender_engine == "CYCLES"
     assert draft.blender_engine == "BLENDER_EEVEE"

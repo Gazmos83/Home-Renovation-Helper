@@ -64,3 +64,12 @@ def describe(seconds: float) -> str:
         return f"about {whole} second{'s' if whole != 1 else ''}"
     minutes = round(seconds / 60)
     return f"about {minutes} minute{'s' if minutes != 1 else ''}"
+
+
+def describe_long(seconds: float) -> str:
+    """A long render's time in hours and minutes ("about 3 h 24 min"); under an hour as `describe`
+    words it (local-detail-turntable)."""
+    minutes = round(seconds / 60)
+    if minutes < 60:
+        return describe(seconds)
+    return f"about {minutes // 60} h {minutes % 60} min"

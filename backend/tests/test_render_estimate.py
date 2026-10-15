@@ -163,3 +163,16 @@ def test_a_local_quote_is_unchanged_by_the_new_target() -> None:
 
 def test_a_remote_still_is_one_frame_plus_overhead() -> None:
     assert _remote_quote(kind="still").estimate_seconds == pytest.approx(2.25 * 0.2 + 40)
+
+
+# --- the long-render wording (local-detail-turntable) -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("seconds", "words"),
+    [(12_225.3, "about 3 h 24 min"), (3_600, "about 1 h 0 min"), (339.6, "about 6 minutes"), (21_600, "about 6 h 0 min")],
+)
+def test_a_long_estimate_is_worded_in_hours_and_minutes(seconds: float, words: str) -> None:
+    from app.render.estimate import describe_long
+
+    assert describe_long(seconds) == words

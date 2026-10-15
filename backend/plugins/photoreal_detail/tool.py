@@ -5,8 +5,9 @@
 sends one allow-listed script and answers with the scene as text.
 `detail_screenshot` is for the owner: the agent is text-only. `render_detail`
 renders the detail copy at tier `final` through the render guard, behind the
-owner's typed yes; on the laptop that is a still, and a turntable runs only on the
-render server (two-tier-renders). Nothing here reads or writes the spec.
+owner's typed yes. It is a still unless a turntable is asked for; a turntable runs on the
+laptop or the render server, and a long one is approved with its time and the busy laptop
+stated (local-detail-turntable). Nothing here reads or writes the spec.
 
 The package always comes from the conversation's bound piece, never from an
 argument the model supplied (CLAUDE.md §8).
@@ -74,7 +75,7 @@ class RenderDetailArgs(VersionArgs):
 
     kind: str = Field(
         default="still",
-        description="'still', or 'turntable' only when finals run on the render server",
+        description="'still' (the default), or 'turntable' when the owner asks for one; it may take hours on the laptop",
     )
     tier: str | None = Field(default=None, description="required; a detail render is 'final' only")
 
@@ -331,7 +332,9 @@ def render_preview(arguments: dict[str, Any], ctx: ToolContext):
         return unavailable
     return Confirmation(
         subject="detail_render",
-        summary=f"A final render of the detailed copy needs your approval: {priced.summary}",
+        summary=" ".join(
+            filter(None, [f"A final render of the detailed copy needs your approval: {priced.summary}.", priced.warning])
+        ),
         proposal={
             "package_id": priced.package_id,
             "version": priced.version,
@@ -389,10 +392,11 @@ def render_run(arguments: dict[str, Any], ctx: ToolContext) -> str:
 render_detail = AgentTool(
     name="render_detail",
     description=(
-        "Render a still of the detailed copy of the bound piece, or a turntable when finals run "
-        "on the render server (on the laptop a detail render is a still). The tier is required "
-        "and must be final (check progress with a screenshot instead); never pass frames, "
-        "resolution or engine. Waits for the owner's yes and shows the estimate."
+        "Render a still of the detailed copy of the bound piece, or a turntable when the owner asks "
+        "for one (on the laptop or the render server; a long render's approval states its time and "
+        "that the laptop is busy). The tier is required and must be final (check progress with a "
+        "screenshot instead); never pass frames, resolution or engine. Waits for the owner's yes "
+        "and shows the estimate."
     ),
     schema=RenderDetailArgs,
     run=render_run,

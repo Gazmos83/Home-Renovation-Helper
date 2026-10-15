@@ -3,8 +3,9 @@
 # request names a tier and nothing else — raw frame counts, resolutions and
 # engines are refused.
 #
-# `timeout_multiplier` scales BLENDER_TIMEOUT_SECONDS for the tier (assumption,
-# TODO(user): a final on this CPU can take hours; 24x = 4 h at the 600 s default).
+# `timeout_multiplier` scales BLENDER_TIMEOUT_SECONDS for the tier. A final may run
+# 6 hours (36x the 600 s default), long enough for a detail turntable on this CPU
+# (owner's decision 2026-10-15, local-detail-turntable).
 tiers:
   draft:
     frames: 12
@@ -15,4 +16,4 @@ tiers:
     frames: 36
     resolution: 1500
     engine: cycles
-    timeout_multiplier: 24
+    timeout_multiplier: 36

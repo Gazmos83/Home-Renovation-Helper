@@ -173,7 +173,7 @@ def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str |
         return None
     return Confirmation(
         subject="final_render",
-        summary=f"A final render needs your approval: {priced.summary}",
+        summary=" ".join(filter(None, [f"A final render needs your approval: {priced.summary}.", priced.warning])),
         proposal={
             "package_id": priced.package_id,
             "version": priced.version,

@@ -182,7 +182,16 @@ def test_a_final_answers_with_the_estimate_and_a_token_and_starts_nothing(
     detail = response.json()["detail"]
     assert detail["failure_class"] == "approval_required" and detail["tier"] == "final"
     assert detail["estimate"] == "about 101 minutes" and detail["approval_token"]
+    # Over 20 minutes the answer carries the long-render warning (local-detail-turntable).
+    assert "This is a long render: about 1 h 41 min" in detail["warning"]
+    assert detail["warning"] in detail["reason"]
     assert renders_launched(launched) == []
+
+
+def test_a_short_final_answers_with_an_empty_warning(client: TestClient, launched) -> None:
+    detail = render(client, kind="still", tier="final").json()["detail"]
+    assert detail["failure_class"] == "approval_required" and detail["warning"] == ""
+    assert "long render" not in detail["reason"]
 
 
 def test_approving_a_final_with_yes_runs_it_and_calibrates_the_multiplier(
