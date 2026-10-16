@@ -111,6 +111,172 @@ def test_a_design_file_without_a_confirmed_room_gets_the_question_and_is_not_imp
     assert _builds(tool_state, harness) == []
 
 
+# --- a design file attached before the room (pending-design-import) ---------------------
+
+
+def _attach(tool_state, harness, tmp_path, name: str = "kommode-harmony.json", kind: str = "design") -> str:
+    import io
+    import json
+
+    from app.agent import uploads
+    from app.design_import import load_template
+    from tests.test_review_evidence import _png
+
+    tool_state.settings.upload_root = tmp_path / "uploads"
+    if kind == "design":
+        # The bare design form: the test is about the hand-off, not the template's guide.
+        content = json.dumps(load_template()["build"]).encode("utf-8")
+    else:
+        _png(tmp_path / "photo.png")
+        content = (tmp_path / "photo.png").read_bytes()
+    with ToolDeps(tool_state).session() as session:
+        return str(
+            uploads.add_upload(
+                session, tool_state.settings.upload_root, harness.thread, io.BytesIO(content),
+                original_name=name, max_bytes=1_000_000, max_per_thread=10,
+            ).id
+        )
+
+
+def _send(harness, text: str, *upload_ids: str):
+    from langchain_core.messages import HumanMessage
+
+    return harness.graph.invoke(
+        {"messages": [HumanMessage(text, additional_kwargs={"upload_ids": list(upload_ids)})]},
+        config=harness.config,
+    )
+
+
+def _room_confirming(tool_state, tmp_path, *, designer: dict | None = None):
+    """A new conversation whose first message attached a design file and got the room question;
+    Intake will offer `Wohnen` with `confirm_room`."""
+    _house(tool_state)
+    models = fake_models(
+        foreman={"decisions": [decision("designer"), decision("intake"), decision("designer")]},
+        intake={"steps": [[tool_call("confirm_room", {"room": "Wohnen"})], "This conversation now works in Wohnen."]},
+        designer=designer or {},
+    )
+    harness = make_harness(tool_state, models, room=None)
+    upload_id = _attach(tool_state, harness, tmp_path)
+    assert last_reply(_send(harness, "I'd like to view this dresser", upload_id)) == ROOM_QUESTION
+    return harness, models, upload_id
+
+
+def test_confirming_the_room_hands_the_earlier_design_file_to_the_designer(tool_state, tmp_path) -> None:
+    harness, models, upload_id = _room_confirming(tool_state, tmp_path, designer={"replies": ["Imported; it is building."]})
+    models["designer"].tool_call_scripts.append(
+        [tool_call("import_design", {"upload_id": upload_id, "package_id": "kommode"})]
+    )
+    state = harness.turn("Wohnen")
+    assert state["__interrupt__"][0].value["subject"] == "room"
+    state = harness.answer("yes")
+    # The same turn goes on to the Designer, which raises the import preview.
+    assert state["specialist"] == "designer"
+    assert state["__interrupt__"][0].value["subject"] == "import_design"
+    assert _builds(tool_state, harness) == []
+    prompt = "\n".join(str(m.content) for m in models["designer"].prompts[0])
+    assert f"'kommode-harmony.json' as upload {upload_id} before the room was confirmed" in prompt
+    assert "room Wohnen" in prompt
+    assert "No room is confirmed in this conversation yet." not in prompt
+
+    state = harness.answer("yes")
+    assert last_reply(state) == "Imported; it is building."
+    assert _active(tool_state, harness) == "kommode"
+
+
+def test_a_declined_room_confirmation_ends_with_intake(tool_state, tmp_path) -> None:
+    harness, models, _upload_id = _room_confirming(tool_state, tmp_path)
+    models["intake"].steps[1] = "Which room, then?"
+    harness.turn("Wohnen")
+    state = harness.answer("no")
+    assert state["specialist"] == "intake"
+    assert "__interrupt__" not in state
+    assert models["designer"].calls == 0
+
+
+def test_a_declined_import_is_not_offered_again(tool_state, tmp_path) -> None:
+    harness, models, upload_id = _room_confirming(tool_state, tmp_path, designer={"replies": ["Not imported."]})
+    models["designer"].tool_call_scripts.append(
+        [tool_call("import_design", {"upload_id": upload_id, "package_id": "kommode"})]
+    )
+    harness.turn("Wohnen")
+    harness.answer("yes")
+    harness.answer("no")
+    assert _active(tool_state, harness) is None
+    designer_calls = models["designer"].calls
+    models["intake"].replies.append("What would you like there?")
+    state = harness.turn("what else could go here?")
+    assert state["pending_design"] is None
+    assert "__interrupt__" not in state
+    assert models["designer"].calls == designer_calls
+
+
+def test_a_conversation_with_a_piece_does_not_hand_off(tool_state, tmp_path) -> None:
+    _house(tool_state)
+    models = fake_models(
+        foreman={"decisions": [decision("intake")]},
+        intake={"steps": [[tool_call("confirm_room", {"room": "Hall"})], "This conversation now works in Hall."]},
+    )
+    harness = make_harness(tool_state, models, room=None)
+    harness.start(package_id="hall-bench")
+    upload_id = _attach(tool_state, harness, tmp_path)
+    state = _send(harness, "the Hall, please", upload_id)
+    assert state["pending_design"] is None
+    state = harness.answer("yes")
+    assert state["specialist"] == "intake"
+    assert models["designer"].calls == 0
+
+
+def test_a_brief_naming_a_room_hands_off_too(tool_state, tmp_path) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("designer"), decision("intake")]},
+        intake={
+            "steps": [
+                [
+                    tool_call(
+                        "record_brief",
+                        {
+                            "room_name": "Hall",
+                            "corners_mm": [[0, 0], [1200, 0], [1200, 3000], [0, 3000]],
+                            "ceiling_height_mm": 2400,
+                            "purpose": "a dresser",
+                        },
+                    )
+                ],
+                "The brief is saved.",
+            ]
+        },
+        designer={"replies": ["Shall I import it?"]},
+    )
+    harness = make_harness(tool_state, models, room=None)
+    upload_id = _attach(tool_state, harness, tmp_path)
+    assert last_reply(_send(harness, "I'd like to view this dresser", upload_id)) == ROOM_QUESTION
+    harness.turn("the hall, 1.2 by 3 metres, 2.4 high")
+    state = harness.answer("yes")
+    assert state["specialist"] == "designer"
+    assert last_reply(state) == "Shall I import it?"
+
+
+def test_the_pending_file_is_the_newest_design_and_ignores_images(tool_state, tmp_path) -> None:
+    models = fake_models(foreman={"decisions": [decision("designer"), decision("designer")]})
+    harness = make_harness(tool_state, models, room=None)
+    older = _attach(tool_state, harness, tmp_path, "older.json")
+    newer = _attach(tool_state, harness, tmp_path, "newer.json")
+    photo = _attach(tool_state, harness, tmp_path, "room.png", kind="image")
+    _send(harness, "these two", older, newer)
+    state = _send(harness, "and a photo", photo)
+    assert state["pending_design"] == {"upload_id": newer, "name": "newer.json"}
+
+
+def test_no_file_is_pending_once_the_room_is_confirmed(tool_state, tmp_path) -> None:
+    models = fake_models(foreman={"decisions": [decision("designer")]}, designer={"replies": ["Importing."]})
+    harness = make_harness(tool_state, models)
+    upload_id = _attach(tool_state, harness, tmp_path)
+    state = _send(harness, "import this", upload_id)
+    assert state["pending_design"] is None
+    assert state["specialist"] == "designer"
+
+
 # --- naming a build ---------------------------------------------------------------------
 
 

@@ -23,7 +23,10 @@ router = APIRouter(prefix="/admin/workflow", tags=["admin"], dependencies=[Depen
 # The tools whose renders pass the render guard (CLAUDE.md §6); every other render-free tool does not.
 GUARDED_TOOLS: Final = frozenset({"render_turntable", "render_detail", "restyle_render"})
 HOMEOWNER: Final = "homeowner"
-INTERNAL_NODES: Final = frozenset({"__start__", "__end__", "load_house"})
+INTERNAL_NODES: Final = frozenset({"__start__", "__end__", "load_house", "after_intake"})
+# Code-only steps between agents, drawn as a hand-off from the agent before to the agents after
+# (pending-design-import: Intake hands a pending design file to the Designer).
+PASS_THROUGH_NODES: Final = frozenset({"after_intake"})
 
 
 @router.get("")
@@ -36,11 +39,17 @@ def workflow(request: Request) -> dict[str, Any]:
         )
     drawn = graph.get_graph()
     agents = [name for name in drawn.nodes if name not in INTERNAL_NODES]
-    handoffs = [
-        {"from": edge.source, "to": edge.target}
-        for edge in drawn.edges
-        if edge.source in agents and edge.target in agents
-    ]
+    after: dict[str, list[str]] = {}
+    for edge in drawn.edges:
+        if edge.source in PASS_THROUGH_NODES and edge.target in agents:
+            after.setdefault(edge.source, []).append(edge.target)
+    handoffs = []
+    for edge in drawn.edges:
+        if edge.source not in agents:
+            continue
+        for target in after.get(edge.target, [edge.target]):
+            if target in agents:
+                handoffs.append({"from": edge.source, "to": target})
     routing = request.app.state.routing
     plugins = request.app.state.plugins
     with Session(request.app.state.engine) as session:

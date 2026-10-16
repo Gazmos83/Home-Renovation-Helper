@@ -174,6 +174,10 @@ class ChatState(TypedDict, total=False):
     detail_ready: bool
     image_attached: bool
     design_attached: bool
+    # A design file attached while no room was confirmed, `{"upload_id", "name"}`; Intake's turn
+    # that confirms the room hands it to the Designer (pending-design-import).
+    pending_design: dict[str, str] | None
+    handoff_design: dict[str, str] | None
     piece_named: bool
     room_confirmed: bool
     room_named: bool
@@ -238,6 +242,18 @@ def _attached(engine: Engine, messages: list[AnyMessage]) -> tuple[bool, bool]:
         return False, False
     images, designs, _notes = _designs(engine, list(ids))
     return bool(images), bool(designs)
+
+
+def _pending_design(engine: Engine, messages: list[AnyMessage]) -> dict[str, str] | None:
+    """The newest design file any owner message carries, as `{"upload_id", "name"}`."""
+    for message in reversed(messages):
+        ids = message.additional_kwargs.get("upload_ids") if isinstance(message, HumanMessage) else None
+        if ids:
+            _images, designs, _notes = _designs(engine, list(ids))
+            if designs:
+                upload_id, name = designs[-1]
+                return {"upload_id": upload_id, "name": name}
+    return None
 
 
 def _designs(
@@ -658,6 +674,11 @@ def build_graph(
             )
             facts += f" Apartments: {listed}."
         image_attached, design_attached = _attached(engine, messages)
+        pending_design = None
+        if thread_id is not None and not room_confirmed and package_id is None:
+            with Session(engine) as session:
+                unbuilt = not house_file.builds_of(session, thread_id)
+            pending_design = _pending_design(engine, messages) if unbuilt else None
         bound_room = piece_rooms.get(package_id) if package_id else None
         # One piece per conversation: never list other builds, even from legacy rows.
         other_builds: list[dict[str, Any]] = []
@@ -702,6 +723,8 @@ def build_graph(
             "detail_ready": detail_ready,
             "image_attached": image_attached,
             "design_attached": design_attached,
+            "pending_design": pending_design,
+            "handoff_design": None,
             "piece_named": bool(matches) and active is None and piece_taken is None,
             "room_confirmed": room_confirmed,
             "room_named": room_is_named,
@@ -956,6 +979,13 @@ def build_graph(
                 notes.append(state.get("composition_note", ""))
             if name in ("designer", "lighting"):
                 notes.append(state.get("feedback_note", ""))
+            handoff = state.get("handoff_design") if name == "designer" else None
+            if handoff:
+                notes.append(
+                    f"(The owner attached the design file '{neutralise(handoff['name'])}' as upload "
+                    f"{handoff['upload_id']} before the room was confirmed; it is now confirmed. "
+                    "Import it with import_design.)"
+                )
             # The templates only for a new piece: a revision sees only the active build's figures.
             if name == "designer" and not state.get("package_id"):
                 notes.append(designer_note)
@@ -1147,12 +1177,49 @@ def build_graph(
 
     # --- the whole graph -----------------------------------------------------------
 
+    def after_intake(state: ChatState, config: RunnableConfig) -> Command[Literal["designer", "__end__"]]:
+        """Hand a design file attached before the room was confirmed to the Designer, on the
+        Intake turn that confirmed the room, while the conversation has no piece
+        (pending-design-import). Decided here, never by a model."""
+        pending = state.get("pending_design")
+        raw_thread = config.get("configurable", {}).get("chat_thread")
+        if not pending or not raw_thread:
+            return Command(goto=END)
+        thread_id = UUID(str(raw_thread))
+        with Session(engine) as session:
+            thread = house_file.get_thread(session, thread_id)
+            room, apartment = house_file.thread_scope(session, thread_id)
+            unbuilt = thread is not None and not thread.package_id and not house_file.builds_of(session, thread_id)
+            scope = f"room {room.name}" if room is not None else (
+                f"apartment {apartment.name}" if apartment is not None else None
+            )
+        if scope is None or not unbuilt:
+            return Command(goto=END)
+        return Command(
+            update={
+                "specialist": "designer",
+                "round_count": 0,
+                "handoff_design": pending,
+                "pending_design": None,
+                # The slice was read before the room was confirmed; only its room line changes.
+                "room_confirmed": True,
+                "facts": state.get("facts", "").replace("no room confirmed yet", scope),
+                "house_note": state.get("house_note", "").replace(
+                    "No room is confirmed in this conversation yet.", f"This conversation now works in the {scope}."
+                ),
+            },
+            goto="designer",
+        )
+
     graph = StateGraph(ChatState)
     graph.add_node("load_house", load_house)
     graph.add_node("foreman", foreman)
     for name in SPECIALISTS:
         graph.add_node(name, specialist_graph(name))
-        graph.add_edge(name, END)
+        if name != "intake":
+            graph.add_edge(name, END)
+    graph.add_node("after_intake", after_intake)
+    graph.add_edge("intake", "after_intake")
     graph.add_edge(START, "load_house")
     graph.add_edge("load_house", "foreman")
     compiled = graph.compile(checkpointer=checkpointer)

@@ -6,11 +6,12 @@ Defines the Foreman and its three specialists for the design loop: how a turn is
 ## Requirements
 
 ### Requirement: The Foreman routes each turn to one specialist
-Each turn SHALL be handled by exactly one specialist (Intake, Designer, Builder, Researcher, Reviewer or Lighting & materials), chosen by the Foreman from the conversation and the house file, or answered by the Foreman with one of its fixed questions below. Application rules bound the choice, in this order:
+Each turn SHALL be handled by exactly one specialist (Intake, Designer, Builder, Researcher, Reviewer or Lighting & materials), chosen by the Foreman from the conversation and the house file, or answered by the Foreman with one of its fixed questions below. The one exception is the hand-off of a pending design file below, where Intake is followed by the Designer in the same turn. Application rules bound the choice, in this order:
 - A question the Researcher answers (a price, a product, a guideline) goes to the Researcher, with or without a confirmed room.
 - A help question (how to use the app: its pages, conversations, rooms, renders, files or the design file template, and not a request to design, build, render, review or price something) goes to Intake, with or without a confirmed room, and before the room question below. A turn that carries a plan, a photo or a design file is never a help question. A help question does not change the conversation's confirmed room or bound piece.
 - While the conversation has no confirmed room or apartment, a turn that carries a plan or photo, names a room or apartment of the house file, or answers the Foreman's room question goes to Intake. Any other turn, including one that carries a design file, SHALL be answered by the Foreman with "Which room is this for?", and no specialist runs.
-- Once the conversation has a confirmed room or apartment, a turn that carries a design file goes to the Designer, whatever else the thread holds. A design file sent before the room was confirmed is not imported then; the owner attaches it again once the room is confirmed.
+- Once the conversation has a confirmed room or apartment, a turn that carries a design file goes to the Designer, whatever else the thread holds.
+- A design file sent before the room was confirmed is not imported then. When an Intake turn confirms the conversation's room or apartment (it had none when the turn began), the conversation has no piece, and an owner message in the conversation carries a design file, the same turn SHALL go on to the Designer once Intake has finished. The Designer SHALL import the newest such design file, and the owner SHALL be shown its import preview and SHALL answer yes or no as for an attached file. This hand-off SHALL be decided by the application, not by a model. It SHALL happen only on the turn that confirms the room, so a later turn does not offer the file again; attaching it again still imports it. Intake SHALL NOT tell the owner that an attached design file cannot be imported.
 - When the bound piece has no room, or a room outside the conversation's confirmed room or apartment, a turn the Foreman gave to the Designer, Builder, Reviewer or Lighting & materials goes to Intake, which confirms the room for that piece.
 - The Builder is never chosen when the thread has no bound piece with a built version.
 - The Reviewer is never chosen unless the bound piece's latest version has a screenshot or a render.
@@ -61,6 +62,22 @@ The fixed questions SHALL be composed by the application, SHALL NOT need a model
 #### Scenario: Design attached in a new thread
 - **WHEN** a thread has no piece, no brief and no confirmed room, and the owner sends "import this" with a design file attached
 - **THEN** the reply is "Which room is this for?", no specialist runs, and nothing is imported
+
+#### Scenario: Design attached before the room, imported once it is confirmed
+- **WHEN** a thread has no piece, no brief and no confirmed room, the owner sent "I'd like to view this dresser" with `kommode-harmony.json` attached and was asked "Which room is this for?", and the owner answers "Wohnen" and says yes to Intake's room confirmation
+- **THEN** the conversation works in `Wohnen`, and in the same turn the Designer shows the import preview for `kommode-harmony.json`; nothing is created before the owner's yes
+
+#### Scenario: Pending design import declined
+- **WHEN** a room confirmation has handed `kommode-harmony.json` to the Designer and the owner answers no to the import preview
+- **THEN** nothing is imported, and the owner's next message without an attachment does not show the preview again
+
+#### Scenario: Room confirmed in a thread that already has a piece
+- **WHEN** a thread bound to `hall-bench` had a design file attached earlier, and an Intake turn confirms the conversation's room
+- **THEN** the turn ends with Intake and the Designer does not run
+
+#### Scenario: Room confirmation declined
+- **WHEN** a design file is pending and the owner answers no to Intake's room confirmation
+- **THEN** no room is confirmed, the Designer does not run, and nothing is imported
 
 #### Scenario: Design attached after the room is confirmed
 - **WHEN** a thread has no piece and no brief, its confirmed room is `Hall`, and the owner sends "import this" with a design file attached

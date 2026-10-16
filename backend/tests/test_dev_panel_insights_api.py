@@ -222,6 +222,9 @@ def test_the_map_follows_routing_plugins_and_markers(client: TestClient) -> None
     nodes = {node["name"]: node for node in body["nodes"]}
     assert set(nodes) >= {"foreman", "intake", "designer", "builder", "lighting", "reviewer", "researcher"}
     assert {"from": "foreman", "to": "designer"} in body["handoffs"]
+    # The code-only step after Intake is drawn as Intake's hand-off to the Designer (pending-design-import).
+    assert "after_intake" not in nodes
+    assert {"from": "intake", "to": "designer"} in body["handoffs"]
     assert nodes["designer"]["model"] == client.app.state.routing.model_for("designer")
     tools = {tool["name"]: tool for node in body["nodes"] for tool in node["tools"]}
     assert tools["render_turntable"]["render_guard"] and not tools["render_turntable"]["enabled"]
