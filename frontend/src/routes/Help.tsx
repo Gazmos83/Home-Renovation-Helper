@@ -1,17 +1,10 @@
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { cardClass } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Page } from "@/components/Page";
-
-/** What Intake needs from a blueprint or a hand sketch (studio-ui; Intake's record_plan fields). */
-export const MEASUREMENTS = [
-  "Each room's name.",
-  "The length of every wall, edge by edge, going round the room in one direction.",
-  "Every corner angle that is not 90°.",
-  "The ceiling height.",
-  "The wall thickness.",
-  "Every door and window: the wall it is on, its offset from that wall's starting corner, its width and its height, and for a window its sill height.",
-  "A scale reference: a dimension line, a printed area or a known door width.",
-  "All rooms of one apartment drawn in one plan frame, so the walls line up.",
-];
+import { FieldError } from "../lib/form";
+import { api, downloads, type HelpBlock, type HelpTopic } from "../lib/api";
 
 /** A worked example: one room, its walls numbered from the starting corner, one door. */
 function ExampleRoom() {
@@ -38,38 +31,131 @@ function ExampleRoom() {
   );
 }
 
-export default function Help() {
+const STEP_HEIGHT = 34;
+const STEP_GAP = 16;
+/** The step a design file from the template joins: the Designer's (the third step). */
+const IMPORT_JOINS = 2;
+
+/**
+ * How a piece is made, drawn from the workflow topic's own steps so the diagram, its text alternative and
+ * the chat's answer say the same thing. The template import joins at the Designer's step.
+ */
+function WorkflowDiagram({ steps }: { steps: string[] }) {
+  const pitch = STEP_HEIGHT + STEP_GAP;
+  const height = steps.length * pitch - STEP_GAP + 2;
+  const joinY = IMPORT_JOINS * pitch + STEP_HEIGHT / 2 + 1;
   return (
-    <Page>
-      <h1>Help</h1>
-      <section className={`${cardClass} space-y-3`} aria-label="Preparing a blueprint">
-        <h2>Preparing a blueprint or a sketch</h2>
-        <p>
-          Intake reads a plan or a hand sketch and turns it into rooms. A clear photo of a printed plan works, and so does a
-          neat sketch on paper. Write every figure in millimetres, and go round each room from one corner, always in the same
-          direction.
-        </p>
-        <h3>The measurements Intake needs</h3>
+    <svg viewBox={`0 0 560 ${height}`} role="img" aria-labelledby="workflow-title" className="w-full max-w-2xl text-foreground">
+      <title id="workflow-title">
+        {`How a piece is made: ${steps.join(" Then: ")} A design file made from the template joins at the design step.`}
+      </title>
+      <defs>
+        <marker id="workflow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0 0 L10 5 L0 10 z" fill="currentColor" />
+        </marker>
+      </defs>
+      {steps.map((step, index) => {
+        const y = index * pitch + 1;
+        return (
+          <g key={step}>
+            <rect x="1" y={y} width="380" height={STEP_HEIGHT} rx="6" fill="none" stroke="currentColor" />
+            <text x="191" y={y + STEP_HEIGHT / 2 + 4} fontSize="11" fill="currentColor" textAnchor="middle">
+              {step}
+            </text>
+            {index < steps.length - 1 && (
+              <line
+                x1="191" y1={y + STEP_HEIGHT} x2="191" y2={y + pitch - 2}
+                stroke="currentColor" markerEnd="url(#workflow-arrow)"
+              />
+            )}
+          </g>
+        );
+      })}
+      {steps.length > IMPORT_JOINS && (
+        <g>
+          <rect x="420" y={joinY - STEP_HEIGHT / 2} width="139" height={STEP_HEIGHT} rx="6" fill="none" stroke="currentColor" strokeDasharray="4 3" />
+          <text x="489" y={joinY + 4} fontSize="11" fill="currentColor" textAnchor="middle">
+            Design file (template)
+          </text>
+          <line x1="420" y1={joinY} x2="384" y2={joinY} stroke="currentColor" markerEnd="url(#workflow-arrow)" />
+        </g>
+      )}
+    </svg>
+  );
+}
+
+function Block({ block }: { block: HelpBlock }) {
+  return (
+    <>
+      {block.heading && <h3>{block.heading}</h3>}
+      {block.text && <p>{block.text}</p>}
+      {block.items && (
         <ul className="list-disc space-y-1 pl-5 text-sm">
-          {MEASUREMENTS.map((item) => (
+          {block.items.map((item) => (
             <li key={item}>{item}</li>
           ))}
         </ul>
-        <h3>An example</h3>
-        <ExampleRoom />
-        <p>
-          Here the walls are numbered from the starting corner, going clockwise. The door is on wall 1, 500 mm from the start,
-          900 mm wide and 2100 mm high.
-        </p>
-      </section>
-      <section className={`${cardClass} space-y-2`} aria-label="Files">
-        <h2>Files a conversation accepts</h2>
-        <ul className="list-disc space-y-1 pl-5 text-sm">
-          <li>Plans and photos: PNG or JPEG images.</li>
-          <li>Notes: Markdown (.md) or plain text (.txt). If a note disagrees with what is already recorded, Intake asks which figure holds.</li>
-          <li>Designs: a design file (.json) exported from a piece or made from the import template.</li>
-        </ul>
-      </section>
+      )}
+    </>
+  );
+}
+
+/** The default prompt, shown whole so it can be selected by hand, with a button that copies it exactly. */
+function CopyPrompt({ prompt }: { prompt: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setState("copied");
+      setTimeout(() => setState("idle"), 2000);
+    } catch {
+      setState("failed");
+    }
+  };
+  return (
+    <div className="space-y-2">
+      <h3>The default prompt</h3>
+      <pre className="whitespace-pre-wrap rounded-md border bg-muted p-3 text-sm">{prompt}</pre>
+      <Button type="button" variant="outline" size="sm" onClick={copy}>
+        {state === "copied" ? "Copied" : "Copy prompt"}
+      </Button>
+      {state === "failed" && <p className="text-sm text-destructive">Copy failed — select the text.</p>}
+    </div>
+  );
+}
+
+function Topic({ topic }: { topic: HelpTopic }) {
+  const steps = topic.body.find((block) => block.items)?.items ?? [];
+  return (
+    <details className={cardClass}>
+      <summary className="cursor-pointer font-heading text-lg">{topic.title}</summary>
+      <div className="mt-3 space-y-3">
+        {topic.body.map((block, index) => (
+          <Block key={index} block={block} />
+        ))}
+        {topic.id === "blueprint" && <ExampleRoom />}
+        {topic.id === "workflow" && <WorkflowDiagram steps={steps} />}
+        {topic.download === "import_template" && (
+          <p>
+            <a href={downloads.importTemplate} download="import-template.json" className="underline">
+              Download the import template
+            </a>
+          </p>
+        )}
+        {topic.prompt && <CopyPrompt prompt={topic.prompt} />}
+      </div>
+    </details>
+  );
+}
+
+/** The Studio's help: one collapsed topic per entry of the help source, the same text the chat answers from. */
+export default function Help() {
+  const help = useQuery({ queryKey: ["help"], queryFn: api.help });
+  return (
+    <Page>
+      <h1>Help</h1>
+      {help.isError && <FieldError message="The help could not be loaded." />}
+      {help.data?.topics.map((topic) => <Topic key={topic.id} topic={topic} />)}
     </Page>
   );
 }

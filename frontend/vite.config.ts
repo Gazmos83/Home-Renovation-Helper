@@ -40,6 +40,7 @@ export default defineConfig({
       "/snapshots": page,
       "/remnants": page,
       "/guideline-notes": page,
+      "/help": page,
       // API-only: hardware data sheets live on the guidelines page, not their own route.
       "/hardware-data": API,
     },

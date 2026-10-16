@@ -8,6 +8,7 @@ Defines the Foreman and its three specialists for the design loop: how a turn is
 ### Requirement: The Foreman routes each turn to one specialist
 Each turn SHALL be handled by exactly one specialist (Intake, Designer, Builder, Researcher, Reviewer or Lighting & materials), chosen by the Foreman from the conversation and the house file, or answered by the Foreman with one of its fixed questions below. Application rules bound the choice, in this order:
 - A question the Researcher answers (a price, a product, a guideline) goes to the Researcher, with or without a confirmed room.
+- A help question (how to use the app: its pages, conversations, rooms, renders, files or the design file template, and not a request to design, build, render, review or price something) goes to Intake, with or without a confirmed room, and before the room question below. A turn that carries a plan, a photo or a design file is never a help question. A help question does not change the conversation's confirmed room or bound piece.
 - While the conversation has no confirmed room or apartment, a turn that carries a plan or photo, names a room or apartment of the house file, or answers the Foreman's room question goes to Intake. Any other turn, including one that carries a design file, SHALL be answered by the Foreman with "Which room is this for?", and no specialist runs.
 - Once the conversation has a confirmed room or apartment, a turn that carries a design file goes to the Designer, whatever else the thread holds. A design file sent before the room was confirmed is not imported then; the owner attaches it again once the room is confirmed.
 - When the bound piece has no room, or a room outside the conversation's confirmed room or apartment, a turn the Foreman gave to the Designer, Builder, Reviewer or Lighting & materials goes to Intake, which confirms the room for that piece.
@@ -96,6 +97,18 @@ The fixed questions SHALL be composed by the application, SHALL NOT need a model
 #### Scenario: Active build in another room
 - **WHEN** the conversation's confirmed room is `Hall`, the bound piece `murphy-bed` is unassigned, and the owner asks for a revision
 - **THEN** Intake answers, not the Designer
+
+#### Scenario: Help question in a new thread
+- **WHEN** a conversation has no confirmed room and the owner writes "How do I use the design template?"
+- **THEN** Intake answers, and the reply is not "Which room is this for?"
+
+#### Scenario: Help question in a bound thread
+- **WHEN** a conversation is about `hall-bench` and the owner asks "What is the difference between a draft and a final render?"
+- **THEN** Intake answers, and the conversation stays bound to `hall-bench`
+
+#### Scenario: Design file is not a help question
+- **WHEN** a conversation has no confirmed room and the owner attaches a design file asking "how does this work?"
+- **THEN** the reply is "Which room is this for?" and no specialist runs
 
 ### Requirement: Each specialist runs on its routed model with its instruction file
 Each specialist SHALL call the model routed for its slot (`intake`, `designer`, `builder`, `researcher`, `reviewer`, `lighting`; the Foreman on `foreman`) with that slot's generation profile. It SHALL be prompted from its checked-in instruction file: a header naming its tools (not editable) and text, followed by the fixed notes and the untrusted-content guard composed by code, exactly once and last. The tools a header may name SHALL be the tools the plugin manifests declare. A specialist SHALL bind only the named tools whose plugin is enabled for the thread, plus enabled HTTPS plugins for its role. A missing or malformed instruction file SHALL stop startup naming the file.
@@ -756,3 +769,18 @@ Designer and Researcher SHALL have an engineering lookup tool through the existi
 #### Scenario: Lookup fails
 - **WHEN** the evidence store cannot be consulted
 - **THEN** the owner sees the lookup limitation and no invented rule or load rating
+
+### Requirement: Intake answers help questions from the help source
+When the Foreman routes a help question to Intake, Intake SHALL answer it from the help source through `read_help`, in its own words and no longer than the question needs, and SHALL NOT state a step, page, button or limit that the help source does not hold. When the help source does not cover the question, Intake SHALL say so and point to the Help page. A help turn SHALL NOT record a brief, a room, a plan or a piece, and SHALL NOT raise a confirmation.
+
+#### Scenario: Template question answered
+- **WHEN** the owner asks "How do I turn a photo of a cabinet into a design?"
+- **THEN** Intake reads the template topic and replies with its steps: download the template, give it with the photo and the default prompt to an AI chat that reads images, attach the returned `.json` file in a new conversation, confirm the import, then revise the piece
+
+#### Scenario: Not covered
+- **WHEN** the owner asks a help question no topic covers
+- **THEN** the reply says the help does not cover it and points to the Help page, and no step is invented
+
+#### Scenario: Nothing recorded
+- **WHEN** Intake answers a help question in a conversation with no brief
+- **THEN** the house file and the conversation's room and piece are unchanged

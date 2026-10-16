@@ -1,0 +1,115 @@
+# The Studio's help (help-center). One source for the Help page and Intake's
+# `read_help` tool, so the page and the chat say the same thing. Each topic has an
+# id, a title and a body of blocks; a block is a paragraph (`text`) or a list
+# (`items`), optionally under a `heading`. Loaded and checked at startup.
+topics:
+  - id: blueprint
+    title: Preparing a blueprint or a sketch
+    body:
+      - text: >-
+          Intake reads a plan or a hand sketch and turns it into rooms. A clear photo of a
+          printed plan works, and so does a neat sketch on paper. Write every figure in
+          millimetres, and go round each room from one corner, always in the same direction.
+      - heading: The measurements Intake needs
+        items:
+          - Each room's name.
+          - The length of every wall, edge by edge, going round the room in one direction.
+          - Every corner angle that is not 90°.
+          - The ceiling height.
+          - The wall thickness.
+          - "Every door and window: the wall it is on, its offset from that wall's starting corner, its width and its height, and for a window its sill height."
+          - "A scale reference: a dimension line, a printed area or a known door width."
+          - All rooms of one apartment drawn in one plan frame, so the walls line up.
+      - heading: An example
+        text: >-
+          Here the walls are numbered from the starting corner, going clockwise. The door is
+          on wall 1, 500 mm from the start, 900 mm wide and 2100 mm high.
+
+  - id: files
+    title: Files a conversation accepts
+    body:
+      - items:
+          - "Plans and photos: PNG or JPEG images."
+          - "Notes: Markdown (.md) or plain text (.txt). If a note disagrees with what is already recorded, Intake asks which figure holds."
+          - "Designs: a design file (.json) exported from a piece or made from the import template."
+
+  - id: template
+    title: Designing from a photo with the design file template
+    download: import_template
+    body:
+      - text: >-
+          Seen a piece of furniture you like? Another AI chat can turn a photo of it into a
+          design file, which you then import here and change like any piece designed in the
+          conversation.
+      - heading: How to use the template
+        items:
+          - Download the import template below.
+          - Open a high-end AI chat that can read images.
+          - Attach a photo of the piece you like and the template, and paste the default prompt below.
+          - Save the chat's reply as a .json file.
+          - Attach that file to a new conversation here, confirm the room, then confirm the import.
+          - Revise the imported piece in the conversation like any other piece.
+      - heading: Good to know
+        items:
+          - A field the template does not define is refused by name, and nothing is created; ask the other chat to remove it.
+          - Sizes read from a photo are estimates. Check them before you build the piece, and change them in the conversation.
+          - The template is only for the piece. Rooms are recorded by Intake from your measurements or a plan.
+    prompt: >-
+      You are a furniture designer. The attached photo shows a piece of furniture I like, and
+      the attached file import-template.json is a design template. Fill in the template's
+      "build" so that it describes the piece in the photo: its overall size, its modules,
+      shelves, dividers, fronts, materials and hardware. Follow the template's "guide" and use
+      only the fields it names; do not add any other field. Give every size in whole
+      millimetres; where the photo shows no measurement, estimate it from common furniture
+      sizes. Keep "kind", "schema_version", "units" and "guide" exactly as they are, and do
+      not add a room survey. Return the whole document as JSON alone, with no other text
+      before or after it.
+
+  - id: renders
+    title: Pieces and renders
+    body:
+      - text: >-
+          Every piece you design is listed under Pieces, with its versions, its renders and its
+          cut list. A new version is made whenever the piece is revised; older versions stay.
+      - heading: Draft and final renders
+        items:
+          - A draft is a quick turntable of the piece, rendered on this computer. It shows the estimated time before it starts.
+          - A final is a slow, photoreal render. It always asks first and starts only after you type "yes".
+          - A final that would take more than 20 minutes says so, and warns that the computer stays busy while it runs.
+      - heading: Rating a render
+        text: >-
+          Give a render a thumbs up or down and a comment. The next render takes your rating
+          into account.
+      - heading: Restyle pictures
+        text: >-
+          Restyle pictures show the piece, or the room, in another look or style as a draft.
+          They change only the appearance; nothing about the piece is saved.
+
+  - id: conversations
+    title: Conversations and rooms
+    body:
+      - items:
+          - A conversation is about one piece. Start a new conversation for another piece; a room may hold many pieces.
+          - Each conversation confirms its room first. Name the room, or attach its plan, and Intake confirms it.
+          - "To change a piece, say what should change: the bot lists the changes and asks before making a new version."
+          - Tools can be switched on or off for one conversation from its Tools panel.
+          - You can edit your latest message and send it again, or stop a reply that is still running.
+
+  - id: workflow
+    title: How a piece is made
+    body:
+      - text: >-
+          Every piece follows the same path. A design file made from the template joins the
+          path at the design step.
+      - heading: The steps
+        items:
+          - You describe the piece you want.
+          - Intake confirms the room and the numbers.
+          - The Designer drafts the piece, or imports your design file.
+          - You confirm the design.
+          - The Builder builds a blockout.
+          - A draft turntable is rendered.
+          - The Reviewer checks it against your brief.
+          - The piece is revised until you are happy.
+          - Optionally, a detail pass adds realistic materials and light.
+          - A final render runs after you type "yes".

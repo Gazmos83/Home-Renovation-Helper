@@ -1,0 +1,7 @@
+name: help
+description: Read the Studio's help topics to answer a question about how to use the app.
+kind: builtin
+role: intake
+tools: [read_help]
+enabled_by_default: true
+toggleable: false

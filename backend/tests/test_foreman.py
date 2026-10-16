@@ -505,7 +505,7 @@ def test_the_prompt_carries_the_guard_once_and_binds_only_the_headers_tools(tool
         "compose_room", "read_room_version_dimensions", "edit_decisions", "search_guidelines",
         "ask_owner",
     }
-    assert models["intake"].bound_tools == ["record_brief", "record_plan", "confirm_room", "ask_owner"]
+    assert models["intake"].bound_tools == ["record_brief", "record_plan", "confirm_room", "ask_owner", "read_help"]
     # The Foreman's own prompt is guarded and binds nothing.
     foreman_prompt = "\n".join(str(m.content) for m in models["foreman"].decision_prompts[-1])
     assert foreman_prompt.count(UNTRUSTED_CONTENT_PREAMBLE) == 1

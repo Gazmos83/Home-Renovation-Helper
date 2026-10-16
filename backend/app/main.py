@@ -51,6 +51,7 @@ from app.api.feedback import router as feedback_router
 from app.api.guideline_notes import router as guideline_notes_router
 from app.api.hardware_data import router as hardware_data_router
 from app.api.health import router as health_router
+from app.api.help import router as help_router
 from app.api.limits import RateLimiter
 from app.api.models import router as models_router
 from app.api.packages import router as packages_router
@@ -69,6 +70,7 @@ from app.db.migrate import current_revision, upgrade_to_head
 from app.db.session import make_engine
 from app.guidelines.rule_overrides import effective_rules
 from app.guidelines.rules import load_rules
+from app.help import load_help
 from app.ingestion.live_fetcher import make_live_fetcher
 from app.observability.langfuse import Tracing
 from app.plugins.binding import attach_https_tools
@@ -336,6 +338,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.tiers = load_tiers()
     # The hard design rules; a rule without a source stops startup naming it.
     app.state.design_rules = load_rules()
+    app.state.help = load_help()
     app.state.render_approvals = ApprovalStore()
     # Built in the lifespan; `None` until then, and without a checkpointer.
     app.state.graph = None
@@ -361,6 +364,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health_router)
     app.include_router(packages_router)
     app.include_router(design_import_router)
+    app.include_router(help_router)
     app.include_router(models_router)
     app.include_router(compositions_router)
     app.include_router(package_reviews_router)

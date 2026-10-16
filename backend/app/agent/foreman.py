@@ -200,6 +200,10 @@ class Decision(BaseModel):
     )
     engineering_question: bool = Field(default=False, description="asks for engineering evidence, strength, load capacity, deflection, anchorage or safety")
     requests_revision: bool = Field(default=False, description="asks to revise an existing piece, rather than only ask an engineering question")
+    asks_help: bool = Field(
+        default=False,
+        description="true when the owner asks how to use the app, not for design, build, render, review or price work",
+    )
 
 
 def _image_blocks(
@@ -861,6 +865,16 @@ def build_graph(
         if engineering:
             changing = bool(state.get("package_id")) and (engineering_chat.revision_intent(_last_human_text(state)) or bool(getattr(decision, "requests_revision", False)))
             chosen = "designer" if changing else "researcher"
+
+        # A question about how to use the app is Intake's, with or without a room, before the
+        # room question; a turn with a plan, photo or design file is never one (help-center).
+        if (
+            chosen != "researcher"
+            and not engineering
+            and getattr(decision, "asks_help", False) is True
+            and not (state.get("image_attached") or state.get("design_attached"))
+        ):
+            return Command(update={"specialist": "intake", "reason": reason, "engineering_turn": False}, goto="intake")
 
         # Application rules bound the model's choice (design-agents spec). A price or product
         # question is the Researcher's whatever else holds; then the two fixed questions.

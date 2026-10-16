@@ -851,6 +851,11 @@ export const modelFile = (modelId: string, name: string) =>
   `/models/${modelId}/files/${name.split("/").map(encodeURIComponent).join("/")}`;
 export const modelThumbnail = (modelId: string) => `/models/${modelId}/thumbnail`;
 
+/** One help block: a paragraph or a list, optionally under a heading (help-center). */
+export type HelpBlock = { heading?: string; text?: string; items?: string[] };
+export type HelpTopic = { id: string; title: string; body: HelpBlock[]; prompt?: string; download?: "import_template" };
+export type Help = { topics: HelpTopic[] };
+
 /** Download links: plain URLs, so the browser sends the session cookie and saves the file. */
 export const downloads = {
   importTemplate: "/design-import/template",
@@ -892,6 +897,8 @@ export const api = {
   login: (email: string, password: string) =>
     request("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
   me: () => request<{ email: string }>("/auth/me"),
+  /** The Studio's help topics, the same text the chat answers from (help-center). */
+  help: () => request<Help>("/help"),
   threads: () => request<Thread[]>("/chat/threads"),
   deleteThread: (threadId: string) =>
     request<void>(`/chat/threads/${threadId}`, { method: "DELETE" }),
