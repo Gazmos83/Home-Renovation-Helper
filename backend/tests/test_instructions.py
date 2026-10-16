@@ -371,6 +371,11 @@ def test_the_designer_goes_by_the_stated_front_positions() -> None:
     assert "where each front sits" in text and "not by the brief or earlier messages" in text
 
 
+def test_the_designer_lays_rugs_on_the_floor_layer() -> None:
+    text = load_instructions()["designer"].text
+    assert '`layer: "floor"`' in text and "may lie under other furniture" in text
+
+
 def test_the_designer_records_a_verdict_only_when_the_owner_gives_one() -> None:
     """version-verdict: the verdict tool and the open verdicts in the house file."""
     text = load_instructions()["designer"].text

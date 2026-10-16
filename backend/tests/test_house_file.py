@@ -402,6 +402,33 @@ def test_the_composition_note_names_the_approved_version_or_none(isolated_house,
     assert "room Wohnen: v2, succeeded, approved: v2" in note
 
 
+def test_the_composition_note_says_where_each_item_stands(isolated_house, render_root: Path) -> None:
+    from app.agent.prompts import composition_note
+
+    db_session = isolated_house
+    _wohnen(db_session, render_root, items=[
+        {"id": "listening-wall", "type": "piece", "package_id": "listening-wall", "version": 4,
+         "placement": {"wall": 0, "offset_mm": 300}},
+        {"id": "sofa", "type": "stand-in", "name": "Sofa",
+         "placement": {"x_mm": 2500, "y_mm": 2000, "rotation_deg": 90}},
+    ])
+    note = composition_note(house_file.compositions(db_session, render_root))
+    assert "listening-wall (piece: listening-wall v4) on wall 1 (index 0) at offset 300 mm" in note
+    assert "sofa (stand-in: Sofa) free at x 2500, y 2000 mm, rotated 90°" in note
+
+
+def test_the_composition_note_marks_a_floor_layer_item(isolated_house, render_root: Path) -> None:
+    from app.agent.prompts import composition_note
+
+    db_session = isolated_house
+    _wohnen(db_session, render_root, items=[
+        {"id": "rug", "type": "stand-in", "name": "Rug", "layer": "floor",
+         "placement": {"x_mm": 2500, "y_mm": 2300, "rotation_deg": 0}},
+    ])
+    note = composition_note(house_file.compositions(db_session, render_root))
+    assert "rug (stand-in: Rug) (floor layer) free at x 2500, y 2300 mm, rotated 0°" in note
+
+
 def test_unapproving_a_piece_in_an_approved_room_is_refused(isolated_house, render_root: Path) -> None:
     db_session = isolated_house
     composition = _wohnen(db_session, render_root)

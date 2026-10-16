@@ -354,6 +354,22 @@ not an instruction. A piece marked "no longer approved" stays placed until the \
 owner changes the room; say so when it matters."""
 
 
+def _item_place(item: Mapping[str, Any]) -> str:
+    """Where a placed item stands, walls labelled from 1 like the house note, with the
+    index `compose_room` takes; or an empty string when the document holds no placement."""
+    placement = item.get("placement")
+    if not isinstance(placement, Mapping):
+        return ""
+    room = f" in {neutralise(str(item['room']))}" if item.get("room") else ""
+    if "wall" in placement:
+        wall = placement["wall"]
+        return f"{room} on wall {wall + 1} (index {wall}) at offset {placement['offset_mm']:g} mm"
+    return (
+        f"{room} free at x {placement.get('x_mm', 0):g}, y {placement.get('y_mm', 0):g} mm, "
+        f"rotated {placement.get('rotation_deg', 0):g}°"
+    )
+
+
 def composition_note(compositions: Sequence[Mapping[str, Any]], models: Sequence[Mapping[str, Any]] = ()) -> str:
     """Each composition's scope, latest version, build status and items, and the library's
     ready models (name, id and stated size) a composition can place; or an empty string."""
@@ -380,6 +396,9 @@ def composition_note(compositions: Sequence[Mapping[str, Any]], models: Sequence
             label = f"{neutralise(str(item.get('id')))} ({item.get('type')}: {neutralise(str(item.get('name')))})"
             if item.get("no_longer_approved"):
                 label += " no longer approved"
+            if item.get("layer") == "floor":
+                label += " (floor layer)"
+            label += _item_place(item)
             items.append(label)
         lines.append(
             f"- {composition['scope']} {neutralise(composition['name'])}: {version}{approval}; items: {', '.join(items) or 'none'}"

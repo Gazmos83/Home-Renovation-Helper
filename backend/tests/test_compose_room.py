@@ -108,6 +108,21 @@ def test_an_invalid_placement_is_returned_without_a_pause(make_ctx, room) -> Non
     assert isinstance(refused, str) and "item sofa blocks the door on wall 0 of Wohnen" in refused
 
 
+def test_a_floor_layer_rug_under_the_sofa_is_previewed_for_confirmation(make_ctx, room) -> None:
+    rug = {"id": "rug", "type": "stand-in", "name": "Rug", "width_mm": 2300, "depth_mm": 1600, "height_mm": 10,
+           "colour": "#c8b8a0", "layer": "floor", "placement": {"x_mm": 2500, "y_mm": 2300, "rotation_deg": 0}}
+    assert isinstance(preview({"room": "Wohnen", "items": [SOFA, rug]}, make_ctx()), Confirmation)
+    without_layer = {key: value for key, value in rug.items() if key != "layer"}
+    refused = preview({"room": "Wohnen", "items": [SOFA, without_layer]}, make_ctx())
+    assert isinstance(refused, str) and "overlap" in refused
+
+
+def test_the_tool_tells_the_designer_about_the_floor_layer() -> None:
+    from plugins.compose_room.tool import ComposeRoomArgs
+
+    assert "layer 'floor'" in ComposeRoomArgs.model_fields["items"].description
+
+
 def test_an_unknown_room_lists_the_known_ones(make_ctx, room) -> None:
     refused = preview({"room": "Attic", "items": [SOFA]}, make_ctx())
     assert "there is no room 'Attic'" in refused and "the rooms are: Wohnen" in refused

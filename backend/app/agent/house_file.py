@@ -927,6 +927,9 @@ def placed_items(session: Session, document: dict[str, Any]) -> list[dict[str, A
             )
         else:
             entry["name"] = item.get("name")
+        for key in ("room", "placement", "layer"):
+            if key in item:
+                entry[key] = item[key]
         listed.append(entry)
     return listed
 

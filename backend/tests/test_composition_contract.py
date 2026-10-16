@@ -52,6 +52,12 @@ def armchair(**placement):
             "placement": placement or {"x_mm": 1000, "y_mm": 3000, "rotation_deg": 45}}
 
 
+def rug(item_id="rug", **placement):
+    return {"id": item_id, "type": "stand-in", "name": "Rug", "width_mm": 2300, "depth_mm": 1600, "height_mm": 10,
+            "colour": "#c8b8a0", "layer": "floor",
+            "placement": placement or {"x_mm": 2500, "y_mm": 2300, "rotation_deg": 0}}
+
+
 def place(doc, rooms=None, scope_room="Wohnen"):
     parsed = parse_composition(doc, max_items=30)
     geometry = {name: room_geometry(name, room) for name, room in (rooms or {"Wohnen": WOHNEN}).items()}
@@ -125,6 +131,11 @@ def test_duplicate_ids_and_bad_colours_are_refused() -> None:
 def test_two_items_that_overlap_are_refused_naming_both() -> None:
     message = refusal(document(sofa(), armchair(x_mm=2500, y_mm=2000, rotation_deg=0)))
     assert "sofa" in message and "armchair" in message and "overlap" in message
+
+
+def test_an_overlap_at_a_corner_names_both_walls() -> None:
+    message = refusal(document(piece(wall=1, offset_mm=1800), sofa(wall=2, offset_mm=0)))
+    assert "listening-wall (wall 1, offset 1800 mm) and sofa (wall 2, offset 0 mm) overlap" in message
 
 
 def test_items_side_by_side_on_one_wall_may_touch() -> None:
@@ -204,6 +215,63 @@ def test_without_rules_nothing_is_reported(tmp_path) -> None:
 
     _stored, subjects = place(document(sofa()))
     assert rule_outcome((), subjects) == (None, "")
+
+
+# --- a floor-layer item lies under standing items (composition-floor-layer) ----------------
+
+
+def test_a_floor_layer_rug_is_accepted_and_keeps_its_layer() -> None:
+    stored, _subjects = place(document(rug()))
+    assert stored["items"][0]["layer"] == "floor"
+
+
+def test_a_floor_layer_model_is_accepted() -> None:
+    mat = {**armchair(), "height_mm": 20, "layer": "floor"}
+    stored, _subjects = place(document(mat))
+    assert stored["items"][0]["layer"] == "floor"
+
+
+def test_an_unknown_layer_value_is_refused_naming_the_item_and_field() -> None:
+    message = refusal(document({**rug(), "layer": "wall"}))
+    assert "rug" in message and "layer" in message
+
+
+def test_a_piece_with_a_layer_is_refused_as_an_unknown_field() -> None:
+    assert "unknown items[0] field: layer" in refusal(document({**piece(), "layer": "floor"}))
+
+
+def test_a_floor_layer_item_taller_than_30_mm_is_refused() -> None:
+    message = refusal(document({**rug(), "height_mm": 40}))
+    assert "rug" in message and "30 mm" in message
+
+
+def test_a_rug_under_the_sofa_is_accepted() -> None:
+    stored, subjects = place(document(sofa(), rug()))
+    assert [i["id"] for i in stored["resolved"]["items"]] == ["sofa", "rug"]
+    assert [s[0] for s in subjects] == ["sofa"]
+
+
+def test_a_sofa_on_a_rug_is_accepted_whichever_comes_first() -> None:
+    place(document(rug(), sofa()))
+
+
+def test_two_overlapping_rugs_are_refused_naming_both() -> None:
+    message = refusal(document(rug(), rug("runner", x_mm=2600, y_mm=2400, rotation_deg=0)))
+    assert "rug" in message and "runner" in message and "overlap" in message
+
+
+def test_a_rug_in_front_of_a_door_is_accepted_and_takes_no_placement_rule(tmp_path) -> None:
+    from app.compositions import rule_outcome
+    from tests.test_design_rules import swing
+
+    mat = {**rug(), "width_mm": 800, "depth_mm": 600, "placement": {"x_mm": 4250, "y_mm": 400, "rotation_deg": 0}}
+    _stored, subjects = place(document(mat))
+    assert subjects == []
+    assert rule_outcome(_rules(tmp_path, swing(severity="refuse")), subjects) == (None, "")
+
+
+def test_a_floor_layer_item_leaving_the_room_is_refused() -> None:
+    assert "rug leaves the room Wohnen" in refusal(document(rug(x_mm=4800, y_mm=2000, rotation_deg=0)))
 
 
 # --- an empty room (rooms-page) ------------------------------------------------------------

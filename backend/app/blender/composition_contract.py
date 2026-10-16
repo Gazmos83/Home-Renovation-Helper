@@ -44,6 +44,8 @@ SCHEMA_VERSION: Final = 1
 UNITS: Final = "mm"
 ITEM_TYPES: Final = ("piece", "stand-in", "model")
 MAX_SIZE_MM: Final = 10_000
+FLOOR_LAYER: Final = "floor"
+FLOOR_LAYER_MAX_MM: Final = 30
 _MAX_POSITION_MM: Final = 60_000
 _TOL: Final = 1e-6
 _ID: Final = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$")
@@ -114,7 +116,8 @@ def _parse_item(raw: Any, index: int, apartment: bool) -> dict[str, Any]:
     if apartment and "room" not in raw:
         _fail(f"item {raw.get('id')!r} names no room; in an apartment every item names its room")
     room_key = frozenset({"room"}) if apartment else frozenset()
-    _require_keys(raw, _ITEM_COMMON | _ITEM_FIELDS[kind] | room_key, frozenset(), label)
+    layer_key = frozenset() if kind == "piece" else frozenset({"layer"})
+    _require_keys(raw, _ITEM_COMMON | _ITEM_FIELDS[kind] | room_key, layer_key, label)
     item_id = raw["id"]
     if not isinstance(item_id, str) or not _ID.match(item_id):
         _fail(f"{label}.id must be a short slug (lowercase letters, digits and hyphens)")
@@ -135,6 +138,13 @@ def _parse_item(raw: Any, index: int, apartment: bool) -> dict[str, Any]:
             item["colour"] = colour.lower()
         else:
             item["model_id"] = _text(raw["model_id"], f"{label}.model_id", 64)
+        if "layer" in raw:
+            # A floor-layer item lies flat on the floor, such as a rug (composition-floor-layer).
+            if raw["layer"] != FLOOR_LAYER:
+                _fail(f"item {item_id}: layer must be {FLOOR_LAYER!r}")
+            if item["height_mm"] > FLOOR_LAYER_MAX_MM:
+                _fail(f"item {item_id} is on the floor layer and may be at most {FLOOR_LAYER_MAX_MM} mm tall, not {item['height_mm']} mm")
+            item["layer"] = FLOOR_LAYER
     item["placement"] = _parse_placement(raw["placement"], f"{label}.placement")
     return item
 
@@ -280,6 +290,13 @@ def _blocked_opening(
         )
 
 
+def _where(placement: Mapping[str, Any]) -> str:
+    """A placement as a refusal names it: wall index and offset, or the free position."""
+    if "wall" in placement:
+        return f"wall {placement['wall']}, offset {placement['offset_mm']:g} mm"
+    return f"free at x {placement['x_mm']:g}, y {placement['y_mm']:g} mm, rotated {placement['rotation_deg']:g}°"
+
+
 def _touching_only(a: Sequence[Point], b: Sequence[Point]) -> bool:
     """Whether two overlapping-by-test rectangles only share an edge (no area in common)."""
     shrunk = _shrink(a, 0.5)
@@ -312,7 +329,7 @@ def place_items(
     """
     placed: list[dict[str, Any]] = []
     subjects: list[tuple[str, ItemSubject]] = []
-    footprints: list[tuple[str, str, tuple[Point, ...]]] = []
+    footprints: list[tuple[str, str, tuple[Point, ...], str, str | None]] = []
     for item in parsed["items"]:
         item_id = item["id"]
         room_name = item.get("room") or scope_room
@@ -332,16 +349,22 @@ def place_items(
             footprint, centre, rotation, outward = _free_pose(placement, size)
         if not _footprint_inside(footprint, room.corners):
             _fail(f"item {item_id} leaves the room {room.name}")
-        _blocked_opening(item_id, room, footprint, placement, size)
-        for other_id, other_room, other in footprints:
-            if other_room == room.name and _rectangles_overlap(footprint, other) and not _touching_only(footprint, other):
-                _fail(f"items {other_id} and {item_id} overlap")
-        footprints.append((item_id, room.name, tuple(footprint)))
-        subjects.append((item_id, ItemSubject(
-            corners=room.corners, walls=room.walls, openings=room.openings,
-            placement={"footprint": tuple(footprint), "outward_normal": outward,
-                       **({"wall": placement["wall"], "offset_mm": placement["offset_mm"]} if "wall" in placement else {})},
-        )))
+        # A floor-layer item (a rug) blocks no opening, lies under standing items and takes no
+        # placement rule; it still stays inside the room and clear of other floor-layer items.
+        layer = item.get("layer")
+        if layer is None:
+            _blocked_opening(item_id, room, footprint, placement, size)
+        for other_id, other_room, other, other_where, other_layer in footprints:
+            if (other_room == room.name and other_layer == layer
+                    and _rectangles_overlap(footprint, other) and not _touching_only(footprint, other)):
+                _fail(f"items {other_id} ({other_where}) and {item_id} ({_where(placement)}) overlap")
+        footprints.append((item_id, room.name, tuple(footprint), _where(placement), layer))
+        if layer is None:
+            subjects.append((item_id, ItemSubject(
+                corners=room.corners, walls=room.walls, openings=room.openings,
+                placement={"footprint": tuple(footprint), "outward_normal": outward,
+                           **({"wall": placement["wall"], "offset_mm": placement["offset_mm"]} if "wall" in placement else {})},
+            )))
         placed.append({
             "id": item_id, "room": room.name,
             "size_mm": {"w": size[0], "d": size[1], "h": size[2]},
