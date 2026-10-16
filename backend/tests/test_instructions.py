@@ -316,6 +316,16 @@ def test_the_designer_restates_a_revision_and_asks_before_calling_the_tool() -> 
     assert "Never resend the whole document." in text
 
 
+def test_the_designer_restates_a_composition_change_and_asks_before_calling_the_tool() -> None:
+    text = load_instructions()["designer"].text
+    assert "To change a room or apartment whose composition already has a version" in text
+    assert "one line per item added, moved or removed, naming the item by its id" in text
+    assert "Call `compose_room` only once the owner says the list is complete" in text
+    assert "every change asked for since the composition's latest version in that one call" in text
+    assert "Do not call `compose_room` again in that reply." in text
+    assert "A first composition, with no version yet, needs no restating." in text
+
+
 def test_intake_reuses_a_stored_room_only_through_a_confirmation() -> None:
     text = load_instructions()["intake"].text
     assert "Never ask for what it already says about this conversation's confirmed room." in text
