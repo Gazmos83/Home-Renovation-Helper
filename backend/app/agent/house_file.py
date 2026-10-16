@@ -46,6 +46,7 @@ from app.db.models import (
     Thread,
     ThreadNotice,
     ThreadPiece,
+    VersionVerdict,
 )
 
 
@@ -418,11 +419,16 @@ def record_version(
     version: int,
     revised_from: int | None = None,
     changes: list[str] | None = None,
+    *,
+    slot: str | None = None,
+    model: str | None = None,
 ) -> PieceVersion:
+    """Record a version; `slot` and `model` name the agent whose tool made it (version-verdict)."""
     if session.get(Piece, package_id) is None:
         raise HouseFileError(f"piece {package_id!r} is not recorded")
     row = PieceVersion(
-        package_id=package_id, version=version, revised_from=revised_from, changes=changes or []
+        package_id=package_id, version=version, revised_from=revised_from, changes=changes or [],
+        slot=slot, model=model,
     )
     session.add(row)
     session.flush()
@@ -620,7 +626,7 @@ def delete_version(session: Session, root: Path, package_id: str, version: int) 
     Refuses with `HouseFileError` (nothing changed) when the version is approved, placed
     in a room composition, or still building or rendering, and with `VersionMissing` when
     it has neither a folder nor a record. Removes the version's reviews and their items,
-    render runs and their feedback, pricings and their entries, and its record, and clears
+    render runs and their feedback, its verdict, pricings and their entries, and its record, and clears
     the piece and version from notices naming it. When no version is left, the piece is
     removed and every conversation unbound from it. Like `delete_room` this commits: the
     folder is moved aside first, removed after the commit and moved back if it fails.
@@ -646,6 +652,9 @@ def delete_version(session: Session, root: Path, package_id: str, version: int) 
         runs = select(RenderRun.id).where(RenderRun.package_id == package_id, RenderRun.version == version)
         session.execute(delete(RenderFeedback).where(RenderFeedback.run_id.in_(runs)))
         session.execute(delete(RenderRun).where(RenderRun.package_id == package_id, RenderRun.version == version))
+        session.execute(
+            delete(VersionVerdict).where(VersionVerdict.package_id == package_id, VersionVerdict.version == version)
+        )
         pricings = select(CutListPricing.id).where(
             CutListPricing.package_id == package_id, CutListPricing.version == version
         )

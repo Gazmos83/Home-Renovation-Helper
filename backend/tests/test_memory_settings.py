@@ -57,6 +57,13 @@ def test_without_a_stored_value_the_settings_are_todays_constants(engine) -> Non
     assert f"{settings.note_instructions} {summaries.FIXED_NOTE_RULES}" == summaries.SUMMARY_INSTRUCTION
 
 
+def test_version_verdicts_are_included_by_default_and_can_be_left_out(engine) -> None:
+    """version-verdict: the slice switch for open verdicts."""
+    assert read_memory_settings(engine).include_version_verdicts is True
+    assert write_memory_settings(engine, {"include_version_verdicts": False}).include_version_verdicts is False
+    assert reset_memory_setting(engine, "include_version_verdicts").include_version_verdicts is True
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [("trigger_percent", 40), ("keep_turns", 50), ("note_tokens", 50), ("tool_result_chars", 3000), ("render_ratings", 11)],

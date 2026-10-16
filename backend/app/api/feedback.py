@@ -1,8 +1,9 @@
-"""Render feedback routes (feedback-capture).
+"""Render feedback and version verdict routes (feedback-capture, version-verdict).
 
-The owner's side lists a version's published renders and rates them. Nothing in
-these responses names a model, a prompt or a slot: that origin stays in the
-database (`render_runs`) for the developer's summary.
+The owner's side lists a version's published renders and rates them, and gives
+the version itself a verdict. Nothing in these responses names a model, a prompt
+or a slot: that origin stays in the database (`render_runs`, `piece_versions`)
+for the developer's summary.
 """
 
 from __future__ import annotations
@@ -16,12 +17,18 @@ from sqlalchemy.orm import Session
 from app.api.gate import require_dev, require_owner
 from app.api.packages import existing_version, refused, render_root
 from app.blender import storage
-from app.feedback import ratings
+from app.feedback import ratings, verdicts
 from app.feedback.ratings import FeedbackRefused
+from app.feedback.verdicts import VerdictRefused
 from app.restyle import store as restyle_store
 
 router = APIRouter(
     prefix="/packages/{package_id}/versions/{version}/renders",
+    tags=["feedback"],
+    dependencies=[Depends(require_owner)],
+)
+verdict_router = APIRouter(
+    prefix="/packages/{package_id}/versions/{version}/verdict",
     tags=["feedback"],
     dependencies=[Depends(require_owner)],
 )
@@ -198,3 +205,88 @@ def feedback_comments(
     """An empty `slot` or `model` selects the renders no agent started."""
     with Session(request.app.state.engine) as session:
         return ratings.comments(session, slot=slot or None, model=model or None, tier=tier)
+
+
+@admin_router.get("/verdicts")
+def verdict_summary(request: Request, days: int = Query(default=30, ge=1, le=365)) -> list[dict]:
+    with Session(request.app.state.engine) as session:
+        return verdicts.summary(session, days=days)
+
+
+@admin_router.get("/verdicts/notes")
+def verdict_notes(request: Request, slot: str = "", model: str = "") -> list[dict]:
+    """An empty `slot` or `model` selects the versions no agent recorded."""
+    with Session(request.app.state.engine) as session:
+        return verdicts.notes(session, slot=slot or None, model=model or None)
+
+
+def _verdict_refusal(error: VerdictRefused) -> HTTPException:
+    return refused(error.status, error.failure_class, error.reason)
+
+
+def _verdict_view(request: Request, package_id: str, version: int) -> dict[str, Any]:
+    with Session(request.app.state.engine) as session:
+        return {"verdict": verdicts.as_dict(verdicts.current(session, package_id, version))}
+
+
+@verdict_router.get("")
+def read_verdict(package_id: str, version: int, request: Request) -> dict[str, Any]:
+    try:
+        return _verdict_view(request, package_id, version)
+    except VerdictRefused as error:
+        raise _verdict_refusal(error) from None
+
+
+@verdict_router.put("")
+def give_verdict(
+    package_id: str,
+    version: int,
+    request: Request,
+    body: Annotated[dict[str, Any], Body()],
+) -> dict[str, Any]:
+    unknown = sorted(set(body) - {"verdict", "note"})
+    if unknown:
+        raise refused(422, "refused", f"unknown field {unknown[0]!r}; a verdict takes verdict and note")
+    try:
+        with Session(request.app.state.engine) as session:
+            given = verdicts.give(
+                session, package_id=package_id, version=version,
+                verdict=body.get("verdict"), note=body.get("note"),
+            )
+    except VerdictRefused as error:
+        raise _verdict_refusal(error) from None
+    tracing = getattr(request.app.state, "tracing", None)
+    if tracing is not None:
+        tracing.record_verdict(
+            verdict=given.verdict, note=given.note, slot=given.slot, model=given.model,
+            package_id=package_id, version=version,
+        )
+    return _verdict_view(request, package_id, version)
+
+
+@verdict_router.delete("")
+def clear_verdict(package_id: str, version: int, request: Request) -> dict[str, Any]:
+    try:
+        with Session(request.app.state.engine) as session:
+            verdicts.clear(session, package_id=package_id, version=version)
+    except VerdictRefused as error:
+        raise _verdict_refusal(error) from None
+    return {"verdict": None}
+
+
+@verdict_router.patch("/status")
+def close_verdict(
+    package_id: str,
+    version: int,
+    request: Request,
+    body: Annotated[dict[str, Any], Body()],
+) -> dict[str, Any]:
+    unknown = sorted(set(body) - {"status"})
+    if unknown:
+        raise refused(422, "refused", f"unknown field {unknown[0]!r}; closing takes status")
+    try:
+        with Session(request.app.state.engine) as session:
+            verdicts.set_status(session, package_id=package_id, version=version, status=body.get("status"))
+    except VerdictRefused as error:
+        raise _verdict_refusal(error) from None
+    return _verdict_view(request, package_id, version)

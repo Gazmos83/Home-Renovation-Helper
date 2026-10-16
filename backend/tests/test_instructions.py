@@ -45,7 +45,7 @@ def test_each_agent_names_exactly_its_tools() -> None:
     assert loaded["intake"].tools == ("record_brief", "record_plan", "confirm_room", "ask_owner", "read_help")
     assert set(loaded["designer"].tools) == {
         "create_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit", "compose_room",
-        "read_room_version_dimensions", "edit_decisions", "search_guidelines",
+        "read_room_version_dimensions", "edit_decisions", "record_version_verdict", "search_guidelines",
         "ask_owner", "search_engineering_knowledge", "record_assessment_inputs", "calculate_engineering", "get_engineering_report",
     }
     assert set(loaded["builder"].tools) == {
@@ -369,3 +369,16 @@ def test_the_designer_changes_the_decisions_note_only_when_asked() -> None:
 def test_the_designer_goes_by_the_stated_front_positions() -> None:
     text = load_instructions()["designer"].text
     assert "where each front sits" in text and "not by the brief or earlier messages" in text
+
+
+def test_the_designer_records_a_verdict_only_when_the_owner_gives_one() -> None:
+    """version-verdict: the verdict tool and the open verdicts in the house file."""
+    text = load_instructions()["designer"].text
+    assert "`record_version_verdict`" in text
+    assert "Never call it unprompted" in text
+    assert "open verdicts" in text and "do not repeat them" in text
+
+
+def test_the_foreman_sends_a_verdict_on_a_version_to_the_designer() -> None:
+    text = load_instructions()["foreman"].text
+    assert "a version of the piece is right or wrong" in text and "records the verdict" in text

@@ -75,7 +75,7 @@ from app.assets import models as model_library
 from app.blender import storage
 from app.config import Settings
 from app.engineering import chat as engineering_chat
-from app.feedback import ratings
+from app.feedback import ratings, verdicts
 from app.observability.usage import UsageRecorder, tokens_today
 from app.plugins.binding import bound_tool_names
 from app.plugins.loader import Plugins
@@ -135,6 +135,7 @@ DECLINED: Final[dict[str, str]] = {
     "detail_pass": "The detail pass was not started.",
     "detail_render": "The detail render was not started.",
     "render_feedback": "The rating was not recorded.",
+    "version_verdict": "The verdict was not recorded.",
     "remnant": "The remnant rack was not changed.",
 }
 
@@ -592,6 +593,7 @@ def build_graph(
                 piece_text += "\nEngineering report IDs/status (fetch complete current evidence; visual approval does not verify engineering): " + json.dumps(report_statuses)
         open_review = []
         recent_feedback: list[dict[str, Any]] = []
+        open_verdicts: list[dict[str, Any]] = []
         if package_id:
             with Session(engine) as session:
                 # The approved version's review, else the latest's; an older version's items stay stored.
@@ -600,6 +602,8 @@ def build_graph(
                     open_review = house_file.latest_open_items(session, package_id, current)
                 if memory.render_ratings:
                     recent_feedback = ratings.recent_for_piece(session, package_id, memory.render_ratings)
+                if memory.include_version_verdicts:
+                    open_verdicts = verdicts.open_for_piece(session, package_id)
 
         def with_room(piece: dict[str, Any]) -> dict[str, Any]:
             return {**piece, "room": piece_rooms.get(piece["package_id"])}
@@ -682,6 +686,7 @@ def build_graph(
                 open_review,
                 other_builds=other_builds,
                 no_room=not room_confirmed,
+                open_verdicts=open_verdicts,
             )
             or "",
             "piece_note": piece_text,

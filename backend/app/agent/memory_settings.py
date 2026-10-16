@@ -57,6 +57,8 @@ class MemorySettings(BaseModel):
     other_builds: Literal["line", "hidden"] = "line"
     include_preferences: bool = True
     include_review_items: bool = True
+    # The piece's open "doesn't match" verdicts on its versions (version-verdict).
+    include_version_verdicts: bool = True
     render_ratings: int = Field(default=5, ge=0, le=10)
     include_extension_requests: bool = True
 

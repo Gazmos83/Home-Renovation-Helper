@@ -54,6 +54,18 @@ def test_yes_creates_the_next_version_revised_from_the_latest(make_ctx, tool_dep
     assert second["changes"] == [f"cabinet: shelves {before} → 3"]
 
 
+def test_a_revision_records_the_slot_and_model_that_made_it(make_ctx, tool_deps, tool_state) -> None:
+    make_piece(make_ctx, tool_state)
+    ctx = replace(make_ctx(), approved=True, slot="designer", model="~deepseek/deepseek-v4-flash-latest")
+    run(SHELVES, ctx)
+    wait_for_status(storage.version_dir(tool_state.settings.render_root, "hall-bench", 2))
+    with tool_deps.session() as session:
+        first = house_file.version_row(session, "hall-bench", 1)
+        second = house_file.version_row(session, "hall-bench", 2)
+        assert (first.slot, first.model) == (None, None)
+        assert (second.slot, second.model) == ("designer", "~deepseek/deepseek-v4-flash-latest")
+
+
 def test_a_revision_that_changes_nothing_is_refused_and_creates_nothing(make_ctx, tool_state) -> None:
     shelves = make_piece(make_ctx, tool_state)
     same = {"package_id": "hall-bench", "changes": {"modules": {"cabinet": {"shelves": shelves}}}}

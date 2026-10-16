@@ -391,3 +391,58 @@ def test_a_failing_collector_never_reaches_the_rating(caplog: pytest.LogCaptureF
         tracing.record_feedback(**FEEDBACK)
         tracing.record_feedback(**FEEDBACK)
     assert len([r for r in caplog.records if "render feedback" in r.message]) == 1
+
+
+# --- version verdicts (version-verdict) -----------------------------------------------------------
+
+VERDICT: dict[str, Any] = {
+    "verdict": "mismatch",
+    "note": "the side sections lost their 5 drawers",
+    "slot": "designer",
+    "model": "~deepseek/deepseek-v4-flash-latest",
+    "package_id": "amesbury-wardrobe",
+    "version": 5,
+}
+
+
+def test_a_verdict_is_a_tagged_feedback_trace(propagated: list[dict[str, Any]], detach_tracing) -> None:
+    client = ScoringClient()
+    tracing = detach_tracing(
+        Tracing(_configured(), handler_factory=lambda _s: (client, FakeHandler()))
+    )
+    tracing.record_verdict(**VERDICT)
+    assert client.scores == []
+    [attributes] = propagated
+    assert attributes["tags"] == [
+        "version-verdict", "verdict:mismatch", "slot:designer", "model:~deepseek/deepseek-v4-flash-latest",
+    ]
+    assert client.opened_with["name"] == "version-verdict"
+    assert client.opened_with["input"] == {"package_id": "amesbury-wardrobe", "version": 5, "verdict": "mismatch"}
+    assert client.updates[-1]["output"]["note"] == VERDICT["note"]
+
+
+def test_a_verdict_on_an_origin_less_version_has_no_slot_tags(propagated: list[dict[str, Any]], detach_tracing) -> None:
+    tracing = detach_tracing(
+        Tracing(_configured(), handler_factory=lambda _s: (ScoringClient(), FakeHandler()))
+    )
+    tracing.record_verdict(**{**VERDICT, "slot": None, "model": None})
+    assert propagated[0]["tags"] == ["version-verdict", "verdict:mismatch"]
+
+
+def test_a_verdict_with_tracing_off_sends_nothing() -> None:
+    Tracing(_settings()).record_verdict(**VERDICT)  # no client exists to call
+
+
+class FailingSpanClient(FakeClient):
+    def start_as_current_observation(self, **kwargs: Any) -> FakeSpan:
+        raise ConnectionError("langfuse unreachable")
+
+
+def test_a_failing_collector_never_reaches_the_verdict(caplog: pytest.LogCaptureFixture, propagated: list[dict[str, Any]], detach_tracing) -> None:
+    tracing = detach_tracing(
+        Tracing(_configured(), handler_factory=lambda _s: (FailingSpanClient(), FakeHandler()))
+    )
+    with caplog.at_level(logging.WARNING, logger="app"):
+        tracing.record_verdict(**VERDICT)
+        tracing.record_verdict(**VERDICT)
+    assert len([r for r in caplog.records if "version verdict" in r.message]) == 1

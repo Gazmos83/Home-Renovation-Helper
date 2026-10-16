@@ -45,6 +45,17 @@ The developer SHALL be able to read the render-feedback summary (up and down cou
 - **WHEN** a still started through the renders route is rated up
 - **THEN** the summary counts it in a row with no slot and no model at its tier
 
+### Requirement: Version verdicts are readable per slot and model
+Behind the developer gate, the developer SHALL be able to read version-verdict counts grouped by the slot and model that produced each version: the number of `matches` and `mismatch` verdicts and the time of the latest note, and the notes of one group, newest first, each naming its piece and version. Versions with no recorded slot or model SHALL be grouped under no slot and no model. Reading verdicts SHALL NOT change routing or any setting. The developer route tree's Feedback page SHALL show these counts and notes beside the render ratings.
+
+#### Scenario: Summary after three verdicts
+- **WHEN** two versions made by the Designer were marked "Doesn't match" and one "Matches what I confirmed"
+- **THEN** the Designer's model shows 1 matches and 2 mismatch, and selecting it lists the two notes newest first
+
+#### Scenario: Older versions grouped as unknown
+- **WHEN** `amesbury-wardrobe` v4, made before versions recorded their origin, is marked "Doesn't match"
+- **THEN** it is counted in a row with no slot and no model
+
 ### Requirement: Render offload is managed from the developer panel
 Behind the developer gate, the developer SHALL be able to:
 - read whether offload is configured (host, port, user, remote Blender path and device shown; key file and known-hosts contents never shown);
@@ -151,7 +162,7 @@ The developer SHALL be able to read every `TODO(user)` marker in the backend cod
 The developer SHALL be able to read, set and reset the memory settings:
 - compression: trigger share of the usable context budget (50–100 %), recent turns always kept (0–20), note length (100–2000 tokens), note headings and instructions (text up to 2000 characters), tool-result cut length (0–2000 characters);
 - saving: preferences from a brief saved or not (review confirmation is deferred);
-- the conversation's slice: other builds as one line or hidden; preferences, latest review items and open generator-extension requests included or left out; render ratings 0–10.
+- the conversation's slice: other builds as one line or hidden; preferences, latest review items, open version verdicts and open generator-extension requests included or left out; render ratings 0–10.
 
 Each setting SHALL show its default, and resetting SHALL restore it. An out-of-range value SHALL be refused naming the field. The page SHALL also list the fixed rules no setting changes: rooms enter a conversation only by confirmation, nothing from another conversation is given, generator-extension requests are always saved, and the note's safety rules are composed in code. Changes SHALL apply from the next call, without a restart. The route SHALL sit behind the developer gate.
 
@@ -170,6 +181,10 @@ Each setting SHALL show its default, and resetting SHALL restore it. An out-of-r
 #### Scenario: Panel disabled
 - **WHEN** the panel is disabled and the memory route is called with a valid session
 - **THEN** the response is 404
+
+#### Scenario: Version verdicts left out
+- **WHEN** the developer turns open version verdicts off
+- **THEN** the setting is stored and the next call's context lists no verdicts
 
 ### Requirement: Developer manages engineering source rights and verification
 Behind the developer gate, the developer SHALL list/register engineering metadata and files, inspect current rights decisions, approve/revoke documented operation scopes, review technical verification, ingest/re-ingest approved content and inspect failures/metadata-only reasons. Rights and technical verification SHALL be displayed separately. Engineering upload/registration SHALL NOT index immediately on a licence note. A locally supplied large document SHALL have a confined ingestion path even when it exceeds the browser upload cap, without silently changing that cap.

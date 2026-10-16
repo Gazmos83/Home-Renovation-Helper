@@ -46,6 +46,18 @@ def test_yes_records_the_piece_and_version_one_and_starts_the_build(make_ctx, to
     assert listing["hall-bench"]["versions"][0]["revised_from"] is None
 
 
+def test_a_new_piece_records_the_slot_and_model_that_made_it(make_ctx, tool_deps, tool_state) -> None:
+    ctx = replace(make_ctx(), approved=True, slot="designer", model="~deepseek/deepseek-v4-flash-latest")
+    run(arguments(), ctx)
+    wait_for_status(storage.version_dir(tool_state.settings.render_root, "hall-bench", 1))
+    with tool_deps.session() as session:
+        row = house_file.version_row(session, "hall-bench", 1)
+        assert (row.slot, row.model) == ("designer", "~deepseek/deepseek-v4-flash-latest")
+        listing = {p["package_id"]: p for p in house_file.pieces(session, tool_state.settings.render_root)}
+    assert "slot" not in listing["hall-bench"]["versions"][0]
+    assert "model" not in listing["hall-bench"]["versions"][0]
+
+
 def test_without_approval_nothing_is_created(make_ctx, tool_state) -> None:
     assert "confirmation" in run(arguments(), make_ctx())
     assert storage.versions(tool_state.settings.render_root, "hall-bench") == []

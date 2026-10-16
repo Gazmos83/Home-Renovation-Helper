@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { expect, test, vi } from "vitest";
@@ -294,4 +294,20 @@ test("a version with no renders says so on the Renders tab", async () => {
   serveRenders([]);
   show("/pieces/murphy-bed/versions/1?tab=renders");
   expect(await screen.findByText("No renders of this version yet.")).toBeInTheDocument();
+});
+
+test("a version that is not built still shows its verdict above the build state", async () => {
+  stubFetch((call) => {
+    if (call === "GET /packages/murphy-bed/versions/1") {
+      return { body: { package_id: "murphy-bed", version: 1, status: "running", approved_at: null, files: [] } };
+    }
+    if (call === "GET /packages/murphy-bed/versions/1/verdict") {
+      return { body: { verdict: { verdict: "mismatch", note: "doors too short", status: "open", updated_at: "x" } } };
+    }
+    return undefined;
+  });
+  show();
+  const section = await screen.findByRole("region", { name: "Verdict" });
+  expect(await within(section).findByDisplayValue("doors too short")).toBeInTheDocument();
+  expect(screen.queryByTestId("canvas")).not.toBeInTheDocument();
 });

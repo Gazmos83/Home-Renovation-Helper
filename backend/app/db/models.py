@@ -375,6 +375,10 @@ class PieceVersion(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The agent slot and model whose tool made the version (version-verdict); never served
+    # to the homeowner. None for versions made outside an agent turn or before the change.
+    slot: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     __table_args__ = (
         CheckConstraint("version >= 1", name="ck_piece_versions_version_positive"),
@@ -810,6 +814,47 @@ class RenderFeedback(Base):
         CheckConstraint("rating IN ('up', 'down')", name="ck_render_feedback_rating_known"),
         CheckConstraint(
             "comment IS NULL OR char_length(comment) <= 1000", name="ck_render_feedback_comment_short"
+        ),
+    )
+
+
+class VersionVerdict(Base):
+    """The owner's verdict on one piece version: does it match what was confirmed
+    (version-verdict). One row per version; a mismatch stays open until closed."""
+
+    __tablename__ = "version_verdicts"
+
+    package_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    verdict: Mapped[str] = mapped_column(String(16), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    status_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["package_id", "version"],
+            ["piece_versions.package_id", "piece_versions.version"],
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("verdict IN ('matches', 'mismatch')", name="ck_version_verdicts_verdict_known"),
+        CheckConstraint(
+            "note IS NULL OR char_length(note) <= 1000", name="ck_version_verdicts_note_short"
+        ),
+        CheckConstraint(
+            "verdict <> 'mismatch' OR (note IS NOT NULL AND btrim(note) <> '')",
+            name="ck_version_verdicts_mismatch_has_note",
+        ),
+        CheckConstraint(
+            "(verdict = 'matches' AND status IS NULL) OR "
+            "(verdict = 'mismatch' AND status IN ('open', 'resolved', 'dismissed'))",
+            name="ck_version_verdicts_status_known",
         ),
     )
 

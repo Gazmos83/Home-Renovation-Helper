@@ -159,7 +159,9 @@ def create_and_record(
         house_file.record_piece(
             session, package_id, spec["name"], brief=dict(ctx.brief), room_id=room_id
         )
-        house_file.record_version(session, package_id, created["version"], changes=changes)
+        house_file.record_version(
+            session, package_id, created["version"], changes=changes, slot=ctx.slot, model=ctx.model
+        )
         if ctx.thread_id is not None:
             house_file.touch_thread(session, ctx.thread_id, package_id=package_id)
         session.commit()

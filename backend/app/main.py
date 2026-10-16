@@ -48,6 +48,7 @@ from app.api.engineering import admin_router as engineering_methods_router
 from app.api.engineering import router as engineering_router
 from app.api.feedback import admin_router as admin_feedback_router
 from app.api.feedback import router as feedback_router
+from app.api.feedback import verdict_router
 from app.api.guideline_notes import router as guideline_notes_router
 from app.api.hardware_data import router as hardware_data_router
 from app.api.health import router as health_router
@@ -374,6 +375,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(uploads_router)
     app.include_router(renders_router)
     app.include_router(feedback_router)
+    app.include_router(verdict_router)
     app.include_router(apartments_router)
     app.include_router(rooms_router)
     app.include_router(price_list_router)

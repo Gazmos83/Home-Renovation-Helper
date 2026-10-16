@@ -257,6 +257,7 @@ def house_note(
     review_items: Sequence[Mapping[str, Any]] = (),
     other_builds: Sequence[Mapping[str, Any]] = (),
     no_room: bool = False,
+    open_verdicts: Sequence[Mapping[str, Any]] = (),
 ) -> str | None:
     """The house file as a labelled note, or `None` when it holds nothing.
 
@@ -269,6 +270,7 @@ def house_note(
     """
     if not (
         rooms or preferences or pieces or requests or apartments or review_items or other_builds or no_room
+        or open_verdicts
     ):
         return None
     lines = [HOUSE_CONTEXT_PREAMBLE]
@@ -339,6 +341,10 @@ def house_note(
                 f"- {item.get('aspect')}{about}: expected {neutralise(str(item.get('expected') or ''))}; "
                 f"observed {neutralise(str(item.get('observed') or ''))}"
             )
+    if open_verdicts:
+        lines.append("Owner's verdicts — these versions do not match what the owner confirmed (open):")
+        for item in open_verdicts:
+            lines.append(f"- version {item['version']}: {neutralise(str(item.get('note') or ''))}")
     return "\n".join(lines)
 
 

@@ -258,7 +258,8 @@ def record_next(
             # A package made directly through the routes: record it now.
             house_file.record_piece(session, package_id, spec["name"])
         house_file.record_version(
-            session, package_id, created["version"], revised_from=latest, changes=lines
+            session, package_id, created["version"], revised_from=latest, changes=lines,
+            slot=ctx.slot, model=ctx.model,
         )
         if ctx.thread_id is not None:
             house_file.touch_thread(session, ctx.thread_id, package_id=package_id)

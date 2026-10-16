@@ -8,11 +8,13 @@ import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { CutListTables } from "@/components/inspector/CutListTables";
 import { RendersTab } from "@/components/inspector/RendersTab";
+import { VersionVerdict } from "@/components/inspector/VersionVerdict";
 
 /**
  * One piece version, inspected (piece-inspector): its model in 3D with the camera
  * buttons, modes, explode, layer switches and overall dimensions, its straight-on
- * views, its cut list, and its renders (two-tier-renders). Every figure comes from the version's own files. The 3D
+ * views, its cut list, its renders (two-tier-renders) and the owner's verdict on the version
+ * (version-verdict). Every figure comes from the version's own files. The 3D
  * stage is a lazy import, so three.js loads only when a model is shown. The inspector
  * page and the conversation's split view both render this one component.
  *
@@ -322,6 +324,7 @@ export function InspectorView({
   return (
     <section className={`${cardClass} grid gap-4`}>
       {switcher}
+      {info.data && <VersionVerdict key={`${packageId}-${version}`} packageId={packageId} version={version} />}
       {body}
     </section>
   );

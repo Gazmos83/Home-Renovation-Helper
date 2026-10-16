@@ -370,6 +370,50 @@ class Tracing:
         except Exception as error:  # noqa: BLE001 - a rating must not depend on tracing
             self._warn_once("tracing could not record render feedback", error)
 
+    def record_verdict(
+        self,
+        *,
+        verdict: str,
+        note: str | None,
+        slot: str | None,
+        model: str | None,
+        package_id: str,
+        version: int,
+    ) -> None:
+        """Record the owner's verdict on a version (version-verdict design decision 7).
+
+        A short feedback trace tagged with the verdict and the version's slot and
+        model. A version keeps no trace id, so there is no score. A no-op when
+        tracing is off; a failure is reported once per process and never reaches
+        the verdict.
+        """
+        if not self.enabled:
+            return
+        try:
+            tags = ["version-verdict", f"verdict:{verdict}"]
+            if slot:
+                tags.append(f"slot:{slot}")
+            if model:
+                tags.append(f"model:{model}")
+            metadata = {"package_id": package_id, "version": version, "verdict": verdict}
+            from langfuse import propagate_attributes
+
+            with ExitStack() as stack:
+                stack.enter_context(
+                    self._client.start_as_current_observation(
+                        name="version-verdict",
+                        as_type="span",
+                        trace_context={"trace_id": self._client.create_trace_id()},
+                        input=metadata,
+                    )
+                )
+                stack.enter_context(
+                    propagate_attributes(tags=tags, trace_name="version-verdict")
+                )
+                self._client.update_current_span(output={"verdict": verdict, "note": note})
+        except Exception as error:  # noqa: BLE001 - a verdict must not depend on tracing
+            self._warn_once("tracing could not record a version verdict", error)
+
     def trace_url(self, trace_id: str | None) -> str | None:
         """The Langfuse page for a trace, or `None` when there is none to show."""
         if not trace_id or not self.enabled or self._links_unavailable:

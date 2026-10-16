@@ -33,6 +33,7 @@ const GROUPS: { title: string; rows: Row[] }[] = [
       { field: "other_builds", label: "Other builds of the conversation", kind: "choice", choices: [["line", "one line each"], ["hidden", "hidden"]] },
       { field: "include_preferences", label: "Preferences", kind: "bool" },
       { field: "include_review_items", label: "Latest review's open items", kind: "bool" },
+      { field: "include_version_verdicts", label: "Open version verdicts (doesn't match)", kind: "bool" },
       { field: "render_ratings", label: "Latest render ratings given (0–10)", kind: "number" },
       { field: "include_extension_requests", label: "Open generator-extension requests", kind: "bool" },
     ],

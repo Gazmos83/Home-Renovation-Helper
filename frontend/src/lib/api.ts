@@ -179,6 +179,7 @@ export type MemorySettings = {
   other_builds: "line" | "hidden";
   include_preferences: boolean;
   include_review_items: boolean;
+  include_version_verdicts: boolean;
   render_ratings: number;
   include_extension_requests: boolean;
 };
@@ -605,6 +606,32 @@ export type FeedbackRow = {
   up: number;
   down: number;
   latest_comment_at: string | null;
+};
+
+/** The owner's verdict on a piece version (version-verdict); never names a model. */
+export type Verdict = {
+  verdict: "matches" | "mismatch";
+  note: string | null;
+  /** `open`, `resolved` or `dismissed` for a mismatch; `null` for matches. */
+  status: "open" | "resolved" | "dismissed" | null;
+  updated_at: string | null;
+};
+
+export type VerdictRow = {
+  slot: string | null;
+  model: string | null;
+  matches: number;
+  mismatch: number;
+  latest_note_at: string | null;
+};
+
+export type VerdictNote = {
+  package_id: string;
+  version: number;
+  verdict: "matches" | "mismatch";
+  status: "open" | "resolved" | "dismissed" | null;
+  note: string;
+  updated_at: string;
 };
 
 export type FeedbackComment = {
@@ -1053,6 +1080,27 @@ export const api = {
   feedbackComments: (row: { slot: string | null; model: string | null; tier: string }) =>
     request<FeedbackComment[]>(
       `/admin/feedback/comments?tier=${encodeURIComponent(row.tier)}&slot=${encodeURIComponent(row.slot ?? "")}&model=${encodeURIComponent(row.model ?? "")}`,
+    ),
+  verdict: (packageId: string, version: number) =>
+    request<{ verdict: Verdict | null }>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/verdict`),
+  giveVerdict: (packageId: string, version: number, verdict: "matches" | "mismatch", note: string | null) =>
+    request<{ verdict: Verdict | null }>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/verdict`, {
+      method: "PUT",
+      body: JSON.stringify(note ? { verdict, note } : { verdict }),
+    }),
+  clearVerdict: (packageId: string, version: number) =>
+    request<{ verdict: null }>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/verdict`, {
+      method: "DELETE",
+    }),
+  closeVerdict: (packageId: string, version: number, status: "resolved" | "dismissed") =>
+    request<{ verdict: Verdict | null }>(
+      `/packages/${encodeURIComponent(packageId)}/versions/${version}/verdict/status`,
+      { method: "PATCH", body: JSON.stringify({ status }) },
+    ),
+  verdictSummary: (days = 30) => request<VerdictRow[]>(`/admin/feedback/verdicts?days=${days}`),
+  verdictNotes: (row: { slot: string | null; model: string | null }) =>
+    request<VerdictNote[]>(
+      `/admin/feedback/verdicts/notes?slot=${encodeURIComponent(row.slot ?? "")}&model=${encodeURIComponent(row.model ?? "")}`,
     ),
   offload: () => request<OffloadSummary>("/admin/offload"),
   testOffload: () => request<OffloadTest | OffloadRunPodTest>("/admin/offload/test", { method: "POST" }),

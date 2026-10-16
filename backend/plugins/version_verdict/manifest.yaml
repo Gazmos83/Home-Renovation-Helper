@@ -1,0 +1,7 @@
+name: version_verdict
+description: Record the owner's verdict on a piece version (matches what they confirmed, or not, with a note), after the owner confirms.
+kind: builtin
+role: designer
+tools: [record_version_verdict]
+enabled_by_default: true
+toggleable: true

@@ -103,6 +103,7 @@ Each tool is a folder under `backend/plugins/<name>/` with `manifest.yaml` (name
 | — | `catalog_research` | Researcher | port | `search_catalog_knowledge`, `check_live_listing`, `compare_products` |
 | 7 | `revision_review` | Reviewer | port | render vs spec vs brief; discrepancy list; no write tool |
 | 8 | `photoreal_detail` | Lighting | built | detail pass on a copy of `model.blend` over the socket, allow-listed; its render is `final` tier only |
+| — | `version_verdict` | Designer | built | owner's thumbs up or down on a version with a note; a thumbs down stays open (shown to the Designer) until resolved; no render needed |
 | — | `restyle_render` | Builder | built | draft turntables of a piece's look or a room's style from `config/looks.yaml` and `config/styles.yaml`; in-memory override, nothing saved, appearance only; one guard ticket per variant, never `final`; a piece's variant is rateable |
 
 ### 5a. Pricing (kept, reworked)
@@ -175,5 +176,6 @@ None open as of 2026-10-05.
 7. [x] Plugin manifests, homeowner toggles, dev panel with per-agent model routing and token restrictions — `openspec/changes/plugins-and-budgets`
 8. [x] `photoreal_detail` over the socket, allow-list, `final` tier — `openspec/changes/photoreal-detail`
 9. [x] Feedback capture → house file + Langfuse tags — `openspec/changes/feedback-capture`
+9a. [x] Version verdicts: thumbs up or down on a version, open mismatches in the Designer's context, counts per model — asked for 2026-10-16 — `openspec/changes/version-verdict`
 10. [x] Cloud render offload — asked for 2026-10-06 — `openspec/changes/render-offload`
 10a. [x] RunPod pod created after approval and deleted when idle — asked for 2026-10-15 — `openspec/changes/render-pod-lifecycle`

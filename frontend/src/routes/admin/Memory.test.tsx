@@ -8,7 +8,7 @@ import Memory from "./Memory";
 const defaults = {
   trigger_percent: 100, keep_turns: 0, note_tokens: 400, note_instructions: "You keep the notes.", tool_result_chars: 300,
   reviews: "auto", save_preferences: true, other_builds: "line", include_preferences: true,
-  include_review_items: true, render_ratings: 5, include_extension_requests: true,
+  include_review_items: true, include_version_verdicts: true, render_ratings: 5, include_extension_requests: true,
 };
 const payload = { settings: { ...defaults, keep_turns: 3 }, defaults, fixed_rules: ["Generator-extension requests are always saved."] };
 
@@ -52,4 +52,28 @@ test("an out-of-range value shows the refusal", async () => {
   await user.type(kept, "50");
   await user.click(screen.getAllByRole("button", { name: "Save" })[1]);
   expect(await screen.findByText(/less than or equal to 20/)).toBeInTheDocument();
+});
+
+test("open version verdicts can be left out and reset", async () => {
+  let current = true;
+  const calls = stubFetch((call, init) => {
+    const body = () => ({ settings: { ...defaults, include_version_verdicts: current }, defaults, fixed_rules: [] });
+    if (call === "GET /admin/memory") return { body: body() };
+    if (call === "PUT /admin/memory") {
+      current = JSON.parse(String(init?.body)).include_version_verdicts;
+      return { body: body() };
+    }
+    if (call === "DELETE /admin/memory/include_version_verdicts") {
+      current = true;
+      return { body: body() };
+    }
+  });
+  show();
+  const user = userEvent.setup();
+  const field = await screen.findByLabelText("Open version verdicts (doesn't match)");
+  expect(field).toHaveValue("true");
+  await user.selectOptions(field, "false");
+  expect(calls).toContainEqual(["PUT", "/admin/memory", { include_version_verdicts: false }]);
+  await user.click(await screen.findByRole("button", { name: "Reset Open version verdicts (doesn't match)" }));
+  expect(calls.map(([m, u]) => `${m} ${u}`)).toContain("DELETE /admin/memory/include_version_verdicts");
 });
