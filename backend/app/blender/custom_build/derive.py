@@ -121,6 +121,10 @@ PUSH_LATCH_ID: Final = "push-latch"
 SHELF_PIN_ID: Final = "shelf-pin"
 BRACKET_COUNT_CHECK: Final = "shelf_bracket_count_for_length"
 BRACKET_SPACING_CHECK: Final = "shelf_bracket_spacing_mm"
+PIN_COUNT_CHECK: Final = "shelf_pin_count_for_width"
+HINGE_COUNT_CHECK: Final = "hinge_count_for_height"
+# Rules the calculators read from a version's frozen inputs; at most one rule may name each.
+CALCULATOR_CHECKS: Final = (BRACKET_COUNT_CHECK, BRACKET_SPACING_CHECK, PIN_COUNT_CHECK, HINGE_COUNT_CHECK)
 CONFIRMAT_ID: Final = "confirmat-7x50"
 EXTRAS_MODULE: Final = "extras"
 # The generated model's stable logical layers (furniture-package-generation).
@@ -1340,13 +1344,13 @@ def _divider_layout_rows(
             )
         )
     fixed_boards = 0
-    adjustable_boards = 0
+    adjustable_widths: list[int] = []
     for row_id, name, kind, width, depth, boards in shelf_rows(module, t, b):
         if kind == "fixed":
             fixed_boards += len(boards)
             rule = "fixed shelf boards between the sides and the dividers that cross them"
         else:
-            adjustable_boards += len(boards)
+            adjustable_widths += [width] * len(boards)
             rule = (
                 f"adjustable shelf boards between the sides and the dividers that cross them, less "
                 f"{ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance (rounded down)"
@@ -1367,8 +1371,8 @@ def _divider_layout_rows(
         8 + 4 * n_folds + 4 * fixed_boards + 4 * dividers,
         f"Rule: 8 per carcass{fold_words} plus 4 per fixed shelf board plus 4 per divider",
     )
-    if adjustable_boards:
-        _pin_line(module, adjustable_boards, inputs, hardware)
+    if adjustable_widths:
+        _pin_line(module, adjustable_widths, inputs, hardware)
     return rows
 
 
@@ -1500,13 +1504,13 @@ def _folded_module_rows(
     n_folds = len(profile.folds)
     if module.get("shelf_depths_mm"):
         fixed_boards = 0
-        adjustable_boards = 0
+        adjustable_widths: list[int] = []
         for row_id, name, kind, width, depth, boards in shelf_rows(module, t, b):
             if kind == "fixed":
                 fixed_boards += len(boards)
                 rule = "fixed shelf between the sides at the smallest inner width along its thickness"
             else:
-                adjustable_boards += len(boards)
+                adjustable_widths += [width] * len(boards)
                 rule = (
                     f"between the sides at the smallest inner width along its thickness, "
                     f"less {ADJUSTABLE_SHELF_CLEARANCE_MM:g} mm clearance (rounded down)"
@@ -1524,8 +1528,8 @@ def _folded_module_rows(
             8 + 4 * n_folds + 4 * fixed_boards,
             "Rule: 8 per carcass plus 4 per fold joint plus 4 per fixed shelf board",
         )
-        if adjustable_boards:
-            _pin_line(module, adjustable_boards, inputs, hardware)
+        if adjustable_widths:
+            _pin_line(module, adjustable_widths, inputs, hardware)
     else:
         shelf_widths = _folded_shelf_widths(module, profile)
         if shelf_widths:
@@ -1576,7 +1580,7 @@ def _folded_module_rows(
                             ),
                         )
                     )
-            _pin_line(module, len(adjustable_widths), inputs, hardware)
+            _pin_line(module, adjustable_widths, inputs, hardware)
     bottom_slot = back if back is not None else {"thickness_mm": t, "material": material}
     _add_front_rows(
         rows, module, hardware, t, b, material, bottom_slot, profile.width - 2 * t, inner_d, inputs, profile,
@@ -1641,7 +1645,7 @@ def _module_rows(
     adjustable = module.get("adjustable_shelves", 0)
     if module.get("shelf_depths_mm"):
         fixed_boards = 0
-        adjustable_boards = 0
+        adjustable_widths: list[int] = []
         for row_id, name, kind, width, depth, boards in shelf_rows(module, t, b):
             if kind == "fixed":
                 fixed_boards += len(boards)
@@ -1649,7 +1653,7 @@ def _module_rows(
                 if dividers:
                     rule += " and the dividers that cross them"
             else:
-                adjustable_boards += len(boards)
+                adjustable_widths += [width] * len(boards)
                 rule = (
                     f"adjustable shelf boards between the sides"
                     f"{' and the dividers that cross them' if dividers else ''}, less "
@@ -1663,8 +1667,8 @@ def _module_rows(
                     notes=f"Rule: {rule}{depth_note}; {_where(boards)}", module=mid,
                 )
             )
-        if adjustable_boards:
-            _pin_line(module, adjustable_boards, inputs, hardware)
+        if adjustable_widths:
+            _pin_line(module, adjustable_widths, inputs, hardware)
         if dividers:
             hardware.add(
                 CONFIRMAT_ID,
@@ -1725,7 +1729,13 @@ def _module_rows(
                     )
                 )
         if adjustable:
-            _pin_line(module, adjustable * len(widths), inputs, hardware)
+            board_widths = [inner_w] if not dividers else widths
+            _pin_line(
+                module,
+                [math.floor(width - ADJUSTABLE_SHELF_CLEARANCE_MM) for width in board_widths for _ in range(adjustable)],
+                inputs,
+                hardware,
+            )
         if dividers:
             hardware.add(
                 CONFIRMAT_ID,
@@ -1837,15 +1847,23 @@ def _shortest(form: Form) -> float:
     return form["mm"] if "mm" in form else form["min_mm"]
 
 
-def _hinge_count(sheet: Mapping[str, Any] | None, height_mm: int) -> tuple[int, bool]:
-    """(hinges per door, whether the item's own count table decided it)."""
+FALLBACK_HINGE_RULE: Final = "Rule: 2/3/4 per door up to 900/1600 mm tall/above"
+
+
+def _hinge_count(sheet: Mapping[str, Any] | None, height_mm: int, rule: Mapping[str, Any] | None) -> tuple[int, str]:
+    """(hinges per door, what decided it in words): the sheet's count table, else the hinge-count rule, else the fallback."""
     table = ((sheet or {}).get("values") or {}).get("count_table")
-    if not table:
-        return hinges_for_height(height_mm), False
-    for row in sorted(table, key=lambda r: r["max_height_mm"]):
-        if height_mm <= row["max_height_mm"]:
-            return row["hinges"], True
-    return max(table, key=lambda r: r["max_height_mm"])["hinges"], True
+    if table:
+        for row in sorted(table, key=lambda r: r["max_height_mm"]):
+            if height_mm <= row["max_height_mm"]:
+                return row["hinges"], "Rule: per the item's data sheet count table"
+        return max(table, key=lambda r: r["max_height_mm"])["hinges"], "Rule: per the item's data sheet count table"
+    if rule is not None:
+        return (
+            _count_for(rule, "max_height_mm", "hinges", height_mm),
+            _rule_words(rule, "max_height_mm", "hinges", "door", "tall"),
+        )
+    return hinges_for_height(height_mm), FALLBACK_HINGE_RULE
 
 
 def _hinge_lines(
@@ -1853,33 +1871,50 @@ def _hinge_lines(
 ) -> None:
     key = front.get("hinge") or HINGE_ID
     sheet = _sheet(inputs, key)
-    per_door, from_table = _hinge_count(sheet, door_height)
+    per_door, note = _hinge_count(sheet, door_height, _rule(inputs, HINGE_COUNT_CHECK))
     if sheet is not None:
         item = f"{sheet['maker']} {sheet['model']}"
     elif key == HINGE_ID:
         item = "Concealed hinge 110°"
     else:
         item = f"Hinge {key}"
-    note = (
-        "Rule: per the item's data sheet count table"
-        if from_table
-        else "Rule: 2/3/4 per door up to 900/1600 mm tall/above"
-    )
     hardware.add(key, item, per_door * doors, note)
     plate = ((sheet or {}).get("values") or {}).get("plate_item")
     if plate:
         hardware.add(plate, f"Mounting plate for {key}", per_door * doors, "Rule: one plate per hinge")
 
 
-def _pin_line(module: Mapping[str, Any], shelves: int, inputs: Mapping[str, Any] | None, hardware: _Hardware) -> None:
+def _count_for(rule: Mapping[str, Any], limit_key: str, count_key: str, size: float) -> int:
+    """The count of the first row whose limit is at least `size`; the rule's `beyond` past the last row."""
+    rows = sorted(rule["params"]["table"], key=lambda row: row[limit_key])
+    return next((row[count_key] for row in rows if size <= row[limit_key]), rule["params"]["beyond"])
+
+
+def _rule_words(rule: Mapping[str, Any], limit_key: str, count_key: str, each: str, measure: str) -> str:
+    """A count rule in words with its id and source, e.g. 'Rule: 4 per shelf up to 914 mm wide, 5 beyond (...)'."""
+    rows = sorted(rule["params"]["table"], key=lambda row: row[limit_key])
+    steps = ", ".join(f"{row[count_key]} per {each} up to {row[limit_key]} mm {measure}" for row in rows)
+    return f"Rule: {steps}, {rule['params']['beyond']} beyond ({rule['rule_id']}; {rule['source']['publication']})"
+
+
+def _pin_line(
+    module: Mapping[str, Any], widths: list[int], inputs: Mapping[str, Any] | None, hardware: _Hardware
+) -> None:
+    """Pins for the module's adjustable boards (their cut widths): the data sheet, else the pin-count rule."""
     key = module.get("shelf_pin") or SHELF_PIN_ID
     sheet = _sheet(inputs, key)
     per_shelf = ((sheet or {}).get("values") or {}).get("pins_per_shelf")
-    if per_shelf is None:
-        reason = "no data sheet" if sheet is None else "pins per shelf missing from its data sheet"
-        hardware.add(key, f"Shelf pin {key}", "", f"No quantity: {reason}")
-    else:
-        hardware.add(key, f"{sheet['maker']} {sheet['model']}", per_shelf * shelves, "Rule: pins per shelf × adjustable shelves")
+    if per_shelf is not None:
+        hardware.add(key, f"{sheet['maker']} {sheet['model']}", per_shelf * len(widths), "Rule: pins per shelf × adjustable shelves")
+        return
+    item = f"{sheet['maker']} {sheet['model']}" if sheet is not None else f"Shelf pin {key}"
+    rule = _rule(inputs, PIN_COUNT_CHECK)
+    if rule is not None:
+        pins = sum(_count_for(rule, "max_width_mm", "pins", width) for width in widths)
+        hardware.add(key, item, pins, _rule_words(rule, "max_width_mm", "pins", "shelf", "wide"))
+        return
+    reason = "no data sheet" if sheet is None else "pins per shelf missing from its data sheet"
+    hardware.add(key, f"Shelf pin {key}", "", f"No quantity: {reason}")
 
 
 def bracket_plan(shelf: Mapping[str, Any], inputs: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -2478,13 +2513,14 @@ def _hinge_entries(spec: Mapping[str, Any], inputs: Mapping[str, Any]) -> list[D
                 first = group[0]
                 doors = len(group)
                 height = _door_height(first)
-                per_door, _ = _hinge_count(sheet, int(height))
+                per_door, count_words = _hinge_count(sheet, int(height), _rule(inputs, HINGE_COUNT_CHECK))
+                count_clause = f"{per_door} hinges per door ({count_words.removeprefix('Rule: ')})"
                 borings = {"hinge_cup_borings": per_door * doors}
                 what = "hinges"
                 if sheet is None:
                     entries.append(_entry(
                         "hinges", part_id, what, positions=[], values=[], missing=_no_sheet(key),
-                        counts=borings, clauses=[], source_name=f"{key}: no data sheet",
+                        counts=borings, clauses=[count_clause], source_name=f"{key}: no data sheet",
                     ))
                     continue
                 source, missing = sheet["source"], []
@@ -2496,7 +2532,7 @@ def _hinge_entries(spec: Mapping[str, Any], inputs: Mapping[str, Any]) -> list[D
                         ("cup_edge_distance_mm", "cup edge distance"), ("end_distance_mm", "end distance"),
                     )
                 }
-                positions, clauses, problem = [], [], None
+                positions, clauses, problem = [], [count_clause], None
                 end = by_name["end distance"]["form"]
                 origins = ("door's bottom end", "door's top end")
                 if end is not None:

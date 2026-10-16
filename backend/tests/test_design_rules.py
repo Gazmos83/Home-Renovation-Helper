@@ -71,8 +71,12 @@ def room_context(*, door_wall: int | None = None):
 
 def test_the_shipped_table_loads() -> None:
     shipped = {r.check: r for r in load_rules()}
-    assert set(shipped) == {"shelf_bracket_count_for_length", "shelf_bracket_spacing_mm"}
-    assert all(r.severity == "warn" and r.source.publication == "topnotch-shelf-brackets" for r in shipped.values())
+    assert set(shipped) == {
+        "shelf_bracket_count_for_length", "shelf_bracket_spacing_mm", "shelf_pin_count_for_width", "hinge_count_for_height",
+    }
+    assert all(r.severity == "warn" for r in shipped.values())
+    assert all(shipped[check].source.publication == "topnotch-shelf-brackets"
+               for check in ("shelf_bracket_count_for_length", "shelf_bracket_spacing_mm"))
     spacing = shipped["shelf_bracket_spacing_mm"].params
     assert (spacing.end_distance_mm.min, spacing.end_distance_mm.max, spacing.end_distance_mm.unit) == (100, 200, "mm")
     assert [(row.max_length_mm, row.min_brackets) for row in shipped["shelf_bracket_count_for_length"].params.table] == [
@@ -84,7 +88,8 @@ def test_every_check_is_loadable_by_its_name(tmp_path: Path) -> None:
     spacing = rule("spacing", "shelf_bracket_spacing_mm",
                    {"end_distance_mm": {"min": 100, "max": 200, "unit": "mm"}, "even_tolerance_mm": 10},
                    applies_to="piece")
-    rules = table(tmp_path, passage(900), swing(), height(), span(1000), bracket_count(), spacing)
+    rules = table(tmp_path, passage(900), swing(), height(), span(1000), bracket_count(), spacing,
+                  pin_count(), hinge_count())
     assert {r.check for r in rules} == set(CHECKS)
 
 
@@ -266,3 +271,62 @@ def test_the_span_check_counts_adjustable_shelves_too(tmp_path: Path) -> None:
     assert finding.measurement.value == "964 mm" and finding.rule.id == "span"
     spec["modules"][0]["adjustable_shelves"] = 0
     assert evaluate(table(tmp_path, span(900)), "piece", spec) == []
+
+
+# --- count checks (guideline-hardware-counts) ---------------------------------------------------
+
+
+def pin_count(rule_id: str = "pin-count", **params: object) -> dict:
+    return rule(rule_id, "shelf_pin_count_for_width",
+                {"table": [{"max_width_mm": 914, "pins": 4}], "beyond": 5} | params, applies_to="piece")
+
+
+def hinge_count(rule_id: str = "hinge-count", **params: object) -> dict:
+    return rule(rule_id, "hinge_count_for_height", {
+        "table": [{"max_height_mm": 1016, "hinges": 2}, {"max_height_mm": 1524, "hinges": 3}], "beyond": 4,
+    } | params, applies_to="piece")
+
+
+def test_a_count_table_parses(tmp_path: Path) -> None:
+    pins, hinges = table(tmp_path, pin_count(), hinge_count())
+    assert [(row.max_width_mm, row.pins) for row in pins.params.table] == [(914, 4)] and pins.params.beyond == 5
+    assert [(row.max_height_mm, row.hinges) for row in hinges.params.table] == [(1016, 2), (1524, 3)]
+
+
+@pytest.mark.parametrize("hinges", ["4-5", 4.5, 0, 65])
+def test_a_count_that_is_not_one_whole_number_is_refused(tmp_path: Path, hinges: object) -> None:
+    bad = hinge_count(table=[{"max_height_mm": 1016, "hinges": hinges}])
+    with pytest.raises(DesignRulesError, match="rule 'hinge-count': parameters"):
+        table(tmp_path, bad)
+
+
+@pytest.mark.parametrize("rows", [
+    [{"max_width_mm": 914, "pins": 4}, {"max_width_mm": 600, "pins": 3}],
+    [{"max_width_mm": 914, "pins": 4}, {"max_width_mm": 914, "pins": 5}],
+])
+def test_a_count_table_that_does_not_rise_is_refused(tmp_path: Path, rows: list) -> None:
+    with pytest.raises(DesignRulesError, match="rule 'pin-count': parameters"):
+        table(tmp_path, pin_count(table=rows))
+
+
+def test_a_count_rule_raises_no_finding(tmp_path: Path) -> None:
+    spec = desk()
+    spec["modules"][0]["adjustable_shelves"] = 3
+    spec["modules"][0]["fronts"] = [{"type": "door", "count": 2, "opening": "hinge", "height": 1200}]
+    assert evaluate(table(tmp_path, pin_count(), hinge_count()), "piece", spec) == []
+
+
+@pytest.mark.parametrize("make", [pin_count, hinge_count])
+def test_two_rules_on_one_count_check_fail_naming_both(tmp_path: Path, make) -> None:
+    with pytest.raises(DesignRulesError, match="'first' and 'second'"):
+        table(tmp_path, make("first"), make("second"))
+
+
+def test_the_shipped_count_rules_cite_the_owner_notes() -> None:
+    shipped = {r.id: r for r in load_rules()}
+    pins, hinges = shipped["shelf-pin-count"], shipped["hinge-count"]
+    assert pins.source.publication == "owner:7cf8c9ef-e98f-4d3d-af6c-f0384a17ffdd" and "36 inches" in pins.source.quote
+    assert [(row.max_width_mm, row.pins) for row in pins.params.table] == [(914, 4)] and pins.params.beyond == 5
+    assert hinges.source.publication == "owner:a8147011-0f73-4e5e-a5f2-e3a9f8fd9852" and "101.6 cm" in hinges.source.quote
+    assert [(row.max_height_mm, row.hinges) for row in hinges.params.table] == [(1016, 2), (1524, 3), (2032, 4)]
+    assert hinges.params.beyond == 5

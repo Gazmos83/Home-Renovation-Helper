@@ -339,6 +339,25 @@ def test_a_rule_without_a_source_is_refused_and_nothing_changes(client: TestClie
     assert client.app.state.design_rules == before
 
 
+def test_the_shipped_count_rules_are_listed(client: TestClient) -> None:
+    listed = {rule["id"]: rule for rule in client.get("/admin/rules").json()["rules"]}
+    for rule_id, check in (("shelf-pin-count", "shelf_pin_count_for_width"), ("hinge-count", "hinge_count_for_height")):
+        assert listed[rule_id]["origin"] == "file" and listed[rule_id]["check"] == check
+        assert listed[rule_id]["severity"] == "warn" and listed[rule_id]["source"]["publication"].startswith("owner:")
+
+
+def test_a_second_pin_count_rule_is_refused_and_nothing_changes(client: TestClient, migrated_database: str) -> None:
+    before = client.app.state.design_rules
+    rule = _span_rule(
+        _note(migrated_database), id="other-pins", check="shelf_pin_count_for_width",
+        params={"table": [{"max_width_mm": 600, "pins": 4}], "beyond": 6},
+    )
+    response = client.put("/admin/rules/other-pins", json=rule)
+    assert response.status_code == 422, response.text
+    assert "'shelf-pin-count' and 'other-pins'" in response.json()["detail"]["reason"]
+    assert client.app.state.design_rules == before
+
+
 def test_an_edited_file_rule_resets_to_the_file(client: TestClient) -> None:
     listed = {rule["id"]: rule for rule in client.get("/admin/rules").json()["rules"]}
     original = {key: listed["shelf-bracket-count"][key] for key in ("id", "applies_to", "check", "params", "severity", "source")}

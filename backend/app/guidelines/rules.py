@@ -16,12 +16,11 @@ from typing import Any, Final, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from app.blender.custom_build.derive import BRACKET_COUNT_CHECK, BRACKET_SPACING_CHECK
+from app.blender.custom_build.derive import CALCULATOR_CHECKS
 from app.config import ConfigurationError
 from app.guidelines.checks import CHECKS, Measurement
 from app.guidelines.sources import source_ids
 
-BRACKET_CHECKS: Final = (BRACKET_COUNT_CHECK, BRACKET_SPACING_CHECK)
 DEFAULT_RULES_PATH: Final = Path(__file__).resolve().parents[2] / "config" / "design_rules.yaml"
 _OWNER_NOTE: Final = re.compile(r"^owner:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
@@ -115,11 +114,11 @@ def parse_rules(items: list[Any], sources: frozenset[str]) -> tuple[Rule, ...]:
         except ValidationError as error:
             raise DesignRulesError(f"rule {entry.id!r}: parameters: {error.errors()[0]['msg']}") from None
         rules.append(Rule(entry.id, entry.applies_to, entry.check, params, entry.severity, source))
-    for check in BRACKET_CHECKS:
+    for check in CALCULATOR_CHECKS:
         named = [rule.id for rule in rules if rule.check == check]
         if len(named) > 1:
             raise DesignRulesError(
-                f"rules {named[0]!r} and {named[1]!r} both name {check!r}; the bracket calculator reads one"
+                f"rules {named[0]!r} and {named[1]!r} both name {check!r}; the calculator reads one"
             )
     return tuple(rules)
 

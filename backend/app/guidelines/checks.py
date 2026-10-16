@@ -18,6 +18,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.blender.custom_build.derive import (
     BRACKET_COUNT_CHECK,
     BRACKET_SPACING_CHECK,
+    HINGE_COUNT_CHECK,
+    PIN_COUNT_CHECK,
     bay_cut_widths,
     uses_divider_layout,
     widest_shelf_board,
@@ -102,6 +104,49 @@ class BracketSpacing(BaseModel):
 
 
 # --- placement checks ------------------------------------------------------------
+
+
+class PinCountRow(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    max_width_mm: int = Field(ge=1, le=10000)
+    pins: int = Field(ge=1, le=64)
+
+
+class HingeCountRow(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    max_height_mm: int = Field(ge=1, le=10000)
+    hinges: int = Field(ge=1, le=64)
+
+
+def _rising(limits: list[int]) -> None:
+    if any(later <= earlier for earlier, later in pairwise(limits)):
+        raise ValueError("table rows must rise, each limit above the one before")
+
+
+class PinCount(BaseModel):
+    """Pins per shelf: the first row whose width is at least the board's; `beyond` past the last row."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    table: list[PinCountRow] = Field(min_length=1)
+    beyond: int = Field(ge=1, le=64)
+
+    @model_validator(mode="after")
+    def _rows_rise(self) -> PinCount:
+        _rising([row.max_width_mm for row in self.table])
+        return self
+
+
+class HingeCount(BaseModel):
+    """Hinges per door: the first row whose height is at least the door's; `beyond` past the last row."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    table: list[HingeCountRow] = Field(min_length=1)
+    beyond: int = Field(ge=1, le=64)
+
+    @model_validator(mode="after")
+    def _rows_rise(self) -> HingeCount:
+        _rising([row.max_height_mm for row in self.table])
+        return self
 
 
 def _ray_distance(origin: Point, direction: Point, corners: Sequence[Point]) -> float | None:
@@ -294,6 +339,11 @@ def shelf_bracket_spacing(spec: Mapping[str, Any], params: BracketSpacing) -> li
     return found
 
 
+def counts_only(_spec: Mapping[str, Any], _params: BaseModel) -> list[Measurement]:
+    """A spec states no pin or hinge count, so a count rule judges nothing; it only gives the calculator its count."""
+    return []
+
+
 @dataclass(frozen=True, slots=True)
 class CheckSpec:
     applies_to: Applies
@@ -308,4 +358,6 @@ CHECKS: Final[dict[str, CheckSpec]] = {
     "shelf_span_mm_for_thickness": CheckSpec("piece", ShelfSpan, shelf_span),
     BRACKET_COUNT_CHECK: CheckSpec("piece", BracketCount, shelf_bracket_count),
     BRACKET_SPACING_CHECK: CheckSpec("piece", BracketSpacing, shelf_bracket_spacing),
+    PIN_COUNT_CHECK: CheckSpec("piece", PinCount, counts_only),
+    HINGE_COUNT_CHECK: CheckSpec("piece", HingeCount, counts_only),
 }

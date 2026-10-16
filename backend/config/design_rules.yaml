@@ -14,7 +14,15 @@
 #                                            (the cited end range is kept as a range; the owner's outer brackets
 #                                            are judged against it, and the gaps between them for evenness; it
 #                                            gives the calculator its end range)
-# At most one rule may name each bracket check.
+#   shelf_pin_count_for_width     piece      params: table [{max_width_mm, pins}], beyond
+#                                            (an adjustable shelf board takes the first row whose width is at least
+#                                            its cut width, `beyond` past the last row; it gives the cut list its pin
+#                                            count when the pin's data sheet has none, and judges nothing)
+#   hinge_count_for_height        piece      params: table [{max_height_mm, hinges}], beyond
+#                                            (a door takes the first row whose height is at least its own, `beyond`
+#                                            past the last row; it gives the hinge count when the hinge's data sheet
+#                                            has no count table, and judges nothing)
+# At most one rule may name each bracket or count check.
 # with a severity (warn | refuse) and the clause the limit is quoted from:
 #   source: {publication: <id in guideline_sources.yaml, or owner:<note uuid>>, section: ..., quote: ...}
 # A rule without a source, with an unknown check or source, or with parameters its check does not
@@ -22,8 +30,9 @@
 #
 # No official limit is entered yet: a number here must be quoted from the clause it cites, and none of
 # the official publications could be read for this review (see config/guideline_sources.yaml; each host
-# refused this service's identity). The only rules shipped are the two bracket rules below, quoted from
-# `topnotch-shelf-brackets` (retailer guidance, not an official rule; hence `warn`). TODO(user): add each
+# refused this service's identity). The rules shipped are the two bracket rules below, quoted from
+# `topnotch-shelf-brackets`, and the shelf-pin and hinge count rules, quoted from the owner's notes (all
+# retailer guidance, not official rules; hence `warn`). TODO(user): add each
 # further rule by quoting its clause (from an official text you have read, or from an owner note added
 # under /guideline-notes and cited as `owner:<note id>`). Example shape, not a rule:
 #
@@ -63,3 +72,31 @@ rules:
       publication: topnotch-shelf-brackets
       section: How close should brackets be to the end of a shelf?
       quote: "The outer brackets are commonly positioned approximately 10cm to 20cm from each end. If additional brackets are required, position them at equal distances between the two outer brackets."
+  - id: shelf-pin-count
+    applies_to: piece
+    check: shelf_pin_count_for_width
+    # 36 in = 914.4 mm; cut widths are whole millimetres, so the limit is 914 mm. "5 or more" takes its minimum.
+    params:
+      table:
+        - {max_width_mm: 914, pins: 4}
+      beyond: 5
+    severity: warn
+    source:
+      publication: owner:7cf8c9ef-e98f-4d3d-af6c-f0384a17ffdd
+      section: Shelf Pin Count
+      quote: "Standard Shelves (up to 36 inches wide): Use 4 pins (one near each of the four corners). Wide or Heavy Shelves (over 36 inches wide): Use 5 or more pins"
+  - id: hinge-count
+    applies_to: piece
+    check: hinge_count_for_height
+    # 101.6 / 152.4 / 203.2 cm are exactly 1016 / 1524 / 2032 mm.
+    params:
+      table:
+        - {max_height_mm: 1016, hinges: 2}
+        - {max_height_mm: 1524, hinges: 3}
+        - {max_height_mm: 2032, hinges: 4}
+      beyond: 5
+    severity: warn
+    source:
+      publication: owner:a8147011-0f73-4e5e-a5f2-e3a9f8fd9852
+      section: Hinge Quantity per Door
+      quote: "Doors up to 101.6 cm usually need 2 hinges. Doors between 101.6 cm and 152.4 cm should have 3 hinges for added stability. Taller doors between 152.4 cm and  203.2 cm generally require 4 hinges to support the extra weight. Any door above 203.2 cm should have 5 hinges to prevent sagging over time."

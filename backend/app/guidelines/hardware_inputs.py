@@ -1,7 +1,8 @@
 """The inputs a version's drilling list is calculated from, frozen into its folder.
 
 `hardware_inputs.json` holds a copy of each data sheet the spec names (by hardware key) and of the
-two bracket rules, so editing a sheet or a rule later never changes an existing version.
+calculator rules (the bracket rules and the pin and hinge count rules), so editing a sheet or a rule
+later never changes an existing version.
 """
 
 from __future__ import annotations
@@ -12,14 +13,11 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.blender.custom_build.derive import (
-    BRACKET_COUNT_CHECK,
-    BRACKET_SPACING_CHECK,
+    CALCULATOR_CHECKS,
     HINGE_ID,
     SHELF_PIN_ID,
 )
 from app.guidelines.datasheets import sheet_for_key
-
-BRACKET_CHECKS = (BRACKET_COUNT_CHECK, BRACKET_SPACING_CHECK)
 
 
 def named_keys(spec: Mapping[str, Any]) -> tuple[list[str], bool]:
@@ -45,7 +43,7 @@ def freeze_inputs(session: Session, design_rules: Iterable[Any], spec: Mapping[s
             data_sheets[plate] = _frozen_sheet(plate_sheet)
     rules: dict[str, Any] = {}
     for rule in design_rules:
-        if rule.check in BRACKET_CHECKS:
+        if rule.check in CALCULATOR_CHECKS:
             rules[rule.check] = {
                 "rule_id": rule.id,
                 "params": rule.params.model_dump(mode="json"),

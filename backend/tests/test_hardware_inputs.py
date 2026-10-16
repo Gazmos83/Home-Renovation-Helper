@@ -12,11 +12,13 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.blender import storage
-from app.blender.custom_build.derive import drilling, emitted_spec
+from app.blender.custom_build.derive import derive, drilling, emitted_spec
 from app.db.session import make_engine
 from app.guidelines import datasheets
 from app.guidelines.hardware_inputs import freeze_inputs
-from app.guidelines.rules import RuleSource
+from app.guidelines.rule_overrides import file_items
+from app.guidelines.rules import RuleSource, load_rules, parse_rules
+from app.guidelines.sources import source_ids
 from app.packages import service
 from tests.drill_helpers import COUNT_TABLE, build, module, wall_shelf
 
@@ -79,6 +81,21 @@ def test_the_file_holds_only_the_named_keys_and_both_bracket_rules(session: Sess
     assert frozen["rules"]["shelf_bracket_spacing_mm"]["source"]["publication"] == "topnotch-shelf-brackets"
 
 
+def test_the_pin_and_hinge_count_rules_are_frozen_too(session: Session) -> None:
+    pins = {"table": [{"max_width_mm": 914, "pins": 4}], "beyond": 5}
+    hinges = {"table": [{"max_height_mm": 1016, "hinges": 2}], "beyond": 3}
+    rules = (*RULES, _rule("shelf_pin_count_for_width", pins), _rule("hinge_count_for_height", hinges))
+    frozen = freeze_inputs(session, rules, SPEC)
+    assert sorted(frozen["rules"]) == [
+        "hinge_count_for_height", "shelf_bracket_count_for_length", "shelf_bracket_spacing_mm", "shelf_pin_count_for_width",
+    ]
+    assert frozen["rules"]["shelf_pin_count_for_width"] == {
+        "rule_id": "rule-shelf_pin_count_for_width", "params": pins,
+        "source": {"publication": "topnotch-shelf-brackets", "section": "Where?", "quote": "10cm to 20cm"},
+    }
+    assert frozen["rules"]["hinge_count_for_height"]["params"] == hinges
+
+
 def test_a_named_plate_sheet_is_frozen_with_its_hinge(session: Session) -> None:
     _sheet(session, "hinge-concealed-110", "hinge", {"plate_item": "plate-110"})
     _sheet(session, "plate-110", "hinge", {})
@@ -104,6 +121,26 @@ def test_editing_a_sheet_afterwards_leaves_the_versions_list_unchanged(session: 
     assert drilling(SPEC, storage.read_hardware_inputs(folder)) == before
     newer = freeze_inputs(session, RULES, SPEC)
     assert newer["data_sheets"]["hinge-concealed-110"]["values"]["cup_edge_distance_mm"] == {"value": 9}
+
+
+def test_editing_the_hinge_count_rule_afterwards_leaves_the_version_unchanged(session: Session, tmp_path: Path) -> None:
+    shipped = load_rules()
+    created = service.create_version(tmp_path, "hall-cabinet", SPEC, lambda version: None,
+                                     inputs=freeze_inputs(session, shipped, SPEC))
+    folder = storage.version_dir(tmp_path, "hall-cabinet", created["version"])
+    before = (drilling(SPEC, storage.read_hardware_inputs(folder)), derive(SPEC, storage.read_hardware_inputs(folder))[1])
+    assert before[0]["counts"]["hinge_cup_borings"] == 2
+
+    items = [item for item in file_items() if item["id"] != "hinge-count"]
+    edited = next(item for item in file_items() if item["id"] == "hinge-count")
+    edited["params"] = {"table": [{"max_height_mm": 1000, "hinges": 3}], "beyond": 4}
+    newer_rules = parse_rules([*items, edited], source_ids())
+
+    frozen = storage.read_hardware_inputs(folder)
+    assert (drilling(SPEC, frozen), derive(SPEC, frozen)[1]) == before
+    newer = freeze_inputs(session, newer_rules, SPEC)
+    assert newer["rules"]["hinge_count_for_height"]["params"]["table"] == [{"max_height_mm": 1000, "hinges": 3}]
+    assert drilling(SPEC, newer)["counts"]["hinge_cup_borings"] == 3
 
 
 def test_a_version_without_the_file_derives_as_before_with_no_drilling(tmp_path: Path) -> None:
