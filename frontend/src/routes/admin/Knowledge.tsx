@@ -2,7 +2,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { api, type KnowledgeSearch, type KnowledgeVersion } from "../../lib/api";
 import { downloadJson } from "../../lib/download";
-import { Page } from "@/components/Page";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -92,8 +91,8 @@ export default function Knowledge() {
     finally { setBusy(false); }
   }
 
-  return <Page>
-    <h1>Engineering knowledge</h1>
+  return <div className="space-y-4">
+    <h2>Engineering knowledge</h2>
     <EngineeringMethods />
     <p>Register official links first. Rights approval, ingestion and technical review are separate steps. A reviewed property is evidence, not a calculated capacity or installation approval.</p>
     <div className="sticky top-0 z-10 bg-background">
@@ -190,5 +189,5 @@ export default function Knowledge() {
       <JsonField id="knowledge-filters" label="Applicability filters (JSON)" value={filters} onChange={setFilters} /><div className="flex flex-wrap items-center gap-3"><Button disabled={busy}>Preview eligible evidence</Button>{feedback("search")}</div>
     </form>
     {result && <section aria-label="Retrieval results"><h2>Retrieval results</h2>{result.limitation && <p>{result.limitation}</p>}<h3>Eligible evidence ({result.evidence.length})</h3><pre className="overflow-auto text-xs">{json(result.evidence)}</pre><h3>Metadata only ({result.metadata_only.length})</h3><pre className="overflow-auto text-xs">{json(result.metadata_only)}</pre></section>}
-  </Page>;
+  </div>;
 }

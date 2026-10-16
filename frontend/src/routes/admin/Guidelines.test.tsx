@@ -15,6 +15,9 @@ const uploaded = {
   size_bytes: 2048, ingested_at: "2026-10-10T08:00:00Z", error: null,
 };
 
+/** The "Guideline PDFs" section; the note form below it also has a "Title" field. */
+const pdfs = () => within(screen.getByRole("region", { name: "Guideline PDFs" }));
+
 function show() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -37,11 +40,11 @@ test("sources are listed, a PDF is uploaded with its details, and only an upload
   expect(within(rows[1]).getByRole("button", { name: "Delete" })).toBeInTheDocument();
 
   const user = userEvent.setup();
-  await user.upload(screen.getByLabelText("PDF"), new File(["%PDF-1.4"], "asr.pdf", { type: "application/pdf" }));
-  await user.type(screen.getByLabelText("Title"), "ASR A1.2");
-  await user.type(screen.getByLabelText("Jurisdiction"), "Germany");
-  await user.type(screen.getByLabelText("Published on"), "2022-01-01");
-  await user.type(screen.getByLabelText("Licence note"), "BAuA");
+  await user.upload(pdfs().getByLabelText("PDF"), new File(["%PDF-1.4"], "asr.pdf", { type: "application/pdf" }));
+  await user.type(pdfs().getByLabelText("Title"), "ASR A1.2");
+  await user.type(pdfs().getByLabelText("Jurisdiction"), "Germany");
+  await user.type(pdfs().getByLabelText("Published on"), "2022-01-01");
+  await user.type(pdfs().getByLabelText("Licence note"), "BAuA");
   await user.click(screen.getByRole("button", { name: "Upload and ingest" }));
   const post = calls.find(([method, url]) => method === "POST" && url === "/admin/guidelines");
   const form = post ? (post[2] as FormData) : null;
@@ -60,11 +63,24 @@ test("a refused upload shows the reason", async () => {
   });
   show();
   const user = userEvent.setup();
-  await user.upload(screen.getByLabelText("PDF"), new File(["png"], "x.pdf", { type: "application/pdf" }));
-  await user.type(screen.getByLabelText("Title"), "x");
-  await user.type(screen.getByLabelText("Jurisdiction"), "x");
-  await user.type(screen.getByLabelText("Published on"), "2022-01-01");
-  await user.type(screen.getByLabelText("Licence note"), "x");
+  await user.upload(pdfs().getByLabelText("PDF"), new File(["png"], "x.pdf", { type: "application/pdf" }));
+  await user.type(pdfs().getByLabelText("Title"), "x");
+  await user.type(pdfs().getByLabelText("Jurisdiction"), "x");
+  await user.type(pdfs().getByLabelText("Published on"), "2022-01-01");
+  await user.type(pdfs().getByLabelText("Licence note"), "x");
   await user.click(screen.getByRole("button", { name: "Upload and ingest" }));
   expect(await screen.findByText(/the file is not a PDF/)).toBeInTheDocument();
+});
+
+test("the view holds the guideline PDFs, the guideline notes and the hardware data", async () => {
+  stubFetch((call) => {
+    if (call === "GET /admin/guidelines") return { body: [listed] };
+    if (call === "GET /guideline-notes") return { body: [] };
+    if (call === "GET /hardware-data") return { body: [] };
+  });
+  show();
+  expect(await screen.findByRole("heading", { name: "Upload a PDF" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Guideline notes" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Hardware data" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
 });

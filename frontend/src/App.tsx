@@ -3,28 +3,18 @@ import { Link, Navigate, NavLink, Route, Routes, useLocation, useParams } from "
 import { cn } from "@/lib/utils";
 import { api, onUnauthorized } from "./lib/api";
 import { Page } from "@/components/Page";
-import GuidelineNotes from "./routes/GuidelineNotes";
 import Help from "./routes/Help";
 import Login from "./routes/Login";
 import PieceInspector from "./routes/PieceInspector";
 import Studio from "./routes/Studio";
-import AdminGuidelines from "./routes/admin/Guidelines";
-import Knowledge from "./routes/admin/Knowledge";
-import Rules from "./routes/admin/Rules";
 
 const links = [
   ["/studio", "Design Studio"],
-  ["/guidelines", "Guidelines"],
   ["/help", "Help"],
 ] as const;
-const adminLinks = [
-  ["/admin/guidelines", "Guidelines"],
-  ["/admin/knowledge", "Knowledge"],
-  ["/admin/rules", "Rules"],
-] as const;
 
-/** The Design Studio's developer tab keeps the developer route tree, so its entry is current there too. */
-const ALSO_CURRENT: Record<string, string> = { "/studio": "/admin/agents" };
+/** The Design Studio's developer tabs keep the developer route tree, so its entry is current there too. */
+const ALSO_CURRENT: Record<string, string[]> = { "/studio": ["/admin/agents", "/admin/design-knowledge"] };
 
 const navItemClass = (active: boolean) =>
   cn(
@@ -34,9 +24,9 @@ const navItemClass = (active: boolean) =>
 
 function NavItem({ to, label }: { to: string; label: string }) {
   const { pathname } = useLocation();
-  const also = ALSO_CURRENT[to];
-  // NavLink marks only its own path current, so the other path gets a plain link marked by hand.
-  if (also !== undefined && (pathname === also || pathname.startsWith(`${also}/`))) {
+  const also = ALSO_CURRENT[to] ?? [];
+  // NavLink marks only its own path current, so the other paths get a plain link marked by hand.
+  if (also.some((path) => pathname === path || pathname.startsWith(`${path}/`))) {
     return (
       <Link to={to} aria-current="page" className={navItemClass(true)}>
         {label}
@@ -102,14 +92,6 @@ export default function App() {
             {links.map(([to, label]) => (
               <NavItem key={to} to={to} label={label} />
             ))}
-            {dev && (
-              <>
-                <span className="mx-2 h-5 w-px bg-border" aria-hidden />
-                {adminLinks.map(([to, label]) => (
-                  <NavItem key={to} to={to} label={label} />
-                ))}
-              </>
-            )}
           </nav>
         </header>
       )}
@@ -131,7 +113,10 @@ export default function App() {
         <Route path="/price-list" element={<Navigate to="/studio/pricing/prices" replace />} />
         <Route path="/snapshots" element={<Navigate to="/studio/pricing/snapshots" replace />} />
         <Route path="/remnants" element={<Navigate to="/studio/pricing/remnants" replace />} />
-        <Route path="/guidelines" element={signedIn ? <GuidelineNotes /> : <Navigate to="/login" replace />} />
+        <Route
+          path="/guidelines"
+          element={signedIn && dev ? <Navigate to="/admin/design-knowledge/guidelines" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+        />
         <Route path="/help" element={signedIn ? <Help /> : <Navigate to="/login" replace />} />
         <Route
           path="/admin/agents"
@@ -170,14 +155,25 @@ export default function App() {
           element={signedIn && dev ? <Navigate to="/admin/agents/workflow" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
+          path="/admin/design-knowledge"
+          element={signedIn && dev ? <Studio dev fixedTab="design-knowledge" /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+        />
+        <Route
+          path="/admin/design-knowledge/:tab"
+          element={signedIn && dev ? <Studio dev fixedTab="design-knowledge" /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+        />
+        <Route
           path="/admin/guidelines"
-          element={signedIn && dev ? <AdminGuidelines /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/design-knowledge/guidelines" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
         <Route
           path="/admin/rules"
-          element={signedIn && dev ? <Rules /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/design-knowledge/rules" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
         />
-        <Route path="/admin/knowledge" element={signedIn && dev ? <Knowledge /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />} />
+        <Route
+          path="/admin/knowledge"
+          element={signedIn && dev ? <Navigate to="/admin/design-knowledge/engineering" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+        />
         <Route
           path="/admin/memory"
           element={signedIn && dev ? <Navigate to="/admin/agents/memory" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}

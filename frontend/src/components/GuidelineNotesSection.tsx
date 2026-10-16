@@ -1,13 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
-import { api, type GuidelineNote } from "../lib/api";
-import { FieldError, fieldError, formError } from "../lib/form";
+import { api, type GuidelineNote } from "@/lib/api";
+import { FieldError, fieldError, formError } from "@/lib/form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cardClass } from "@/components/ui/card";
-import { Page } from "@/components/Page";
-import { HardwareDataSection } from "@/components/HardwareDataSection";
 
 const FIELDS = ["title", "body", "citation", "value", "unit"];
 
@@ -36,7 +34,7 @@ function NoteForm({ note, onDone }: { note?: GuidelineNote; onDone: () => void }
 
   return (
     <form onSubmit={submit} className={cardClass} aria-label={note ? `Edit ${note.title}` : "Add a note"}>
-      <h2>{note ? "Edit note" : "Add a note"}</h2>
+      <h3>{note ? "Edit note" : "Add a note"}</h3>
       <Label htmlFor={`title-${id}`}>Title</Label>
       <Input id={`title-${id}`} value={title} onChange={(e) => setTitle(e.target.value)} />
       <FieldError message={fieldError(save.error, "title")} />
@@ -57,7 +55,8 @@ function NoteForm({ note, onDone }: { note?: GuidelineNote; onDone: () => void }
   );
 }
 
-export default function GuidelineNotes() {
+/** The owner's hand-written guideline notes, on the Guidelines view of the Design Knowledge tab (merge-guideline-pages). */
+export function GuidelineNotesSection() {
   const queryClient = useQueryClient();
   const notes = useQuery({ queryKey: ["guideline-notes"], queryFn: api.guidelineNotes });
   const [editing, setEditing] = useState<string | null>(null);
@@ -65,8 +64,8 @@ export default function GuidelineNotes() {
   const remove = useMutation({ mutationFn: api.deleteNote, onSuccess: reload });
 
   return (
-    <Page>
-      <h1>Guideline notes</h1>
+    <section aria-label="Guideline notes" className="grid gap-3">
+      <h2>Guideline notes</h2>
       <p>Rules and numbers from your own sources. The designer can look them up and cites the source you give.</p>
       {(notes.data ?? []).map((note) =>
         editing === note.id ? (
@@ -89,7 +88,6 @@ export default function GuidelineNotes() {
         ),
       )}
       <NoteForm onDone={reload} />
-      <HardwareDataSection />
-    </Page>
+    </section>
   );
 }

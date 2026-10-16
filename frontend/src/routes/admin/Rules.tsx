@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { cardClass } from "@/components/ui/card";
-import { Page } from "@/components/Page";
 
 const ORIGIN: Record<DesignRule["origin"], string> = {
   file: "checked-in table",
@@ -56,14 +55,14 @@ export default function Rules() {
   const save = useMutation({ mutationFn: api.saveDesignRule, onSuccess: saved, onError: (e: Error) => setError(e.message) });
   const reset = useMutation({ mutationFn: api.resetDesignRule, onSuccess: saved, onError: (e: Error) => setError(e.message) });
 
-  if (!rules.data) return <Page>Loading…</Page>;
+  if (!rules.data) return <p>Loading…</p>;
   const checks = rules.data.checks;
   const set = (field: keyof Draft) => (event: { target: { value: string } }) =>
     setDraft({ ...draft, [field]: event.target.value });
 
   return (
-    <Page>
-      <h1>Design rules</h1>
+    <div className="space-y-4">
+      <h2>Design rules</h2>
       <p className="text-sm text-muted-foreground">
         Every rule cites its source. Rules added or edited here apply from the next check, without a restart; the
         checked-in table is never rewritten.
@@ -174,7 +173,7 @@ export default function Rules() {
       </form>
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <h1>Open items for you</h1>
+      <h2>Open items for you</h2>
       <p className="text-sm text-muted-foreground">Every TODO(user) in the backend code and configuration.</p>
       <ul className="space-y-1">
         {(items.data ?? []).map((item) => (
@@ -186,6 +185,6 @@ export default function Rules() {
           </li>
         ))}
       </ul>
-    </Page>
+    </div>
   );
 }

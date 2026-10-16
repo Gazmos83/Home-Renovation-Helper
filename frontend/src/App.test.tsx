@@ -244,19 +244,62 @@ function stubDeveloper() {
   });
 }
 
-test("the developer header keeps Guidelines, Knowledge and Rules and has no AI & Agent Settings entry (Navigation)", async () => {
+test("the developer header has Design Studio and Help only, with no developer entries (Navigation)", async () => {
   stubDeveloper();
   show("/pieces");
   const nav = await screen.findByRole("navigation", { name: "Main" });
-  const rules = await within(nav).findByRole("link", { name: "Rules" });
-  expect(rules).toBeInTheDocument();
-  const labels = within(nav).getAllByRole("link").map((link) => link.textContent);
-  expect(labels.slice(labels.lastIndexOf("Guidelines"))).toEqual(["Guidelines", "Knowledge", "Rules"]);
-  for (const old of ["AI & Agent Settings", "Pricing Overview", "Models", "Plugins", "Usage", "Feedback", "Offload", "Calls", "Workflow", "Memory"]) {
-    expect(within(nav).queryByRole("link", { name: old })).not.toBeInTheDocument();
-  }
   expect(await screen.findByRole("tab", { name: "AI & Agent Settings" })).toHaveAttribute("href", "/admin/agents");
+  expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Design Studio", "Help"]);
+  expect(screen.getByRole("tab", { name: "Design Knowledge" })).toHaveAttribute("href", "/admin/design-knowledge");
 });
+
+test("the homeowner header has no Guidelines entry", async () => {
+  stubFetch((call) => {
+    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+    if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+    if (call === "GET /packages") return { body: [] };
+  });
+  show("/studio/pieces");
+  const nav = await screen.findByRole("navigation", { name: "Main" });
+  expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Design Studio", "Help"]);
+});
+
+test.each([
+  ["/guidelines", "Guidelines"],
+  ["/admin/guidelines", "Guidelines"],
+  ["/admin/knowledge", "Engineering Knowledge"],
+  ["/admin/rules", "Design Rules"],
+])("the old address %s opens the %s view of Design Knowledge (Old addresses)", async (path, view) => {
+  stubDeveloper();
+  show(path);
+  expect(await screen.findByRole("tab", { name: "Design Knowledge" })).toHaveAttribute("aria-selected", "true");
+  const [column] = screen.getAllByRole("navigation", { name: "Design Knowledge views" });
+  expect(within(column).getByRole("link", { name: view })).toHaveAttribute("aria-current", "page");
+});
+
+test("a reloaded Design Knowledge view marks Design Studio current (View address reloaded)", async () => {
+  stubDeveloper();
+  show("/admin/design-knowledge/engineering");
+  const [column] = await screen.findAllByRole("navigation", { name: "Design Knowledge views" });
+  expect(within(column).getByRole("link", { name: "Engineering Knowledge" })).toHaveAttribute("aria-current", "page");
+  const nav = screen.getByRole("navigation", { name: "Main" });
+  expect(within(nav).getByRole("link", { name: "Design Studio" })).toHaveAttribute("aria-current", "page");
+});
+
+test.each(["/guidelines", "/admin/design-knowledge/guidelines"])(
+  "without the developer gate %s opens Pieces with no Design Knowledge tab (Not a developer)",
+  async (path) => {
+    stubFetch((call) => {
+      if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+      if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+      if (call === "GET /packages") return { body: [] };
+    });
+    show(path);
+    expect(await screen.findByRole("tab", { name: "Pieces" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("tab", { name: "Design Knowledge" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Guideline notes" })).not.toBeInTheDocument();
+  },
+);
 
 test("an old developer address opens its view of the Design Studio's developer tab (Old address)", async () => {
   stubDeveloper();

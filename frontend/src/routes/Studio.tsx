@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Armchair, MessagesSquare, Package, Plus, Ruler, Settings, Tag } from "lucide-react";
+import { Armchair, BookOpen, MessagesSquare, Package, Plus, Ruler, Settings, Tag } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 import { Link, Navigate, useLocation, useParams } from "react-router-dom";
 import { api } from "../lib/api";
@@ -17,12 +17,13 @@ import { PRICING_VIEWS, PricingTab } from "./Pricing";
 import Rooms from "./Rooms";
 import Workspace, { useNewConversation } from "./Workspace";
 import { AGENT_VIEWS, AgentSettingsTab } from "./admin/AgentSettings";
+import { DesignKnowledgeTab, KNOWLEDGE_VIEWS } from "./admin/DesignKnowledge";
 
 type Tab = {
   id: string;
   label: string;
   icon: typeof Armchair;
-  /** Where the tab's addresses start; the developer tab keeps the developer route tree. */
+  /** Where the tab's addresses start; the developer tabs keep the developer route tree. */
   base: string;
   body: (view: string | undefined) => ReactNode;
   /** Shown only when the developer gate answers. */
@@ -41,6 +42,14 @@ const TABS: Tab[] = [
     icon: Settings,
     base: "/admin/agents",
     body: (view) => <AgentSettingsTab view={view} />,
+    dev: true,
+  },
+  {
+    id: "design-knowledge",
+    label: "Design Knowledge",
+    icon: BookOpen,
+    base: "/admin/design-knowledge",
+    body: (view) => <DesignKnowledgeTab view={view} />,
     dev: true,
   },
 ];
@@ -129,6 +138,12 @@ function useSubMenu(tab: string, view: string | undefined): Menu {
       current: view ?? "memory",
     };
   }
+  if (tab === "design-knowledge") {
+    return {
+      items: KNOWLEDGE_VIEWS.map((v) => ({ id: v.id, label: v.label, to: `/admin/design-knowledge/${v.id}` })),
+      current: view ?? "guidelines",
+    };
+  }
   return {
     items: [
       { id: "all", label: "Uploaded models", to: dialog.grid },
@@ -139,14 +154,15 @@ function useSubMenu(tab: string, view: string | undefined): Menu {
 }
 
 /**
- * Pieces, measured rooms, the model library, pricing and, for the developer, AI & agent settings as
- * tabs of one page (combine-design-studio-pages, studio-pricing-and-agent-settings-tabs), chosen from
- * a rail at the screen's left edge that looks and hides its labels like the conversation's. Each tab
- * is a link with its own address. Beside the rail, the tab's sub-menu; below 768 px it is a row above
- * the content (studio-tile-grid, studio-submenu-names).
+ * Pieces, measured rooms, the model library, pricing and, for the developer, AI & agent settings and
+ * design knowledge as tabs of one page (combine-design-studio-pages, studio-pricing-and-agent-settings-tabs,
+ * merge-guideline-pages), chosen from a rail at the screen's left edge that looks and hides its labels
+ * like the conversation's. Each tab is a link with its own address. Beside the rail, the tab's sub-menu;
+ * below 768 px it is a row above the content (studio-tile-grid, studio-submenu-names).
  *
- * `fixedTab` serves the developer tab from its own route tree (`/admin/agents/:tab`), where `:tab`
- * names the view; on `/studio/:tab/*` the view is the first path segment after the tab.
+ * `fixedTab` serves a developer tab from its own route tree (`/admin/agents/:tab`,
+ * `/admin/design-knowledge/:tab`), where `:tab` names the view; on `/studio/:tab/*` the view is the first
+ * path segment after the tab.
  */
 export default function Studio({ dev = false, fixedTab }: { dev?: boolean; fixedTab?: string }) {
   const params = useParams();
@@ -169,7 +185,7 @@ export default function Studio({ dev = false, fixedTab }: { dev?: boolean; fixed
             const Icon = t.icon;
             return (
               <Fragment key={t.id}>
-                {/* The developer tab sits below a divider after the owner tabs. */}
+                {/* The developer tabs sit below a divider after the owner tabs. */}
                 {t.dev && !tabs[index - 1]?.dev && <div aria-hidden data-rail-divider className="mx-1 h-px bg-border" />}
                 <Link
                   to={t.base}

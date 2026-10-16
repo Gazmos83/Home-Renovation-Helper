@@ -24,6 +24,8 @@ function show(path: string, dev = false) {
           <Route path="/studio/:tab/*" element={<Studio dev={dev} />} />
           <Route path="/admin/agents" element={<Studio dev fixedTab="agents" />} />
           <Route path="/admin/agents/:tab" element={<Studio dev fixedTab="agents" />} />
+          <Route path="/admin/design-knowledge" element={<Studio dev fixedTab="design-knowledge" />} />
+          <Route path="/admin/design-knowledge/:tab" element={<Studio dev fixedTab="design-knowledge" />} />
         </Routes>
         <Address />
       </MemoryRouter>
@@ -264,7 +266,7 @@ test("on a phone the names are one row that scrolls sideways (Names on a phone)"
   expect(screen.getByRole("tablist", { name: "Design Studio" })).toBeInTheDocument();
 });
 
-test("the owner's rail has no divider and no AI & Agent Settings tab (Owner rail)", () => {
+test("the owner's rail has no divider and no developer tabs (Owner rail)", () => {
   stubAll();
   show("/studio/pieces");
   expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-label"))).toEqual([
@@ -273,16 +275,18 @@ test("the owner's rail has no divider and no AI & Agent Settings tab (Owner rail
   expect(document.querySelector("[data-rail-divider]")).toBeNull();
 });
 
-test("the developer's rail ends with a divider and AI & Agent Settings (Developer rail)", () => {
+test("the developer's rail ends with a divider, AI & Agent Settings and Design Knowledge (Developer rail)", () => {
   stubAll();
   show("/studio/pieces", true);
   const list = screen.getByRole("tablist", { name: "Design Studio" });
   expect(within(list).getAllByRole("tab").map((tab) => tab.getAttribute("aria-label"))).toEqual([
-    "Workspace", "Pieces", "Measured Rooms", "Model Library", "Pricing", "AI & Agent Settings",
+    "Workspace", "Pieces", "Measured Rooms", "Model Library", "Pricing", "AI & Agent Settings", "Design Knowledge",
   ]);
+  expect(list.querySelectorAll("[data-rail-divider]")).toHaveLength(1);
   const divider = list.querySelector("[data-rail-divider]");
   expect(divider?.nextElementSibling).toBe(screen.getByRole("tab", { name: "AI & Agent Settings" }));
   expect(screen.getByRole("tab", { name: "AI & Agent Settings" })).toHaveAttribute("href", "/admin/agents");
+  expect(screen.getByRole("tab", { name: "Design Knowledge" })).toHaveAttribute("href", "/admin/design-knowledge");
 });
 
 test("Pricing opens on Prices with its three views in the sub-menu (Prices first)", async () => {
@@ -359,4 +363,30 @@ test("on a phone the eight developer views are a sideways-scrolling row (Sub-men
   expect(within(row).getAllByRole("link").map((l) => l.textContent)).toEqual(AGENT_LABELS);
   expect(within(row).getByRole("link", { name: "Models and Routing" })).toHaveAttribute("aria-current", "page");
   expect(row).toHaveClass("overflow-x-auto", "md:hidden");
+});
+
+test("Design Knowledge opens on Guidelines with its three views in the sub-menu (Guidelines first)", async () => {
+  stubFetch((call) => {
+    if (call === "GET /admin/guidelines") return { body: [] };
+    if (call === "GET /guideline-notes") return { body: [] };
+    if (call === "GET /hardware-data") return { body: [] };
+  });
+  show("/admin/design-knowledge");
+  expect(screen.getByRole("heading", { level: 1, name: "Design Studio" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Design Knowledge" })).toHaveAttribute("aria-selected", "true");
+  const [column] = screen.getAllByRole("navigation", { name: "Design Knowledge views" });
+  expect(within(column).getAllByRole("link").map((l) => l.textContent)).toEqual([
+    "Guidelines", "Engineering Knowledge", "Design Rules",
+  ]);
+  expect(within(column).getByRole("link", { name: "Guidelines" })).toHaveAttribute("aria-current", "page");
+  expect(within(column).getByRole("link", { name: "Design Rules" })).toHaveAttribute("href", "/admin/design-knowledge/rules");
+  expect(await screen.findByRole("heading", { name: "Guideline PDFs" })).toBeInTheDocument();
+});
+
+test("a Design Knowledge view address opens that view (View address reloaded)", async () => {
+  stubFetch((call) => (call === "GET /admin/knowledge" ? { body: [] } : undefined));
+  show("/admin/design-knowledge/engineering");
+  const [column] = screen.getAllByRole("navigation", { name: "Design Knowledge views" });
+  expect(within(column).getByRole("link", { name: "Engineering Knowledge" })).toHaveAttribute("aria-current", "page");
+  expect(await screen.findByRole("heading", { name: "Engineering knowledge" })).toBeInTheDocument();
 });
