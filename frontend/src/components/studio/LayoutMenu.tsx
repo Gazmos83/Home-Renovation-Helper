@@ -14,11 +14,11 @@ import {
 /** A 32 × 20 picture of a layout: C is the chat, P the piece, R the room. */
 function Pictogram({ layout }: { layout: WorkspaceLayout }) {
   const boxes =
-    layout === "piece-room"
+    layout === "chat-above"
       ? [
-          { x: 1, y: 1, w: 14, h: 10, label: "P" },
-          { x: 17, y: 1, w: 14, h: 10, label: "R" },
-          { x: 1, y: 13, w: 30, h: 6, label: "C" },
+          { x: 1, y: 1, w: 30, h: 6, label: "C" },
+          { x: 1, y: 9, w: 14, h: 10, label: "P" },
+          { x: 17, y: 9, w: 14, h: 10, label: "R" },
         ]
       : [
           { x: 1, y: 1, w: 14, h: 18, label: "C" },

@@ -3,18 +3,16 @@ import { Link, Navigate, NavLink, Route, Routes, useLocation, useParams } from "
 import { cn } from "@/lib/utils";
 import { api, onUnauthorized } from "./lib/api";
 import { Page } from "@/components/Page";
+import { Button } from "@/components/ui/button";
 import Help from "./routes/Help";
 import Login from "./routes/Login";
 import PieceInspector from "./routes/PieceInspector";
 import Studio from "./routes/Studio";
 
-const links = [
-  ["/studio", "Design Studio"],
-  ["/help", "Help"],
-] as const;
+/** The home page: the Design Studio's Workspace, which opens the newest conversation (workspace-chat-above-layout). */
+const HOME = "/studio/workspace";
 
-/** The Design Studio's developer tabs keep the developer route tree, so its entry is current there too. */
-const ALSO_CURRENT: Record<string, string[]> = { "/studio": ["/admin/agents", "/admin/design-knowledge"] };
+const links = [["/help", "Help"]] as const;
 
 const navItemClass = (active: boolean) =>
   cn(
@@ -23,16 +21,6 @@ const navItemClass = (active: boolean) =>
   );
 
 function NavItem({ to, label }: { to: string; label: string }) {
-  const { pathname } = useLocation();
-  const also = ALSO_CURRENT[to] ?? [];
-  // NavLink marks only its own path current, so the other paths get a plain link marked by hand.
-  if (also.some((path) => pathname === path || pathname.startsWith(`${path}/`))) {
-    return (
-      <Link to={to} aria-current="page" className={navItemClass(true)}>
-        {label}
-      </Link>
-    );
-  }
   return (
     <NavLink to={to} className={({ isActive }) => navItemClass(isActive)}>
       {label}
@@ -51,6 +39,31 @@ function ConversationRedirect() {
   const { threadId = "" } = useParams();
   const { search } = useLocation();
   return <Navigate to={`/studio/workspace/${threadId}${search}`} replace />;
+}
+
+/** Ends the session and returns to sign-in; a failed request leaves the owner signed in and says why. */
+function SignOut({ onSignedOut }: { onSignedOut: () => void }) {
+  const [refused, setRefused] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  async function signOut() {
+    setBusy(true);
+    setRefused(null);
+    try {
+      await api.logout();
+      onSignedOut();
+    } catch (caught) {
+      setRefused(caught instanceof Error ? caught.message : "sign-out failed");
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="ml-auto flex shrink-0 items-center gap-2">
+      {refused && <span role="alert" className="text-sm text-destructive">{refused}</span>}
+      <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void signOut()}>
+        Sign out
+      </Button>
+    </div>
+  );
 }
 
 export default function App() {
@@ -88,10 +101,11 @@ export default function App() {
       {signedIn && (
         <header className="sticky top-0 z-40 h-[var(--header-h)] border-b bg-card">
           <nav aria-label="Main" className="mx-auto flex h-full max-w-5xl items-center gap-1 overflow-x-auto px-4 sm:px-6">
-            <span className="mr-4 shrink-0 font-semibold whitespace-nowrap">Home Renovation</span>
+            <Link to={HOME} className="mr-4 shrink-0 font-semibold whitespace-nowrap">Home Renovation</Link>
             {links.map(([to, label]) => (
               <NavItem key={to} to={to} label={label} />
             ))}
+            <SignOut onSignedOut={() => setSignedIn(false)} />
           </nav>
         </header>
       )}
@@ -115,70 +129,70 @@ export default function App() {
         <Route path="/remnants" element={<Navigate to="/studio/pricing/remnants" replace />} />
         <Route
           path="/guidelines"
-          element={signedIn && dev ? <Navigate to="/admin/design-knowledge/guidelines" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/design-knowledge/guidelines" replace /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route path="/help" element={signedIn ? <Help /> : <Navigate to="/login" replace />} />
         <Route
           path="/admin/agents"
-          element={signedIn && dev ? <Studio dev fixedTab="agents" /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Studio dev fixedTab="agents" /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route
           path="/admin/agents/:tab"
-          element={signedIn && dev ? <Studio dev fixedTab="agents" /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Studio dev fixedTab="agents" /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route
           path="/admin/models"
-          element={signedIn && dev ? <Navigate to="/admin/agents/models" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/models" replace /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route
           path="/admin/plugins"
-          element={signedIn && dev ? <Navigate to="/admin/agents/plugins" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/plugins" replace /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route
           path="/admin/usage"
-          element={signedIn && dev ? <Navigate to="/admin/agents/usage" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/usage" replace /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route
           path="/admin/feedback"
-          element={signedIn && dev ? <Navigate to="/admin/agents/score" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/score" replace /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route
           path="/admin/offload"
-          element={signedIn && dev ? <Navigate to="/admin/agents/offload" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/offload" replace /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route
           path="/admin/conversations"
-          element={signedIn && dev ? <Navigate to="/admin/agents/calls" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/calls" replace /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route
           path="/admin/workflow"
-          element={signedIn && dev ? <Navigate to="/admin/agents/workflow" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/workflow" replace /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route
           path="/admin/design-knowledge"
-          element={signedIn && dev ? <Studio dev fixedTab="design-knowledge" /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Studio dev fixedTab="design-knowledge" /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route
           path="/admin/design-knowledge/:tab"
-          element={signedIn && dev ? <Studio dev fixedTab="design-knowledge" /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Studio dev fixedTab="design-knowledge" /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route
           path="/admin/guidelines"
-          element={signedIn && dev ? <Navigate to="/admin/design-knowledge/guidelines" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/design-knowledge/guidelines" replace /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route
           path="/admin/rules"
-          element={signedIn && dev ? <Navigate to="/admin/design-knowledge/rules" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/design-knowledge/rules" replace /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route
           path="/admin/knowledge"
-          element={signedIn && dev ? <Navigate to="/admin/design-knowledge/engineering" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/design-knowledge/engineering" replace /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route
           path="/admin/memory"
-          element={signedIn && dev ? <Navigate to="/admin/agents/memory" replace /> : <Navigate to={signedIn ? "/pieces" : "/login"} replace />}
+          element={signedIn && dev ? <Navigate to="/admin/agents/memory" replace /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
-        <Route path="*" element={<Navigate to={signedIn ? "/pieces" : "/login"} replace />} />
+        <Route path="*" element={<Navigate to={signedIn ? HOME : "/login"} replace />} />
       </Routes>
     </>
   );

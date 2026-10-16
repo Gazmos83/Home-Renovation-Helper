@@ -969,8 +969,8 @@ test("the panel icons sit in the chat pane's header and name themselves on hover
   expect(within(icons).getAllByRole("button").map((b) => b.getAttribute("title"))).toEqual([
     "Tools", "Decisions so far", "Brief", "Project", "Piece", "Room",
   ]);
-  // In the header with the title, above the messages.
-  const header = icons.parentElement!;
+  // In the header row with the title (the icons sit in its right-hand group with Layout), above the messages.
+  const header = icons.parentElement!.parentElement!;
   expect(within(header).getByRole("heading", { level: 2, name: "Hall bench" })).toBeInTheDocument();
   expect(header).not.toContainElement(screen.getByRole("region", { name: "Messages" }));
 });

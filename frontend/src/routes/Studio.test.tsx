@@ -36,6 +36,7 @@ function show(path: string, dev = false) {
 function stubAll() {
   return stubFetch((call) => {
     if (call === "GET /packages") return { body: [] };
+    if (call === "GET /chat/threads") return { body: [] };
     if (call === "GET /rooms") return { body: [] };
     if (call === "GET /compositions") return { body: [] };
     if (call === "GET /models") return { body: [] };
@@ -57,13 +58,20 @@ const AGENT_LABELS = [
   "Agent Memory", "Agent Workflow", "Agent Calls", "Render Offload", "Agent Score", "Token Usage", "Plugins", "Models and Routing",
 ];
 
-test("the page opens on the Pieces tab", async () => {
+test("the page opens on the Workspace tab, with its title for screen readers only (No page title)", async () => {
   stubAll();
   show("/studio");
-  expect(screen.getByRole("heading", { level: 1, name: "Design Studio" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 1, name: "Design Studio" })).toHaveClass("sr-only");
   const tabs = screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-label"));
   expect(tabs).toEqual(["Workspace", "Pieces", "Measured Rooms", "Model Library", "Pricing"]);
-  expect(screen.getByRole("tab", { name: "Pieces" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tab", { name: "Workspace" })).toHaveAttribute("aria-selected", "true");
+});
+
+test("choosing Pieces shows the piece tiles with the pieces listed (Pieces first)", async () => {
+  const user = userEvent.setup();
+  stubAll();
+  show("/studio");
+  await user.click(screen.getByRole("tab", { name: "Pieces" }));
   expect(await screen.findByRole("button", { name: "Create A New Piece" })).toBeInTheDocument();
   const [column] = screen.getAllByRole("navigation", { name: "Pieces" });
   expect(await within(column).findByText("No pieces yet")).toBeInTheDocument();
@@ -93,11 +101,11 @@ test("a tab address opens that tab", async () => {
   expect(await screen.findByText(/No rooms measured yet/)).toBeInTheDocument();
 });
 
-test("an unknown tab opens Pieces", async () => {
+test("an unknown tab opens the Workspace", async () => {
   stubAll();
   show("/studio/quotes");
-  await waitFor(() => expect(screen.getByLabelText("address")).toHaveTextContent("/studio/pieces"));
-  expect(screen.getByRole("tab", { name: "Pieces" })).toHaveAttribute("aria-selected", "true");
+  await waitFor(() => expect(screen.getByLabelText("address")).toHaveTextContent("/studio/workspace"));
+  expect(screen.getByRole("tab", { name: "Workspace" })).toHaveAttribute("aria-selected", "true");
 });
 
 test("the tabs sit in a rail of icons that shows and hides its labels like the conversation's", async () => {

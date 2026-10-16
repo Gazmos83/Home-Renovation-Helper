@@ -27,13 +27,15 @@ const progress = {
 };
 const thread = (id: string, title: string) => ({ thread_id: id, title, package_id: null, created_at: "", last_turn_at: "" });
 
-function stubAll(threads = [thread("t2", "Shoe rack"), thread("t1", "Hall bench")]) {
+const DRAFT_NOTICE = { role: "notice", text: "Draft v2 is ready.", kind: "render", outcome: "succeeded", tier: "draft", package_id: "hall-bench", version: 2 };
+
+function stubAll(threads = [thread("t2", "Shoe rack"), thread("t1", "Hall bench")], messages: object[] = [DRAFT_NOTICE]) {
   return stubFetch((call) => {
     if (call === "GET /chat/threads") return { body: threads };
     if (call === "POST /chat/threads") return { status: 201, body: thread("t9", "") };
     if (/^GET \/chat\/threads\/t[129]$/.test(call)) {
       const id = call.split("/").at(-1);
-      return { body: { ...thread(id as string, "Hall bench"), messages: [{ role: "notice", text: "Draft v2 is ready.", kind: "render", outcome: "succeeded", tier: "draft", package_id: "hall-bench", version: 2 }], pending: null } };
+      return { body: { ...thread(id as string, "Hall bench"), messages, pending: null } };
     }
     if (/^GET \/chat\/threads\/t[129]\/progress$/.test(call)) return { body: progress };
     if (/^GET \/packages\/hall-bench\/versions\/\d$/.test(call)) {
@@ -97,25 +99,26 @@ test("the Layout menu lists the three layouts with the current one marked, and c
   await user.click(screen.getByRole("button", { name: "Layout" }));
   const items = await screen.findAllByRole("menuitemradio");
   // Each item is its pictogram (the letters C, P and R) and its name.
-  const names = ["Chat and piece", "Chat and room", "Piece and room, chat below"];
+  const names = ["Chat and piece", "Chat and room", "Piece, room and chat above"];
   expect(items).toHaveLength(3);
   items.forEach((item, index) => expect(item.textContent?.endsWith(names[index])).toBe(true));
   expect(screen.getByRole("menuitemradio", { name: /Chat and piece/ })).toHaveAttribute("aria-checked", "true");
-  await user.click(screen.getByRole("menuitemradio", { name: /Piece and room, chat below/ }));
+  await user.click(screen.getByRole("menuitemradio", { name: /Piece, room and chat above/ }));
 
   expect(await screen.findByRole("complementary", { name: "Room view" })).toBeInTheDocument();
   expect(inspector()).toBeInTheDocument();
   expect(handle("Resize the piece and the room")).toHaveAttribute("aria-valuenow", "50");
-  expect(handle("Resize the piece and room above the chat")).toHaveAttribute("aria-valuenow", "60");
-  // The piece and the room come before the chat.
-  expect(roomView()!.compareDocumentPosition(screen.getByRole("region", { name: "Messages" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(handle("Resize the chat above the piece and room")).toHaveAttribute("aria-valuenow", "40");
+  // The chat comes before the piece and the room.
+  expect(screen.getByRole("region", { name: "Messages" }).compareDocumentPosition(inspector()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(inspector()!.compareDocumentPosition(roomView()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(calls.some(([method, url]) => method === "POST" && url.includes("/turns"))).toBe(false);
 });
 
 test("the arrow keys move a focused handle, never below a fifth, and a double-click restores the default (Keyboard, Double-click resets)", async () => {
   const user = userEvent.setup();
   stubAll();
-  setWorkspaceLayout("piece-room");
+  setWorkspaceLayout("chat-above");
   show();
   await screen.findByRole("complementary", { name: "Room view" });
   const between = handle("Resize the piece and the room");
@@ -131,17 +134,30 @@ test("the arrow keys move a focused handle, never below a fifth, and a double-cl
   await waitFor(() => expect(between).toHaveAttribute("aria-valuenow", "50"));
 });
 
-test("the chat grows upwards when the handle above it moves up (Chat expanded upwards)", async () => {
+test("the chat grows when the handle below it moves down, and shrinks when it moves up (Chat expanded downwards, Chat expanded upwards)", async () => {
   const user = userEvent.setup();
   stubAll();
-  setWorkspaceLayout("piece-room");
+  setWorkspaceLayout("chat-above");
   show();
   await screen.findByRole("complementary", { name: "Room view" });
-  const above = handle("Resize the piece and room above the chat");
-  act(() => above.focus());
-  await user.keyboard("{ArrowUp}");
-  // The top panes shrink, so the chat below them grows.
-  expect(Number(above.getAttribute("aria-valuenow"))).toBeLessThan(60);
+  const below = handle("Resize the chat above the piece and room");
+  act(() => below.focus());
+  // The handle's value is the chat's share of the height.
+  await user.keyboard("{ArrowDown}");
+  expect(Number(below.getAttribute("aria-valuenow"))).toBeGreaterThan(40);
+  await user.keyboard("{Home}{ArrowUp}");
+  expect(Number(below.getAttribute("aria-valuenow"))).toBe(20);
+});
+
+test("a browser that remembered the replaced layout opens chat above at its default sizes (Old layout remembered)", async () => {
+  window.localStorage.setItem("studio.workspace.layout", "piece-room");
+  resetWorkspaceLayout();
+  stubAll();
+  show();
+  await screen.findByRole("complementary", { name: "Room view" });
+  expect(inspector()).toBeInTheDocument();
+  expect(handle("Resize the chat above the piece and room")).toHaveAttribute("aria-valuenow", "40");
+  expect(handle("Resize the piece and the room")).toHaveAttribute("aria-valuenow", "50");
 });
 
 
@@ -201,7 +217,7 @@ test("reviewing a version from the chat in the room layout switches to the piece
 test("in the piece and room layout the piece and the room are both shown and neither closes the other (Piece and room together)", async () => {
   const user = userEvent.setup();
   stubAll();
-  setWorkspaceLayout("piece-room");
+  setWorkspaceLayout("chat-above");
   show();
   await screen.findByRole("complementary", { name: "Room view" });
   await user.click(await screen.findByRole("button", { name: /Review draft revision 2/ }));
@@ -268,4 +284,111 @@ test("on a phone reviewing a version from the chat chooses the Piece tab (Phone 
   expect(tabs.getByRole("tab", { name: "Piece" })).toHaveAttribute("aria-selected", "true");
   expect(await screen.findByRole("complementary", { name: "Inspector" })).toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Messages" })).not.toBeInTheDocument();
+});
+
+const CHAT = [
+  { role: "owner", text: "Make it 10 cm narrower", message_id: "m1" },
+  { role: "assistant", text: "Done. Version 3 is ready." },
+];
+
+test("chat above shows a compact transcript on the left with the speakers inline (Compact transcript)", async () => {
+  stubAll(undefined, CHAT);
+  setWorkspaceLayout("chat-above");
+  show();
+  const list = await screen.findByRole("region", { name: "Messages" });
+  const owner = await within(list).findByText("Make it 10 cm narrower");
+  const reply = within(list).getByText("Done. Version 3 is ready.");
+  for (const text of [owner, reply]) expect(text.closest("[data-side]")).toHaveAttribute("data-side", "left");
+  // The speaker sits on the same row as the text, in a light bubble.
+  const ownerRow = owner.closest("[data-side]")!.firstElementChild!;
+  expect(ownerRow.textContent?.startsWith("You:Make it 10 cm narrower")).toBe(true);
+  expect(ownerRow).toHaveClass("flex", "border");
+  expect(ownerRow).not.toHaveClass("bg-primary");
+  expect(reply.closest("[data-side]")!.firstElementChild!.textContent?.startsWith("Foreman:")).toBe(true);
+  // An 8 px gap between messages.
+  expect(list).toHaveClass("space-y-2");
+});
+
+test("chat above puts You:, the message box and Send on one row (Compact composer)", async () => {
+  stubAll(undefined, CHAT);
+  setWorkspaceLayout("chat-above");
+  show();
+  const box = await screen.findByRole("textbox", { name: "Message" });
+  expect(box).toHaveAttribute("placeholder", "Describe what you want…");
+  const row = box.parentElement!;
+  expect(within(row).getByText("You:")).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "Send" })).toBeInTheDocument();
+  expect(within(row).queryByLabelText("Add a plan, photo, design or note")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Add a plan, photo, design or note")).toBeInTheDocument();
+});
+
+test("switching to chat and piece brings back the left and right bubbles and keeps the half-typed message (Other layouts unchanged)", async () => {
+  const user = userEvent.setup();
+  stubAll(undefined, CHAT);
+  setWorkspaceLayout("chat-above");
+  show();
+  await user.type(await screen.findByRole("textbox", { name: "Message" }), "Also lower");
+  await chooseLayout(user, "Chat and piece");
+  await screen.findByRole("complementary", { name: "Inspector" });
+  const owner = screen.getByText("Make it 10 cm narrower");
+  expect(owner.closest("[data-side]")).toHaveAttribute("data-side", "right");
+  expect(screen.getByText("Done. Version 3 is ready.").closest("[data-side]")).toHaveAttribute("data-side", "left");
+  expect(screen.getByRole("region", { name: "Messages" })).toHaveClass("space-y-4");
+  expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue("Also lower");
+  expect(screen.queryByText("You:")).not.toBeInTheDocument();
+});
+
+test("the title row is gone: Layout sits at the end of the chat header, after the Room icon (Layout button in the chat header)", async () => {
+  stubAll();
+  show();
+  const title = await screen.findByRole("heading", { level: 1, name: "Design Studio" });
+  expect(title).toHaveClass("sr-only");
+  const layout = screen.getByRole("button", { name: "Layout" });
+  const roomIcon = screen.getByRole("button", { name: "Room" });
+  expect(roomIcon.compareDocumentPosition(layout) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(layout.compareDocumentPosition(screen.getByRole("region", { name: "Messages" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test("Delete sits on the header row right of the conversation's title (Delete beside the title)", async () => {
+  const user = userEvent.setup();
+  stubAll();
+  show();
+  const title = await screen.findByRole("heading", { level: 2, name: "Hall bench" });
+  const remove = screen.getByRole("button", { name: "Delete Hall bench" });
+  const row = screen.getByRole("button", { name: "Layout" }).closest(".flex-wrap")!;
+  expect(row).toContainElement(title);
+  expect(row).toContainElement(remove);
+  expect(title.compareDocumentPosition(remove) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  await user.click(remove);
+  // The confirmation takes its own line below the row.
+  expect(screen.getByRole("group", { name: "Delete Hall bench?" })).toHaveClass("basis-full", "order-last");
+});
+
+test("switching the layout shows the chat at its last message (Last message after a switch)", async () => {
+  const user = userEvent.setup();
+  const tops = new WeakMap<Element, number>();
+  const isBox = (el: Element) => el.getAttribute("aria-label") === "Messages";
+  const spies = [
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return isBox(this) ? 900 : 0;
+    }),
+    vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(function (this: Element) {
+      return tops.get(this) ?? 0;
+    }),
+    vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (this: Element, value: number) {
+      tops.set(this, value);
+    }),
+  ];
+  try {
+    stubAll(undefined, CHAT);
+    show();
+    const box = await screen.findByRole("region", { name: "Messages" });
+    await screen.findByText("Done. Version 3 is ready.");
+    // Moving the pane resets its scroll, as a browser does.
+    tops.set(box, 0);
+    await chooseLayout(user, "Piece, room and chat above");
+    await waitFor(() => expect(box.scrollTop).toBe(900));
+  } finally {
+    spies.forEach((spy) => spy.mockRestore());
+  }
 });

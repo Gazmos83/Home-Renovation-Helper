@@ -15,11 +15,14 @@ import {
   type Upload,
 } from "../lib/api";
 import { FieldError } from "../lib/form";
+import { useMediaQuery } from "../lib/useMediaQuery";
+import { WORKSPACE_WIDE, useWorkspaceLayout } from "../lib/workspaceLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cardClass } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Attachment } from "@/components/chat/Attachment";
 import { Bubble } from "@/components/chat/Bubble";
@@ -31,6 +34,7 @@ import { Rail } from "@/components/chat/Rail";
 import { Reply } from "@/components/chat/Reply";
 import { ROLE_LABELS } from "@/components/chat/roles";
 import { WaitingBubble } from "@/components/chat/WaitingBubble";
+import { LayoutMenu } from "@/components/studio/LayoutMenu";
 import { InspectorView, parseTab, type InspectorPlace } from "@/components/inspector/InspectorView";
 import { RoomView, VersionSelect } from "@/components/inspector/RoomView";
 import { BriefPanel } from "@/components/chat/BriefPanel";
@@ -495,7 +499,8 @@ function DeleteConversation({ threadId, title }: { threadId: string; title: stri
   });
   if (confirming) {
     return (
-      <div className="grid gap-2" role="group" aria-label={`Delete ${name}?`}>
+      // On its own line below the chat pane's header row.
+      <div className="order-last grid basis-full gap-2" role="group" aria-label={`Delete ${name}?`}>
         <p className="text-sm">
           Delete “{name}”? Its messages and attached files go; its pieces and renders are kept. A deleted
           conversation cannot be restored.
@@ -528,17 +533,18 @@ function DeleteConversation({ threadId, title }: { threadId: string; title: stri
   );
 }
 
-function OwnerMessage({ m, uploadById, onEdit, onAddDecision }: {
+function OwnerMessage({ m, uploadById, onEdit, onAddDecision, compact = false }: {
   m: ChatMessage;
   uploadById: Map<string, Upload>;
   /** Only the latest owner message, while nothing runs or waits, can be edited. */
   onEdit?: () => void;
   /** Opens the decisions table with this message's text as a new row to adjust and save. */
   onAddDecision?: () => void;
+  compact?: boolean;
 }) {
   const files = (m.upload_ids ?? []).map((id) => uploadById.get(id)).filter((u): u is Upload => Boolean(u));
   return (
-    <Bubble side="right" speaker="You">
+    <Bubble side="right" speaker="You" compact={compact}>
       <p className="font-chat text-base leading-relaxed whitespace-pre-wrap">{m.text}</p>
       {files.length > 0 && (
         <span className="mt-2 flex flex-wrap gap-2">
@@ -651,6 +657,15 @@ export function useConversation(threadId: string, showPane: (pane: "piece" | "ro
   function onScroll() {
     const box = list.current;
     if (box) atBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight <= AT_BOTTOM_PX;
+  }
+  // Show the last message and follow new ones again, now and once the panes have their new sizes.
+  function toEnd() {
+    atBottom.current = true;
+    const scroll = () => {
+      if (list.current) list.current.scrollTop = list.current.scrollHeight;
+    };
+    scroll();
+    requestAnimationFrame(scroll);
   }
 
   function deleted(packageId: string, version: number) {
@@ -829,6 +844,7 @@ export function useConversation(threadId: string, showPane: (pane: "piece" | "ro
     inspected,
     list,
     onScroll,
+    toEnd,
     panel,
     setPanel,
     decisionText,
@@ -862,6 +878,14 @@ export function useConversation(threadId: string, showPane: (pane: "piece" | "ro
  */
 export function ChatPane({ c }: { c: ConversationState }) {
   const { threadId, thread, progress, running, optimistic, editing, specialists, decisionText } = c;
+  // "Piece, room and chat above" shows the chat as a compact transcript on the left (workspace-chat-above-layout).
+  const layout = useWorkspaceLayout();
+  const compact = useMediaQuery(WORKSPACE_WIDE) && layout === "chat-above";
+  // A layout switch moves the chat to another slot, which loses its scroll position: show the last
+  // message. Keyed on the layout only, so other renders leave the owner's scroll alone.
+  useLayoutEffect(() => {
+    c.toEnd();
+  }, [layout]);
   if (thread.error) {
     return (
       <div className="p-3">
@@ -879,67 +903,76 @@ export function ChatPane({ c }: { c: ConversationState }) {
   const canEdit = running === null && !pending && !optimistic;
 
   return (
-    <div className="relative flex h-full min-w-0 flex-col gap-3 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    // Compact: a pending confirmation card or question set starts at the left edge too.
+    <div className={cn("relative flex h-full min-w-0 flex-col gap-3 p-3", compact && "[&>section]:ml-0")}>
+      <div className="flex flex-wrap items-center gap-2">
         <Title key={thread.data.title} threadId={threadId} title={thread.data.title} />
-        <Rail
-          variant="row"
-          open={c.panel}
-          onOpen={c.setPanel}
-          panels={[
-            { id: "tools", label: "Tools", icon: "tools", content: <Tools threadId={threadId} /> },
-            { id: "notes", label: "Decisions so far", icon: "notes", content: (
-                <DecisionsNote
-                  key={decisionText?.id ?? "none"}
-                  threadId={threadId}
-                  prefill={decisionText ?? undefined}
-                  compressing={c.compressing}
-                  onPrefillUsed={() => c.setDecisionText(null)}
-                />
-              ),
-            },
-            { id: "brief", label: "Brief", icon: "brief", content: <BriefPanel threadId={threadId} /> },
-            { id: "project", label: "Project", icon: "project", content: <ProjectPanel progress={progress} /> },
-            {
-              id: "piece",
-              label: "Piece",
-              icon: "piece",
-              content: (
-                <PiecePanel
-                  threadId={threadId}
-                  progress={progress}
-                  onInspect={(packageId, version) => {
-                    c.inspect(packageId, version);
-                    c.setPanel(null);
-                  }}
-                  onDeleted={c.deleted}
-                  onUseLook={(text) => void c.send(text, [])}
-                />
-              ),
-            },
-            {
-              id: "room",
-              label: "Room",
-              icon: "room",
-              content: (
-                <RoomPanel
-                  threadId={threadId}
-                  progress={progress}
-                  onInspectRoom={(slug) => {
-                    c.inspectRoom(slug);
-                    c.setPanel(null);
-                  }}
-                />
-              ),
-            },
-          ]}
-        />
+        <DeleteConversation threadId={threadId} title={thread.data.title} />
+        <div className="ml-auto flex items-center gap-2">
+          <Rail
+            variant="row"
+            open={c.panel}
+            onOpen={c.setPanel}
+            panels={[
+              { id: "tools", label: "Tools", icon: "tools", content: <Tools threadId={threadId} /> },
+              { id: "notes", label: "Decisions so far", icon: "notes", content: (
+                  <DecisionsNote
+                    key={decisionText?.id ?? "none"}
+                    threadId={threadId}
+                    prefill={decisionText ?? undefined}
+                    compressing={c.compressing}
+                    onPrefillUsed={() => c.setDecisionText(null)}
+                  />
+                ),
+              },
+              { id: "brief", label: "Brief", icon: "brief", content: <BriefPanel threadId={threadId} /> },
+              { id: "project", label: "Project", icon: "project", content: <ProjectPanel progress={progress} /> },
+              {
+                id: "piece",
+                label: "Piece",
+                icon: "piece",
+                content: (
+                  <PiecePanel
+                    threadId={threadId}
+                    progress={progress}
+                    onInspect={(packageId, version) => {
+                      c.inspect(packageId, version);
+                      c.setPanel(null);
+                    }}
+                    onDeleted={c.deleted}
+                    onUseLook={(text) => void c.send(text, [])}
+                  />
+                ),
+              },
+              {
+                id: "room",
+                label: "Room",
+                icon: "room",
+                content: (
+                  <RoomPanel
+                    threadId={threadId}
+                    progress={progress}
+                    onInspectRoom={(slug) => {
+                      c.inspectRoom(slug);
+                      c.setPanel(null);
+                    }}
+                  />
+                ),
+              },
+            ]}
+          />
+          <LayoutMenu />
+        </div>
       </div>
-      <DeleteConversation threadId={threadId} title={thread.data.title} />
       <section
         ref={c.list}
         onScroll={c.onScroll}
-        className={`${cardClass} min-h-24 flex-1 space-y-4 overflow-y-auto`}
+        className={cn(
+          cardClass,
+          "min-h-24 flex-1 overflow-y-auto",
+          // Compact: everything starts at the left edge, notices included, with small gaps.
+          compact ? "space-y-2 [&>*]:ml-0 [&>[data-role=notice]]:items-start [&>[data-role=notice]]:text-left" : "space-y-4",
+        )}
         aria-label="Messages"
       >
         {messages.length === 0 && !showOptimistic && <p className="text-muted-foreground">Nothing said yet. Describe the piece you want.</p>}
@@ -968,11 +1001,12 @@ export function ChatPane({ c }: { c: ConversationState }) {
                 uploadById={c.uploadById}
                 onEdit={editable ? () => c.setEditing({ messageId: m.message_id as string, text: m.text }) : undefined}
                 onAddDecision={m.message_id ? () => c.addDecision(m.text) : undefined}
+                compact={compact}
               />
             );
           }
           return (
-            <Bubble key={index} side="left" speaker="Foreman">
+            <Bubble key={index} side="left" speaker="Foreman" compact={compact}>
               <Reply text={m.text} />
               <Button type="button" variant="outline" size="sm" className={ADD_DECISION_CLASS} onClick={() => c.addDecision(m.text)}>
                 Add to decisions
@@ -988,9 +1022,9 @@ export function ChatPane({ c }: { c: ConversationState }) {
           );
         })}
         {optimistic && showOptimistic && (
-          <OwnerMessage m={{ role: "owner", text: optimistic.text, upload_ids: optimistic.uploads.map((u) => u.upload_id) }} uploadById={new Map(optimistic.uploads.map((u) => [u.upload_id, u]))} />
+          <OwnerMessage m={{ role: "owner", text: optimistic.text, upload_ids: optimistic.uploads.map((u) => u.upload_id) }} uploadById={new Map(optimistic.uploads.map((u) => [u.upload_id, u]))} compact={compact} />
         )}
-        {running && <WaitingBubble working={running.working} tool={running.tool} />}
+        {running && <WaitingBubble working={running.working} tool={running.tool} compact={compact} />}
         {c.kept.length > 0 && (
           <p role="status" className="text-sm text-muted-foreground">
             Kept from the replaced message: {c.kept.join("; ")}.
@@ -1024,6 +1058,7 @@ export function ChatPane({ c }: { c: ConversationState }) {
           onStop={() => void c.stop()}
           editing={editing}
           onCancelEdit={() => c.setEditing(null)}
+          compact={compact}
         />
       )}
     </div>

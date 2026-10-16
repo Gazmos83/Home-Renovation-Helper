@@ -1,7 +1,11 @@
 ## RENAMED Requirements
 
 - FROM: `### Requirement: Pieces, measured rooms and the model library are tabs of one Design Studio page`
-- TO: `### Requirement: The workspace, pieces, measured rooms, the model library, pricing and agent settings are tabs of one Design Studio page
+- TO: `### Requirement: The workspace, pieces, measured rooms, the model library, pricing and agent settings are tabs of one Design Studio page`
+
+## MODIFIED Requirements
+
+### Requirement: The workspace, pieces, measured rooms, the model library, pricing and agent settings are tabs of one Design Studio page
 The Studio SHALL have a Design Studio page for the owner at `/studio` with the page title "Design Studio" on every tab, and five owner tabs, in this order: "Workspace", "Pieces", "Measured Rooms", "Model Library" and "Pricing". When the developer gate answers, a sixth tab, "AI & Agent Settings", SHALL follow them below a divider. Without the developer gate, that tab and the divider SHALL NOT be shown. Each owner tab SHALL have its own address (`/studio/workspace`, `/studio/pieces`, `/studio/rooms`, `/studio/models`, `/studio/pricing`), and opening that address SHALL show the page with that tab chosen. The AI & Agent Settings tab SHALL keep the developer route tree's addresses, as its requirement states. `/studio`, and a `/studio/` address naming no known tab, SHALL show the Pieces tab. The tabs SHALL be a rail at the screen's left edge below the header, with the same font, icon style, colour scheme and "Hide labels" switch as the conversation page's panel rail: each tab an icon, with its label beside it while labels are shown, the chosen tab highlighted, and the switch at the rail's foot. The label choice SHALL be remembered in the browser and shared with the other rails; a browser that cannot store it SHALL show the labels hidden. The tabs SHALL be exposed as a vertical tab list with the chosen tab marked selected, and only the chosen tab's content SHALL be shown.
 
 **Sub-menu.** Beside the rail, the chosen tab SHALL show a sub-menu, each entry with its label always shown:

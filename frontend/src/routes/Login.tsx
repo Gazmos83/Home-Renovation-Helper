@@ -18,7 +18,7 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
     try {
       await api.login(email, password);
       onSignedIn();
-      navigate("/pieces");
+      navigate("/studio/workspace");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "sign-in failed");
     }

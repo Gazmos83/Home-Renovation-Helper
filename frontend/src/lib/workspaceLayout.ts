@@ -1,12 +1,12 @@
 import { useSyncExternalStore } from "react";
 
-/** The Workspace's three arrangements of the chat, piece and room panes (studio-pricing-and-agent-settings-tabs). */
-export type WorkspaceLayout = "chat-piece" | "chat-room" | "piece-room";
+/** The Workspace's three arrangements of the chat, piece and room panes (studio-pricing-and-agent-settings-tabs, workspace-chat-above-layout). */
+export type WorkspaceLayout = "chat-piece" | "chat-room" | "chat-above";
 
 export const LAYOUTS: { id: WorkspaceLayout; label: string }[] = [
   { id: "chat-piece", label: "Chat and piece" },
   { id: "chat-room", label: "Chat and room" },
-  { id: "piece-room", label: "Piece and room, chat below" },
+  { id: "chat-above", label: "Piece, room and chat above" },
 ];
 
 /** The width from which the Workspace's panes sit side by side; below it one pane is shown at a time. */
@@ -20,9 +20,11 @@ function isLayout(value: unknown): value is WorkspaceLayout {
 }
 
 // Remembered per browser; a browser that cannot store it starts on the default and keeps the choice in memory.
+// "piece-room", the replaced "Piece and room, chat below" layout, opens its successor (workspace-chat-above-layout).
 function read(): WorkspaceLayout {
   try {
     const stored = window.localStorage.getItem(KEY);
+    if (stored === "piece-room") return "chat-above";
     return isLayout(stored) ? stored : DEFAULT;
   } catch {
     return DEFAULT;
@@ -61,5 +63,5 @@ export function useWorkspaceLayout(): WorkspaceLayout {
 
 /** Whether a layout has a pane for the piece or the room. */
 export function hasPane(layout: WorkspaceLayout, pane: "piece" | "room"): boolean {
-  return layout === "piece-room" || layout === `chat-${pane}`;
+  return layout === "chat-above" || layout === `chat-${pane}`;
 }

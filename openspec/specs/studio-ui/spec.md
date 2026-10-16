@@ -39,33 +39,6 @@ The Studio SHALL be a client-rendered single-page app served separately from the
 - **WHEN** the owner opens the price list without a session
 - **THEN** the sign-in page is shown and, after signing in, the price list
 
-### Requirement: Prices, snapshots and remnants are tabs of one Pricing Overview page
-The Studio SHALL have a Pricing Overview page for the owner at `/pricing` with the page title "Pricing Overview" and three tabs, in this order: "Prices", "Snapshots" and "Remnants". Each tab SHALL have its own address — `/pricing/prices`, `/pricing/snapshots`, `/pricing/remnants` — and opening that address SHALL show the page with that tab chosen. `/pricing`, and a `/pricing/` address naming no known tab, SHALL show the Prices tab. The tabs SHALL be a rail at the screen's left edge below the header, with the same font, icon style, colour scheme and "Hide labels" switch as the conversation page's panel rail: each tab an icon, with its label beside it while labels are shown, the chosen tab highlighted, and the switch at the rail's foot. The label choice SHALL be remembered in the browser and shared with the conversation page's rail; a browser that cannot store it SHALL show the labels hidden. The tabs SHALL be exposed as a vertical tab list with the chosen tab marked selected, and only the chosen tab's content SHALL be shown. The old addresses `/price-list`, `/snapshots` and `/remnants` SHALL open the matching tab. The Studio navigation SHALL show one "Pricing Overview" entry, marked current on every tab, and SHALL NOT show "Price list", "Snapshots" or "Remnants" entries. The page SHALL NOT show model names, prompts, token counts or costs of model calls. The page SHALL pass a recorded browser check before it counts as done.
-
-#### Scenario: Prices first
-- **WHEN** the owner chooses "Pricing Overview" in the navigation
-- **THEN** the Pricing Overview page opens with the Prices tab chosen and the price list shown
-
-#### Scenario: Labels shown and hidden
-- **WHEN** the owner chooses "Show labels" on the Pricing Overview rail
-- **THEN** each tab shows its label beside its icon, and the conversation page's rail shows its labels too until the owner hides them
-
-#### Scenario: Tab chosen
-- **WHEN** the owner chooses the Remnants tab
-- **THEN** the address is `/pricing/remnants`, the rack is shown, and the price list and snapshots are not
-
-#### Scenario: Tab address reloaded
-- **WHEN** the owner reloads `/pricing/snapshots`
-- **THEN** the Pricing Overview page opens with the Snapshots tab chosen
-
-#### Scenario: Old address
-- **WHEN** the owner opens a bookmark to `/snapshots`
-- **THEN** the Pricing Overview page opens with the Snapshots tab chosen
-
-#### Scenario: Navigation
-- **WHEN** the owner is signed in and looks at the Studio navigation
-- **THEN** it shows "Pricing Overview" and no "Price list", "Snapshots" or "Remnants" entry
-
 ### Requirement: The price list is managed from a page
 The Prices tab of the Pricing Overview page SHALL list entries with label, key, category, unit, effective price, provenance and, when present, the override and the captured price with its date; filter by category; add a manual entry; edit an entry; set and clear an override with a note; refresh a captured entry and show its outcome; and paste a toom URL to create an entry, showing a refusal or parse failure in plain words.
 
@@ -137,6 +110,14 @@ Neither view SHALL show a model name, prompt, token count or cost. The import an
 ### Requirement: The conversation view is the homeowner's chat
 The conversation view SHALL show the owner's messages and the replies in order as chat bubbles: replies aligned to the left, the owner's messages to the right, and forms, confirmations and question sets centred. Reply text SHALL be set in Commissioner and headings and speaker names in Oswald, served with the app, with a line height of at least 1.6 and space between paragraphs. A reply SHALL be rendered as formatted text — headings, bullet and numbered lists, tables, emphasis, inline code — with raw HTML shown as text and never rendered, and an image shown only when it points at one of the app's own routes. A fenced block marked `calc` SHALL be shown in a framed box set apart from the reply's text. A file route of a piece, a composition or an apartment shell in a reply, written bare or as a link, SHALL be shown as a link that opens in a new tab; no other address in a reply SHALL be linked. A composer SHALL send one message as one turn, and the turn's refusal SHALL be shown in words next to the composer when the service refuses it. While a turn is running the composer SHALL be disabled and a waiting bubble SHALL stand in the reply position: left-aligned, rounded, with a 2 px border and animated dots, naming the specialist currently working ("Designer is working…") and updating as the turn moves on, or "The Foreman is working…" before a specialist is chosen. Under each reply the specialists that ran in that turn SHALL be listed by role name only. A reply's title event SHALL update the heading without a reload. The heading SHALL be editable in place; saving sends the new title and an empty title is refused in words.
 
+**Compact chat.** In the "Piece, room and chat above" layout, and only there, the chat SHALL be a compact transcript instead:
+- every message, reply, notice, confirmation, question set, the waiting bubble and a pending confirmation card SHALL be aligned to the left;
+- each reply and each of the owner's messages SHALL be a light bubble (a thin border, no filled colour) with its speaker inline before the text on the same line — "Foreman:" before a reply and "You:" before the owner's message — and the text wrapping beside the speaker, not below it;
+- the vertical gap between two messages SHALL be at most 8 px;
+- the composer's first row SHALL hold, in this order, a "You:" label, the message box with the placeholder "Describe what you want…", and Send (Stop while a turn runs, "Send edit" while editing); the attach control, the edit warning and pending attachments SHALL be on rows below it.
+
+A message's formatting, links, attachments, "Edit", "Add to decisions" and the specialists listed under a reply SHALL be the same in both styles. "Chat and piece", "Chat and room" and the phone view SHALL keep the left and right bubbles.
+
 #### Scenario: Send and read
 - **WHEN** the owner types "I want a bench for the hall" and sends it
 - **THEN** the message appears at once on the right, the composer is disabled, a waiting bubble on the left names the Foreman and then Intake, and the reply replaces it on the left with "Intake" listed under it
@@ -164,6 +145,18 @@ The conversation view SHALL show the owner's messages and the replies in order a
 #### Scenario: Rename in place
 - **WHEN** the owner edits the heading to "Listening wall" and saves
 - **THEN** the heading and the conversation list show "Listening wall"
+
+#### Scenario: Compact transcript
+- **WHEN** the layout is "Piece, room and chat above" and the conversation holds the owner's "Make it 10 cm narrower" followed by a reply
+- **THEN** both are on the left, the owner's message reads "You: Make it 10 cm narrower" on one line in a light bubble, the reply starts with "Foreman:" on its first line, and the gap between them is at most 8 px
+
+#### Scenario: Compact composer
+- **WHEN** the layout is "Piece, room and chat above"
+- **THEN** "You:", the "Describe what you want…" box and Send are on one row, and "Add a plan, photo, design or note" is below it
+
+#### Scenario: Other layouts unchanged
+- **WHEN** the owner switches from "Piece, room and chat above" to "Chat and piece"
+- **THEN** the owner's messages are on the right again with "You" above them, and the half-typed message in the composer is kept
 
 ### Requirement: A pending confirmation is answered in the view
 When a reply carries a pending confirmation the view SHALL show it as a card with its subject, summary and proposal, a **Yes** and a **No** button and an optional reason, and SHALL hide the composer until it is answered. Answering SHALL send the owner's answer on the thread and show the reply that follows. Reopening a conversation with a confirmation still pending SHALL show the card again.
@@ -326,10 +319,10 @@ The developer route tree SHALL include an Offload page showing the configuration
 - **THEN** the page shows the refusal next to the target switch and the switch stays on `local`
 
 ### Requirement: Tools and Project open from a rail
-The conversation view SHALL show a narrow rail with a Tools icon and a Project icon, each with an accessible name. The rail SHALL sit at the left edge of the screen, below the header, outside the centred page, and SHALL stay visible while the page scrolls. The rail SHALL have an expand control: expanded, each icon is shown with its label ("Tools", "Project"); collapsed, only the icons are shown. The control SHALL say which it does and whether the rail is expanded. Choosing an icon SHALL open its panel as a flyout beside the rail, over the chat; choosing it again, choosing the other, pressing Escape or closing the flyout SHALL close or switch it. The chat SHALL use the full width beside the rail when no flyout is open. The Project flyout SHALL carry the project panel unchanged, including its refresh while a build or render is queued or running.
+In the Workspace, the chat pane SHALL show one header row with, from the left, the conversation's title, its rename button, its delete action ("Delete <title>") directly to the right of the title, and at the right end a row of panel icons followed by the "Layout" button: "Tools", "Decisions so far", "Brief", "Project", "Piece" and "Room", each with an accessible name and a tooltip naming it. While the Design Studio rail shows its labels, each icon SHALL show its label beside it. Choosing an icon SHALL open its panel as a flyout over the chat pane. Choosing it again, choosing another icon, pressing Escape or closing the flyout SHALL close it or switch to the other panel. The messages SHALL NOT reflow when a flyout opens. The header row SHALL stay visible while the messages scroll. Asking to delete SHALL show the confirmation on its own line below the header row. The Project flyout SHALL carry the project panel unchanged, including its refresh while a build or render is queued or running.
 
 #### Scenario: Open and close
-- **WHEN** the owner clicks the Project icon and then presses Escape
+- **WHEN** the owner clicks the Project icon in the chat pane header and then presses Escape
 - **THEN** the project panel opens over the chat and then closes, and the messages were not reflowed
 
 #### Scenario: Switch
@@ -338,11 +331,19 @@ The conversation view SHALL show a narrow rail with a Tools icon and a Project i
 
 #### Scenario: Scrolled conversation
 - **WHEN** the owner scrolls a long conversation to its end
-- **THEN** the rail is still shown at the left edge of the screen and its icons still open their panels
+- **THEN** the chat pane header and its icons are still shown, and the icons still open their panels
+
+#### Scenario: Icons named
+- **WHEN** the owner rests the pointer on the Brief icon
+- **THEN** a tooltip shows "Brief"
 
 #### Scenario: Expanded
-- **WHEN** the owner presses the expand control
-- **THEN** the rail shows "Tools" and "Project" beside their icons; pressing it again shows the icons only
+- **WHEN** the owner chooses "Show labels" on the Design Studio rail
+- **THEN** the chat pane header shows each panel's label beside its icon, and choosing "Hide labels" shows the icons only
+
+#### Scenario: Delete beside the title
+- **WHEN** the owner opens the conversation "Murphy bed" in the Workspace
+- **THEN** "Delete Murphy bed" is on the header row directly right of the title and its rename button, and no separate line holds it
 
 ### Requirement: Questions are answered one at a time
 When a reply carries a pending question set the view SHALL show it centred in place of the composer, one question at a time with its unit and, when given, its choices as buttons (a free answer remains possible). The next question SHALL appear only after the current one has an answer; the owner SHALL be able to go back to an earlier question before sending. After the last answer the owner sends all answers in one step. A "Answer in my own words" action SHALL decline the set with a message instead. Answered sets SHALL be shown in the conversation as a table with a Question and an Answer column.
@@ -450,23 +451,35 @@ The conversation view SHALL show each notice in the thread's history in its plac
 - **THEN** a notice says it did not finish and shows no button
 
 ### Requirement: A piece version is reviewed beside the conversation
-The conversation view SHALL be able to show the inspector for one piece version beside the chat: on a wide screen the chat on one side and the inspector on the other, both visible at once; on a narrow screen the inspector below the chat. The conversation route SHALL use the full width of the screen for this. While the inspector is shown the owner SHALL still be able to read, scroll and send messages, and opening the inspector SHALL NOT start a turn. The inspector SHALL have a control to close it, after which the chat takes the width again. Opening another version SHALL replace the shown one. The open inspector SHALL be part of the page's address, so a reload shows it again. A version that is not built, or a file it lacks, SHALL be named in plain words as on the inspector page.
+The Workspace's piece pane SHALL show the inspector for one piece version, with its version dropdown, in every layout that has a piece pane. It SHALL show the version named in the address (`?inspect=<package-id>/<n>`), or otherwise the latest version of the conversation's bound piece. When the conversation has no bound piece, the pane SHALL say in plain words that no piece has been designed yet in this conversation. While the inspector is shown, the owner SHALL still be able to read, scroll and send messages, and opening the inspector SHALL NOT start a turn. Opening another version, from the dropdown, a notice or the Project panel, SHALL replace the shown one and write it to the address, so a reload shows it again. When the current layout has no piece pane, opening a version SHALL switch to the "Chat and piece" layout. A version that is not built, or a file it lacks, SHALL be named in plain words as on the inspector page.
 
 #### Scenario: Review from a notice
 - **WHEN** the owner presses "Review draft v1" on a notice for `hall-bench` version 1
-- **THEN** the inspector for `hall-bench` version 1 is shown beside the chat and the composer is still usable
+- **THEN** the piece pane shows the inspector for `hall-bench` version 1 and the composer is still usable
 
 #### Scenario: Ask about a detail
-- **WHEN** the inspector is open and the owner sends "the left shelf looks too thin"
-- **THEN** the message is sent as a normal turn and the inspector stays open
+- **WHEN** the piece pane shows a version and the owner sends "the left shelf looks too thin"
+- **THEN** the message is sent as a normal turn and the piece pane still shows that version
+
+#### Scenario: Bound piece by default
+- **WHEN** the owner opens a conversation bound to `hall-bench`, whose latest version is 3, with no `?inspect=` in the address, in the "Chat and piece" layout
+- **THEN** the piece pane shows `hall-bench` version 3
+
+#### Scenario: No piece yet
+- **WHEN** the owner opens a new conversation with no bound piece in the "Chat and piece" layout
+- **THEN** the piece pane says no piece has been designed yet in this conversation
+
+#### Scenario: Opened from the room layout
+- **WHEN** the layout is "Chat and room" and the owner presses "Review draft v2" on a notice
+- **THEN** the layout switches to "Chat and piece" and the piece pane shows version 2
 
 #### Scenario: Close
-- **WHEN** the owner closes the inspector
-- **THEN** the chat takes the full width beside the rail again
+- **WHEN** the piece pane is shown in "Chat and piece" and the owner chooses the "Chat and room" layout
+- **THEN** the piece pane is no longer shown, and the room pane takes its place beside the chat
 
 #### Scenario: Reload
-- **WHEN** the owner reloads the conversation while the inspector shows `hall-bench` version 2
-- **THEN** the conversation and the inspector for version 2 are shown again
+- **WHEN** the owner reloads the conversation while the piece pane shows `hall-bench` version 2
+- **THEN** the conversation and the inspector for version 2 are shown again, in the same layout
 
 ### Requirement: Hardware data sheets are managed on the guidelines page
 The guidelines page SHALL have a Hardware data section. In it the owner can list, add, edit and delete data sheets, with each sheet's key, kind, maker, model, values and source. A value left empty SHALL be shown as missing, never as zero. Each measured value SHALL be entered as one number or as a minimum and maximum, and a range SHALL be shown as a range. Every form SHALL show the API's refusal reason next to the field it names. The section SHALL pass a recorded browser check before it counts as done.
@@ -750,20 +763,20 @@ Only "Yes" SHALL send the delete. Afterwards the Rooms page SHALL show the remai
 - **THEN** the refusal is shown next to the control and the version stays listed
 
 ### Requirement: The Project panel opens the conversation's room in 3D beside the chat
-The Project panel SHALL show, under the piece, a "Selected room" heading and below it the conversation's confirmed room or apartment by name. When its composition has a 3D model the panel SHALL offer a button to inspect it. Pressing it SHALL show the room's 3D view beside the chat in the same split screen as the piece inspector: on a wide screen the chat on one side and the room on the other, on a narrow screen the room below the chat. The view SHALL be the Rooms page's 3D view of the composition, with the same cameras, modes, surface switches and dimensions switch, the ceiling starting off. The pane SHALL offer the same version dropdown as the Rooms page (the newest five versions, the latest chosen); choosing a version SHALL show it, and a version without a 3D model SHALL be named in plain words. Opening it SHALL NOT start a turn, and the owner SHALL still be able to read, scroll and send messages. The pane SHALL show the room's name and a control to close it, after which the chat takes the width again. The open room view and its chosen version SHALL be part of the page's address, so a reload shows them again.
+The Project panel SHALL show, under the piece, a "Selected room" heading and below it the conversation's confirmed room or apartment by name. When its composition has a 3D model, the panel SHALL offer a button to inspect it. Pressing it SHALL show the room's 3D view in the Workspace's room pane, and SHALL switch to the "Chat and room" layout when the current layout has no room pane. In every layout with a room pane, the pane SHALL show the room named in the address (`?room=<slug>[/<n>]`), or otherwise the conversation's confirmed room at its composition's latest version. The view SHALL be the Rooms page's 3D view of the composition, with the same cameras, modes, surface switches and dimensions switch, and the ceiling starting off. The pane SHALL show the room's name and offer the same version dropdown as the Rooms page (the newest five versions, the latest chosen). Choosing a version SHALL show it, and a version without a 3D model SHALL be named in plain words. Opening it SHALL NOT start a turn, and the owner SHALL still be able to read, scroll and send messages. The shown room and its chosen version SHALL be part of the page's address, so a reload shows them again.
 
-When the room or apartment has no composition, the panel SHALL say in plain words that it has no 3D view yet and that the Designer can compose it. When the composition's latest version has no 3D model, the panel SHALL say that composing it again adds the 3D view. When the conversation has confirmed no room or apartment, the panel SHALL show no room section. An address naming a room view that is not the conversation's current room SHALL show no room pane.
+When the room or apartment has no composition, the panel and the room pane SHALL say in plain words that it has no 3D view yet and that the Designer can compose it. When the composition's latest version has no 3D model, they SHALL say that composing it again adds the 3D view. When the conversation has confirmed no room or apartment, the panel SHALL show no room section and the room pane SHALL say that no room is confirmed yet. An address naming a room that is not the conversation's current room SHALL be ignored, and the pane SHALL show the current room.
 
-Only one side pane SHALL be shown at a time: opening the room view SHALL close an open piece inspector, and opening a piece version (from the panel or a notice) SHALL close an open room view.
+The piece pane and the room pane SHALL be shown together in the "Piece, room and chat above" layout. Opening one SHALL NOT close the other.
 
-The panel and the pane SHALL NOT show model names of language models, prompts, token counts or costs. The room section SHALL pass a recorded browser check before it counts as done.
+The panel and the panes SHALL NOT show model names of language models, prompts, token counts or costs. The room section SHALL pass a recorded browser check before it counts as done.
 
 #### Scenario: Inspect the room
-- **WHEN** the conversation has confirmed `Hall`, composition `Hall` has a 3D model, and the owner presses "Inspect Hall" in the Project panel under "Selected room"
-- **THEN** the 3D view of `Hall` is shown beside the chat with its surface switches and the ceiling off, and the composer is still usable
+- **WHEN** the layout is "Chat and piece", the conversation has confirmed `Hall`, composition `Hall` has a 3D model, and the owner presses "Inspect Hall" in the Project panel under "Selected room"
+- **THEN** the layout switches to "Chat and room", the 3D view of `Hall` is shown with its surface switches and the ceiling off, and the composer is still usable
 
 #### Scenario: Another version beside the chat
-- **WHEN** the room view of `Hall` shows version 3 and the owner chooses version 2 in its dropdown
+- **WHEN** the room pane shows `Hall` version 3 and the owner chooses version 2 in its dropdown
 - **THEN** version 2's model is shown, and a reload shows version 2 again
 
 #### Scenario: Dimensions beside the chat
@@ -772,23 +785,27 @@ The panel and the pane SHALL NOT show model names of language models, prompts, t
 
 #### Scenario: No 3D view yet
 - **WHEN** the conversation has confirmed `Hall` and `Hall` has no composition
-- **THEN** the Project panel says `Hall` has no 3D view yet and that the Designer can compose the room, and offers no inspect button
+- **THEN** the Project panel and the room pane say `Hall` has no 3D view yet and that the Designer can compose the room, and the panel offers no inspect button
 
 #### Scenario: No room confirmed
 - **WHEN** the conversation has confirmed no room or apartment
-- **THEN** the Project panel shows no room section
-
-#### Scenario: Close the room view
-- **WHEN** the owner closes the room pane
-- **THEN** the chat takes the full width beside the rail again
+- **THEN** the Project panel shows no room section and the room pane says no room is confirmed yet
 
 #### Scenario: Reload
-- **WHEN** the owner reloads the conversation while the room view of `Hall` is shown
+- **WHEN** the owner reloads the conversation while the room pane shows `Hall`
 - **THEN** the conversation and the room view of `Hall` are shown again
 
+#### Scenario: Close the room view
+- **WHEN** the room pane is shown in "Chat and room" and the owner chooses the "Chat and piece" layout
+- **THEN** the room pane is no longer shown, and the piece pane takes its place beside the chat
+
 #### Scenario: One pane at a time
-- **WHEN** the room view of `Hall` is shown and the owner presses "Inspect version 2" in the Project panel
-- **THEN** the piece inspector for version 2 is shown beside the chat and the room view is closed; pressing "Inspect Hall" then shows the room and closes the inspector
+- **WHEN** the layout is "Chat and room" and the owner presses "Inspect version 2" in the Project panel
+- **THEN** the layout switches to "Chat and piece" with version 2 shown; pressing "Inspect Hall" then switches back to "Chat and room" with `Hall` shown
+
+#### Scenario: Piece and room together
+- **WHEN** the layout is "Piece, room and chat above" and the owner presses "Inspect version 2" and then "Inspect Hall" in the Project panel
+- **THEN** the piece pane shows version 2, the room pane shows `Hall`, and neither closes the other
 
 ### Requirement: The Pieces page opens or starts each piece's conversation
 The Pieces page SHALL place a conversation link directly under each piece card's header (the piece's id or name). When that piece already has a conversation, the link SHALL open it. When it has none, the link SHALL start a conversation bound to that piece and open it. The link SHALL NOT show a model name, prompt, token count or cost. The flow SHALL pass a recorded browser check before it counts as done.
@@ -811,21 +828,6 @@ The Pieces page SHALL show a "Create A New Piece" button at the top of the page.
 #### Scenario: Button at the top
 - **WHEN** the owner opens the Pieces page with two pieces listed
 - **THEN** "Create A New Piece" is shown above the piece cards
-
-### Requirement: Conversations are not listed in the Studio navigation
-The Studio navigation SHALL NOT include a Conversations item. Routes `/conversations` and `/conversations/:threadId` SHALL remain reachable by deep link and from the Pieces tab's conversation links. After sign-in the owner SHALL land on the Design Studio page's Pieces tab.
-
-#### Scenario: Nav without Conversations
-- **WHEN** the owner is signed in and looks at the Studio navigation
-- **THEN** there is no Conversations item, and Design Studio is present
-
-#### Scenario: Sign-in lands on Pieces
-- **WHEN** the owner signs in successfully
-- **THEN** the Studio opens on the Design Studio page with the Pieces tab chosen
-
-#### Scenario: Deep link still works
-- **WHEN** the owner opens `/conversations/<thread-id>` for an existing conversation
-- **THEN** that conversation view opens
 
 ### Requirement: Opening an inspector from the Project flyout closes the flyout
 When the owner chooses "Inspect version N" or "Inspect <room>" in the Project flyout, the conversation view SHALL close the flyout and show the inspector beside the chat. Other actions in the flyout (approve, unapprove, delete, using a look) SHALL leave it open, and the Tools and Decisions so far flyouts SHALL not be affected. Reopening the Project icon SHALL open the flyout again with the inspector still shown.
@@ -974,27 +976,34 @@ The views SHALL NOT show measured rooms, compositions, model names of language m
 - **WHEN** the browser cannot draw a ready OBJ model
 - **THEN** its tile keeps the placeholder icon and shows no error
 
-### Requirement: Pieces, measured rooms and the model library are tabs of one Design Studio page
-The Studio SHALL have a Design Studio page for the owner at `/studio` with the page title "Design Studio" and three tabs, in this order: "Pieces", "Measured Rooms" and "Model Library". Each tab SHALL have its own address — `/studio/pieces`, `/studio/rooms`, `/studio/models` — and opening that address SHALL show the page with that tab chosen. `/studio`, and a `/studio/` address naming no known tab, SHALL show the Pieces tab. The tabs SHALL be a rail at the screen's left edge below the header, with the same font, icon style, colour scheme and "Hide labels" switch as the conversation page's panel rail: each tab an icon, with its label beside it while labels are shown, the chosen tab highlighted, and the switch at the rail's foot. The label choice SHALL be remembered in the browser and shared with the other rails; a browser that cannot store it SHALL show the labels hidden. The tabs SHALL be exposed as a vertical tab list with the chosen tab marked selected, and only the chosen tab's content SHALL be shown.
+### Requirement: The workspace, pieces, measured rooms, the model library, pricing and agent settings are tabs of one Design Studio page
+The Studio SHALL have a Design Studio page for the owner at `/studio` with no visible page title on any tab (its level-1 heading "Design Studio" is for screen readers only, so the space goes to the tab's content), and five owner tabs, in this order: "Workspace", "Pieces", "Measured Rooms", "Model Library" and "Pricing". When the developer gate answers, a sixth tab, "AI & Agent Settings", SHALL follow them below a divider. Without the developer gate, that tab and the divider SHALL NOT be shown. Each owner tab SHALL have its own address (`/studio/workspace`, `/studio/pieces`, `/studio/rooms`, `/studio/models`, `/studio/pricing`), and opening that address SHALL show the page with that tab chosen. The AI & Agent Settings tab SHALL keep the developer route tree's addresses, as its requirement states. `/studio`, and a `/studio/` address naming no known tab, SHALL show the Workspace tab. The tabs SHALL be a rail at the screen's left edge below the header, with the same font, icon style, colour scheme and "Hide labels" switch as the conversation page's panel rail: each tab an icon, with its label beside it while labels are shown, the chosen tab highlighted, and the switch at the rail's foot. The label choice SHALL be remembered in the browser and shared with the other rails; a browser that cannot store it SHALL show the labels hidden. The tabs SHALL be exposed as a vertical tab list with the chosen tab marked selected, and only the chosen tab's content SHALL be shown.
 
 **Sub-menu.** Beside the rail, the chosen tab SHALL show a sub-menu, each entry with its label always shown:
+- Workspace: "New conversation", then the conversations by title, newest first;
 - Pieces: the name (id) of every piece, in the order of the Pieces grid;
 - Measured Rooms: the name of every measured room, then the name of every composition that has a tile of its own (an apartment composition, or a room composition whose room is not in the house file), in the order of the Measured Rooms grid;
-- Model Library: "Uploaded models" and "Upload model".
+- Model Library: "Uploaded models" and "Upload model";
+- Pricing: "Prices", "Snapshots" and "Remnants";
+- AI & Agent Settings: "Agent Memory", "Agent Workflow", "Agent Calls", "Render Offload", "Agent Score", "Token Usage", "Plugins" and "Models and Routing".
 
 There SHALL be no "All pieces" or "All rooms" entry. With no dialog open, each tab's address (`/studio/pieces`, `/studio/rooms`) SHALL show its tile grid, and no Pieces or Measured Rooms entry SHALL be highlighted. Choosing a piece's, room's or composition's name SHALL open that item's dialog over the grid, at the same address and with the same behaviour as choosing its tile, keeping `?page`. Closing the dialog SHALL return to the grid as it does for a tile. While an item's dialog is open, its name SHALL be highlighted and marked as the current entry. A list with no item SHALL say "No pieces yet" or "No rooms yet" in the sub-menu. A name too long for the column SHALL be cut short with an ellipsis, and its full name SHALL be shown on hover. A sub-menu longer than the screen SHALL scroll on its own, with the page and the rail staying in place. The names SHALL follow the lists without a reload: a piece or room that is created or deleted SHALL appear in or disappear from the sub-menu as its tile does.
 
-"Uploaded models" SHALL be the Model Library's first view and its address (`/studio/models`). "Upload model" SHALL open the upload dialog of the Model Library requirement over Uploaded models, and SHALL be highlighted while that dialog is open. On a screen 768 CSS px wide or wider the sub-menu SHALL be a column between the rail and the content. Narrower, it SHALL be one row across the top of the content, below the page title, that scrolls sideways when the names do not fit, and the rail SHALL stay at the left edge as it is.
+"Uploaded models" SHALL be the Model Library's first view and its address (`/studio/models`), and "Prices" the Pricing tab's (`/studio/pricing`). "Upload model" SHALL open the upload dialog of the Model Library requirement over Uploaded models, and SHALL be highlighted while that dialog is open. In the Workspace sub-menu, "New conversation" SHALL start a conversation and open it, and a conversation's entry SHALL open it at `/studio/workspace/<thread-id>`, highlighted while it is open. On a screen 768 CSS px wide or wider the sub-menu SHALL be a column between the rail and the content. Narrower, it SHALL be one row across the top of the content, below the page title, that scrolls sideways when the names do not fit, and the rail SHALL stay at the left edge as it is.
 
-Each tab SHALL show what its page showed: wherever another requirement names the Pieces page, the Measured Rooms page (or the Rooms page) or the Model Library page, it SHALL mean that tab, and where it gives that page a heading row with its page title, the page title is "Design Studio" and the tab keeps the rest of its heading row. The old addresses `/pieces`, `/rooms` and `/models` SHALL open the matching tab; a piece version's inspector SHALL keep its address `/pieces/<id>/versions/<n>`. The Studio navigation SHALL show one "Design Studio" entry, first, marked current on every tab, and SHALL NOT show "Pieces", "Measured Rooms" or "Model Library" entries. The routes SHALL require sign-in, and a signed-out visit SHALL go to the sign-in page. The page SHALL NOT show model names, prompts, token counts or costs of model calls. The page SHALL pass a recorded browser check, at 1280 × 800 and at 360 × 780, before it counts as done.
+Each tab SHALL show what its page showed: wherever another requirement names the Pieces page, the Measured Rooms page (or the Rooms page) or the Model Library page, it SHALL mean that tab, and where it gives that page a heading row with its page title, no title is shown and the tab keeps the rest of its heading row. The old addresses `/pieces`, `/rooms` and `/models` SHALL open the matching tab; a piece version's inspector SHALL keep its address `/pieces/<id>/versions/<n>`. The Studio navigation SHALL NOT show a "Design Studio" entry, nor "Pieces", "Measured Rooms", "Model Library", "Pricing Overview" or "AI & Agent Settings" entries; the Design Studio is reached as the home page. The routes SHALL require sign-in, and a signed-out visit SHALL go to the sign-in page. The owner tabs SHALL NOT show model names, prompts, token counts or costs of model calls. The page SHALL pass a recorded browser check, at 1280 × 800 and at 360 × 780, before it counts as done.
 
 #### Scenario: Pieces first
-- **WHEN** the owner chooses "Design Studio" in the navigation
-- **THEN** the Design Studio page opens with the Pieces tab chosen, the piece tiles shown, and the pieces listed by name in the sub-menu with none highlighted
+- **WHEN** the owner chooses "Pieces" on the Design Studio rail
+- **THEN** the Pieces tab opens with the piece tiles shown, and the pieces listed by name in the sub-menu with none highlighted
+
+#### Scenario: No page title
+- **WHEN** the owner opens any Design Studio tab
+- **THEN** no "Design Studio" title is shown above the tab's content, and a screen reader still finds the level-1 heading "Design Studio"
 
 #### Scenario: Labels shown and hidden
 - **WHEN** the owner chooses "Show labels" on the Design Studio rail
-- **THEN** each tab shows its label beside its icon, and the Pricing Overview and conversation rails show their labels too until the owner hides them
+- **THEN** each tab shows its label beside its icon, and the Workspace chat pane's panel icons show their labels too until the owner hides them
 
 #### Scenario: Tab chosen
 - **WHEN** the owner chooses the Model Library tab
@@ -1018,11 +1027,19 @@ Each tab SHALL show what its page showed: wherever another requirement names the
 
 #### Scenario: Navigation
 - **WHEN** the owner is signed in and looks at the Studio navigation
-- **THEN** it shows "Design Studio" first and no "Pieces", "Measured Rooms" or "Model Library" entry
+- **THEN** it shows no "Design Studio", "Pieces", "Measured Rooms", "Model Library", "Pricing Overview" or "AI & Agent Settings" entry
 
 #### Scenario: Signed out
-- **WHEN** a signed-out visitor opens `/studio/models`
+- **WHEN** a signed-out visitor opens `/studio/pricing/remnants`
 - **THEN** they are sent to the sign-in page
+
+#### Scenario: Owner rail
+- **WHEN** the owner is signed in without the developer gate and opens the Design Studio
+- **THEN** the rail shows "Workspace", "Pieces", "Measured Rooms", "Model Library" and "Pricing", in that order, and no divider and no "AI & Agent Settings" tab
+
+#### Scenario: Developer rail
+- **WHEN** the developer is signed in and opens the Design Studio
+- **THEN** the rail shows "Workspace", "Pieces", "Measured Rooms", "Model Library" and "Pricing", then a divider and "AI & Agent Settings"
 
 #### Scenario: Pieces listed by name
 - **WHEN** the owner opens the Pieces tab and the pieces are `bench`, `hall-bench` and `shelf`
@@ -1187,3 +1204,140 @@ A selected still SHALL show its picture. Frames and pictures SHALL be loaded onl
 #### Scenario: No renders yet
 - **WHEN** the owner opens the Renders tab of a built version with no renders
 - **THEN** the tab says there are no renders of this version yet
+
+### Requirement: The Workspace shows a conversation in a chosen layout
+The Design Studio's Workspace tab SHALL show one conversation at `/studio/workspace/<thread-id>` in one of three layouts:
+- "Chat and piece": the chat pane on the left, the piece pane on the right;
+- "Chat and room": the chat pane on the left, the room pane on the right;
+- "Piece, room and chat above": the chat pane across the top, with the piece pane on the left and the room pane on the right below it.
+
+A layout button with an accessible name "Layout" SHALL sit in the chat pane's header row, after its panel icons, at the row's right end. It SHALL open a menu of the three layouts, each with a small picture of its arrangement and its name, with the current one marked. Choosing one SHALL switch the layout without reloading the conversation and without starting a turn, and SHALL show the chat scrolled to its last message. The default layout SHALL be "Chat and piece". There SHALL be no "Piece and room, chat below" layout; a browser that remembered it SHALL open in "Piece, room and chat above" at that layout's default sizes.
+
+Between every two neighbouring panes there SHALL be a resize handle: between the chat and the piece or room left and right, between the piece and the room left and right, and between the chat and the panes below it up and down. Dragging a handle SHALL resize the panes on both sides. Double-clicking it SHALL restore that layout's default sizes. With the handle focused, the arrow keys SHALL move it. No pane SHALL be made smaller than 20 % of its group. The default sizes SHALL be half and half for each left and right split, and 40 % for the chat and 60 % for the panes below it in "Piece, room and chat above". The chosen layout and each layout's sizes SHALL be remembered in the browser. A browser that cannot store them SHALL use the defaults. The panes SHALL fill the height of the screen below the header (and, on a phone, the sub-menu row), and each pane SHALL scroll on its own.
+
+`/studio/workspace` SHALL open the newest conversation. When there is none, it SHALL say so in plain words and offer "New conversation". A `/studio/workspace/` address naming an unknown conversation SHALL say the conversation was not found, and SHALL keep the sub-menu.
+
+Below 1024 CSS px wide, the Workspace SHALL show one pane at a time, chosen from a row of "Chat", "Piece" and "Room" tabs above it, and SHALL NOT show the layout button. Opening a piece version or the room from the chat SHALL choose that pane's tab.
+
+Wherever another requirement names the conversation view or the conversation page, it SHALL mean the Workspace with that conversation open. Where it says "beside the chat", it SHALL mean in the piece or room pane. The Workspace SHALL NOT show model names, prompts, token counts or costs of model calls. The tab SHALL pass a recorded browser check, at 1280 × 800 and at 360 × 780, before it counts as done.
+
+#### Scenario: Default layout
+- **WHEN** the owner opens a conversation in the Workspace for the first time in this browser
+- **THEN** the chat is on the left and the piece pane on the right, each half the width
+
+#### Scenario: Choose a layout
+- **WHEN** the owner presses "Layout" and chooses "Piece, room and chat above"
+- **THEN** the chat is across the top, the piece pane on the bottom left, the room pane on the bottom right, and no turn starts
+
+#### Scenario: Last message after a switch
+- **WHEN** a long conversation is shown scrolled to its end in "Chat and piece" and the owner chooses "Piece, room and chat above"
+- **THEN** the chat shows its last message, scrolled to the bottom of the messages box
+
+#### Scenario: Layout button in the chat header
+- **WHEN** the owner opens a conversation in the Workspace on a 1280 × 800 screen
+- **THEN** the "Layout" button is at the right end of the chat pane's header row, after the Room icon, and no "Design Studio" title is shown above the Workspace
+
+#### Scenario: Old layout remembered
+- **WHEN** the browser remembered "Piece and room, chat below" and the owner opens a conversation
+- **THEN** the Workspace opens in "Piece, room and chat above" with the chat at 40 % and the piece and room at half and half
+
+#### Scenario: Drag a handle
+- **WHEN** in "Chat and piece" the owner drags the handle between the chat and the piece to the right
+- **THEN** the chat grows and the piece pane shrinks, and neither becomes smaller than 20 %
+
+#### Scenario: Chat expanded downwards
+- **WHEN** in "Piece, room and chat above" the owner drags the handle below the chat downwards
+- **THEN** the chat grows taller and the piece and room panes grow shorter
+
+#### Scenario: Chat expanded upwards
+- **WHEN** in "Piece, room and chat above" the owner drags the handle below the chat upwards
+- **THEN** the chat grows shorter and the piece and room panes grow taller, and the chat never becomes smaller than 20 %
+
+#### Scenario: Double-click resets
+- **WHEN** the owner double-clicks a handle after dragging it
+- **THEN** the panes on both sides return to that layout's default sizes
+
+#### Scenario: Keyboard
+- **WHEN** the owner focuses the handle between the piece and the room and presses the left arrow
+- **THEN** the piece pane shrinks and the room pane grows
+
+#### Scenario: Remembered
+- **WHEN** the owner chooses "Chat and room", drags its handle, and reloads the page
+- **THEN** the layout is "Chat and room" with the dragged sizes
+
+#### Scenario: Storage unavailable
+- **WHEN** the browser cannot store the layout
+- **THEN** the Workspace opens in "Chat and piece" at the default sizes, and switching and resizing still work until the page is left
+
+#### Scenario: Newest conversation
+- **WHEN** the owner chooses "Workspace" on the rail and conversations exist
+- **THEN** the newest conversation opens and is highlighted in the sub-menu
+
+#### Scenario: New conversation
+- **WHEN** the owner chooses "New conversation" in the Workspace sub-menu
+- **THEN** a conversation is started, it opens at its `/studio/workspace/<thread-id>` address, and it is listed first in the sub-menu
+
+#### Scenario: Phone tabs
+- **WHEN** the owner opens a conversation on a 360 × 780 screen
+- **THEN** "Chat", "Piece" and "Room" tabs are shown with "Chat" chosen, only the chat is shown, and there is no layout button
+
+#### Scenario: Phone review
+- **WHEN** on a 360 × 780 screen the owner presses "Review draft v1" on a notice
+- **THEN** the "Piece" tab is chosen and shows version 1
+
+### Requirement: Prices, snapshots and remnants are views of the Design Studio's Pricing tab
+The Design Studio's Pricing tab SHALL have three views, in this order: "Prices", "Snapshots" and "Remnants", chosen from its sub-menu. Each view SHALL have its own address (`/studio/pricing/prices`, `/studio/pricing/snapshots`, `/studio/pricing/remnants`), and opening that address SHALL show the Design Studio with the Pricing tab and that view chosen. `/studio/pricing`, and a `/studio/pricing/` address naming no known view, SHALL show the Prices view. Only the chosen view's content SHALL be shown. Each view SHALL show what the matching Pricing Overview tab showed: wherever another requirement names the Pricing Overview page or its Prices, Snapshots or Remnants tab, it SHALL mean the Pricing tab or that view. The old addresses `/pricing`, `/pricing/prices`, `/pricing/snapshots`, `/pricing/remnants`, `/price-list`, `/snapshots` and `/remnants` SHALL open the matching view, and a `/pricing/` address naming no known tab SHALL open the Prices view. The tab SHALL NOT show model names, prompts, token counts or costs of model calls. The tab SHALL pass a recorded browser check, at 1280 × 800 and at 360 × 780, before it counts as done.
+
+#### Scenario: Prices first
+- **WHEN** the owner chooses "Pricing" on the Design Studio rail
+- **THEN** the address is `/studio/pricing`, the sub-menu shows "Prices" (chosen), "Snapshots" and "Remnants", and the price list is shown
+
+#### Scenario: View chosen
+- **WHEN** the owner chooses "Remnants" in the Pricing sub-menu
+- **THEN** the address is `/studio/pricing/remnants`, the rack is shown, and the price list and snapshots are not
+
+#### Scenario: View address reloaded
+- **WHEN** the owner reloads `/studio/pricing/snapshots`
+- **THEN** the Design Studio opens with the Pricing tab and its Snapshots view chosen
+
+#### Scenario: Old address
+- **WHEN** the owner opens a bookmark to `/snapshots` or to `/pricing/snapshots`
+- **THEN** the Design Studio opens at `/studio/pricing/snapshots` with the Snapshots view chosen
+
+#### Scenario: Pricing on a phone
+- **WHEN** the owner opens `/studio/pricing/prices` on a 360 × 780 screen
+- **THEN** "Prices", "Snapshots" and "Remnants" are a row of tabs above the price list, and the page does not scroll sideways
+
+### Requirement: The Workspace is the home page
+After sign-in the owner SHALL land on the Workspace tab, which opens the newest conversation. `/`, `/studio`, any address the Studio does not know, and a developer address opened without the developer gate SHALL open the Workspace for a signed-in owner. The header's "Home Renovation" name SHALL be a link to the Workspace. The header navigation SHALL NOT include a Conversations item; conversations SHALL be listed in the Workspace tab's sub-menu. `/conversations` SHALL open the Workspace, and `/conversations/<thread-id>` SHALL open `/studio/workspace/<thread-id>`, keeping its `?inspect=` and `?room=` values. The Pieces tab's conversation links SHALL open `/studio/workspace/<thread-id>`.
+
+#### Scenario: Sign-in lands on the Workspace
+- **WHEN** the owner signs in successfully and conversations exist
+- **THEN** the Design Studio opens with the Workspace tab chosen and the newest conversation open
+
+#### Scenario: Home address
+- **WHEN** the signed-in owner opens `/` or `/studio`
+- **THEN** the Workspace tab opens
+
+#### Scenario: Name in the header
+- **WHEN** the owner is on the Help page and clicks "Home Renovation" in the header
+- **THEN** the Workspace tab opens
+
+#### Scenario: Nav without Conversations
+- **WHEN** the owner is signed in and looks at the Studio navigation
+- **THEN** there is no Conversations item and no "Design Studio" item
+
+#### Scenario: Deep link still works
+- **WHEN** the owner opens `/conversations/<thread-id>?inspect=hall-bench/2` for an existing conversation
+- **THEN** the address becomes `/studio/workspace/<thread-id>?inspect=hall-bench/2`, and that conversation opens with version 2 in the piece pane
+
+### Requirement: The header offers sign-out
+While the owner is signed in, the header SHALL show a "Sign out" button at its right end. Pressing it SHALL end the session (the sign-out of the owner-auth capability) and show the sign-in page, with no header. If the sign-out request fails, the owner SHALL stay signed in and the reason SHALL be shown in words beside the button.
+
+#### Scenario: Sign out
+- **WHEN** the signed-in owner presses "Sign out"
+- **THEN** the session is ended, the sign-in page is shown, and opening `/studio/workspace` afterwards shows the sign-in page
+
+#### Scenario: Sign-out fails
+- **WHEN** the owner presses "Sign out" and the service cannot be reached
+- **THEN** the owner stays on the page, still signed in, and the reason is shown beside the button

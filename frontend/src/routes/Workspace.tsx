@@ -50,18 +50,18 @@ function Pane({ id, size = "50%", children }: { id: string; size?: string; child
 }
 
 function Layout({ layout, chat, piece, room }: { layout: WorkspaceLayout; chat: ReactNode; piece: ReactNode; room: ReactNode }) {
-  if (layout === "piece-room") {
+  if (layout === "chat-above") {
     return (
-      <SavedGroup key={layout} id="workspace.piece-room.rows" orientation="vertical">
-        <Pane id="top" size="60%">
-          <SavedGroup id="workspace.piece-room.cols" orientation="horizontal">
+      <SavedGroup key={layout} id="workspace.chat-above.rows" orientation="vertical">
+        <Pane id="chat" size="40%">{chat}</Pane>
+        <ResizableHandle withHandle aria-label="Resize the chat above the piece and room" />
+        <Pane id="bottom" size="60%">
+          <SavedGroup id="workspace.chat-above.cols" orientation="horizontal">
             <Pane id="piece">{piece}</Pane>
             <ResizableHandle withHandle aria-label="Resize the piece and the room" />
             <Pane id="room">{room}</Pane>
           </SavedGroup>
         </Pane>
-        <ResizableHandle withHandle aria-label="Resize the piece and room above the chat" />
-        <Pane id="chat" size="40%">{chat}</Pane>
       </SavedGroup>
     );
   }

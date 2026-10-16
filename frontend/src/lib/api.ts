@@ -897,6 +897,7 @@ export const api = {
   login: (email: string, password: string) =>
     request("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
   me: () => request<{ email: string }>("/auth/me"),
+  logout: () => request<{ signed_out: boolean }>("/auth/logout", { method: "POST" }),
   /** The Studio's help topics, the same text the chat answers from (help-center). */
   help: () => request<Help>("/help"),
   threads: () => request<Thread[]>("/chat/threads"),

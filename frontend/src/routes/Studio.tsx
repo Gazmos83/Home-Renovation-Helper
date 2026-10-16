@@ -8,7 +8,6 @@ import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Page } from "@/components/Page";
 import { RailLabelsToggle, railClass, railItemClass, useRailLabels } from "@/components/chat/Rail";
-import { LayoutMenu } from "@/components/studio/LayoutMenu";
 import { SubMenu, type SubMenuItem } from "@/components/studio/SubMenu";
 import { useStudioDialog } from "@/components/studio/useStudioDialog";
 import ModelLibrary from "./ModelLibrary";
@@ -166,13 +165,13 @@ function useSubMenu(tab: string, view: string | undefined): Menu {
  */
 export default function Studio({ dev = false, fixedTab }: { dev?: boolean; fixedTab?: string }) {
   const params = useParams();
-  const tab = fixedTab ?? params.tab ?? "pieces";
+  const tab = fixedTab ?? params.tab ?? "workspace";
   const view = fixedTab ? params.tab : params["*"]?.split("/")[0] || undefined;
   const [expanded, toggleLabels] = useRailLabels();
   const menu = useSubMenu(tab, view);
   const tabs = TABS.filter((t) => dev || !t.dev);
   const chosen = tabs.find((t) => t.id === tab);
-  if (!chosen) return <Navigate to="/studio/pieces" replace />;
+  if (!chosen) return <Navigate to="/studio/workspace" replace />;
   const menuLabel =
     chosen.id === "workspace" ? "Conversations" : ["pieces", "rooms"].includes(chosen.id) ? chosen.label : `${chosen.label} views`;
   const lead = chosen.id === "workspace" ? (layout: "column" | "row") => <NewConversation layout={layout} /> : undefined;
@@ -213,10 +212,8 @@ export default function Studio({ dev = false, fixedTab }: { dev?: boolean; fixed
       <SubMenu label={menuLabel} {...menu} layout="column" lead={lead?.("column")} />
       <div className="min-w-0 flex-1">
         <Page wide>
-          <div className="flex items-center justify-between gap-2">
-            <h1>Design Studio</h1>
-            {chosen.id === "workspace" && view && <LayoutMenu />}
-          </div>
+          {/* No visible title, so the space goes to the tab; screen readers keep the page's heading (workspace-chat-above-layout). */}
+          <h1 className="sr-only">Design Studio</h1>
           <SubMenu label={menuLabel} {...menu} layout="row" lead={lead?.("row")} />
           <div role="tabpanel" id="studio-panel" aria-labelledby={`studio-tab-${chosen.id}`} className="space-y-4">
             {chosen.body(view)}
