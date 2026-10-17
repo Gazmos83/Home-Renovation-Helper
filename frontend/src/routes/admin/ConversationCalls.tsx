@@ -4,8 +4,11 @@ import { api } from "../../lib/api";
 import { FieldError } from "../../lib/form";
 import { Label } from "@/components/ui/label";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
 import { ROLE_LABELS } from "@/components/chat/roles";
 import { UsageCharts } from "@/components/UsageCharts";
+
+const pageSize = 20;
 
 /** One conversation's model calls, newest first (dev-panel; studio-chat-polish). */
 export default function ConversationCalls() {
@@ -17,6 +20,11 @@ export default function ConversationCalls() {
     queryFn: () => api.threadCalls(threadId),
     enabled: Boolean(threadId),
   });
+  const [page, setPage] = useState(0);
+  const listed = calls.data ?? [];
+  const pages = Math.max(1, Math.ceil(listed.length / pageSize));
+  const current = Math.min(page, pages - 1);
+  const shown = listed.slice(current * pageSize, (current + 1) * pageSize);
 
   return (
     <>
@@ -29,7 +37,10 @@ export default function ConversationCalls() {
           <select
             className="h-9 rounded-md border bg-background px-2 text-sm"
             value={threadId}
-            onChange={(event) => setChosen(event.target.value)}
+            onChange={(event) => {
+              setChosen(event.target.value);
+              setPage(0);
+            }}
           >
             {threads.data.map((t) => (
               <option key={t.thread_id} value={t.thread_id}>
@@ -55,8 +66,8 @@ export default function ConversationCalls() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {calls.data.map((call, index) => (
-              <TableRow key={`${call.time}-${index}`}>
+            {shown.map((call, index) => (
+              <TableRow key={`${call.time}-${current * pageSize + index}`}>
                 <TableCell><time dateTime={call.time}>{new Date(call.time).toLocaleString()}</time></TableCell>
                 <TableCell>{ROLE_LABELS[call.slot] ?? call.slot}</TableCell>
                 <TableCell>{call.operation}</TableCell>
@@ -79,6 +90,19 @@ export default function ConversationCalls() {
             ))}
           </TableBody>
         </Table>
+      )}
+      {calls.data && pages > 1 && (
+        <nav aria-label="Call pages" className="flex items-center justify-between gap-3">
+          <Button variant="outline" size="sm" disabled={current === 0} onClick={() => setPage(current - 1)}>
+            Previous page
+          </Button>
+          <span className="text-sm text-muted-foreground">
+            Page {current + 1} of {pages} ({listed.length} calls)
+          </span>
+          <Button variant="outline" size="sm" disabled={current >= pages - 1} onClick={() => setPage(current + 1)}>
+            Next page
+          </Button>
+        </nav>
       )}
     </>
   );

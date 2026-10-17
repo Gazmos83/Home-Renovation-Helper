@@ -46,6 +46,31 @@ test("a conversation's calls are listed with their specialist, model slug and to
   expect(calls.map(([, url]) => url)).toContain("/admin/threads/t2/calls");
 });
 
+test("calls are listed twenty per page and a new conversation starts on the first page", async () => {
+  const many = Array.from({ length: 25 }, (_, i) => ({
+    time: `2026-10-07T09:00:${String(59 - i).padStart(2, "0")}Z`, slot: "designer", operation: `call-${i}`, model: "m", input_tokens: 1, output_tokens: 1, estimated: false,
+  }));
+  stubFetch((call) => {
+    if (call === "GET /chat/threads") return { body: threads };
+    if (call === "GET /admin/threads/t1/calls") return { body: many };
+    if (call === "GET /admin/threads/t2/calls") return { body: many.slice(0, 3) };
+  });
+  show();
+  const user = userEvent.setup();
+  expect(await screen.findByText("Page 1 of 2 (25 calls)")).toBeInTheDocument();
+  expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(21);
+  expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Next page" }));
+  expect(screen.getByText("Page 2 of 2 (25 calls)")).toBeInTheDocument();
+  expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(6);
+  expect(screen.getByText("call-20")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
+
+  await user.selectOptions(screen.getByLabelText("Conversation"), "t2");
+  expect(await screen.findByText("call-0")).toBeInTheDocument();
+  expect(screen.queryByRole("navigation", { name: "Call pages" })).not.toBeInTheDocument();
+});
+
 const summary = {
   days: 7, cost_incomplete: true, label: "estimate at the last fetched price", tracing: true,
   model: [{ key: "deepseek/deepseek-v4-pro-0813", calls: 3, input_tokens: 900, output_tokens: 120, estimated_calls: 0, cost_usd: 0.01, cost_complete: true }],
