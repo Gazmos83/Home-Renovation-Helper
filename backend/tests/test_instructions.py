@@ -387,3 +387,12 @@ def test_the_designer_records_a_verdict_only_when_the_owner_gives_one() -> None:
 def test_the_foreman_sends_a_verdict_on_a_version_to_the_designer() -> None:
     text = load_instructions()["foreman"].text
     assert "a version of the piece is right or wrong" in text and "records the verdict" in text
+
+
+def test_the_designer_offers_cited_suggestions_for_a_new_piece() -> None:
+    """guideline-design-suggestions: cited style suggestions before the first draft."""
+    text = load_instructions()["designer"].text
+    line = next(line for line in text.splitlines() if "found no style guidance in the guidelines" in line)
+    assert "`search_guidelines`" in line and "`create_piece`" in line
+    assert "at most three" in line and "advice only" in line and "generator-extension" in line
+    assert "revisions, imports or rebuilds" in line
