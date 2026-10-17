@@ -7,6 +7,7 @@ publication or note, its section and its date; nothing matched is said plainly.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any, Final
 
 from pydantic import BaseModel, Field
@@ -54,7 +55,7 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str | ToolOutput:
     for hit in hits:
         passage = Passage.from_hit(hit)
         if hit.published_on is not None:
-            passage.title = f"{passage.title} ({hit.published_on.isoformat()})".strip()
+            passage = replace(passage, title=f"{passage.title} ({hit.published_on.isoformat()})".strip())
         passages.append(passage)
     return CITE_NOTE + "\n\n" + wrap_passages(passages)
 
