@@ -554,6 +554,9 @@ export type SpecPart = {
 /** `shown`: how many of the line's pieces the model draws (hardware-catalog); absent on older versions. */
 export type SpecHardware = { id: string; item: string; qty: number | ""; notes: string; shown?: number };
 
+/** One step of a built version's assembly sequence, ending with its installation (piece-assembly-steps). */
+export type SpecAssemblyStep = { step: number; title: string; body: string };
+
 /** A drilling position: an exact value, a range, or its rule in words (hardware-drilling). */
 export type DrillForm = { mm: number } | { min_mm: number; max_mm: number } | { rule: string };
 
@@ -590,6 +593,7 @@ export type PieceSpec = {
   layers: Record<string, string[]>;
   parts?: SpecPart[];
   hardware?: SpecHardware[];
+  assembly?: SpecAssemblyStep[];
   drilling?: DrillingList;
   /** The validated input the version was built from: where the model's centre is. */
   input?: { envelope?: unknown; wall_shelves?: { x: number; y: number }[] };

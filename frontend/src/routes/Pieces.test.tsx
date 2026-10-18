@@ -2,9 +2,22 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { stubFetch } from "../test/fetchStub";
 import Pieces from "./Pieces";
+
+/** jsPDF sets `save` on each document, so the download test records it through a subclass. */
+const save = vi.hoisted(() => vi.fn());
+vi.mock("jspdf", async (original) => {
+  const { jsPDF } = await original<typeof import("jspdf")>();
+  class RecordingPdf extends jsPDF {
+    constructor(...args: ConstructorParameters<typeof jsPDF>) {
+      super(...args);
+      this.save = save as never;
+    }
+  }
+  return { jsPDF: RecordingPdf };
+});
 
 const turntable = {
   render: "turntable", label: "Turntable", tier: "draft", finished_at: null, frames: 12, can_rate: true, rating: null, comment: null,
@@ -479,6 +492,72 @@ test("a version that is not approved must be approved before it is priced", asyn
   expect(await screen.findByText("Version 2 must be approved before it can be priced.")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Price this version" })).not.toBeInTheDocument();
   expect(calls.some(([, url]) => url.endsWith("/pricings"))).toBe(false);
+});
+
+// --- assembly steps per built version (piece-assembly-steps) ------------------------------
+
+const SPEC = "GET /packages/bench/versions/2/files/spec.json";
+const steps = [
+  { step: 1, title: "Cut and edge-band", body: "Cut and label every part on the cut list." },
+  { step: 2, title: "Carcass: Bench", body: "Fix the top and bottom between the sides of m1 with confirmats and glue." },
+  { step: 3, title: "Install", body: "Position, level and fix the build in place." },
+];
+
+test("a built version lists its assembly steps in order, ending with the installation (Built version with steps)", async () => {
+  const user = userEvent.setup();
+  serve([], (call) => (call === SPEC ? { body: { overall: { w: 1, h: 1, d: 1 }, layers: {}, assembly: steps } } : undefined));
+  show();
+  await user.click(await screen.findByText("Assembly"));
+  const list = await screen.findByRole("list", { name: "Assembly of bench version 2" });
+  const items = within(list).getAllByRole("listitem");
+  expect(items.map((item) => item.textContent)).toEqual([
+    "01Cut and edge-bandCut and label every part on the cut list.",
+    "02Carcass: BenchFix the top and bottom between the sides of m1 with confirmats and glue.",
+    "03InstallPosition, level and fix the build in place.",
+  ]);
+});
+
+test("a built version without steps says so and offers no download (Built version without steps)", async () => {
+  const user = userEvent.setup();
+  serve([], (call) => (call === SPEC ? { body: { overall: { w: 1, h: 1, d: 1 }, layers: {} } } : undefined));
+  show();
+  await user.click(await screen.findByText("Assembly"));
+  expect(await screen.findByText("This version lists no assembly steps.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Download assembly (PDF)" })).not.toBeInTheDocument();
+});
+
+test("the steps download as a PDF named after the piece, with no request to the server (Download the steps as a PDF)", async () => {
+  const user = userEvent.setup();
+  save.mockClear();
+  const calls = serve([], (call) => (call === SPEC ? { body: { overall: { w: 1, h: 1, d: 1 }, layers: {}, assembly: steps } } : undefined));
+  show();
+  await user.click(await screen.findByText("Assembly"));
+  const before = calls.length;
+  await user.click(await screen.findByRole("button", { name: "Download assembly (PDF)" }));
+  await waitFor(() => expect(save).toHaveBeenCalledWith("bench-v2-assembly.pdf"));
+  expect(calls.length).toBe(before);
+});
+
+test("a failed spec read shows its reason inside the assembly dropdown", async () => {
+  const user = userEvent.setup();
+  serve([], (call) => (call === SPEC ? { status: 404, body: { detail: "spec.json is missing" } } : undefined));
+  show();
+  await user.click(await screen.findByText("Assembly"));
+  expect(await screen.findByText("spec.json is missing")).toBeInTheDocument();
+});
+
+test("the spec is read only once the assembly dropdown is opened", async () => {
+  const calls = serve([]);
+  show();
+  await screen.findByText("Assembly");
+  expect(calls.some(([, url]) => url.endsWith("/spec.json"))).toBe(false);
+});
+
+test("a version that is not built offers no assembly (Version not built)", async () => {
+  serve([], undefined, { approved: null, status: "failed" });
+  show();
+  await screen.findByRole("link", { name: "Download design (version 2)" });
+  expect(screen.queryByText("Assembly")).not.toBeInTheDocument();
 });
 
 // --- deleting a version (version-cleanup-and-inspection) ---------------------------------

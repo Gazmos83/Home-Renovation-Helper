@@ -7,6 +7,7 @@ import { RenderRating } from "@/components/RenderRating";
 import { api, downloads, versionFile, type PieceSummary, type Pricing, type RenderItem, type VersionInfo } from "../lib/api";
 import { VersionFiles } from "@/components/studio/VersionFiles";
 import { pictureVersion } from "../lib/pieces";
+import { downloadAssemblyPdf } from "../lib/assemblyPdf";
 import { euros } from "../lib/money";
 import { FieldError } from "../lib/form";
 import { Badge } from "@/components/ui/badge";
@@ -182,6 +183,61 @@ function PricingPanel({ packageId, version }: { packageId: string; version: numb
   );
 }
 
+const NO_STEPS = "This version lists no assembly steps.";
+
+/**
+ * A built version's assembly sequence from its own `spec.json`, ending with its installation
+ * (piece-assembly-steps). Ported from the predecessor's `AssemblyPanel`; read once opened.
+ */
+function AssemblyPanel({ packageId, version }: { packageId: string; version: number }) {
+  const [open, setOpen] = useState(false);
+  const info = useQuery({
+    queryKey: ["version", packageId, version],
+    queryFn: () => api.version(packageId, version),
+  });
+  const built = info.data?.status === "succeeded";
+  const spec = useQuery({
+    queryKey: ["spec", packageId, version],
+    queryFn: () => api.pieceSpec(packageId, version),
+    enabled: built && open,
+  });
+  const download = useMutation({
+    mutationFn: () => downloadAssemblyPdf(packageId, version, spec.data?.assembly ?? []),
+  });
+  if (!built) return null;
+  const steps = spec.data?.assembly ?? [];
+  return (
+    <details className="min-w-0 rounded-md border p-2" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="cursor-pointer">Assembly</summary>
+      <div className="mt-2 grid gap-2">
+        <FieldError message={message(spec.error)} />
+        {spec.data && steps.length === 0 && <p className="text-sm">{NO_STEPS}</p>}
+        {steps.length > 0 && (
+          <ol className="grid gap-2" aria-label={`Assembly of ${packageId} version ${version}`}>
+            {steps.map((step) => (
+              <li key={step.step} className="rounded-md border bg-muted/60 px-3 py-2">
+                <div className="flex items-baseline gap-3">
+                  <span className="font-mono text-xs tabular-nums">{String(step.step).padStart(2, "0")}</span>
+                  <h4 className="font-medium">{step.title}</h4>
+                </div>
+                <p className="mt-1 pl-8 text-sm text-muted-foreground">{step.body}</p>
+              </li>
+            ))}
+          </ol>
+        )}
+        {steps.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" size="sm" variant="outline" disabled={download.isPending} onClick={() => download.mutate()}>
+              Download assembly (PDF)
+            </Button>
+            <FieldError message={message(download.error)} />
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function Downloads({ packageId, version }: { packageId: string; version: number }) {
   const info = useQuery({
     queryKey: ["version", packageId, version],
@@ -261,6 +317,7 @@ function Version({ packageId, version }: { packageId: string; version: number })
       <VersionActions packageId={packageId} version={version} />
       <Downloads packageId={packageId} version={version} />
       <PricingPanel packageId={packageId} version={version} />
+      <AssemblyPanel packageId={packageId} version={version} />
       {shown}
       <PieceVariants packageId={packageId} version={version} />
     </div>
