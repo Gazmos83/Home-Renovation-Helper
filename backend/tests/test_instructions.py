@@ -351,6 +351,13 @@ def test_the_foreman_flags_composing_a_room_apart_from_a_piece_wish() -> None:
     assert "A wish for a new piece is never composing a room." in text
 
 
+def test_the_foreman_flags_an_open_question_apart_from_a_request() -> None:
+    text = load_instructions()["foreman"].text
+    assert "Set `open_question` to true only when the owner asks a question or thinks aloud about a piece" in text
+    assert "\"I'd like to build a kitchen counter, how tall should it be?\" is an open question" in text
+    assert "\"Can you design a shoe bench for me?\" is not, it is a request" in text
+
+
 def test_the_designer_fills_requested_with_the_owners_lengths() -> None:
     text = load_instructions()["designer"].text
     assert "Fill `requested` in every `revise_package` call with each length with a unit" in text

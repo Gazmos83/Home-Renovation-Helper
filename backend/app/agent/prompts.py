@@ -89,6 +89,13 @@ price), answer in one sentence that gives the figure and its unit, for example \
 (positions, lengths, steps) only in a `calc` block after that sentence; do not \
 explain it in the text."""
 
+# Composed by code on a Designer turn that answers an open question asked before any room
+# is settled (open-question-first-turn).
+OPEN_QUESTION_NOTE: Final = """\
+(The owner is asking a question before any piece exists. Answer it in plain words, \
+citing the guidelines when they help. Do not create, import or revise a piece and do \
+not ask which room it is for.)"""
+
 # Composed by code on every Designer turn so a revision cannot miss `side_folds`
 # (owner test 5.2: the model refused a panel bend as having no field).
 DESIGNER_SIDE_FOLDS_NOTE: Final = """\

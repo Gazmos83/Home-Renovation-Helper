@@ -52,6 +52,7 @@ from app.agent.prompts import (
     DESIGNER_SIDE_FOLDS_NOTE,
     EMPTY_ANSWER_NOTE,
     FORMATTING_NOTE,
+    OPEN_QUESTION_NOTE,
     TOOL_ROUND_CAP_NOTE,
     compose_agent_prompt,
     composition_note,
@@ -214,6 +215,9 @@ class ChatState(TypedDict, total=False):
     brief: dict[str, Any]
     bound_tools: dict[str, list[str]]
     engineering_turn: bool
+    # An open question asked before any room is settled; the Designer answers it with only
+    # its guideline search (open-question-first-turn).
+    open_question_turn: bool
     engineering_evidence_ids: list[str]
     engineering_metadata_ids: list[str]
     engineering_report_ids: list[str]
@@ -238,6 +242,10 @@ class Decision(BaseModel):
     views_in_room: bool = Field(
         default=False,
         description="true when the owner wants to see the conversation's piece in its room (placed there, or a picture of it there)",
+    )
+    open_question: bool = Field(
+        default=False,
+        description="true when the owner asks a question or thinks aloud about a piece (sizes, heights, materials, ideas) without asking yet for anything to be designed, imported, built, rendered, reviewed or priced",
     )
 
 
@@ -864,6 +872,7 @@ def build_graph(
             "specialist": "",
             "bound_tools": tools_this_turn,
             "engineering_turn": engineering_chat.engineering_intent(_last_human_text(state)),
+            "open_question_turn": False,
             "engineering_evidence_ids": [],
             "engineering_metadata_ids": [],
             "engineering_report_ids": [],
@@ -1048,6 +1057,26 @@ def build_graph(
         ):
             return Command(update={"specialist": "intake", "reason": reason, "engineering_turn": False}, goto="intake")
 
+        # An open question before any room is settled is answered by the Designer, before the
+        # room offer; a turn with a plan, photo or design file is never one (open-question-first-turn).
+        if (
+            chosen != "researcher"
+            and not engineering
+            and getattr(decision, "open_question", False) is True
+            and not (state.get("image_attached") or state.get("design_attached"))
+            and not state.get("room_confirmed")
+            and not state.get("room_declined")
+        ):
+            return Command(
+                update={
+                    "specialist": "designer",
+                    "reason": reason,
+                    "engineering_turn": False,
+                    "open_question_turn": True,
+                },
+                goto="designer",
+            )
+
         # Application rules bound the model's choice (design-agents spec). A price or product
         # question is the Researcher's whatever else holds; then the two fixed questions.
         if chosen != "researcher":
@@ -1141,6 +1170,9 @@ def build_graph(
             names = (state.get("bound_tools") or {}).get(name)
             if names is None:
                 names = list(instruction.tools)
+            # An open question changes nothing: the Designer may only search the guidelines.
+            if state.get("open_question_turn"):
+                names = [tool for tool in names if tool == "search_guidelines"]
             return {tool: tools_by_name[tool] for tool in names if tool in tools_by_name and (tool not in {"search_engineering_knowledge", "record_assessment_inputs", "calculate_engineering", "get_engineering_report"} or state.get("engineering_turn")) and (not state.get("engineering_turn") or tool not in {"search_catalog_knowledge", "check_live_listing", "compare_products"})}
 
         def agent(state: ChatState, config: RunnableConfig) -> Command[Literal["tools", "__end__"]]:
@@ -1178,8 +1210,10 @@ def build_graph(
                     'saved. Start a draft still now: call render_turntable with the piece\'s package_id, kind "still", '
                     'tier "draft" and in_room true.)'
                 )
+            if state.get("open_question_turn") and name == "designer":
+                notes.append(OPEN_QUESTION_NOTE)
             # The templates only for a new piece: a revision sees only the active build's figures.
-            if name == "designer" and not state.get("package_id"):
+            elif name == "designer" and not state.get("package_id"):
                 notes.append(designer_note)
             notes.append(FORMATTING_NOTE)
             if state.get("engineering_turn"):
