@@ -39,7 +39,7 @@
 ## 5. Checks
 
 - [x] 5.1 Run `pnpm lint && pnpm test && pnpm build` in `frontend/` and `uv run ruff check .` in `backend/`. pytest is deferred to the batch check after the last change of the 2026-10-18 review batch (skip RunPod/offload tests, throwaway `TEST_DATABASE_URL`).
-- [ ] 5.2 Browser pass, with **no render tier**, in light and dark mode:
+- [x] 5.2 Browser pass, with **no render tier**, in light and dark mode (passed, owner, 2026-10-19):
   - the tab shows "Little Homey" with the house icon;
   - the header shows the icon and name at the left, and Help, About and Sign out at the right;
   - About opens and reads in plain words;
