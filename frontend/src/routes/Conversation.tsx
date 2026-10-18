@@ -10,7 +10,6 @@ import {
   type ResumeBody,
   type Thread,
   type ThreadDetail,
-  type ToolToggle,
   type TurnEvent,
   type Upload,
 } from "../lib/api";
@@ -20,7 +19,6 @@ import { WORKSPACE_WIDE, useWorkspaceLayout } from "../lib/workspaceLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { cardClass } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -55,41 +53,6 @@ const STEP_LABELS: Record<string, string> = {
 
 function message(error: unknown): string | null {
   return error instanceof Error ? error.message : null;
-}
-
-function Tools({ threadId }: { threadId: string }) {
-  const queryClient = useQueryClient();
-  const tools = useQuery({ queryKey: ["tools", threadId], queryFn: () => api.tools(threadId) });
-  const toggle = useMutation({
-    mutationFn: ({ plugin, enabled }: { plugin: string; enabled: boolean }) => api.setTool(threadId, plugin, enabled),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tools", threadId] }),
-  });
-
-  if (tools.isLoading) return <p>Loading tools…</p>;
-  if (!tools.data) return null;
-
-  return (
-    <ul>
-      {tools.data.map((tool: ToolToggle) => (
-        <li key={tool.plugin} className="flex items-center justify-between gap-4">
-          <div>
-            <strong>{tool.plugin.replaceAll("_", " ")}</strong>
-            <div>{tool.description}</div>
-            {!tool.toggleable && <small className="text-muted-foreground">Always on</small>}
-          </div>
-          <Label>
-            <Input
-              type="checkbox"
-              checked={tool.enabled}
-              disabled={!tool.toggleable}
-              aria-label={tool.plugin}
-              onChange={(event) => toggle.mutate({ plugin: tool.plugin, enabled: event.target.checked })}
-            />
-          </Label>
-        </li>
-      ))}
-    </ul>
-  );
 }
 
 function ProjectPanel({ progress }: { progress: UseQueryResult<Progress> }) {
@@ -654,7 +617,6 @@ export function ChatPane({ c }: { c: ConversationState }) {
             open={c.panel}
             onOpen={c.setPanel}
             panels={[
-              { id: "tools", label: "Tools", icon: "tools", content: <Tools threadId={threadId} /> },
               { id: "notes", label: "Decisions so far", icon: "notes", content: (
                   <DecisionsNote
                     key={decisionText?.id ?? "none"}
@@ -1018,6 +980,13 @@ export function RoomPane({ c }: { c: ConversationState }) {
       ) : (
         <p className="text-sm text-muted-foreground">
           Version {chosen?.version} of {room.name} has no 3D view. Composing {room.name} again adds it.
+        </p>
+      )}
+      {shown.model && shown.surfaces && chosen?.viewer && (
+        <p>
+          <a href={chosen.viewer} target="_blank" rel="noreferrer" className="underline">
+            Open the turntable viewer of {room.name}
+          </a>
         </p>
       )}
     </aside>

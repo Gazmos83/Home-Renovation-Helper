@@ -34,7 +34,7 @@ from app.engineering.reports import (
     stale_reasons,
 )
 from app.engineering.schemas import PropertyIn, ReviewIn, RightsIn
-from app.plugins.enablement import set_global_enabled, set_thread_enabled
+from app.plugins.enablement import set_global_enabled
 from plugins.engineering_calculators.tool import calculate, get_report, preview, record
 from tests.api_helpers import desk
 from tests.graph_helpers import fake_models, make_harness, place_in_room
@@ -478,7 +478,6 @@ def test_calculate_fetch_and_typed_renderer_use_code_report_and_refuse_disabled_
 def test_assessment_confirmation_through_graph_requires_explicit_owner_answer(
     tool_state, piece, answer
 ):
-    from app.agent.tools import loaded_plugins
 
     models = fake_models(
         foreman={"decisions": [{"specialist": "researcher", "reason": "assessment"}]},
@@ -501,9 +500,6 @@ def test_assessment_confirmation_through_graph_requires_explicit_owner_answer(
     place_in_room(harness, piece[0])
     with Session(tool_state.engine) as session:
         set_global_enabled(session, "engineering_calculators", True)
-        set_thread_enabled(
-            session, loaded_plugins(), harness.thread, "engineering_calculators", True
-        )
         session.commit()
     pending = harness.turn("Record engineering loads for this shelf")
     assert pending["__interrupt__"][0].value["subject"] == "assessment_inputs"

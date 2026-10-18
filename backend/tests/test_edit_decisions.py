@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.agent import house_file
 from app.agent.foreman import last_reply
 from app.agent.tools import loaded_plugins
-from app.plugins.enablement import set_thread_enabled
+from app.plugins.enablement import set_global_enabled
 from plugins.edit_decisions.tool import preview, run
 from tests.fakes import tool_call
 from tests.graph_helpers import fake_models, make_harness
@@ -166,13 +166,15 @@ def test_declining_changes_nothing(tool_state) -> None:
     assert _note(tool_state, harness.thread) == NOTE
 
 
-def test_the_tool_follows_the_conversations_switch(tool_state) -> None:
-    models = fake_models(foreman={"decisions": [decision("designer")]}, designer={"replies": ["Hello."]})
-    harness = make_harness(tool_state, models)
+def test_the_tool_follows_the_global_switch_in_every_conversation(tool_state) -> None:
+    """studio-navigation-tidy: a toggleable plugin is bound in every thread while on, in none while off."""
+    def turn() -> list[str]:
+        models = fake_models(foreman={"decisions": [decision("designer")]}, designer={"replies": ["Hello."]})
+        return make_harness(tool_state, models).turn("hello")["bound_tools"]["designer"]
+
+    assert loaded_plugins().by_name["edit_decisions"].toggleable
+    assert "edit_decisions" in turn() and "edit_decisions" in turn()
     with Session(tool_state.engine) as session:
-        set_thread_enabled(session, loaded_plugins(), harness.thread, "edit_decisions", False)
+        set_global_enabled(session, "edit_decisions", False)
         session.commit()
-    state = harness.turn("hello")
-    assert "edit_decisions" not in state["bound_tools"]["designer"]
-    other = make_harness(tool_state, fake_models(foreman={"decisions": [decision("designer")]}, designer={"replies": ["Hi."]}))
-    assert "edit_decisions" in other.turn("hello")["bound_tools"]["designer"]
+    assert "edit_decisions" not in turn() and "edit_decisions" not in turn()

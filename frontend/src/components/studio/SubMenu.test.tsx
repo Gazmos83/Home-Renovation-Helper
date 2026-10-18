@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SubMenu } from "./SubMenu";
 
 const ITEMS = [
@@ -54,5 +54,29 @@ describe("SubMenu", () => {
     );
     expect(screen.getByText("No pieces yet")).toBeInTheDocument();
     expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("gives the column an x and reports a choice, and the row neither", () => {
+    const onClose = vi.fn();
+    const onChoose = vi.fn();
+    const { unmount } = render(
+      <MemoryRouter>
+        <SubMenu label="Pricing views" items={ITEMS} current={null} layout="column" onClose={onClose} onChoose={onChoose} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close Pricing views" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("link", { name: "Upload model" }));
+    expect(onChoose).toHaveBeenCalledTimes(1);
+    unmount();
+
+    render(
+      <MemoryRouter>
+        <SubMenu label="Pricing views" items={ITEMS} current={null} layout="row" onClose={onClose} onChoose={onChoose} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("button", { name: "Close Pricing views" })).toBeNull();
+    fireEvent.click(screen.getByRole("link", { name: "Upload model" }));
+    expect(onChoose).toHaveBeenCalledTimes(1);
   });
 });

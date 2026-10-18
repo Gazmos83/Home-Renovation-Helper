@@ -271,7 +271,7 @@ def record_next(
         if ctx.thread_id is not None:
             house_file.touch_thread(session, ctx.thread_id, package_id=package_id)
         session.commit()
-    notices.post_revision(ctx.deps, ctx.thread_id, package_id, created["version"])
+    # No notice of its own: the build notice is the version's one notice (studio-navigation-tidy).
     return created["version"]
 
 

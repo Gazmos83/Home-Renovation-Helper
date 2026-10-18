@@ -59,7 +59,6 @@ test("a placed piece that is no longer approved is marked plainly", async () => 
   expect(card.getByText("listening-wall v4").closest("li")).toHaveTextContent("no longer approved");
   expect(card.getByText("Sofa").closest("li")).not.toHaveTextContent("no longer approved");
   expect(card.getByRole("img")).toHaveAttribute("src", wohnen.picture);
-  expect(card.getByRole("link", { name: "Open the turntable viewer of Wohnen" })).toHaveAttribute("href", wohnen.viewer);
 });
 
 test("no model library, model name, prompt, token or cost text appears on the page", async () => {
@@ -223,7 +222,6 @@ test("an empty composition says it is the room only", async () => {
   show("/studio/rooms/compositions/wohnen");
   const card = within(await screen.findByRole("dialog", { name: "Wohnen" }));
   expect(card.getByText("The room only, no furniture.")).toBeInTheDocument();
-  expect(card.getByRole("link", { name: "Open the turntable viewer of Wohnen" })).toBeInTheDocument();
 });
 
 
@@ -246,6 +244,16 @@ function serve3d() {
       return { body: { surfaces: SURFACES, extent_mm: { min: [0, 0, 0], max: [5000, 4000, 2600] } } };
   });
 }
+
+test("the turntable viewer is offered only in the open 3D view (Turntable viewer only in the 3D view)", async () => {
+  const user = userEvent.setup();
+  serve3d();
+  show("/studio/rooms/compositions/wohnen");
+  const card = within(await screen.findByRole("dialog", { name: "Wohnen" }));
+  expect(card.queryByRole("link", { name: "Open the turntable viewer of Wohnen" })).not.toBeInTheDocument();
+  await user.click(card.getByRole("button", { name: "Open the 3D view of Wohnen" }));
+  expect(await card.findByRole("link", { name: "Open the turntable viewer of Wohnen" })).toHaveAttribute("href", wohnen.viewer);
+});
 
 async function canvasProps() {
   const canvas = await screen.findByTestId("canvas");

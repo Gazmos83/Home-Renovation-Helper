@@ -59,8 +59,8 @@ def bound_tool_names(
 ) -> list[str]:
     """The tools a specialist binds this turn.
 
-    Header tools whose plugin is globally on and (not toggleable or enabled for
-    the thread), plus enabled HTTPS tools for the same role.
+    Header tools whose plugin is globally on, plus enabled HTTPS tools for the
+    same role. No per-conversation setting changes this.
     """
     enabled = enabled_plugin_names(session, plugins, thread_id)
     names: list[str] = []

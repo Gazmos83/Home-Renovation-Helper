@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Armchair, BookOpen, MessagesSquare, Package, Plus, Ruler, Settings, Tag } from "lucide-react";
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { Link, Navigate, useLocation, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { isOpen, roomEntries } from "../lib/rooms";
@@ -56,7 +56,7 @@ const TABS: Tab[] = [
 type Menu = { items: SubMenuItem[]; current: string | null; empty?: string };
 
 /** The Workspace sub-menu's first entry: starts a conversation instead of opening one. */
-function NewConversation({ layout }: { layout: "column" | "row" }) {
+function NewConversation({ layout, onDone }: { layout: "column" | "row"; onDone?: () => void }) {
   const create = useNewConversation();
   return (
     <Button
@@ -65,7 +65,7 @@ function NewConversation({ layout }: { layout: "column" | "row" }) {
       size="sm"
       className={cn(layout === "column" ? "mb-1 w-full justify-start" : "shrink-0")}
       disabled={create.isPending}
-      onClick={() => create.mutate()}
+      onClick={() => create.mutate(undefined, { onSuccess: onDone })}
     >
       <Plus aria-hidden size={16} />
       New conversation
@@ -169,12 +169,18 @@ export default function Studio({ dev = false, fixedTab }: { dev?: boolean; fixed
   const view = fixedTab ? params.tab : params["*"]?.split("/")[0] || undefined;
   const [expanded, toggleLabels] = useRailLabels();
   const menu = useSubMenu(tab, view);
+  // The sub-menu column closes on a choice or its "x" and opens again from the rail; a reload shows it.
+  const [menuOpen, setMenuOpen] = useState(true);
+  const closeMenu = () => setMenuOpen(false);
   const tabs = TABS.filter((t) => dev || !t.dev);
   const chosen = tabs.find((t) => t.id === tab);
   if (!chosen) return <Navigate to="/studio/workspace" replace />;
   const menuLabel =
     chosen.id === "workspace" ? "Conversations" : ["pieces", "rooms"].includes(chosen.id) ? chosen.label : `${chosen.label} views`;
-  const lead = chosen.id === "workspace" ? (layout: "column" | "row") => <NewConversation layout={layout} /> : undefined;
+  const lead =
+    chosen.id === "workspace"
+      ? (layout: "column" | "row") => <NewConversation layout={layout} onDone={layout === "column" ? closeMenu : undefined} />
+      : undefined;
 
   return (
     <div className="flex">
@@ -193,6 +199,7 @@ export default function Studio({ dev = false, fixedTab }: { dev?: boolean; fixed
                   aria-label={t.label}
                   aria-selected={t.id === chosen.id}
                   aria-controls="studio-panel"
+                  onClick={() => setMenuOpen(true)}
                   className={cn(buttonVariants({ variant: "ghost", size: "sm" }), railItemClass(expanded), t.id === chosen.id && "bg-accent")}
                 >
                   <Icon aria-hidden size={20} className="shrink-0" />
@@ -209,7 +216,16 @@ export default function Studio({ dev = false, fixedTab }: { dev?: boolean; fixed
         </div>
         <RailLabelsToggle expanded={expanded} onToggle={toggleLabels} />
       </div>
-      <SubMenu label={menuLabel} {...menu} layout="column" lead={lead?.("column")} />
+      {menuOpen && (
+        <SubMenu
+          label={menuLabel}
+          {...menu}
+          layout="column"
+          lead={lead?.("column")}
+          onClose={closeMenu}
+          onChoose={closeMenu}
+        />
+      )}
       <div className="min-w-0 flex-1">
         <Page wide>
           {/* No visible title, so the space goes to the tab; screen readers keep the page's heading (workspace-chat-above-layout). */}

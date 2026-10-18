@@ -10,8 +10,8 @@ export function reviewLabel(tier: string, version: number): string {
  * A notice the service posted when a render or a build started in this conversation ended.
  * A finished render of a piece version has a Review button, opening the inspector beside the
  * chat on its Renders tab, and a finished build an "Inspect version N" button opening it; a failed one, a
- * shell or a deleted version has none. A revision notice (revision-link-button) is posted when the
- * version is created and always has an "Open version N" button. A finished room render carries
+ * shell or a deleted version has none. A revision notice is no longer posted (studio-navigation-tidy);
+ * one already in the history shows as its text with no button. A finished room render carries
  * links to its viewer or still, opening in a new tab (room-render-notices).
  */
 export function Notice({
@@ -25,7 +25,7 @@ export function Notice({
   const build = m.kind === "build";
   const revision = m.kind === "revision";
   const linked = m.outcome === "succeeded" && m.package_id !== undefined && m.version !== undefined;
-  const canOpen = linked && (build || revision || Boolean(m.tier));
+  const canOpen = linked && !revision && (build || Boolean(m.tier));
   return (
     <section
       aria-label={revision ? "Revision notice" : build ? "Build notice" : "Render notice"}
@@ -36,13 +36,9 @@ export function Notice({
       <p>{m.text}</p>
       {canOpen && (
         <Button type="button" size="sm" variant="outline" onClick={() =>
-            onReview(m.package_id as string, m.version as number, build || revision ? undefined : (m.tier as string))
+            onReview(m.package_id as string, m.version as number, build ? undefined : (m.tier as string))
           }>
-          {revision
-            ? `Open version ${m.version}`
-            : build
-              ? `Inspect version ${m.version}`
-              : reviewLabel(m.tier as string, m.version as number)}
+          {build ? `Inspect version ${m.version}` : reviewLabel(m.tier as string, m.version as number)}
         </Button>
       )}
       {m.outcome === "succeeded" &&

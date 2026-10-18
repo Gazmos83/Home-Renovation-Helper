@@ -23,7 +23,7 @@ from tests.blender_fakes import fake_pipeline_launch
 
 HOUSE_TABLES = (
     "composition_versions, compositions, model_assets, remote_render_jobs, render_feedback, render_runs, review_items, reviews, piece_versions, pieces, rooms, apartments, preferences, "
-    "generator_extension_requests, thread_tool_settings, plugin_invocations, threads, uploads"
+    "generator_extension_requests, plugin_invocations, threads, uploads"
 )
 
 

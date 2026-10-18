@@ -1,10 +1,3 @@
-export type ToolToggle = {
-  plugin: string;
-  description: string;
-  enabled: boolean;
-  toggleable: boolean;
-};
-
 export type Thread = {
   thread_id: string;
   title: string;
@@ -1068,12 +1061,6 @@ export const api = {
   brief: (threadId: string) => request<Brief>(`/chat/threads/${threadId}/brief`),
   saveBrief: (threadId: string, body: BriefBody) =>
     request<Brief>(`/chat/threads/${threadId}/brief`, { method: "PUT", body: JSON.stringify(body) }),
-  tools: (threadId: string) => request<ToolToggle[]>(`/chat/threads/${threadId}/tools`),
-  setTool: (threadId: string, plugin: string, enabled: boolean) =>
-    request<ToolToggle>(`/chat/threads/${threadId}/tools/${plugin}`, {
-      method: "PUT",
-      body: JSON.stringify({ enabled }),
-    }),
   models: () => request<ModelsPayload>("/admin/models"),
   setRouting: (slot: string, model: string) =>
     request(`/admin/routing/${slot}`, { method: "PUT", body: JSON.stringify({ model }) }),

@@ -319,7 +319,10 @@ test("choosing a Pricing view shows only that view (View chosen)", async () => {
   await user.click(within(column).getByRole("link", { name: "Remnants" }));
   expect(screen.getByLabelText("address")).toHaveTextContent("/studio/pricing/remnants");
   expect(await screen.findByText("The rack is empty.")).toBeInTheDocument();
-  expect(within(column).getByRole("link", { name: "Remnants" })).toHaveAttribute("aria-current", "page");
+  // The column closes on the choice (Sub-menu closes after a choice); the row still marks the view.
+  expect(screen.getAllByRole("navigation", { name: "Pricing views" })).toHaveLength(1);
+  const [row] = screen.getAllByRole("navigation", { name: "Pricing views" });
+  expect(within(row).getByRole("link", { name: "Remnants" })).toHaveAttribute("aria-current", "page");
   expect(screen.queryByRole("table")).not.toBeInTheDocument();
   expect(screen.queryByRole("form", { name: "Record a snapshot" })).not.toBeInTheDocument();
 });
@@ -397,4 +400,41 @@ test("a Design Knowledge view address opens that view (View address reloaded)", 
   const [column] = screen.getAllByRole("navigation", { name: "Design Knowledge views" });
   expect(within(column).getByRole("link", { name: "Engineering Knowledge" })).toHaveAttribute("aria-current", "page");
   expect(await screen.findByRole("heading", { name: "Engineering knowledge" })).toBeInTheDocument();
+});
+
+// --- the sub-menu column closes itself (studio-navigation-tidy) ---
+
+test("the sub-menu column closes after a choice and the rail tab opens it again (Sub-menu closes after a choice, Sub-menu reopened from the rail)", async () => {
+  const user = userEvent.setup();
+  stubAll();
+  show("/studio/pricing/prices");
+  const [column] = screen.getAllByRole("navigation", { name: "Pricing views" });
+  expect(column).toHaveClass("md:flex");
+  await user.click(within(column).getByRole("link", { name: "Remnants" }));
+  expect(screen.getByLabelText("address")).toHaveTextContent("/studio/pricing/remnants");
+  expect(column).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("tab", { name: "Pricing" }));
+  expect(screen.getAllByRole("navigation", { name: "Pricing views" })).toHaveLength(2);
+});
+
+test("the sub-menu column closes with its x (Sub-menu closed with its x)", async () => {
+  const user = userEvent.setup();
+  stubAll();
+  show("/studio/pricing/prices");
+  await user.click(screen.getByRole("button", { name: "Close Pricing views" }));
+  const navs = screen.getAllByRole("navigation", { name: "Pricing views" });
+  expect(navs).toHaveLength(1);
+  expect(navs[0]).toHaveClass("md:hidden");
+});
+
+test("the phone row stays shown after a choice (Row unchanged on a phone)", async () => {
+  const user = userEvent.setup();
+  setScreenWidth(360);
+  stubAll();
+  show("/studio/pricing/prices");
+  const [, row] = screen.getAllByRole("navigation", { name: "Pricing views" });
+  await user.click(within(row).getByRole("link", { name: "Remnants" }));
+  expect(row).toBeInTheDocument();
+  expect(within(row).getByRole("link", { name: "Remnants" })).toHaveAttribute("aria-current", "page");
 });

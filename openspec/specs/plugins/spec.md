@@ -7,11 +7,11 @@ Defines tools as plugins: the manifest every plugin folder carries, the two kind
 ## Requirements
 
 ### Requirement: Every tool comes from a plugin manifest
-Each plugin SHALL be a folder under `backend/plugins/` holding a `manifest.yaml` with its name, description, kind (`builtin` or `https`), the agent role it serves, the tools it provides, whether it is enabled by default and whether the homeowner may toggle it. A built-in manifest MAY also name other agents that share its tools (`also_for`), never repeating an agent or naming its own role. The backend SHALL load every manifest at startup and SHALL fail startup naming the file for a missing field, an unknown field, a tool named by two plugins, a built-in tool with no implementation, an unknown role or an invalid `also_for`. The set of tools agents may name SHALL be exactly the tools the manifests declare, and an agent's instruction file MAY name a tool only when the agent is the plugin's role or is named in its `also_for`.
+Each plugin SHALL be a folder under `backend/plugins/` holding a `manifest.yaml` with its name, description, kind (`builtin` or `https`), the agent role it serves, the tools it provides, whether it is enabled by default and whether it is marked toggleable. The toggleable mark SHALL be kept in manifests and shown on the developer's Plugins page, and SHALL have no effect on which tools are bound. A built-in manifest MAY also name other agents that share its tools (`also_for`), never repeating an agent or naming its own role. The backend SHALL load every manifest at startup and SHALL fail startup naming the file for a missing field, an unknown field, a tool named by two plugins, a built-in tool with no implementation, an unknown role or an invalid `also_for`. The set of tools agents may name SHALL be exactly the tools the manifests declare, and an agent's instruction file MAY name a tool only when the agent is the plugin's role or is named in its `also_for`.
 
 #### Scenario: Ten toggleable tools
 - **WHEN** the service starts with the shipped plugins
-- **THEN** the loaded plugins provide at least ten tools the homeowner can toggle
+- **THEN** the loaded plugins provide at least ten tools that the developer can enable or disable on the Plugins page
 
 #### Scenario: Two plugins claim a tool
 - **WHEN** two manifests both declare `cut_list`
@@ -43,13 +43,13 @@ Executing an HTTPS plugin SHALL re-validate the arguments, re-check the host aga
 - **WHEN** the response is a redirect
 - **THEN** it is not followed and the call is recorded as refused
 
-### Requirement: Plugins are enabled globally and per conversation
-The developer SHALL be able to enable or disable a plugin for the whole service; the homeowner SHALL be able to switch each toggleable, globally enabled plugin on or off for one conversation, starting from the manifest's default. A tool SHALL be bound to a specialist only when its plugin is globally enabled, enabled for the thread (or not toggleable), and the specialist's instruction header names it — or, for an HTTPS plugin, its role is that specialist.
+### Requirement: Plugins are enabled globally
+The developer SHALL be able to enable or disable a plugin for the whole service from the Plugins page. A tool SHALL be bound to a specialist only when its plugin is globally enabled and the specialist's instruction header names it, or, for an HTTPS plugin, when its role is that specialist. No per-conversation setting SHALL change which tools are bound. A plugin that is disabled by default (such as `engineering_knowledge`) SHALL stay unbound in every conversation until the developer enables it.
 
-#### Scenario: Toggled off in one thread
-- **WHEN** the owner switches `room_fit` off in one conversation
-- **THEN** the Designer in that conversation binds no `room_fit`, and in another conversation still does
+#### Scenario: Disabled for every conversation
+- **WHEN** the developer disables `room_fit` on the Plugins page
+- **THEN** the Designer binds no `room_fit` in any conversation from the next turn
 
-#### Scenario: Not toggleable
-- **WHEN** the owner tries to switch off `create_piece`
-- **THEN** it is refused naming the plugin as not toggleable
+#### Scenario: Default off
+- **WHEN** `engineering_knowledge` is disabled by default and the developer has not enabled it
+- **THEN** no conversation binds its tools

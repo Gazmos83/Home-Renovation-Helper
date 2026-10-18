@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import pytest
 from langchain_core.messages import HumanMessage, ToolMessage
 from sqlalchemy.orm import Session
 
 from app.agent import chat, house_file
 from app.agent.foreman import last_reply
 from app.agent.tools import loaded_plugins
-from app.plugins.enablement import EnablementRefused, set_thread_enabled
 from app.plugins.loader import load_plugins
 from tests.fakes import tool_call
 from tests.graph_helpers import fake_models, make_harness
@@ -25,13 +23,10 @@ def _read_help(arguments: dict) -> str:
     return loaded_plugins().by_name["help"].tools["read_help"].run(arguments, None)  # type: ignore[arg-type]
 
 
-def test_the_plugin_serves_intake_and_cannot_be_switched_off(tool_state) -> None:
+def test_the_plugin_serves_intake_and_is_not_toggleable() -> None:
     plugin = load_plugins().by_name["help"]
     assert plugin.agents == ("intake",)
     assert plugin.toggleable is False and plugin.enabled_by_default is True
-    harness = make_harness(tool_state)
-    with Session(tool_state.engine) as session, pytest.raises(EnablementRefused, match="not toggleable"):
-        set_thread_enabled(session, loaded_plugins(), harness.thread, "help", False)
 
 
 def test_read_help_lists_the_topics() -> None:

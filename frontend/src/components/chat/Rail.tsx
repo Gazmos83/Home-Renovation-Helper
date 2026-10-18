@@ -1,4 +1,4 @@
-import { Box, ChevronsLeft, ChevronsRight, ClipboardList, DoorOpen, NotebookPen, Ruler, Wrench, X } from "lucide-react";
+import { Box, ChevronsLeft, ChevronsRight, ClipboardList, DoorOpen, NotebookPen, Ruler, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -7,12 +7,12 @@ import { cn } from "@/lib/utils";
 export type Panel = {
   id: string;
   label: string;
-  icon: "tools" | "brief" | "project" | "piece" | "room" | "notes";
+  icon: "brief" | "project" | "piece" | "room" | "notes";
   content?: ReactNode;
   onSelect?: () => void;
 };
 
-const ICONS = { tools: Wrench, brief: ClipboardList, project: Ruler, piece: Box, room: DoorOpen, notes: NotebookPen };
+const ICONS = { brief: ClipboardList, project: Ruler, piece: Box, room: DoorOpen, notes: NotebookPen };
 const EXPANDED_KEY = "studio.rail.expanded";
 
 // Remembered per browser; a browser that cannot store it shows the rail collapsed.

@@ -580,15 +580,14 @@ def test_deleting_the_last_composition_version_keeps_the_measured_room(
     assert blender_storage.next_composition_version(render_root, "wohnen") == 1
 
 
-def test_deleting_a_thread_takes_its_settings_and_upload_records_and_keeps_the_piece(db_session) -> None:
-    from app.db.models import ThreadToolSetting, Upload
+def test_deleting_a_thread_takes_its_upload_records_and_keeps_the_piece(db_session) -> None:
+    from app.db.models import Upload
 
     house_file.record_piece(db_session, "hall-bench", "Hall bench")
     house_file.record_version(db_session, "hall-bench", 1)
     house_file.record_review(db_session, "hall-bench", 1, ["screenshot.png"], [])
     thread = house_file.create_thread(db_session, "Hall bench", package_id=None)
     house_file.touch_thread(db_session, thread.id, package_id="hall-bench")
-    db_session.add(ThreadToolSetting(thread_id=thread.id, plugin="room_fit", enabled=False))
     db_session.add(Upload(thread_id=thread.id, kind="png", size_bytes=3, original_name="a.png"))
     db_session.flush()
     thread_id = thread.id
@@ -596,7 +595,6 @@ def test_deleting_a_thread_takes_its_settings_and_upload_records_and_keeps_the_p
 
     assert house_file.delete_thread(db_session, thread_id) is True
     assert house_file.get_thread(db_session, thread_id) is None
-    assert db_session.query(ThreadToolSetting).filter_by(thread_id=thread_id).count() == 0
     assert db_session.query(Upload).filter_by(thread_id=thread_id).count() == 0
     assert house_file.version_row(db_session, "hall-bench", 1) is not None
     assert len(house_file.reviews_for(db_session, "hall-bench", 1)) == 1

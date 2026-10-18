@@ -211,7 +211,7 @@ def test_api_tracing_suppresses_content_and_later_calls_keep_local_usage(
 
     from app.db.models import ModelUsage
     from app.observability.langfuse import Tracing
-    from app.plugins.enablement import set_global_enabled, set_thread_enabled
+    from app.plugins.enablement import set_global_enabled
     from tests.fakes import tool_call
     from tests.graph_helpers import fake_models
     from tests.test_chat_api import install, start
@@ -263,13 +263,6 @@ def test_api_tracing_suppresses_content_and_later_calls_keep_local_usage(
     thread = start(client, room=None)
     with Session(client.app.state.engine) as session:
         set_global_enabled(session, "engineering_knowledge", True)
-        set_thread_enabled(
-            session,
-            client.app.state.plugins,
-            UUID(thread),
-            "engineering_knowledge",
-            True,
-        )
         session.commit()
     first = client.post(
         f"/chat/threads/{thread}/turns", json={"message": "TEST board load capacity?"}

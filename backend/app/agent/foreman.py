@@ -134,7 +134,7 @@ def tool_refusal(tool: str, specialist: str, owners: dict[str, list[str]]) -> st
     """The fixed text for a call to a tool `specialist` has not bound; nothing ran."""
     named = owners.get(tool, [])
     if specialist in named:
-        return f"`{tool}` is switched off in this conversation's tools. Nothing was done."
+        return f"`{tool}` is switched off for the whole service. Nothing was done."
     if named:
         who = " and ".join(SPECIALIST_LABELS.get(n, n) for n in named)
         return f"`{tool}` belongs to {who}, not to you. Nothing was done or saved."

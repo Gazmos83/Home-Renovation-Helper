@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
+import { X } from "lucide-react";
 import { Link } from "react-router-dom";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /** `state` rides along with the link, e.g. so a dialog opened from the menu closes back to the grid. */
@@ -12,6 +13,8 @@ export type SubMenuItem = { id: string; label: string; to: string; state?: unkno
  * with the full name on hover, and a long list scrolls on its own.
  * `column` sits between the rail and the content from 768 px wide; `row` is the tab strip above the
  * content below that. Studio renders both and CSS shows one.
+ * The column has an "x" (`onClose`) and closes when an entry is chosen (`onChoose`); the row ignores
+ * both (studio-navigation-tidy).
  */
 export function SubMenu({
   label,
@@ -20,6 +23,8 @@ export function SubMenu({
   layout,
   empty,
   lead,
+  onClose,
+  onChoose,
 }: {
   label: string;
   items: SubMenuItem[];
@@ -29,7 +34,12 @@ export function SubMenu({
   empty?: string;
   /** An action shown before the entries, e.g. "New conversation". */
   lead?: ReactNode;
+  /** Column only: the "x" at its top. */
+  onClose?: () => void;
+  /** Column only: an entry was chosen. */
+  onChoose?: () => void;
 }) {
+  const column = layout === "column";
   return (
     <nav
       aria-label={label}
@@ -39,6 +49,13 @@ export function SubMenu({
           : "-mx-1 flex gap-2 overflow-x-auto border-b px-1 pb-2 md:hidden"
       }
     >
+      {column && onClose && (
+        <div className="flex justify-end">
+          <Button type="button" variant="ghost" size="sm" className="size-8 p-0" aria-label={`Close ${label}`} onClick={onClose}>
+            <X aria-hidden size={16} />
+          </Button>
+        </div>
+      )}
       {lead}
       {items.length === 0 && empty && <p className="px-2 py-1.5 text-sm text-muted-foreground">{empty}</p>}
       {items.map((item) => (
@@ -47,6 +64,7 @@ export function SubMenu({
           to={item.to}
           state={item.state}
           title={item.label}
+          onClick={column ? onChoose : undefined}
           aria-current={item.id === current ? "page" : undefined}
           className={cn(
             buttonVariants({ variant: "ghost", size: "sm" }),

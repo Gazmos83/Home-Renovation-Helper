@@ -81,4 +81,4 @@ Acceptance behaviours covered: 18 mm P2 shelf, 40 kg runner, plasterboard anchor
 
 ## Rollback
 
-Disable the `engineering_knowledge` plugin globally or per conversation. Kitchen seeds are metadata-only. No migration downgrade is required.
+Disable the `engineering_knowledge` plugin globally. Kitchen seeds are metadata-only. No migration downgrade is required.

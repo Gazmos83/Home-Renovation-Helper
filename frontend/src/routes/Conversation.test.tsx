@@ -43,11 +43,6 @@ function progress(done: string[], extra: Record<string, unknown> = {}) {
   };
 }
 
-const tools = [
-  { plugin: "room_fit", description: "Check whether a piece fits a room", enabled: true, toggleable: true },
-  { plugin: "create_piece", description: "Create a new piece", enabled: true, toggleable: false },
-];
-
 let messages: Msg[];
 let title: string;
 let pending: unknown;
@@ -150,7 +145,6 @@ beforeEach(() => {
         briefNow = { ...briefNow, confirmed: true, ...body, rooms: briefNow.rooms };
         return json({ body: briefNow });
       }
-      if (call === "GET /chat/threads/t1/tools") return json({ body: tools });
       if (call === "GET /packages/hall-bench/versions/1")
         return json({ body: { package_id: "hall-bench", version: 1, status: "succeeded", approved_at: null, files: ["model.glb", "spec.json"] } });
       if (call === "GET /packages/hall-bench/versions/1/files/spec.json") return json({ body: SPEC });
@@ -183,7 +177,6 @@ beforeEach(() => {
         progressNow = { ...(progressNow as object), approved_version: approval[1] === "PUT" ? version : null };
         return json({ body: { package_id: "hall-bench", version, status: "succeeded", approved_at: null } });
       }
-      if (call === "PUT /chat/threads/t1/tools/room_fit") return json({ body: { ...tools[0], enabled: false } });
       if (call === "POST /chat/threads/t1/turns/stream") return streamed(await turn(body));
       if (call === "POST /chat/threads/t1/turns/latest") return streamed(await turn(body));
       if (call === "POST /chat/threads/t1/resume/stream") return streamed(await resume(body));
@@ -213,10 +206,6 @@ const openBrief = async () => {
   await userEvent.setup().click(await screen.findByRole("button", { name: "Brief" }));
   return screen.findByRole("form", { name: "Brief" });
 };
-
-async function openTools(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByRole("button", { name: "Tools" }));
-}
 
 /** The Workspace tab's body, as the Design Studio renders it for `/studio/workspace/<id>`. */
 function Conversation() {
@@ -492,25 +481,6 @@ test("a route the owner typed stays text", async () => {
   expect(list.queryByRole("link")).not.toBeInTheDocument();
 });
 
-test("the owner can switch a toggleable tool off", async () => {
-  const user = userEvent.setup();
-  show();
-  await openTools(user);
-  const checkbox = await screen.findByLabelText("room_fit");
-  expect(checkbox).toBeChecked();
-  await user.click(checkbox);
-  expect(calls).toContainEqual(["PUT", "/chat/threads/t1/tools/room_fit", { enabled: false }]);
-});
-
-test("a non-toggleable tool is shown always on", async () => {
-  show();
-  await openTools(userEvent.setup());
-  const checkbox = await screen.findByLabelText("create_piece");
-  expect(checkbox).toBeChecked();
-  expect(checkbox).toBeDisabled();
-  expect(screen.getByText("Always on")).toBeInTheDocument();
-});
-
 test("an attached design file shows as a named chip, not a thumbnail, and is sent with the turn", async () => {
   const user = userEvent.setup();
   upload = () => ({ status: 201, body: { upload_id: "d1", kind: "design", size_bytes: 900, original_name: "wall-unit.json" } });
@@ -755,13 +725,13 @@ test("the rail opens a flyout, switches, and closes on Escape and on its icon", 
   expect(screen.getByRole("dialog", { name: "Project" })).toHaveFocus();
   expect(projectIcon).toHaveAttribute("aria-expanded", "true");
 
-  await user.click(screen.getByRole("button", { name: "Tools" }));
+  await user.click(screen.getByRole("button", { name: "Brief" }));
   expect(screen.queryByRole("dialog", { name: "Project" })).not.toBeInTheDocument();
-  expect(screen.getByRole("dialog", { name: "Tools" })).toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "Brief" })).toBeInTheDocument();
 
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Tools" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Brief" })).toHaveFocus();
 
   await user.click(projectIcon);
   await user.click(projectIcon);
@@ -929,8 +899,12 @@ test("the panel icons sit in the chat pane's header and name themselves on hover
   const icons = screen.getByRole("navigation", { name: "Panels" });
   expect(icons).not.toHaveClass("sticky");
   expect(within(icons).getAllByRole("button").map((b) => b.getAttribute("title"))).toEqual([
-    "Tools", "Decisions so far", "Brief", "Project", "Piece", "Room",
+    "Decisions so far", "Brief", "Project", "Piece", "Room",
   ]);
+  // No Tools icon and no per-conversation tool switches (No Tools icon, studio-navigation-tidy).
+  expect(screen.queryByRole("button", { name: "Tools" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  expect(calls.some(([, url]) => url.includes("/tools"))).toBe(false);
   // In the header row with the title (the icons sit in its right-hand group with Layout), above the messages.
   const header = icons.parentElement!.parentElement!;
   expect(within(header).getByRole("heading", { level: 2, name: "Hall bench" })).toBeInTheDocument();
@@ -1197,19 +1171,19 @@ test("a build notice has an Inspect button that opens the inspector; a failed or
   expect(screen.getByRole("textbox")).toBeEnabled();
 });
 
-test("a revision notice has a centered Open button that opens the inspector, before any build ends", async () => {
-  const user = userEvent.setup();
+test("an old revision notice shows as text with no button, and a revision shows one build notice (Old revision notice, One notice per revision)", async () => {
   messages = [
     reply("Created hall-bench version 1."),
     { role: "notice", kind: "revision", text: "hall-bench version 1 is created.", outcome: "succeeded", package_id: "hall-bench", version: 1 },
+    { role: "notice", kind: "build", text: "hall-bench version 1 is built.", outcome: "succeeded", package_id: "hall-bench", version: 1 },
   ];
   show();
   const list = within(await screen.findByRole("region", { name: "Messages" }));
-  const notice = await list.findByRole("region", { name: "Revision notice" });
-  expect(notice).toHaveClass("mx-auto", "items-center", "text-center");
-  await user.click(within(notice).getByRole("button", { name: "Open version 1" }));
-  const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
-  expect(await inspector.findByText("Overall: W 1200 mm × H 450 mm × D 400 mm")).toBeInTheDocument();
+  const old = await list.findByRole("region", { name: "Revision notice" });
+  expect(old).toHaveTextContent("hall-bench version 1 is created.");
+  expect(within(old).queryByRole("button")).not.toBeInTheDocument();
+  expect(list.queryByRole("button", { name: "Open version 1" })).not.toBeInTheDocument();
+  expect(list.getAllByRole("button", { name: "Inspect version 1" })).toHaveLength(1);
 });
 
 test("a build notice appears without a reload once the followed build ends", async () => {
@@ -1581,6 +1555,16 @@ test("a fresh room version becomes approvable without a reload (Fresh room versi
     await vi.advanceTimersByTimeAsync(3100);
   });
   expect(await pane.findByRole("button", { name: "Approve version 3" })).toBeInTheDocument();
+});
+
+test("the room pane offers the chosen version's turntable viewer under its 3D view", async () => {
+  setWorkspaceLayout("chat-room");
+  const viewer = "/compositions/room-hall/versions/3/files/viewer.html";
+  progressNow = progress(["brief", "piece", "built"], { room: { ...VERSIONED_HALL, versions: [hallView(3, { viewer }), hallView(2)] } });
+  serveHallVersions();
+  show("/studio/workspace/t1?room=room-hall");
+  const pane = within(await screen.findByRole("complementary", { name: "Room view" }));
+  expect(await pane.findByRole("link", { name: "Open the turntable viewer of Hall" })).toHaveAttribute("href", viewer);
 });
 
 // --- delete conversation (piece-conversation-link) ---------------------------------------

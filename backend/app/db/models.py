@@ -665,25 +665,6 @@ class Upload(Base):
     )
 
 
-class ThreadToolSetting(Base):
-    """Per-conversation on/off for one plugin. Absent means the manifest default."""
-
-    __tablename__ = "thread_tool_settings"
-
-    thread_id: Mapped[UUID] = mapped_column(
-        ForeignKey("threads.id", ondelete="CASCADE"), primary_key=True
-    )
-    plugin: Mapped[str] = mapped_column(String(64), primary_key=True)
-    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-
-    __table_args__ = (
-        CheckConstraint("btrim(plugin) <> ''", name="ck_thread_tool_settings_plugin_not_blank"),
-    )
-
-
 class PluginOutcome(StrEnum):
     """How one HTTPS plugin invocation ended; the audit trail keeps no payload."""
 

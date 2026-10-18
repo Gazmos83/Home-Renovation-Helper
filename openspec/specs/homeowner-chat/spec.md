@@ -55,13 +55,6 @@ Sending a message to a thread SHALL run exactly one Foreman turn and answer with
 - **WHEN** a specialist would call tools more times than the cap allows
 - **THEN** the turn ends with a text reply that says what remains undone
 
-### Requirement: A thread carries its tool toggles
-Each thread SHALL have a tool setting per toggleable plugin, starting from the manifest's default; the owner SHALL be able to read and change them on the thread through an owner-gated route, and a change SHALL apply from the thread's next turn. A pending confirmation SHALL resume with the tools of the turn that raised it.
-
-#### Scenario: Toggles listed
-- **WHEN** the owner reads a new thread's tools
-- **THEN** each toggleable plugin is listed with its manifest default
-
 ### Requirement: A confirmation pauses the turn until the owner answers
 When a gated action is proposed — confirmed numbers, a new piece, a revision, a `final` render — or a specialist asks the owner questions through `ask_owner`, the turn SHALL pause and the reply SHALL carry the pending item with a stable id and its kind. A confirmation carries a subject, a readable summary and the structured proposal, and the owner answers it with `yes` or `no` and an optional reason; `yes` runs the action and `no` returns the reason to the specialist, which continues the conversation. A question set carries its questions in order, each with its text and, when given, a unit and a list of choices; the owner answers it with one answer per question, or declines it with a message in their own words, and the specialist continues with the answers (or the message) in the same turn. An answer naming no pending item, a stale id, an answer of the wrong kind, or a question set answered with a different number of answers SHALL be refused (409 for no pending item or a stale id, 422 for the shape) and nothing runs. A new message while anything is pending SHALL be refused with 409 naming what is pending.
 
@@ -309,7 +302,7 @@ When a build of a piece version that a specialist's tool started in a thread end
 - A finished build's notice SHALL say that the version is built, for example "hall-bench version 2 is built."
 - A failed build's notice SHALL say in plain words that the version did not build, for example "hall-bench version 2 did not build. You can ask for it again." It SHALL NOT carry the error text.
 
-A build started from a Studio route SHALL post no notice. A build whose thread was deleted before it ended SHALL post nothing and SHALL still finish. Posting SHALL NOT change the build's outcome; a failure to post SHALL be logged. A build notice, like a render notice, SHALL NOT be sent to any model and SHALL obey the no-internals rule. Render notices SHALL be unchanged.
+A revision, rebuild or design import that creates a version SHALL post no notice of its own when the version is recorded; the build notice is that version's one notice. A build started from a Studio route SHALL post no notice. A build whose thread was deleted before it ended SHALL post nothing and SHALL still finish. Posting SHALL NOT change the build's outcome; a failure to post SHALL be logged. A build notice, like a render notice, SHALL NOT be sent to any model and SHALL obey the no-internals rule. Render notices SHALL be unchanged.
 
 #### Scenario: Revision built
 - **WHEN** the owner confirms a revision of `hall-bench` in a conversation and version 2 builds
@@ -326,6 +319,10 @@ A build started from a Studio route SHALL post no notice. A build whose thread w
 #### Scenario: Not sent to the model
 - **WHEN** the owner sends a message after a build notice was posted
 - **THEN** the specialist's model call contains no message with the notice's text
+
+#### Scenario: No separate revision notice
+- **WHEN** the owner confirms a revision of `hall-bench` in a conversation and version 2 is recorded
+- **THEN** no notice is posted until its build ends, and then exactly one build notice for version 2 is posted
 
 ### Requirement: A thread's progress names its room and the room's 3D view
 The thread progress read SHALL report the conversation's confirmed room or apartment, or nothing when the conversation has confirmed neither. When one is confirmed the read SHALL give its name and its scope (`room` or `apartment`), and whether its composition's latest version has a 3D model. When it has one, the read SHALL give the composition's slug and name the model and the surface map by their composition routes. When a composition exists the read SHALL also list its newest five versions, newest first, each with its number, build status, and, when that version has `model.glb`, its model, surface map and dimensions by their composition routes. The read SHALL report only this conversation's own room or apartment, never one confirmed in another conversation or the room a piece is assigned to, and SHALL contain no file-system path.

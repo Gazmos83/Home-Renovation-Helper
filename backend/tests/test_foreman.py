@@ -274,15 +274,14 @@ def test_the_designer_calling_intakes_tool_is_refused_naming_intake(tool_state) 
 
 
 def test_a_switched_off_own_tool_is_refused_as_switched_off(tool_state) -> None:
-    from app.agent.tools import loaded_plugins
-    from app.plugins.enablement import set_thread_enabled
+    from app.plugins.enablement import set_global_enabled
 
     models, harness = _designer_calls(tool_state, tool_call("cut_list", {"package_id": "hall-bench"}))
     with ToolDeps(tool_state).session() as session:
-        set_thread_enabled(session, loaded_plugins(), harness.thread, "cut_list", False)
+        set_global_enabled(session, "cut_list", False)
         session.commit()
     harness.turn("list the parts")
-    assert "`cut_list` is switched off in this conversation's tools. Nothing was done." in (
+    assert "`cut_list` is switched off for the whole service. Nothing was done." in (
         models["designer"].last_prompt_text()
     )
 

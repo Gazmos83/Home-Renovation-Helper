@@ -161,35 +161,3 @@ def follow_build(deps: Any, thread_id: UUID | None, future: Any, package_id: str
         post_build(deps, thread_id, package_id, version, str(state.get("status")))
 
     future.add_done_callback(done)
-
-
-# --- revision notices (revision-link-button) -------------------------------------------
-
-
-def revision_text(package_id: str, version: int) -> str:
-    """A revision notice's words, built here and nowhere else."""
-    return f"{package_id} version {version} is created."
-
-
-def post_revision(deps: Any, thread_id: UUID | None, package_id: str, version: int) -> None:
-    """Record the notice for a version a revision just recorded, before its build ends.
-    Never raises: a failure is logged and the revision stands."""
-    if thread_id is None:
-        return
-    try:
-        count = _message_count(deps, thread_id)
-        with deps.session() as session:
-            house_file.add_notice(
-                session,
-                thread_id,
-                after_messages=count,
-                outcome="succeeded",
-                kind="revision",
-                tier=None,
-                text=revision_text(package_id, version),
-                package_id=package_id,
-                version=version,
-            )
-            session.commit()
-    except Exception:
-        logger.exception("could not post a revision notice")

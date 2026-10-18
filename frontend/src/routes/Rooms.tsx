@@ -147,23 +147,26 @@ function CompositionCard({ composition, inRoom = false }: { composition: Composi
           note="Open the .blend in Blender: the room, its openings and every placed piece, in millimetres."
         />
       )}
-      {shown.viewer && (
-        <p>
-          <a href={shown.viewer} target="_blank" rel="noreferrer" className="underline">
-            Open the turntable viewer of {composition.name}
-          </a>
-        </p>
-      )}
       {shown.model && shown.surfaces ? (
         open3d ? (
-          <RoomView
-            key={shown.model}
-            name={composition.name}
-            model={shown.model}
-            report={shown.surfaces}
-            dimensions={shown.dimensions}
-            apartment={composition.scope === "apartment"}
-          />
+          <>
+            <RoomView
+              key={shown.model}
+              name={composition.name}
+              model={shown.model}
+              report={shown.surfaces}
+              dimensions={shown.dimensions}
+              apartment={composition.scope === "apartment"}
+            />
+            {/* The turntable viewer is offered only in the open 3D view (studio-navigation-tidy). */}
+            {shown.viewer && (
+              <p>
+                <a href={shown.viewer} target="_blank" rel="noreferrer" className="underline">
+                  Open the turntable viewer of {composition.name}
+                </a>
+              </p>
+            )}
+          </>
         ) : (
           <p>
             <Button type="button" variant="outline" onClick={() => setOpen3d(true)}>

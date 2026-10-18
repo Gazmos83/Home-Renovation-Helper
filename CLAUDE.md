@@ -87,7 +87,7 @@ Consumer subscriptions (Claude Pro, SuperGrok) are not backends; Claude Desktop 
 
 ## 5. Tools (plugins)
 
-Each tool is a folder under `backend/plugins/<name>/` with `manifest.yaml` (name, description, kind, role, tools, enabled by default, toggleable) and its implementation. The backend loads every manifest at startup and refuses a malformed one by file name. The homeowner toggles plugins per conversation; the developer enables or disables them globally from `/admin/plugins`. Declarative HTTPS plugins are a second kind: one GET to an allow-listed host, executed with the SSRF guard (global addresses only, pinned IP + SNI, no redirects, cap, timeout, pacing); none ship enabled.
+Each tool is a folder under `backend/plugins/<name>/` with `manifest.yaml` (name, description, kind, role, tools, enabled by default, toggleable) and its implementation. The backend loads every manifest at startup and refuses a malformed one by file name. The developer enables or disables plugins globally from `/admin/plugins`; there are no per-conversation switches. Declarative HTTPS plugins are a second kind: one GET to an allow-listed host, executed with the SSRF guard (global addresses only, pinned IP + SNI, no redirects, cap, timeout, pacing); none ship enabled.
 
 | # | Plugin | Agent | Status | Notes |
 |---|---|---|---|---|

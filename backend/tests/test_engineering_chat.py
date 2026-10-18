@@ -21,7 +21,7 @@ from app.engineering.chat import (
 from app.engineering.registry import add_property, decide_rights
 from app.engineering.schemas import PropertyIn, RightsIn
 from app.observability.langfuse import Tracing, mask_personal_data
-from app.plugins.enablement import set_global_enabled, set_thread_enabled
+from app.plugins.enablement import set_global_enabled
 from tests.fakes import tool_call
 from tests.graph_helpers import fake_models, make_harness
 from tests.test_engineering_retrieval import publish
@@ -286,13 +286,7 @@ def test_plugin_uses_current_context_and_records_separate_evidence_ids(
         )
         harness = make_harness(tool_state, models, room=None)
         with Session(tool_state.engine) as session:
-            from app.agent.tools import loaded_plugins
-
-            plugins = loaded_plugins()
             set_global_enabled(session, "engineering_knowledge", True)
-            set_thread_enabled(
-                session, plugins, harness.thread, "engineering_knowledge", True
-            )
             session.commit()
         result = harness.turn("TEST board elasticity and load capacity?")
         assert (

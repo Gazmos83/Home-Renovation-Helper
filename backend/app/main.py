@@ -63,7 +63,6 @@ from app.api.renders import router as renders_router
 from app.api.reviews import item_router as review_item_router
 from app.api.reviews import version_router as package_reviews_router
 from app.api.rooms import router as rooms_router
-from app.api.tool_toggles import router as tool_toggles_router
 from app.api.uploads import router as uploads_router
 from app.auth.accounts import ensure_owner
 from app.blender import storage
@@ -378,7 +377,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(package_reviews_router)
     app.include_router(review_item_router)
     app.include_router(chat_router)
-    app.include_router(tool_toggles_router)
     app.include_router(uploads_router)
     app.include_router(renders_router)
     app.include_router(feedback_router)
