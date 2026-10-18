@@ -410,8 +410,8 @@ def composition_note(compositions: Sequence[Mapping[str, Any]], models: Sequence
             label = f"{neutralise(str(item.get('id')))} ({item.get('type')}: {neutralise(str(item.get('name')))})"
             if item.get("no_longer_approved"):
                 label += " no longer approved"
-            if item.get("layer") == "floor":
-                label += " (floor layer)"
+            if item.get("layer") in ("floor", "ceiling"):
+                label += f" ({item['layer']} layer)"
             label += _item_place(item)
             items.append(label)
         lines.append(

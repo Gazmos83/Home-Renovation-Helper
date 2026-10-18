@@ -9,6 +9,9 @@ composition document from its `resolved` block:
 * a library model with the bundled glTF or OBJ importer, stretched on each axis to
   exactly its stated size, its lowest point on the floor.
 
+A ceiling-layer stand-in or model hangs instead: its lowest point is at the resolved
+item's `base_mm`, which puts its top at its room's ceiling (composition-ceiling-layer).
+
 Importable only inside Blender. Nothing here renders; `render_composition.py` does,
 behind the render guard. The only importers called are the two that the checked-in
 generators use, on files that passed the model-library checks (CLAUDE.md §8).
@@ -114,7 +117,8 @@ def _local_bounds(meshes: list[bpy.types.Object]) -> tuple[Vector, Vector]:
 
 def _pose(empty: bpy.types.Object, low: Vector, high: Vector, item: dict[str, Any], scale: Vector) -> None:
     """Scale, turn and move the wrapped objects so their footprint centre is the item's
-    centre and their lowest point is on the floor. An imported model's front is local -Y;
+    centre and their lowest point is on the floor (or at `base_mm` for a ceiling-layer item).
+    An imported model's front is local -Y;
     the composition's item frame faces +Y, hence the extra half turn."""
     centre_local = Vector(((low.x + high.x) / 2, (low.y + high.y) / 2, low.z))
     rotation = math.radians(item["rotation_deg"]) + math.pi
@@ -122,7 +126,7 @@ def _pose(empty: bpy.types.Object, low: Vector, high: Vector, item: dict[str, An
     stretch = Matrix.Diagonal((*scale, 1.0))
     offset = turn @ stretch @ centre_local
     cx, cy = item["centre_mm"]
-    empty.matrix_world = Matrix.Translation(Vector((m(cx), m(cy), 0.0)) - offset) @ turn @ stretch
+    empty.matrix_world = Matrix.Translation(Vector((m(cx), m(cy), m(item.get("base_mm", 0.0)))) - offset) @ turn @ stretch
 
 
 def _place_piece(item: dict[str, Any], source: dict[str, Any], pieces_root: Path, collection) -> list[bpy.types.Object]:
@@ -180,7 +184,7 @@ def _place_stand_in(item: dict[str, Any], colour: str, collection) -> list[bpy.t
     material.diffuse_color = (*rgb, 1)
     obj.data.materials.append(material)
     cx, cy = item["centre_mm"]
-    obj.location = (m(cx), m(cy), 0.0)
+    obj.location = (m(cx), m(cy), m(item.get("base_mm", 0.0)))
     obj.rotation_euler[2] = math.radians(item["rotation_deg"])
     return [obj]
 

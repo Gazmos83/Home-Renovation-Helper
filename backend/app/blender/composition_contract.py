@@ -46,6 +46,8 @@ ITEM_TYPES: Final = ("piece", "stand-in", "model")
 MAX_SIZE_MM: Final = 10_000
 FLOOR_LAYER: Final = "floor"
 FLOOR_LAYER_MAX_MM: Final = 30
+CEILING_LAYER: Final = "ceiling"
+LAYERS: Final = (FLOOR_LAYER, CEILING_LAYER)
 _MAX_POSITION_MM: Final = 60_000
 _TOL: Final = 1e-6
 _ID: Final = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$")
@@ -139,12 +141,13 @@ def _parse_item(raw: Any, index: int, apartment: bool) -> dict[str, Any]:
         else:
             item["model_id"] = _text(raw["model_id"], f"{label}.model_id", 64)
         if "layer" in raw:
-            # A floor-layer item lies flat on the floor, such as a rug (composition-floor-layer).
-            if raw["layer"] != FLOOR_LAYER:
-                _fail(f"item {item_id}: layer must be {FLOOR_LAYER!r}")
-            if item["height_mm"] > FLOOR_LAYER_MAX_MM:
+            # A floor-layer item lies flat on the floor, such as a rug (composition-floor-layer); a
+            # ceiling-layer item hangs from the ceiling, such as a pendant lamp (composition-ceiling-layer).
+            if raw["layer"] not in LAYERS:
+                _fail(f"item {item_id}: layer must be one of {list(LAYERS)}")
+            if raw["layer"] == FLOOR_LAYER and item["height_mm"] > FLOOR_LAYER_MAX_MM:
                 _fail(f"item {item_id} is on the floor layer and may be at most {FLOOR_LAYER_MAX_MM} mm tall, not {item['height_mm']} mm")
-            item["layer"] = FLOOR_LAYER
+            item["layer"] = raw["layer"]
     item["placement"] = _parse_placement(raw["placement"], f"{label}.placement")
     return item
 
@@ -265,11 +268,16 @@ def _opening_zone(wall: Wall, opening: Mapping[str, Any], depth: float) -> tuple
 
 
 def _blocked_opening(
-    item_id: str, room: RoomGeometry, footprint, placement: Mapping[str, Any], size: tuple[float, float, float]
+    item_id: str, room: RoomGeometry, footprint, placement: Mapping[str, Any], size: tuple[float, float, float],
+    base: float = 0.0,
 ) -> None:
+    """`base` is the height of the item's lowest point: above 0 only for a ceiling-layer item,
+    which clears every opening whose top it hangs above."""
     width, depth, height = size
     for index, opening in enumerate(room.openings):
         if opening["type"] == "window" and opening["sill_mm"] >= height:
+            continue
+        if base >= opening["sill_mm"] + opening["height_mm"] - _TOL:
             continue
         if "wall" in placement:
             if opening["wall"] != placement["wall"]:
@@ -329,7 +337,7 @@ def place_items(
     """
     placed: list[dict[str, Any]] = []
     subjects: list[tuple[str, ItemSubject]] = []
-    footprints: list[tuple[str, str, tuple[Point, ...], str, str | None]] = []
+    footprints: list[tuple[str, str, tuple[Point, ...], str, str | None, float, float]] = []
     for item in parsed["items"]:
         item_id = item["id"]
         room_name = item.get("room") or scope_room
@@ -351,14 +359,23 @@ def place_items(
             _fail(f"item {item_id} leaves the room {room.name}")
         # A floor-layer item (a rug) blocks no opening, lies under standing items and takes no
         # placement rule; it still stays inside the room and clear of other floor-layer items.
+        # A ceiling-layer item hangs from `base` up to the ceiling: it clashes with another item
+        # only where their heights meet, blocks only an opening it hangs below the top of, and
+        # takes no placement rule.
         layer = item.get("layer")
-        if layer is None:
-            _blocked_opening(item_id, room, footprint, placement, size)
-        for other_id, other_room, other, other_where, other_layer in footprints:
-            if (other_room == room.name and other_layer == layer
+        base = room.height_mm - size[2] if layer == CEILING_LAYER else 0.0
+        top = base + size[2]
+        if layer != FLOOR_LAYER:
+            _blocked_opening(item_id, room, footprint, placement, size, base)
+        for other_id, other_room, other, other_where, other_layer, other_base, other_top in footprints:
+            if CEILING_LAYER in (layer, other_layer):
+                clash = base < other_top - _TOL and other_base < top - _TOL
+            else:
+                clash = other_layer == layer
+            if (other_room == room.name and clash
                     and _rectangles_overlap(footprint, other) and not _touching_only(footprint, other)):
                 _fail(f"items {other_id} ({other_where}) and {item_id} ({_where(placement)}) overlap")
-        footprints.append((item_id, room.name, tuple(footprint), _where(placement), layer))
+        footprints.append((item_id, room.name, tuple(footprint), _where(placement), layer, base, top))
         if layer is None:
             subjects.append((item_id, ItemSubject(
                 corners=room.corners, walls=room.walls, openings=room.openings,
@@ -370,6 +387,7 @@ def place_items(
             "size_mm": {"w": size[0], "d": size[1], "h": size[2]},
             "centre_mm": [round(centre[0], 3), round(centre[1], 3)],
             "rotation_deg": round(rotation, 6),
+            **({"base_mm": round(base, 3)} if layer == CEILING_LAYER else {}),
         })
     used = {p["room"] for p in placed}
     stored = {

@@ -137,6 +137,56 @@ def test_a_draft_still_renders_from_the_stored_document(scene, blender_bin: Path
     assert scene_record["output"]["kind"] == "still" and scene_record["input"]["scope"] == {"room": "Wohnen"}
 
 
+# --- a ceiling-layer item hangs from the ceiling (composition-ceiling-layer) ---------------
+
+
+def test_ceiling_layer_items_hang_with_their_top_at_the_ceiling(blender_bin: Path, tmp_path: Path) -> None:
+    root, models = tmp_path / "renders", tmp_path / "models"
+    (models / MODEL_ID).mkdir(parents=True)
+    (models / MODEL_ID / "model.glb").write_bytes(fx.glb())
+    parsed = parse_composition({
+        "kind": "room_composition", "schema_version": 1, "units": "mm", "scope": {"room": "Essen"},
+        "items": [
+            {"id": "table", "type": "stand-in", "name": "Table", "width_mm": 1600, "depth_mm": 900,
+             "height_mm": 750, "colour": "#8a6a48", "placement": {"x_mm": 2500, "y_mm": 2000, "rotation_deg": 0}},
+            {"id": "pendant", "type": "model", "model_id": MODEL_ID, "name": "Pendelleuchte Calisto",
+             "width_mm": 500, "depth_mm": 500, "height_mm": 1100, "layer": "ceiling",
+             "placement": {"x_mm": 2500, "y_mm": 2000, "rotation_deg": 0}},
+            {"id": "spot", "type": "stand-in", "name": "Spot", "width_mm": 300, "depth_mm": 300,
+             "height_mm": 300, "colour": "#202020", "layer": "ceiling",
+             "placement": {"x_mm": 1000, "y_mm": 1000, "rotation_deg": 30}},
+        ],
+    }, max_items=30)
+    document, _subjects = place_items(
+        parsed, rooms={"Essen": room_geometry("Essen", {**ROOM, "height_mm": 2500})}, piece_sizes={},
+        scope_room="Essen",
+    )
+    for placed in document["resolved"]["items"]:
+        if placed["id"] == "pendant":
+            placed["source"] = {"kind": "glb", "entry": "model.glb"}
+    folder = storage.composition_version_dir(root, "essen", 1)
+    folder.mkdir(parents=True)
+    (folder / storage.INPUT_FILE).write_text(json.dumps(document), encoding="utf-8")
+
+    out = folder / ".build-out"
+    result = subprocess.run(
+        [str(blender_bin), "--background", "--python", str(GENERATORS / "build_composition.py"), "--",
+         "--spec", str(folder / storage.INPUT_FILE), "--pieces", str(root), "--models", str(models),
+         "--out", str(out)],
+        capture_output=True, text=True, timeout=300, check=False,
+    )
+    assert result.returncode == 0, result.stderr[-1500:]
+    report = {item["id"]: item for item in json.loads((out / "report.json").read_text(encoding="utf-8"))["items"]}
+    base = {item["id"]: item.get("base_mm", 0.0) for item in document["resolved"]["items"]}
+    assert base == {"table": 0.0, "pendant": 1400.0, "spot": 2200.0}
+    for item_id, item in report.items():
+        assert item["lowest_mm"] == pytest.approx(base[item_id], abs=1), item_id
+    assert report["pendant"]["final_mm"] == pytest.approx({"x": 500, "y": 500, "z": 1100}, abs=1)
+    assert report["spot"]["final_mm"] == pytest.approx({"x": 300, "y": 300, "z": 300}, abs=1)
+    for item_id in ("pendant", "spot"):
+        assert report[item_id]["lowest_mm"] + report[item_id]["final_mm"]["z"] == pytest.approx(2500, abs=1)
+
+
 # --- an empty room (rooms-page) ------------------------------------------------------------
 
 

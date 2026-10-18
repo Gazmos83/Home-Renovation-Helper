@@ -274,6 +274,92 @@ def test_a_floor_layer_item_leaving_the_room_is_refused() -> None:
     assert "rug leaves the room Wohnen" in refusal(document(rug(x_mm=4800, y_mm=2000, rotation_deg=0)))
 
 
+# --- a ceiling-layer item hangs from the ceiling (composition-ceiling-layer) ---------------
+
+
+def pendant(item_id="pendant", height_mm=1100, **placement):
+    return {"id": item_id, "type": "model", "model_id": "c4l1", "name": "Pendelleuchte Calisto",
+            "width_mm": 500, "depth_mm": 500, "height_mm": height_mm, "layer": "ceiling",
+            "placement": placement or {"x_mm": 2500, "y_mm": 2000, "rotation_deg": 0}}
+
+
+def table(height_mm=750):
+    return {"id": "table", "type": "stand-in", "name": "Table", "width_mm": 1600, "depth_mm": 900,
+            "height_mm": height_mm, "colour": "#8a6a48", "placement": {"x_mm": 2500, "y_mm": 2000, "rotation_deg": 0}}
+
+
+def test_a_ceiling_layer_pendant_is_accepted_and_keeps_its_layer() -> None:
+    stored, subjects = place(document(pendant()))
+    assert stored["items"][0]["layer"] == "ceiling"
+    # Wohnen's ceiling is 2600 mm: the 1100 mm pendant reaches down to 1500 mm.
+    assert stored["resolved"]["items"][0]["base_mm"] == 1500.0
+    assert subjects == []
+
+
+def test_a_standing_item_records_no_base() -> None:
+    stored, _subjects = place(document(sofa(), rug()))
+    assert all("base_mm" not in item for item in stored["resolved"]["items"])
+
+
+def test_a_piece_on_the_ceiling_layer_is_refused_as_an_unknown_field() -> None:
+    assert "unknown items[0] field: layer" in refusal(document({**piece(), "layer": "ceiling"}))
+
+
+def test_a_pendant_over_the_table_is_accepted_whichever_comes_first() -> None:
+    place(document(table(), pendant()))
+    place(document(pendant(), table()))
+
+
+def test_a_pendant_resting_exactly_on_the_table_top_is_accepted() -> None:
+    place(document(table(height_mm=1500), pendant()))
+
+
+def test_a_pendant_hanging_into_a_cabinet_is_refused_naming_both() -> None:
+    message = refusal(document(table(height_mm=1600), pendant()))
+    assert "table" in message and "pendant" in message and "overlap" in message
+
+
+def test_two_overlapping_pendants_are_refused_naming_both() -> None:
+    message = refusal(document(pendant(), pendant("spot", height_mm=200, x_mm=2700, y_mm=2000, rotation_deg=0)))
+    assert "pendant" in message and "spot" in message and "overlap" in message
+
+
+def test_a_pendant_over_a_rug_is_accepted() -> None:
+    place(document(rug(), pendant()))
+
+
+def test_a_short_pendant_in_front_of_a_door_is_accepted_and_takes_no_placement_rule(tmp_path) -> None:
+    from app.compositions import rule_outcome
+    from tests.test_design_rules import swing
+
+    # The door is 2100 mm high; a 300 mm pendant hangs down to 2300 mm.
+    _stored, subjects = place(document(pendant(height_mm=300, x_mm=4250, y_mm=400, rotation_deg=0)))
+    assert subjects == []
+    assert rule_outcome(_rules(tmp_path, swing(severity="refuse")), subjects) == (None, "")
+
+
+def test_a_long_pendant_in_front_of_a_door_is_refused() -> None:
+    message = refusal(document(pendant(x_mm=4250, y_mm=400, rotation_deg=0)))
+    assert "pendant blocks the door on wall 0" in message
+
+
+def test_a_ceiling_layer_item_longer_than_the_room_is_high_is_refused() -> None:
+    assert "taller than the ceiling" in refusal(document(pendant(height_mm=2700)))
+
+
+def test_a_ceiling_layer_item_leaving_the_room_is_refused() -> None:
+    assert "pendant leaves the room Wohnen" in refusal(document(pendant(x_mm=4900, y_mm=2000, rotation_deg=0)))
+
+
+def test_a_ceiling_layer_item_hangs_from_its_own_rooms_ceiling() -> None:
+    bad = {**L_ROOM, "height_mm": 2400}
+    item = {**pendant(height_mm=300, x_mm=1000, y_mm=1000, rotation_deg=0), "room": "Bad"}
+    stored, _subjects = place(
+        document(item, scope={"apartment": "Wohnung"}), rooms={"Wohnen": WOHNEN, "Bad": bad}, scope_room=None,
+    )
+    assert stored["resolved"]["items"][0]["base_mm"] == 2100.0
+
+
 # --- an empty room (rooms-page) ------------------------------------------------------------
 
 

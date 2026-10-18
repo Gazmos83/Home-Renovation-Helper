@@ -429,6 +429,18 @@ def test_the_composition_note_marks_a_floor_layer_item(isolated_house, render_ro
     assert "rug (stand-in: Rug) (floor layer) free at x 2500, y 2300 mm, rotated 0°" in note
 
 
+def test_the_composition_note_marks_a_ceiling_layer_item(isolated_house, render_root: Path) -> None:
+    from app.agent.prompts import composition_note
+
+    db_session = isolated_house
+    _wohnen(db_session, render_root, items=[
+        {"id": "pendant", "type": "model", "name": "Pendelleuchte Calisto", "layer": "ceiling",
+         "placement": {"x_mm": 2500, "y_mm": 1200, "rotation_deg": 0}},
+    ])
+    note = composition_note(house_file.compositions(db_session, render_root))
+    assert "pendant (model: Pendelleuchte Calisto) (ceiling layer) free at x 2500, y 1200 mm, rotated 0°" in note
+
+
 def test_unapproving_a_piece_in_an_approved_room_is_refused(isolated_house, render_root: Path) -> None:
     db_session = isolated_house
     composition = _wohnen(db_session, render_root)

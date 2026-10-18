@@ -123,6 +123,24 @@ def test_the_tool_tells_the_designer_about_the_floor_layer() -> None:
     assert "layer 'floor'" in ComposeRoomArgs.model_fields["items"].description
 
 
+def test_a_ceiling_layer_pendant_over_the_table_is_previewed_for_confirmation(make_ctx, room) -> None:
+    table = {"id": "table", "type": "stand-in", "name": "Table", "width_mm": 1600, "depth_mm": 900, "height_mm": 750,
+             "colour": "#8a6a48", "placement": {"x_mm": 2500, "y_mm": 1200, "rotation_deg": 0}}
+    pendant = {"id": "pendant", "type": "stand-in", "name": "Pendant", "width_mm": 500, "depth_mm": 500,
+               "height_mm": 1100, "colour": "#d8c8a8", "layer": "ceiling",
+               "placement": {"x_mm": 2500, "y_mm": 1200, "rotation_deg": 0}}
+    assert isinstance(preview({"room": "Wohnen", "items": [table, pendant]}, make_ctx()), Confirmation)
+    without_layer = {key: value for key, value in pendant.items() if key != "layer"}
+    refused = preview({"room": "Wohnen", "items": [table, without_layer]}, make_ctx())
+    assert isinstance(refused, str) and "overlap" in refused
+
+
+def test_the_tool_tells_the_designer_about_the_ceiling_layer() -> None:
+    from plugins.compose_room.tool import ComposeRoomArgs
+
+    assert "layer 'ceiling'" in ComposeRoomArgs.model_fields["items"].description
+
+
 def test_an_unknown_room_lists_the_known_ones(make_ctx, room) -> None:
     refused = preview({"room": "Attic", "items": [SOFA]}, make_ctx())
     assert "there is no room 'Attic'" in refused and "the rooms are: Wohnen" in refused
