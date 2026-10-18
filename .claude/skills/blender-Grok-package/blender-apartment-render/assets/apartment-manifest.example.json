@@ -1,0 +1,74 @@
+{
+  "project": "example-one-bed",
+  "units": "meters",
+  "polygon_mode": "interior",
+  "ceiling_height_m": 2.55,
+  "wall_thickness_m": 0.12,
+  "slab_thickness_m": 0.18,
+  "origin_note": "0,0 is the interior southwest corner. +X east, +Y north, +Z up. Polygons are interior faces, counter-clockwise.",
+  "rooms": [
+    {
+      "id": "living",
+      "name": "Living room",
+      "polygon": [[0, 0], [5.2, 0], [5.2, 3.8], [0, 3.8]],
+      "floor_material": "oak_floor",
+      "wall_material": "warm_white_paint",
+      "ceiling_material": "matte_white"
+    },
+    {
+      "id": "bedroom",
+      "name": "Bedroom",
+      "polygon": [[5.2, 0], [8.4, 0], [8.4, 3.8], [5.2, 3.8]],
+      "floor_material": "oak_floor",
+      "wall_material": "warm_white_paint",
+      "ceiling_material": "matte_white"
+    }
+  ],
+  "openings": [
+    {
+      "id": "win_living_south",
+      "kind": "window",
+      "room": "living",
+      "from": [0.8, 0],
+      "to": [2.6, 0],
+      "width_m": 1.8,
+      "sill_m": 0.9,
+      "height_m": 1.35
+    },
+    {
+      "id": "door_living_bed",
+      "kind": "door",
+      "room": "living",
+      "from": [5.2, 1.2],
+      "to": [5.2, 2.1],
+      "width_m": 0.9,
+      "sill_m": 0.0,
+      "height_m": 2.05
+    }
+  ],
+  "photos": [
+    {
+      "id": "living_entry",
+      "file": "photos/living_entry.jpg",
+      "room": "living",
+      "lens_mm": 24,
+      "camera": {
+        "location": [1.4, 3.2, 1.5],
+        "look_at": [2.6, 0.4, 1.2]
+      },
+      "notes": "Standing just inside the north wall, looking toward the south window. Afternoon sun."
+    }
+  ],
+  "lights": [
+    {
+      "id": "south_window_portal",
+      "type": "AREA",
+      "location": [1.7, -0.15, 1.55],
+      "rotation_euler_deg": [90, 0, 0],
+      "size_m": [1.8, 1.35],
+      "energy": 250,
+      "color_k": 5600,
+      "portal": true
+    }
+  ]
+}

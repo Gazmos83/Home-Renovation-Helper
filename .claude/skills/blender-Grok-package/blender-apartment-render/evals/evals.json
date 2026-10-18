@@ -1,0 +1,32 @@
+{
+  "skill": "blender-apartment-render",
+  "test_cases": [
+    {
+      "name": "manifest_before_blender",
+      "input": "Here is my apartment floor plan PDF and six room photos. Build a hyper-real Blender scene of it.",
+      "assertions": [
+        "Agent writes an apartment manifest in metres from the plan before any Blender call",
+        "Agent runs scripts/validate_manifest.py and does not invent missing ceiling or opening dimensions",
+        "Agent generates shell chunks with scripts/generate_shell.py"
+      ]
+    },
+    {
+      "name": "mcp_chunked_build",
+      "input": "Blender MCP is connected. Turn this validated apartment manifest into walls, windows, and a camera that matches the living-room photo.",
+      "assertions": [
+        "Agent discovers Blender tools instead of assuming one server schema",
+        "Agent sends generated chunks one at a time and screenshots after the shell",
+        "Agent places cam_ from the photo row and compares a preview to the source photo"
+      ]
+    },
+    {
+      "name": "final_still_pass_bar",
+      "input": "Render the finished apartment bedroom in Cycles so it looks like my evening photo.",
+      "assertions": [
+        "Agent uses Cycles with AgX, not EEVEE, for the deliverable",
+        "Agent rejects pure white walls and missing window light before calling the still done",
+        "Agent reports camera name, sample count, and output path"
+      ]
+    }
+  ]
+}

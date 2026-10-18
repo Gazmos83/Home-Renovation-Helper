@@ -1,0 +1,25 @@
+{
+  "skill": "blender-apartment-render",
+  "test_cases": [
+    {
+      "input": "Use my floor plan and phone photos to build a photoreal Blender apartment and render the living room",
+      "should_trigger": true
+    },
+    {
+      "input": "Connect to Blender over MCP and reconstruct my flat from these blueprints",
+      "should_trigger": true
+    },
+    {
+      "input": "Camera-match this kitchen photo and do a Cycles still of the apartment",
+      "should_trigger": true
+    },
+    {
+      "input": "Make a product render of a wristwatch on a white cyclorama",
+      "should_trigger": false
+    },
+    {
+      "input": "Rig this character in Blender and export an FBX walk cycle",
+      "should_trigger": false
+    }
+  ]
+}
