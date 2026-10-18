@@ -6,6 +6,7 @@ import { FieldError } from "../lib/form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DeleteCompositionVersion } from "@/components/DeleteCompositionVersion";
 import { RoomVariants } from "@/components/Variants";
 import { RoomView, VersionSelect } from "@/components/inspector/RoomView";
@@ -196,6 +197,50 @@ function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
+/** A room's size, ceiling, openings and pieces, opened from its dialog's "Room brief" button. */
+function RoomBrief({ room }: { room: RoomSummary }) {
+  const [open, setOpen] = useState(false);
+  const shape = room.corners === 4 ? "" : `, ${room.corners} corners`;
+  return (
+    <div>
+      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+        Room brief
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{room.name} brief</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm">
+            {room.width_mm} × {room.depth_mm} mm{shape}, ceiling {room.height_mm} mm,{" "}
+            {plural(room.openings, "opening", "openings")}
+          </p>
+          {room.pieces.length > 0 ? (
+            <Table aria-label={`Pieces in ${room.name}`}>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Piece</TableHead>
+                  <TableHead>ID</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {room.pieces.map((piece) => (
+                  <TableRow key={piece.package_id}>
+                    <TableCell>{piece.name}</TableCell>
+                    <TableCell className="text-muted-foreground">{piece.package_id}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <p className="text-sm text-muted-foreground">No pieces in this room.</p>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 /**
  * One measured room, with its delete action and the warning of what it touches (rooms-page),
  * and its composition once the compositions are read (split-rooms-page), shown in its dialog.
@@ -217,7 +262,6 @@ function MeasuredRoom({
       for (const key of ["rooms", "compositions", "pieces"]) queryClient.invalidateQueries({ queryKey: [key] });
     },
   });
-  const shape = room.corners === 4 ? "" : `, ${room.corners} corners`;
   const effects = [
     room.pieces.length > 0 &&
       `${room.pieces.map((p) => p.name).join(", ")} will have no room`,
@@ -232,13 +276,7 @@ function MeasuredRoom({
         <DialogTitle>{room.name}</DialogTitle>
         {room.apartment && <Badge variant="secondary">{room.apartment}</Badge>}
       </DialogHeader>
-      <p className="text-sm">
-        {room.width_mm} × {room.depth_mm} mm{shape}, ceiling {room.height_mm} mm,{" "}
-        {plural(room.openings, "opening", "openings")}
-      </p>
-      <p className="text-sm text-muted-foreground">
-        {room.pieces.length > 0 ? `Pieces: ${room.pieces.map((p) => p.name).join(", ")}` : "No pieces in this room."}
-      </p>
+      <RoomBrief room={room} />
       {room.apartment ? (
         <p className="text-sm text-muted-foreground">
           {room.name} belongs to the apartment {room.apartment}; it cannot be deleted on its own yet.

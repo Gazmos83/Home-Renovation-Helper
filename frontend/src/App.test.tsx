@@ -133,7 +133,7 @@ test("a reloaded dialog address opens the Design Studio tab with that dialog (Li
   });
   show("/studio/rooms/Wohnen?page=1");
   const dialog = await screen.findByRole("dialog", { name: "Wohnen" });
-  expect(within(dialog).getByText("4000 × 3500 mm, ceiling 2500 mm, 2 openings")).toBeInTheDocument();
+  expect(within(dialog).getByRole("button", { name: "Room brief" })).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Measured Rooms", hidden: true })).toHaveAttribute("aria-selected", "true");
 });
 

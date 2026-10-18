@@ -91,13 +91,29 @@ function serveRooms(rooms: unknown[], extra: (call: string) => { status?: number
   });
 }
 
-test("a measured room is listed with its size, ceiling, openings and pieces", async () => {
+test("a measured room's size, ceiling, openings and pieces open from its Room brief button", async () => {
+  const user = userEvent.setup();
   serveRooms([hall]);
   show("/studio/rooms/Hall");
   const card = within(await screen.findByRole("dialog", { name: "Hall" }));
-  expect(card.getByText("3000 × 2000 mm, ceiling 2500 mm, 1 opening")).toBeInTheDocument();
-  expect(card.getByText("Pieces: Hall bench")).toBeInTheDocument();
   expect(card.getByRole("heading", { level: 2, name: "Hall" })).toBeInTheDocument();
+  expect(card.queryByText("3000 × 2000 mm, ceiling 2500 mm, 1 opening")).toBeNull();
+  await user.click(card.getByRole("button", { name: "Room brief" }));
+  const brief = within(await screen.findByRole("dialog", { name: "Hall brief" }));
+  expect(brief.getByText("3000 × 2000 mm, ceiling 2500 mm, 1 opening")).toBeInTheDocument();
+  const rows = within(brief.getByRole("table", { name: "Pieces in Hall" })).getAllByRole("row");
+  expect(rows.map((r) => r.textContent)).toEqual(["PieceID", "Hall benchhall-bench"]);
+});
+
+test("a room brief without pieces says so", async () => {
+  const user = userEvent.setup();
+  serveRooms([{ ...hall, pieces: [] }]);
+  show("/studio/rooms/Hall");
+  const card = within(await screen.findByRole("dialog", { name: "Hall" }));
+  await user.click(card.getByRole("button", { name: "Room brief" }));
+  const brief = within(await screen.findByRole("dialog", { name: "Hall brief" }));
+  expect(brief.getByText("No pieces in this room.")).toBeInTheDocument();
+  expect(brief.queryByRole("table")).toBeNull();
 });
 
 test("a room without a composition says so and how to get one", async () => {

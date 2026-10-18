@@ -838,10 +838,8 @@ The Pieces page SHALL show a "Create A New Piece" button at the top of the page.
 The Studio SHALL have a Measured Rooms page for the owner at `/rooms`: a one-line intro, then one tile per room of the house file in the paged tile grid, each named by the room's name, followed by one tile per standalone composition. Choosing a room's tile SHALL open that room's dialog. When the house file holds no room the page SHALL say that no rooms are measured yet and that one is described in a conversation. Wherever another requirement names the Rooms page, it SHALL mean this page.
 
 **The room.** Each room's dialog SHALL show:
-- its name, its size (width × depth in millimetres, and the number of corners when it is not four), and its ceiling height;
-- its number of openings;
-- the apartment it belongs to, or nothing;
-- the pieces in it by name, or "No pieces";
+- its name and the apartment it belongs to, or nothing;
+- a "Room brief" button that opens a separate dialog titled "<room> brief" showing its size (width × depth in millimetres, and the number of corners when it is not four), its ceiling height and its number of openings on one line, then the pieces in it as a table (piece name and id), or "No pieces in this room." The room's dialog itself SHALL NOT show the size line or the pieces;
 - its composition, set out below, or, when it has none, that it has no composition yet and that the Designer can compose it in a conversation.
 
 Each room SHALL have a delete action. Choosing it SHALL open a confirm dialog that names the room and what deleting it does:
@@ -861,7 +859,7 @@ The page SHALL NOT show the model library, model names of language models, promp
 
 #### Scenario: Measured room listed
 - **WHEN** the house file holds `Hall` with `shoe-bench` in it and no composition
-- **THEN** the Measured Rooms page shows a tile `Hall` with its size and ceiling height, and its dialog shows its openings and `shoe-bench` and says it has no composition yet
+- **THEN** the Measured Rooms page shows a tile `Hall` with its size and ceiling height, its dialog says it has no composition yet, and its "Room brief" button opens a dialog with its size, ceiling and openings and a table listing `shoe-bench`
 
 #### Scenario: Composition inside its room
 - **WHEN** the house file holds `Wohnen` and composition `Wohnen` has versions 1 and 2
@@ -983,7 +981,7 @@ The Studio SHALL have a Design Studio page for the owner at `/studio` with no vi
 
 There SHALL be no "All pieces" or "All rooms" entry. With no dialog open, each tab's address (`/studio/pieces`, `/studio/rooms`) SHALL show its tile grid, and no Pieces or Measured Rooms entry SHALL be highlighted. Choosing a piece's, room's or composition's name SHALL open that item's dialog over the grid, at the same address and with the same behaviour as choosing its tile, keeping `?page`. Closing the dialog SHALL return to the grid as it does for a tile. While an item's dialog is open, its name SHALL be highlighted and marked as the current entry. A list with no item SHALL say "No pieces yet" or "No rooms yet" in the sub-menu. A name too long for the column SHALL be cut short with an ellipsis, and its full name SHALL be shown on hover. A sub-menu longer than the screen SHALL scroll on its own, with the page and the rail staying in place. The names SHALL follow the lists without a reload: a piece or room that is created or deleted SHALL appear in or disappear from the sub-menu as its tile does.
 
-"Uploaded models" SHALL be the Model Library's first view and its address (`/studio/models`), and "Prices" the Pricing tab's (`/studio/pricing`). "Upload model" SHALL open the upload dialog of the Model Library requirement over Uploaded models, and SHALL be highlighted while that dialog is open. In the Workspace sub-menu, "New conversation" SHALL start a conversation and open it, and a conversation's entry SHALL open it at `/studio/workspace/<thread-id>`, highlighted while it is open. On a screen 768 CSS px wide or wider the sub-menu SHALL be a column between the rail and the content, with a close button ("Close <sub-menu name>", an "x") at its top. The column SHALL close when the owner chooses one of its entries, including "New conversation", or presses its close button, and the content SHALL then use the freed width. Choosing a tab on the rail, including the tab already chosen, SHALL open the column again. Opening a Design Studio address directly, or reloading it, SHALL show the column open. Narrower, it SHALL be one row across the top of the content, below the page title, that scrolls sideways when the names do not fit, and the rail SHALL stay at the left edge as it is.
+"Uploaded models" SHALL be the Model Library's first view and its address (`/studio/models`), and "Prices" the Pricing tab's (`/studio/pricing`). "Upload model" SHALL open the upload dialog of the Model Library requirement over Uploaded models, and SHALL be highlighted while that dialog is open. In the Workspace sub-menu, "New conversation" SHALL start a conversation and open it, and a conversation's entry SHALL open it at `/studio/workspace/<thread-id>`, highlighted while it is open. On a screen 768 CSS px wide or wider the sub-menu SHALL be a column between the rail and the content, with a close button ("Close <sub-menu name>", an "x") at its top. The column SHALL stay open when the owner chooses one of its entries, including "New conversation", and SHALL close only when the owner presses its close button; the content SHALL then use the freed width. Choosing a tab on the rail, including the tab already chosen, SHALL open the column again. Opening a Design Studio address directly, or reloading it, SHALL show the column open. Narrower, it SHALL be one row across the top of the content, below the page title, that scrolls sideways when the names do not fit, and the rail SHALL stay at the left edge as it is.
 
 Each tab SHALL show what its page showed: wherever another requirement names the Pieces page, the Measured Rooms page (or the Rooms page) or the Model Library page, it SHALL mean that tab, and where it gives that page a heading row with its page title, no title is shown and the tab keeps the rest of its heading row. The old addresses `/pieces`, `/rooms` and `/models` SHALL open the matching tab; a piece version's inspector SHALL keep its address `/pieces/<id>/versions/<n>`. The Studio navigation SHALL NOT show a "Design Studio" entry, nor "Pieces", "Measured Rooms", "Model Library", "Pricing Overview" or "AI & Agent Settings" entries; the Design Studio is reached as the home page. The routes SHALL require sign-in, and a signed-out visit SHALL go to the sign-in page. The owner tabs SHALL NOT show model names, prompts, token counts or costs of model calls. The page SHALL pass a recorded browser check, at 1280 × 800 and at 360 × 780, before it counts as done.
 
@@ -1067,9 +1065,9 @@ Each tab SHALL show what its page showed: wherever another requirement names the
 - **WHEN** the owner opens Pieces with 18 pieces on a 360 × 780 screen
 - **THEN** the names are one row above the grid that scrolls sideways, the page does not scroll sideways, and the rail is still at the left edge
 
-#### Scenario: Sub-menu closes after a choice
+#### Scenario: Sub-menu stays open after a choice
 - **WHEN** the screen is 1280 px wide and the owner chooses "Remnants" in the Pricing sub-menu column
-- **THEN** the Remnants view is shown and the sub-menu column is closed
+- **THEN** the Remnants view is shown and the sub-menu column stays open with "Remnants" highlighted
 
 #### Scenario: Sub-menu closed with its x
 - **WHEN** the owner presses "Close Conversations" at the top of the Workspace sub-menu column

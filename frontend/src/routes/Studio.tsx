@@ -56,7 +56,7 @@ const TABS: Tab[] = [
 type Menu = { items: SubMenuItem[]; current: string | null; empty?: string };
 
 /** The Workspace sub-menu's first entry: starts a conversation instead of opening one. */
-function NewConversation({ layout, onDone }: { layout: "column" | "row"; onDone?: () => void }) {
+function NewConversation({ layout }: { layout: "column" | "row" }) {
   const create = useNewConversation();
   return (
     <Button
@@ -65,7 +65,7 @@ function NewConversation({ layout, onDone }: { layout: "column" | "row"; onDone?
       size="sm"
       className={cn(layout === "column" ? "mb-1 w-full justify-start" : "shrink-0")}
       disabled={create.isPending}
-      onClick={() => create.mutate(undefined, { onSuccess: onDone })}
+      onClick={() => create.mutate()}
     >
       <Plus aria-hidden size={16} />
       New conversation
@@ -169,7 +169,7 @@ export default function Studio({ dev = false, fixedTab }: { dev?: boolean; fixed
   const view = fixedTab ? params.tab : params["*"]?.split("/")[0] || undefined;
   const [expanded, toggleLabels] = useRailLabels();
   const menu = useSubMenu(tab, view);
-  // The sub-menu column closes on a choice or its "x" and opens again from the rail; a reload shows it.
+  // The sub-menu column closes only with its "x" and opens again from the rail; a reload shows it.
   const [menuOpen, setMenuOpen] = useState(true);
   const closeMenu = () => setMenuOpen(false);
   const tabs = TABS.filter((t) => dev || !t.dev);
@@ -179,7 +179,7 @@ export default function Studio({ dev = false, fixedTab }: { dev?: boolean; fixed
     chosen.id === "workspace" ? "Conversations" : ["pieces", "rooms"].includes(chosen.id) ? chosen.label : `${chosen.label} views`;
   const lead =
     chosen.id === "workspace"
-      ? (layout: "column" | "row") => <NewConversation layout={layout} onDone={layout === "column" ? closeMenu : undefined} />
+      ? (layout: "column" | "row") => <NewConversation layout={layout} />
       : undefined;
 
   return (
@@ -223,7 +223,6 @@ export default function Studio({ dev = false, fixedTab }: { dev?: boolean; fixed
           layout="column"
           lead={lead?.("column")}
           onClose={closeMenu}
-          onChoose={closeMenu}
         />
       )}
       <div className="min-w-0 flex-1">

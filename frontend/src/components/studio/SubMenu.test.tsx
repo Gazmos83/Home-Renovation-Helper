@@ -56,27 +56,22 @@ describe("SubMenu", () => {
     expect(screen.queryByRole("link")).toBeNull();
   });
 
-  it("gives the column an x and reports a choice, and the row neither", () => {
+  it("gives the column an x and the row none", () => {
     const onClose = vi.fn();
-    const onChoose = vi.fn();
     const { unmount } = render(
       <MemoryRouter>
-        <SubMenu label="Pricing views" items={ITEMS} current={null} layout="column" onClose={onClose} onChoose={onChoose} />
+        <SubMenu label="Pricing views" items={ITEMS} current={null} layout="column" onClose={onClose} />
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Close Pricing views" }));
     expect(onClose).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("link", { name: "Upload model" }));
-    expect(onChoose).toHaveBeenCalledTimes(1);
     unmount();
 
     render(
       <MemoryRouter>
-        <SubMenu label="Pricing views" items={ITEMS} current={null} layout="row" onClose={onClose} onChoose={onChoose} />
+        <SubMenu label="Pricing views" items={ITEMS} current={null} layout="row" onClose={onClose} />
       </MemoryRouter>,
     );
     expect(screen.queryByRole("button", { name: "Close Pricing views" })).toBeNull();
-    fireEvent.click(screen.getByRole("link", { name: "Upload model" }));
-    expect(onChoose).toHaveBeenCalledTimes(1);
   });
 });
