@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError, versionFile } from "@/lib/api";
 import type { CameraPreset, Layers, ViewMode } from "@/lib/inspector";
@@ -17,7 +17,8 @@ import { VersionFiles } from "@/components/studio/VersionFiles";
  * buttons, modes, explode, layer switches and overall dimensions, its straight-on
  * views, its cut list, its renders (two-tier-renders) and the owner's verdict on the version
  * (version-verdict). Every figure comes from the version's own files. The 3D
- * stage is a lazy import, so three.js loads only when a model is shown. The inspector
+ * stage is a lazy import, so three.js loads only when a model is shown. The stage's
+ * switches sit in a column on its right under Views and Parts (inspector-side-column). The inspector
  * page and the conversation's split view both render this one component.
  *
  * With `onChoose`, a version switcher lists every version of the piece, and the view
@@ -51,14 +52,17 @@ export function Choice<T extends string>({
   options,
   value,
   onChange,
+  stacked = false,
 }: {
   label: string;
   options: { id: T; label: string }[];
   value: T;
   onChange: (value: T) => void;
+  /** One button above the other, as in the stage's side column. */
+  stacked?: boolean;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-1" role="group" aria-label={label}>
+    <div className={stacked ? "grid gap-1" : "flex flex-wrap items-center gap-1"} role="group" aria-label={label}>
       {options.map((option) => (
         <Button
           key={option.id}
@@ -72,6 +76,19 @@ export function Choice<T extends string>({
         </Button>
       ))}
     </div>
+  );
+}
+
+/**
+ * One heading of the 3D stage's side column (inspector-side-column): a native
+ * fold-out that starts open and keeps its switches mounted while folded.
+ */
+export function StageSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <details open className="grid gap-1">
+      <summary className="cursor-pointer text-sm font-medium">{title}</summary>
+      <div className="mt-1 grid gap-2">{children}</div>
+    </details>
   );
 }
 
@@ -261,51 +278,58 @@ export function InspectorView({
             <p className="text-sm">
               Overall: W {w} mm × H {h} mm × D {d} mm
             </p>
-            <div className="flex flex-wrap items-center gap-4">
-              <Choice label="Camera" options={CAMERAS} value={camera} onChange={setCamera} />
-              <Choice label="Mode" options={MODES} value={mode} onChange={setMode} />
-              {mode === "exploded" && (
-                <label className="flex items-center gap-2 text-sm">
-                  Explode
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={explode}
-                    onChange={(event) => setExplode(Number(event.target.value))}
+            <div className={cn("flex min-h-80 gap-3", compact ? "h-[50vh]" : "h-[60vh]")}>
+              <div className="min-w-0 flex-1 overflow-hidden rounded-md border">
+                <Suspense fallback={<p className="p-4">Loading the model…</p>}>
+                  <InspectorCanvas
+                    url={versionFile(packageId, version, "model.glb")}
+                    spec={spec.data}
+                    mode={mode}
+                    camera={camera}
+                    explode={explode}
+                    layers={layers}
                   />
-                </label>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Layers">
-              {layerNames.map((name) => {
-                const on = layers[name] !== false;
-                return (
-                  <Button
-                    key={name}
-                    type="button"
-                    size="sm"
-                    variant={on ? "default" : "outline"}
-                    aria-pressed={on}
-                    onClick={() => setLayers((current) => ({ ...current, [name]: !on }))}
-                  >
-                    {name}
-                  </Button>
-                );
-              })}
-            </div>
-            <div className={cn("min-h-80 overflow-hidden rounded-md border", compact ? "h-[50vh]" : "h-[60vh]")}>
-              <Suspense fallback={<p className="p-4">Loading the model…</p>}>
-                <InspectorCanvas
-                  url={versionFile(packageId, version, "model.glb")}
-                  spec={spec.data}
-                  mode={mode}
-                  camera={camera}
-                  explode={explode}
-                  layers={layers}
-                />
-              </Suspense>
+                </Suspense>
+              </div>
+              <div className="grid w-max shrink-0 content-start gap-3 overflow-y-auto [&_button]:h-6 [&_button]:px-2" data-role="stage-column">
+                <StageSection title="Views">
+                  <Choice label="Camera" options={CAMERAS} value={camera} onChange={setCamera} stacked />
+                  <Choice label="Mode" options={MODES} value={mode} onChange={setMode} stacked />
+                  {mode === "exploded" && (
+                    <label className="flex items-center gap-2 text-sm">
+                      Explode
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={explode}
+                        className="min-w-0 flex-1"
+                        onChange={(event) => setExplode(Number(event.target.value))}
+                      />
+                    </label>
+                  )}
+                </StageSection>
+                <StageSection title="Parts">
+                  <div className="grid gap-1" role="group" aria-label="Layers">
+                    {layerNames.map((name) => {
+                      const on = layers[name] !== false;
+                      return (
+                        <Button
+                          key={name}
+                          type="button"
+                          size="sm"
+                          variant={on ? "default" : "outline"}
+                          aria-pressed={on}
+                          onClick={() => setLayers((current) => ({ ...current, [name]: !on }))}
+                        >
+                          {name}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </StageSection>
+              </div>
             </div>
             {views.length > 0 && (
               <section aria-label="Straight-on views" className="grid gap-2">

@@ -285,8 +285,10 @@ test("a composition with a model opens in 3D from Iso with the ceiling off", asy
   await user.click(card.getByRole("button", { name: "Open the 3D view of Wohnen" }));
   const switches = within(await card.findByRole("group", { name: "Surfaces" }));
   expect(switches.getAllByRole("button").map((b) => b.textContent)).toEqual([
-    "All walls", "wall 1", "wall 2", "wall 3", "wall 4", "floor", "ceiling", "items",
+    "All walls", "wall 1", "wall 2", "wall 3", "wall 4", "floor", "ceiling",
   ]);
+  const furniture = within(card.getByRole("group", { name: "Furniture" }));
+  expect(furniture.getAllByRole("button").map((b) => b.textContent)).toEqual(["items"]);
   expect(switches.getByRole("button", { name: "ceiling" })).toHaveAttribute("aria-pressed", "false");
   expect(switches.getByRole("button", { name: "All walls" })).toHaveAttribute("aria-pressed", "true");
   const props = await canvasProps();
@@ -314,6 +316,57 @@ test("switching wall 2 off hides only wall 2, and All walls switches every wall"
     "wall 1": false, "wall 2": false, "wall 3": false, "wall 4": false, ceiling: false,
   });
 });
+
+test("the 3D controls sit in open Views, Room and Furniture sections (Room controls grouped)", async () => {
+  serve3d();
+  const { card } = await openItems();
+  const sections = [...card.getByRole("group", { name: "Camera" }).closest("[data-role=stage-column]")!.querySelectorAll("details")];
+  expect(sections.map((d) => d.querySelector("summary")?.textContent)).toEqual(["Views", "Room", "Furniture"]);
+  sections.forEach((d) => expect(d).toHaveAttribute("open"));
+  const views = within(sections[0]);
+  expect(views.getAllByRole("button").map((b) => b.textContent)).toEqual(["Iso", "Front", "Side", "Plan", "Workshop", "Blueprint"]);
+});
+
+test("a wall switched off stays off while Room is folded (Folding keeps switches)", async () => {
+  serve3d();
+  const { user, card } = await openItems();
+  const surfaces = card.getByRole("group", { name: "Surfaces" });
+  await user.click(within(surfaces).getByRole("button", { name: "wall 2" }));
+  const room = surfaces.closest("details")!;
+  await user.click(room.querySelector("summary")!);
+  expect(room).not.toHaveAttribute("open");
+  expect((await canvasProps()).layers).toEqual({ ceiling: false, "wall 2": false, dimensions: false });
+  await user.click(room.querySelector("summary")!);
+  expect(within(surfaces).getByRole("button", { name: "wall 2" })).toHaveAttribute("aria-pressed", "false");
+});
+
+test("a room without items shows no Furniture section (Room without items)", async () => {
+  const { items: _items, ...bare } = SURFACES;
+  serveItems({ surfaces: bare, extent_mm: { min: [0, 0, 0], max: [5000, 4000, 2600] }, items: [] });
+  const user = userEvent.setup();
+  show("/studio/rooms/compositions/wohnen");
+  const card = within(await screen.findByRole("dialog", { name: "Wohnen" }));
+  await user.click(card.getByRole("button", { name: "Open the 3D view of Wohnen" }));
+  await card.findByRole("group", { name: "Surfaces" });
+  expect(card.queryByRole("group", { name: "Furniture" })).not.toBeInTheDocument();
+  expect(card.queryByText("Furniture")).not.toBeInTheDocument();
+});
+
+function serveItems(report: unknown) {
+  return stubFetch((call) => {
+    if (call === "GET /compositions") return { body: [modelled] };
+    if (call === "GET /compositions/wohnen/versions/2/files/report.json") return { body: report };
+  });
+}
+
+async function openItems() {
+  const user = userEvent.setup();
+  show("/studio/rooms/compositions/wohnen");
+  const card = within(await screen.findByRole("dialog", { name: "Wohnen" }));
+  await user.click(card.getByRole("button", { name: "Open the 3D view of Wohnen" }));
+  await card.findByRole("group", { name: "Surfaces" });
+  return { user, card, switches: within(card.getByRole("group", { name: "Furniture" })) };
+}
 
 test("an older composition without a model shows its picture and says how to get the 3D view", async () => {
   stubFetch((call) => {

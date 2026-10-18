@@ -325,3 +325,38 @@ test("a version that is not built still shows its verdict above the build state"
   expect(await within(section).findByDisplayValue("doors too short")).toBeInTheDocument();
   expect(screen.queryByTestId("canvas")).not.toBeInTheDocument();
 });
+
+// --- side column (inspector-side-column) -------------------------------------------------------
+
+test("the stage controls sit in open Views and Parts sections (Piece controls grouped)", async () => {
+  serve();
+  show();
+  const user = userEvent.setup();
+  const parts = (await screen.findByRole("group", { name: "Layers" })).closest("details")!;
+  const views = screen.getByRole("group", { name: "Camera" }).closest("details")!;
+  expect(views.querySelector("summary")).toHaveTextContent("Views");
+  expect(parts.querySelector("summary")).toHaveTextContent("Parts");
+  expect(views).toHaveAttribute("open");
+  expect(parts).toHaveAttribute("open");
+  expect(within(views).getByRole("group", { name: "Mode" })).toBeInTheDocument();
+  expect(screen.queryByRole("slider")).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Exploded" }));
+  expect(within(views).getByRole("slider")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Workshop" }));
+  expect(screen.queryByRole("slider")).not.toBeInTheDocument();
+});
+
+test("folding a section keeps its switches (Folding keeps switches)", async () => {
+  serve();
+  show();
+  const user = userEvent.setup();
+  const layers = await screen.findByRole("group", { name: "Layers" });
+  await user.click(within(layers).getByRole("button", { name: "fronts" }));
+  const parts = layers.closest("details")!;
+  await user.click(parts.querySelector("summary")!);
+  expect(parts).not.toHaveAttribute("open");
+  expect((await canvasProps()).layers).toEqual({ fronts: false });
+  await user.click(parts.querySelector("summary")!);
+  expect(within(layers).getByRole("button", { name: "fronts" })).toHaveAttribute("aria-pressed", "false");
+});

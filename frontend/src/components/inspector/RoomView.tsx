@@ -4,7 +4,7 @@ import { api, type CompositionVersion } from "@/lib/api";
 import type { CameraPreset, Layers, ViewMode } from "@/lib/inspector";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
-import { CAMERAS, Choice } from "@/components/inspector/InspectorView";
+import { CAMERAS, Choice, StageSection } from "@/components/inspector/InspectorView";
 import { RoomDimensions } from "@/components/inspector/RoomDimensions";
 
 /**
@@ -13,7 +13,8 @@ import { RoomDimensions } from "@/components/inspector/RoomDimensions";
  * ceiling, and the items) and "All walls". The ceiling starts off, so the room is seen
  * from above. A "dimensions" switch, off at first, labels each wall's length and each
  * room's ceiling height from the version's own plan (project-room-inspection). No explode
- * or cut list.
+ * or cut list. The switches sit in a column right of the stage under Views, Room and
+ * Furniture (inspector-side-column).
  */
 
 const InspectorCanvas = lazy(() => import("@/components/inspector/InspectorCanvas"));
@@ -102,63 +103,81 @@ export function RoomView({
   const on = (surface: string) => shown[surface] !== false;
   const allWalls = walls.length > 0 && walls.every(on);
 
+  // The items switch belongs to Furniture.
+  const roomSurfaces = surfaces.filter((surface) => surface !== "items");
+  const furniture = surfaces.includes("items");
+  const toggle = (surface: string) => (
+    <Button
+      key={surface}
+      type="button"
+      size="sm"
+      variant={on(surface) ? "default" : "outline"}
+      aria-pressed={on(surface)}
+      onClick={() => setLayers({ ...shown, [surface]: !on(surface) })}
+    >
+      {surface}
+    </Button>
+  );
+
   return (
     <div className="grid gap-2">
-      <div className="flex flex-wrap items-center gap-4">
-        <Choice label="Camera" options={CAMERAS} value={camera} onChange={setCamera} />
-        <Choice label="Mode" options={MODES} value={mode} onChange={setMode} />
-      </div>
-      <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Surfaces">
-        {walls.length > 0 && (
-          <Button
-            type="button"
-            size="sm"
-            variant={allWalls ? "default" : "outline"}
-            aria-pressed={allWalls}
-            onClick={() => setLayers({ ...shown, ...Object.fromEntries(walls.map((w) => [w, !allWalls])) })}
-          >
-            All walls
-          </Button>
-        )}
-        {surfaces.map((surface) => (
-          <Button
-            key={surface}
-            type="button"
-            size="sm"
-            variant={on(surface) ? "default" : "outline"}
-            aria-pressed={on(surface)}
-            onClick={() => setLayers({ ...shown, [surface]: !on(surface) })}
-          >
-            {surface}
-          </Button>
-        ))}
-        {dimensions && (
-          <Button
-            type="button"
-            size="sm"
-            variant={measured ? "default" : "outline"}
-            aria-pressed={measured}
-            onClick={() => setMeasured(!measured)}
-          >
-            dimensions
-          </Button>
-        )}
-      </div>
       {measured && sizes.error && <p className="text-sm">The dimensions of {name} could not be read.</p>}
-      <div className="h-[60vh] min-h-80 overflow-hidden rounded-md border">
-        <Suspense fallback={<p className="p-4">Loading the model…</p>}>
-          <InspectorCanvas
-            url={model}
-            spec={frame.spec}
-            mode={mode}
-            camera={camera}
-            explode={0}
-            layers={{ ...shown, dimensions: false }}
-            offset={frame.offset}
-            isoDirection={ROOM_ISO}
-            overlay={measured && sizes.data ? <RoomDimensions dimensions={sizes.data} apartment={apartment} /> : undefined}
-          />
-        </Suspense>
+      <div className="flex h-[60vh] min-h-80 gap-3">
+        <div className="min-w-0 flex-1 overflow-hidden rounded-md border">
+          <Suspense fallback={<p className="p-4">Loading the model…</p>}>
+            <InspectorCanvas
+              url={model}
+              spec={frame.spec}
+              mode={mode}
+              camera={camera}
+              explode={0}
+              layers={{ ...shown, dimensions: false }}
+              offset={frame.offset}
+              isoDirection={ROOM_ISO}
+              overlay={measured && sizes.data ? <RoomDimensions dimensions={sizes.data} apartment={apartment} /> : undefined}
+            />
+          </Suspense>
+        </div>
+        <div className="grid w-max shrink-0 content-start gap-3 overflow-y-auto [&_button]:h-6 [&_button]:px-2" data-role="stage-column">
+          <StageSection title="Views">
+            <Choice label="Camera" options={CAMERAS} value={camera} onChange={setCamera} stacked />
+            <Choice label="Mode" options={MODES} value={mode} onChange={setMode} stacked />
+          </StageSection>
+          <StageSection title="Room">
+            <div className="grid gap-1" role="group" aria-label="Surfaces">
+              {walls.length > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={allWalls ? "default" : "outline"}
+                  aria-pressed={allWalls}
+                  onClick={() => setLayers({ ...shown, ...Object.fromEntries(walls.map((w) => [w, !allWalls])) })}
+                >
+                  All walls
+                </Button>
+              )}
+              {roomSurfaces.map(toggle)}
+              {dimensions && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={measured ? "default" : "outline"}
+                  aria-pressed={measured}
+                  onClick={() => setMeasured(!measured)}
+                >
+                  dimensions
+                </Button>
+              )}
+            </div>
+          </StageSection>
+          {furniture && (
+            <StageSection title="Furniture">
+              <div className="grid gap-1" role="group" aria-label="Furniture">
+                {toggle("items")}
+              </div>
+            </StageSection>
+          )}
+        </div>
       </div>
     </div>
   );
