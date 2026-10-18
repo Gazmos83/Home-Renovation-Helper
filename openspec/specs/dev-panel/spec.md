@@ -160,7 +160,13 @@ The developer SHALL be able to read every `TODO(user)` marker in the backend cod
 
 ### Requirement: Memory settings are edited by the developer
 The developer SHALL be able to read, set and reset the memory settings:
-- compression: trigger share of the usable context budget (50–100 %), recent turns always kept (0–20), note length (100–2000 tokens), note headings and instructions (text up to 2000 characters), tool-result cut length (0–2000 characters);
+- compression:
+  - recent inputs sent in full (0–20, default 5; 0 means the trigger alone decides);
+  - trigger share of the usable context budget (50–100 %);
+  - recent turns always kept (0–20);
+  - note length (100–2000 tokens);
+  - note headings and instructions (text up to 2000 characters);
+  - tool-result cut length (0–2000 characters);
 - saving: preferences from a brief saved or not (review confirmation is deferred);
 - the conversation's slice: other builds as one line or hidden; preferences, latest review items, open version verdicts and open generator-extension requests included or left out; render ratings 0–10.
 
@@ -172,6 +178,14 @@ Each setting SHALL show its default, and resetting SHALL restore it. An out-of-r
 
 #### Scenario: Out of range
 - **WHEN** the developer sets recent turns always kept to 50
+- **THEN** it is refused naming the field and the stored value is unchanged
+
+#### Scenario: Recent inputs changed
+- **WHEN** the developer sets recent inputs sent in full to 8
+- **THEN** the setting is stored, the next call sends the last 8 owner inputs' exchanges in full, and older ones are replaced by the summary
+
+#### Scenario: Recent inputs out of range
+- **WHEN** the developer sets recent inputs sent in full to 21
 - **THEN** it is refused naming the field and the stored value is unchanged
 
 #### Scenario: Reset
@@ -242,3 +256,74 @@ Behind the developer gate, the Design Studio SHALL have an "AI & Agent Settings"
 #### Scenario: Not a developer
 - **WHEN** the owner without the developer gate opens `/admin/agents/models`
 - **THEN** the Pieces tab opens, and the rail shows no "AI & Agent Settings" tab
+
+### Requirement: Render pod availability is shown on the developer panel
+In pod mode, behind the developer gate, the Render Offload tab SHALL show:
+- **Start history** from the recorded pod sessions, separately for the last 7 and the last 30 days:
+  - the number of pod start attempts;
+  - the share that started (the pod answered and was ready);
+  - the median start-up time of the starts that succeeded;
+  - how many times each GPU type was placed;
+  - the number of failed starts.
+- **Stock history** from the stock samples, for the same two periods:
+  - the share of sample times at which at least one configured GPU type was in stock;
+  - the share for each GPU type;
+  - the number of samples;
+  - the time of the last sample.
+- A switch to turn stock sampling on or off. A change SHALL apply without a restart.
+
+With no sessions or no samples in a period, the tab SHALL say so instead of showing a share. None of this SHALL appear on a homeowner route.
+
+#### Scenario: Start history
+- **WHEN** in the last 7 days four pods were attempted, three became ready with start-up times of 60, 90 and 150 seconds, and one failed to start
+- **THEN** the 7-day start history shows 4 attempts, 75% started, a median start-up of 90 seconds, and 1 failed start
+
+#### Scenario: Stock history
+- **WHEN** in the last 7 days there were 100 sample times and at 62 of them at least one configured GPU type was in stock
+- **THEN** the 7-day stock history shows 62% with at least one render GPU in stock, from 100 samples
+
+#### Scenario: Nothing recorded yet
+- **WHEN** sampling has just been switched on and no sample exists
+- **THEN** the stock history says no samples yet
+
+#### Scenario: Switching sampling off
+- **WHEN** the developer switches stock sampling off
+- **THEN** the next 15-minute interval stores no sample, and the switch shows off after a reload
+
+### Requirement: Source onboarding is prefilled but every decision is explicit
+The Engineering Knowledge view of the Design Studio's Design Knowledge tab SHALL list catalogue entries not yet registered and register one only when the developer presses Register, as metadata only and unverified. The rights form SHALL offer prefilled reviewer, an editable draft evidence note and named grant presets that list their exact operations; no preset SHALL be preselected. A rights decision, a revocation and a technical review SHALL be recorded only by an explicit click on that decision, never as a side effect of registration, ingestion, a preset or a catalogue field. A catalogue or drafted value SHALL NOT set `approved_for_embedding`, a verification status or a reviewer. While the evidence note still holds the draft's `[STATE YOUR BASIS HERE]` marker, Record approval SHALL stay disabled and the form SHALL say, next to the button, that the marker must be replaced with the basis for permission before approval can be recorded; the message SHALL go once the marker is gone.
+
+#### Scenario: Catalogue entry registered
+- **WHEN** the developer registers an unregistered catalogue entry
+- **THEN** a metadata-only unverified version exists, with no rights, content, verification or reviewer recorded
+
+#### Scenario: Preset chosen but not confirmed
+- **WHEN** the developer selects a grant preset and does not press Record approval
+- **THEN** no rights decision is stored and no operation is permitted
+
+#### Scenario: Preset confirmed
+- **WHEN** the developer edits the evidence note and presses Record approval with the "Local use" preset
+- **THEN** one append-only decision grants only extraction, local embedding, local retrieval and retention, with the stated reviewer and evidence
+
+#### Scenario: Draft basis not stated
+- **WHEN** the developer edits the draft evidence note but leaves "Basis for permission: [STATE YOUR BASIS HERE]" in it
+- **THEN** Record approval is disabled and the form says to replace `[STATE YOUR BASIS HERE]` with the basis for permission; once it is replaced, the message goes and the button is enabled
+
+#### Scenario: Catalogue claims verification
+- **WHEN** a catalogue entry carries a verified status or an embedding approval
+- **THEN** registration refuses it and nothing is stored as verified or approved
+
+### Requirement: Official-link ingestion is rights-gated and bounded
+Ingest from official link SHALL run only for a version with an HTTPS `source_url` and current extraction, retention and embedding rights, through the existing pinned-address fetcher without redirects. It SHALL refuse a host whose robots rules deny the service, a response above its size cap or a changed content hash, and SHALL report the refusal reason. The raised cap SHALL apply to this action only and SHALL NOT change browser upload limits.
+
+#### Scenario: Rights missing
+- **WHEN** the developer ingests from the official link without current extraction rights
+- **THEN** nothing is fetched or published and the missing right is named
+
+#### Scenario: Document changed
+- **WHEN** the remote document's hash differs from the stored hash
+- **THEN** ingestion is refused and a new source version is required
+
+#### Scenario: Document too large
+- **WHEN** the response exceeds the configured cap
+- **THEN** ingestion stops with a stated limit and no partial content is stored

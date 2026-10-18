@@ -33,6 +33,10 @@ The service SHALL ship an import template in the wrapper form whose `build` is t
 - that an extra part may list `placements`, one per piece (exactly `qty`), each with `x`, `y`, `z` (the piece's reference corner in mm in the build's frame), `length_along` and `width_along` (each `x`, `y` or `z`, never the same; the thickness takes the remaining axis), and optionally `roll_deg` and `tilt` (`towards`, `angle_deg`) for a piece set at an angle, with one worked example of a diagonal brace;
 - that an extra part may list `end_cuts` (`across` width or thickness, `start_deg`, `end_deg`; the stated length is the longest edge);
 - that modules, wall shelves and placed extra parts are drawn assembled, and an extra part without `placements` is laid flat beside the build;
+- that a door, drawer or flap entry may carry a `handle` (`kind` bar or knob, `length` for a bar, `orientation`, `edge` meeting, left or right for doors, `inset_mm`, `at_mm`, `finish`, optional `key`), that a push-latch door takes no handle, that one `handle` serves every leaf of its entry, and that a handle given this way is drawn and listed, so it is not also written as a hardware line;
+- that a module may list `hanging_rails` (`bay`, `z` the rail centre above the bottom panel, optional `inset_y_mm`, `finish`, `key`, `support_key`), and that the rail and its supports are drawn and listed, so they are not also written as hardware lines;
+- that hinges, shelf pins, drawer runners, flap stays, push latches, confirmat screws and brackets are counted by the app's rules and are not written as hardware lines, that knobs and pulls are written as a front's `handle`, and that every hardware line needs a whole-number `qty`;
+- that hardware lines the app's rules already count are removed on import, and the preview lists each removal;
 - that a document is returned as JSON alone, with no other text;
 - that a room survey is not part of the document.
 
@@ -65,6 +69,14 @@ The template SHALL be valid as shipped, and the owner SHALL be able to download 
 #### Scenario: Guide names extra-part placements
 - **WHEN** the owner downloads the import template
 - **THEN** its guide names `placements`, `length_along`, `width_along`, `roll_deg`, `tilt` and `end_cuts`, says unplaced extra parts are laid beside the build, and no longer says only modules are drawn assembled
+
+#### Scenario: Guide names handles
+- **WHEN** the owner downloads the import template
+- **THEN** its guide names `handle`, `kind`, `orientation`, `edge`, `inset_mm`, `at_mm` and `finish`, says a push-latch door takes no handle, and says a modelled handle is not also written as a hardware line
+
+#### Scenario: Guide names rule-counted hardware
+- **WHEN** the owner downloads the import template
+- **THEN** its guide names `hanging_rails`, says hinges, shelf pins and runners are counted by the app, says knobs and pulls are a `handle`, and says `qty` is required
 
 ### Requirement: An attached design becomes a new piece after confirmation
 When a turn carries a design file, the Designer SHALL be able to import it by its upload id. The file SHALL be read by the service, never retyped by the model, and only a design file of the same conversation SHALL be read.
@@ -155,3 +167,32 @@ The import SHALL be refused, with nothing created, in each of these cases:
 #### Scenario: Declined
 - **WHEN** the owner answers `no` to the version-import preview
 - **THEN** no version or folder is created
+
+### Requirement: An import corrects its hardware against the rules
+`import_design` and `import_design_version` SHALL check every hand-written hardware line of a valid document against the hardware the rules in force derive for it. The rules in force are the version's data sheets, the design rules and the built-in fallbacks. The check is made in code, never by a model, before the preview. Each line is handled as follows:
+- **Same id as a rule-counted line:** removed. The rule's count stands.
+- **Item text matches a catalog entry of a rule-counted kind:** a match is a catalog entry's `matches` phrase, compared as a lower-cased substring. The line is removed when the design derives a line of that kind. Otherwise it is kept, with a warning that nothing in the design uses it.
+- **Reads as a knob, pull or handle while no front carries a `handle`:** kept, with a warning that it is not drawn and can be written as a front's `handle`.
+- **Anything else:** kept as written.
+
+The preview SHALL list every removal and warning under "Hardware corrections". A removal names the line's id, item and quantity, and the rule-counted line that replaces it with its count. On `yes`, the corrected document SHALL be stored as the version's design. On `no`, nothing is created. A line's `qty` SHALL stay required: a line without a whole-number `qty` refuses the import naming the field, as today.
+
+#### Scenario: Duplicate hinges removed
+- **WHEN** an imported design with eight hinged doors also lists `cabinet-hinges` "110 degree soft-close concealed cabinet hinges" ×8
+- **THEN** the preview lists the removal of `cabinet-hinges` ×8 in favour of `hinge-concealed-110` with its rule count, and the stored design has no `cabinet-hinges` line
+
+#### Scenario: Same id not added twice
+- **WHEN** an imported design lists `hinge-concealed-110` ×8 by hand and its doors derive 24
+- **THEN** the hand-written line is removed and the version lists `hinge-concealed-110` ×24, not ×32
+
+#### Scenario: Knob line warned, not converted
+- **WHEN** an imported design lists `cabinet-knobs` "Antique brass cabinet knobs" ×2 on a module whose fronts carry no handle
+- **THEN** the line is kept, and the preview warns that it is not drawn and can be written as a `handle` with kind `knob` and finish `brass`
+
+#### Scenario: Unknown item kept
+- **WHEN** an imported design lists `murphy-mechanism` ×1
+- **THEN** the line is kept as written, and the version marks it as not shown in the model
+
+#### Scenario: Missing quantity still refused
+- **WHEN** a hardware line has no `qty`
+- **THEN** the import is refused naming `qty`, and nothing is created

@@ -428,7 +428,7 @@ The Studio's top header, with its navigation, SHALL stay at the top of the scree
 - **THEN** the header and its links stay visible at the top of the screen
 
 ### Requirement: A render notice is shown in the conversation
-The conversation view SHALL show each notice in the thread's history in its place among the messages, centred and framed like a confirmation, with its text. A finished render of a piece version SHALL show a Review button that names the render's tier: "Review <tier> v1" when the version is 1, and "Review <tier> revision <n>" for version n above 1, where the tier is `draft` or `final`. Pressing it SHALL open the inspector for that piece version in the split view, on its Renders tab, with the most recently finished render of that tier selected. A failed render's notice, and a notice for a shell or composition, SHALL show no button. A notice posted while the view is open SHALL appear without a reload while the project panel is following a render. A notice SHALL NOT show a model name, prompt, token count or cost.
+The conversation view SHALL show each notice in the thread's history in its place among the messages, centred and framed like a confirmation, with its text. A finished render of a piece version SHALL show a Review button that names the render's tier: "Review <tier> v1" when the version is 1, and "Review <tier> revision <n>" for version n above 1, where the tier is `draft` or `final`. Pressing it SHALL open the inspector for that piece version in the split view, on its Renders tab, with the most recently finished render of that tier selected. A finished room render's notice SHALL show its link ("Open the turntable viewer" or "Open the still"), opening the result in a new tab. A failed render's notice, a shell's notice, and a room notice without a link SHALL show no button or link. A notice posted while the view is open SHALL appear without a reload while the thread's progress is following a render, including a room render started in the thread. A notice SHALL NOT show a model name, prompt, token count or cost.
 
 #### Scenario: First draft ready
 - **WHEN** the draft turntable of `hall-bench` version 1 finishes while the conversation is open
@@ -449,6 +449,10 @@ The conversation view SHALL show each notice in the thread's history in its plac
 #### Scenario: Failed render
 - **WHEN** a draft turntable of `hall-bench` version 2 fails
 - **THEN** a notice says it did not finish and shows no button
+
+#### Scenario: Room render link
+- **WHEN** the draft turntable of `wohnen` version 11 finishes while the Murphy bed conversation is open
+- **THEN** its notice appears without a reload, with an "Open the turntable viewer" link that opens the viewer in a new tab and no Review button
 
 ### Requirement: A piece version is reviewed beside the conversation
 The Workspace's piece pane SHALL show the inspector for one piece version, with its version dropdown, in every layout that has a piece pane. It SHALL show the version named in the address (`?inspect=<package-id>/<n>`), or otherwise the latest version of the conversation's bound piece. When the conversation has no bound piece, the pane SHALL say in plain words that no piece has been designed yet in this conversation. While the inspector is shown, the owner SHALL still be able to read, scroll and send messages, and opening the inspector SHALL NOT start a turn. Opening another version, from the dropdown, a notice or the Project panel, SHALL replace the shown one and write it to the address, so a reload shows it again. When the current layout has no piece pane, opening a version SHALL switch to the "Chat and piece" layout. A version that is not built, or a file it lacks, SHALL be named in plain words as on the inspector page.
@@ -1364,3 +1368,76 @@ The inspector, both its page and the conversation's split view, SHALL show the s
 #### Scenario: Resolved
 - **WHEN** the owner marks v4's open thumbs down resolved
 - **THEN** the row shows it as resolved and no longer offers resolve or dismiss
+
+### Requirement: The Cut list marks hardware the model does not show
+The Cut list tab SHALL mark a hardware row with `*` after its item when its `shown` is less than its quantity, or when its quantity is unknown and its `shown` is 0. A row with some pieces shown SHALL add "(n of m shown)". When any row is marked, a legend under the hardware table SHALL read "* not shown in the model". A version whose `spec.json` hardware has no `shown` SHALL mark no row and show no legend. The tab SHALL pass a recorded browser check before it counts as done.
+
+#### Scenario: Unshown line marked
+- **WHEN** the owner opens the Cut list of a version whose `murphy-mechanism` row has quantity 1 and `shown` 0
+- **THEN** the row reads "Vertical Murphy bed mechanism … *" and the legend "* not shown in the model" is shown
+
+#### Scenario: Partly shown
+- **WHEN** a hinge row has quantity 24 and `shown` 16
+- **THEN** the row is marked `*` with "(16 of 24 shown)"
+
+#### Scenario: Fully shown, no mark
+- **WHEN** every hardware row's `shown` equals its quantity
+- **THEN** no row is marked and no legend is shown
+
+#### Scenario: Older version
+- **WHEN** the owner opens a version built before hardware was drawn
+- **THEN** no row is marked and no legend is shown
+
+### Requirement: The inspector has a Reading tab
+The inspector, both its page and the conversation's split view, SHALL have a Reading tab beside its Model, Cut list and Renders tabs.
+
+For an approved version the tab SHALL show the reading list grouped by wall-hung item, with the fixed notice above it and any gap lines. Each entry SHALL show its citation fields and open its link in a new tab. An entry whose source can be read locally SHALL offer "Read here", which shows that source's blocks with their page references, paged. One whose source cannot be read SHALL show the reason instead.
+
+For a version that is not approved, the tab SHALL say "Approve this version to see recommended reading" and show no list.
+
+Below the list, the tab SHALL show the version's stored engineering reports, newest first. Each report SHALL show its overall outcome, "Conformity not established", whether it is stale with its reasons, and its evidence passages when available. A report whose evidence is unavailable SHALL show that limitation. A version with no stored reports SHALL say so in plain words.
+
+Text SHALL be loaded only when the tab is shown. The open tab SHALL be part of the page's address. The tab SHALL NOT show a model name, prompt, token count or cost. It SHALL pass a recorded browser check before it counts as done.
+
+#### Scenario: Reading after approval
+- **WHEN** the owner approves `hall-shelf` v3 and opens the Reading tab
+- **THEN** the wall shelf's sources are listed under the notice, and "Read here" on a local-use source shows its blocks
+
+#### Scenario: Unapproved version
+- **WHEN** the owner switches the inspector to v4, which is not approved
+- **THEN** the Reading tab shows "Approve this version to see recommended reading" and no list
+
+#### Scenario: Stale report
+- **WHEN** v3 has a stored report and v4 is a newer geometry version
+- **THEN** v3's report is shown as stale with "a newer geometry version exists"
+
+### Requirement: The Workspace's piece and room panes approve the version they show
+The Workspace's piece pane SHALL show, for the piece version it shows, whether that version is approved, and the room pane SHALL do the same for the composition version it shows. Each pane SHALL offer "Approve version N" when the shown version's build succeeded and it is not approved, and "Unapprove version N" when the shown version is the approved one. Neither control SHALL be offered for a version that is not built. Approving the shown version SHALL replace any other approved version of the same piece or composition. An API refusal SHALL be shown in plain words next to the control, and the version's state SHALL stay as it was. After a change, the pane, its version dropdown, the Piece and Project flyouts, the Pieces page and the Rooms page SHALL show the new state without a reload. Neither pane SHALL show a model name, prompt, token count or cost. Approving or unapproving SHALL NOT start a turn. The flow SHALL pass a recorded browser check before it counts as done.
+
+#### Scenario: Approve the shown piece version
+- **WHEN** the piece pane shows `hall-bench` version 2, which is built and not approved, and the owner presses "Approve version 2"
+- **THEN** the pane shows version 2 as approved, the version dropdown labels version 2 "approved", and the Piece flyout shows version 2 approved
+
+#### Scenario: Approve an older piece version from the dropdown
+- **WHEN** `hall-bench` version 3 is approved, the owner chooses version 2 in the piece pane's dropdown and presses "Approve version 2"
+- **THEN** version 2 is approved and version 3 is no longer approved
+
+#### Scenario: Unapprove the shown piece version
+- **WHEN** the piece pane shows approved `hall-bench` version 2 and the owner presses "Unapprove version 2"
+- **THEN** the pane shows that version 2 is not approved and offers "Approve version 2"
+
+#### Scenario: Unbuilt version offers no control
+- **WHEN** the piece pane shows `hall-bench` version 4 while it is still building
+- **THEN** the pane offers neither "Approve version 4" nor "Unapprove version 4"
+
+#### Scenario: Approve the shown room version
+- **WHEN** the room pane shows `Hall` version 2, which is built and not approved, and the owner presses "Approve version 2"
+- **THEN** the pane shows version 2 as approved, its dropdown labels version 2 "(approved)", and the Project panel shows `Hall` version 2 approved
+
+#### Scenario: Room approval refused
+- **WHEN** the owner approves `Hall` version 2 from the room pane while it places a piece version that is not approved
+- **THEN** the refusal naming that piece is shown next to the control and version 2 stays unapproved
+
+#### Scenario: Approval does not start a turn
+- **WHEN** the owner approves a version from either pane
+- **THEN** no message is sent to the conversation and the composer stays usable

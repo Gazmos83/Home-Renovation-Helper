@@ -204,7 +204,7 @@ When the Designer's document names a field the schema does not define, `create_p
 
 A requested field whose value equals the latest version's value SHALL be dropped and SHALL give no change line. When every requested change is dropped this way, the revision SHALL be refused with a message saying nothing would change. No confirmation is raised and no version is created.
 
-A change line for a module's `fronts` or `hardware` SHALL describe the list before and after the change, not only its length. A front is named by its type, count, opening or hinged side, height when set, and hinge item when it is not the default. A hardware line is named by its id, item and quantity.
+A change line for a module's `fronts` or `hardware` SHALL describe the list before and after the change, not only its length. A front is named by its type, count, opening or hinged side, height when set, hinge item when it is not the default, and its handle when set (kind, length for a bar, orientation, edge for doors, finish, and key when stated). A hardware line is named by its id, item and quantity.
 
 A change to an extra part's placements SHALL place, move or unplace that part; an empty list unplaces it, so it is laid beside the build again. A change to its end cuts SHALL set or clear them. The change line SHALL describe the placements before and after, or "beside the build" when unplaced. Each piece is described by its corner position in mm, its orientation, and its roll and tilt when set. Changed end cuts are described before and after, or "square" when none. The number of placements SHALL equal the part's quantity, or the change is refused naming the part.
 
@@ -219,6 +219,14 @@ A change to an extra part's placements SHALL place, move or unplace that part; a
 #### Scenario: Fronts change shown in full
 - **WHEN** module `cabinet` has two hinged doors and the change replaces them with one hinged door and one 200 mm drawer
 - **THEN** the confirmation lists "cabinet: fronts" with "2 doors (hinge)" before and "1 door (hinge), 1 drawer 200 mm" after, and no line reads "entries"
+
+#### Scenario: Handle added to fronts
+- **WHEN** module `left-wardrobe` has two hinged doors without handles and the change gives them a vertical 900 mm black bar handle on the meeting edges
+- **THEN** the confirmation lists "left-wardrobe: fronts" with "2 doors (hinge)" before and "2 doors (hinge, bar 900 mm vertical, meeting edges, black)" after
+
+#### Scenario: Handle on a push-latch door refused
+- **WHEN** the change gives a push-latch door entry a handle
+- **THEN** it is refused naming that entry's `handle` and saying a push-latch door takes no handle, and no confirmation is raised
 
 #### Scenario: Hardware change shown in full
 - **WHEN** a module's hardware line `handle` changes quantity from 2 to 4
@@ -526,7 +534,7 @@ When the owner asks to change a room or apartment that already has a composition
 ### Requirement: The Designer sees the active build's latest version
 Each Designer turn SHALL carry a summary of the active build's latest version, built by the application from that version's stored document. The summary SHALL give:
 - the envelope: its width, height and depth in millimetres;
-- per module: its id, name, size, position, carcass slot, fixed and adjustable shelves, its shelf spacing or shelf positions when set, its dividers with their positions when set, each side fold (side, from_mm, along, angle_deg, towards) when set, each front (type, count, opening or hinged side, height when set, hinge item), and its hardware lines (id, item, quantity);
+- per module: its id, name, size, position, carcass slot, fixed and adjustable shelves, its shelf spacing or shelf positions when set, its dividers with their positions when set, each side fold (side, from_mm, along, angle_deg, towards) when set, each front (type, count, opening or hinged side, height when set, hinge item, and its handle when set), and its hardware lines (id, item, quantity);
 - each wall shelf (id, length, depth, material slot, bracket item, and owner bracket positions when set);
 - each extra part (id, name, quantity, length, width, material slot, end cuts when set), and each piece's placement (corner position, orientation, roll and tilt when set) when set, or that it is laid beside the build;
 - each material slot with its material and thickness;
@@ -537,6 +545,10 @@ Only the active build SHALL be summarised; other builds stay one line each. Owne
 #### Scenario: Module and fronts visible
 - **WHEN** the active build `listening-wall` v7 has module `cabinet` 600×2238×400 mm with 3 shelves and one hinged door
 - **THEN** the Designer's context names `cabinet`, its size, "3 shelves" and "1 door (hinge)" for v7
+
+#### Scenario: Handles visible
+- **WHEN** module `centre-drawers` has five drawers with a horizontal 160 mm black bar handle
+- **THEN** the Designer's context gives "5 drawers 850 mm (bar 160 mm horizontal, black)" for `centre-drawers`
 
 #### Scenario: Spacing and dividers visible
 - **WHEN** module `cabinet` has 4 shelves with `shelf_spacing_mm` 355 and 2 dividers without positions

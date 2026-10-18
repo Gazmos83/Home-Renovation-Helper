@@ -44,10 +44,10 @@ Every file SHALL be non-empty and parseable as its format.
 The emitted `spec.json` SHALL carry:
 - `overall` (width, height, depth in mm);
 - `modules` (each module's size and position);
-- `layers` (each exported mesh under exactly one of `carcass`, `backs`, `shelves`, `fronts`, `extras`);
+- `layers` (each exported mesh under exactly one of `carcass`, `backs`, `shelves`, `fronts`, `extras`, `handles`; a layer with no meshes is omitted);
 - `parts`, `hardware`, `assembly` and `blender_version`.
 
-The build SHALL export one object per cut-list piece, named by its cut-list id and parented to one empty per module.
+The build SHALL export one object per cut-list piece, named by its cut-list id, and one object per modelled handle, as set out in "A front can carry a modelled handle"; each is parented to one empty per module.
 
 `model.blend` SHALL also carry the overall dimension lines: one line each for width, height and depth, with its figure in mm taken from `overall`. They are `DIM_` objects under the empty `MOD_Dimensions`, in the collection `09_Dimensions`. The dimension objects SHALL NOT be exported into `model.glb` and SHALL NOT show in `screenshot.png`.
 
@@ -202,7 +202,7 @@ The cut list SHALL hold one adjustable-shelf row per module that has adjustable 
 
 The line's note SHALL name where the count came from: the data sheet, or the rule's id and its source. Hinge lines SHALL be keyed by the door's hinge item. Their count per door SHALL be decided as set out in the hardware-drilling spec: the item's data-sheet count table, else the hinge-count rule in the inputs, else the built-in fallback. Their note SHALL name which of the three decided. When a hinge's data sheet names a mounting-plate item, the hardware SHALL hold that plate's line with one plate per hinge.
 
-A built version SHALL draw each adjustable shelf as a board inside its module. When the module states no shelf spacing or positions, the fixed and adjustable shelves SHALL be spaced evenly together. With a spacing or positions, they SHALL be placed as set out in "A module can state its shelf spacing or shelf positions". A module with no adjustable shelves SHALL be drawn exactly as before. No hole, pin, hinge cup or plate SHALL be drawn.
+A built version SHALL draw each adjustable shelf as a board inside its module. When the module states no shelf spacing or positions, the fixed and adjustable shelves SHALL be spaced evenly together. With a spacing or positions, they SHALL be placed as set out in "A module can state its shelf spacing or shelf positions". A module with no adjustable shelves SHALL be drawn exactly as before. No drilled hole SHALL be drawn. Shelf pins, hinge cups, hinge arms and mounting plates SHALL be drawn as set out in "Hardware with an exact position is drawn".
 
 A document with no new field SHALL derive the same cut list and hardware as before. A derivation without inputs (no data sheets and no rules) SHALL give the same hardware as before this change.
 
@@ -241,6 +241,10 @@ A document with no new field SHALL derive the same cut list and hardware as befo
 #### Scenario: Unknown module field
 - **WHEN** a module carries `pin_pitch_mm`
 - **THEN** it is refused naming `pin_pitch_mm`, and the refusal becomes a generator-extension request
+
+#### Scenario: Pins drawn at exact holes
+- **WHEN** a module with two adjustable shelves is built and its shelf-pin data sheet gives exact hole positions and 4 pins per shelf
+- **THEN** the model holds 8 shelf-pin objects at those holes in the `hardware` layer, and no hole is drawn
 
 ### Requirement: A custom build can carry wall-hung shelves on brackets
 A custom-build document SHALL accept an optional list of wall shelves. Each wall shelf SHALL have:
@@ -694,3 +698,147 @@ When a revision is fitted to a board that reaches in front of the build's front 
 #### Scenario: Placed frame moves back with the cabinet
 - **WHEN** module `cabinet` gets a shelf that protrudes 162 mm and extra part `top-frame` is placed at y 0
 - **THEN** `cabinet`'s `y` and `top-frame`'s placement `y` both become 162, and the confirmation says `top-frame`'s pieces move back 162 mm
+
+### Requirement: A front can carry a modelled handle
+A door, drawer or flap entry SHALL accept an optional `handle`, with these fields:
+- `kind`: `bar` or `knob`.
+- `length`: a bar's length in mm. It is required for a bar and refused on a knob.
+- `orientation`: `vertical` or `horizontal`. Bars only, refused on a knob. Doors default to `vertical`; drawers and flaps to `horizontal`.
+- `edge`: doors only, refused on drawers and flaps. `meeting`, `left` or `right`. `meeting` puts the handles of each pair of leaves, counted from the left, on the edge the pair shares, and needs an even count. The default is `meeting` for an even count, else `right`.
+- `inset_mm`: the distance from the leaf's handle edge to the handle's centre line. The handle edge is the edge `edge` names for a door, the top edge for a drawer, and the edge opposite the hinge for a flap. Doors and flaps default to 40 mm; a drawer's handle defaults to the middle of the leaf's height.
+- `at_mm`: the handle's centre along that edge. For a door it is measured from the leaf's bottom edge; for a drawer or flap, from the leaf's left edge. The default is the middle of the leaf along that edge.
+- `finish`: `black`, `aluminium`, `steel` or `brass`. The default is `black`.
+- `key`: an optional hardware key, as for a hinge. The default is `handle-bar-<length>-<finish>` for a bar and `handle-knob-<finish>` for a knob.
+
+One `handle` SHALL serve every leaf of its entry. An unknown handle field SHALL be refused by name, as any unknown field is.
+
+A handle SHALL be refused, naming its entry's `handle` and with nothing built, when:
+- it is on a push-latch door;
+- its `edge` is `meeting` on an odd count;
+- it is on a module with `side_folds`, which this change does not support;
+- it does not lie at least 10 mm inside its leaf on every side; the refusal gives the leaf's size.
+
+A built version SHALL draw, for each leaf with a handle, one handle object in front of that leaf at its stated place:
+- a bar is a 12 mm bar of the stated length, standing 30 mm proud of the front on two posts;
+- a knob is a 30 mm round knob, 25 mm proud;
+- each is coloured by its finish.
+
+Each handle object SHALL be named `<front row id>-handle`, with `#<n>` for further leaves. The front row id is the door, drawer-front or flap row it sits on. It SHALL be listed in the `handles` layer and parented to its module's empty, so it moves with its module in the exploded view. A handle SHALL NOT be a cut-list row. It SHALL NOT change `overall`, and SHALL NOT count in the envelope check.
+
+The hardware SHALL hold one line per handle key, with one handle per leaf that carries it. The item text names the kind, the length for a bar, and the finish, for example "Bar handle 900 mm, black". The note reads "Rule: one handle per leaf". A door row's note SHALL name its handle's key instead of "handle as specified". Hardware lines written by hand SHALL be kept as written. A front without `handle` SHALL be drawn, derived and listed exactly as before. Handles SHALL add nothing to the drilling list.
+
+#### Scenario: Bar handles on a pair of doors
+- **WHEN** module `left-wardrobe`, 900 × 2034 mm, has one entry of two hinged doors with a vertical 900 mm black bar handle and no `edge`
+- **THEN** the build draws `left-wardrobe-door-1-handle` and `left-wardrobe-door-1-handle#2`, each 40 mm from the edge the two doors share and centred on the doors' height, in the `handles` layer, and the hardware holds `handle-bar-900-black` ×2 "Bar handle 900 mm, black"
+
+#### Scenario: Drawer handles
+- **WHEN** an entry of five drawers carries a horizontal 160 mm bar handle with `inset_mm` 30
+- **THEN** each of the five drawer fronts gets a handle centred across its width with its centre line 30 mm below its top edge, and the hardware holds that handle's key ×5
+
+#### Scenario: Handle on a push-latch door refused
+- **WHEN** a push-latch door entry carries a handle
+- **THEN** the spec is refused naming that entry's `handle` and saying a push-latch door takes no handle
+
+#### Scenario: Handle too long for its leaf
+- **WHEN** a drawer 450 mm wide carries a horizontal 500 mm bar handle
+- **THEN** the spec is refused naming that entry's `handle` and the drawer front's size, and nothing is built
+
+#### Scenario: Handle on a folded module refused
+- **WHEN** a module with a left side fold has a door entry with a handle
+- **THEN** the spec is refused naming that entry's `handle` and saying handles on a folded module are not supported
+
+#### Scenario: Fronts without handles unchanged
+- **WHEN** a version without any `handle` is rebuilt
+- **THEN** its cut list, hardware and exported objects equal the previous build's, and `spec.json` has no `handles` layer
+
+#### Scenario: Handles are not cut
+- **WHEN** a version with handles is built
+- **THEN** `cutlist.csv` holds no handle row, `overall` equals that of the same version without handles, and `spec.json` lists every handle object in the `handles` layer only
+
+### Requirement: Hardware with an exact position is drawn
+A built version SHALL draw every hardware piece whose position the spec and its inputs fix exactly. The pieces come from one shared layout that derive also uses to count them, so the model and the hardware list cannot disagree. Each piece's shape, size and finish SHALL come from its hardware-catalog entry.
+
+The pieces drawn are:
+- a hinge (cup, arm and mounting plate) at each exact cup position in the drilling list;
+- a shelf pin at each exact pin position;
+- a pair of drawer runners for each drawer, of the derived runner length, on the drawer box sides at the box's bottom edge;
+- a wall-shelf bracket at each position the owner stated;
+- each hanging rail and its supports.
+
+A position the drilling list gives as a range or as a rule in words SHALL NOT be narrowed to draw a piece; that piece is not drawn. Confirmat screws and drilled holes SHALL NOT be drawn. A hand-written hardware line SHALL NOT be drawn unless a hanging rail places it. Handles stay as set out in "A front can carry a modelled handle".
+
+Every drawn piece SHALL be its own object, named `<hardware line id>#<n>` from 1, parented to its module's empty, in a `hardware` layer, carrying its `hardware_key` and no `part_id`. Hardware pieces SHALL NOT appear in the cut list and SHALL NOT change `overall` or the envelope check. Pieces of one line SHALL share one mesh.
+
+Each hardware row in `spec.json` SHALL carry `shown`: the number of its pieces drawn, 0 when none are. A document with no hardware lines and no `hanging_rails` SHALL derive the same cut list and hardware as before. It differs only by `shown` and the `hardware` layer.
+
+#### Scenario: Hinges drawn
+- **WHEN** a module with two 700 mm hinged doors is built, and the hinge data sheet gives an exact cup edge distance and positions
+- **THEN** the model holds `hinge-concealed-110#1` to `#4` in the `hardware` layer at the drilling list's cup positions, and the hinge row has `shown` 4
+
+#### Scenario: Ranged position not drawn
+- **WHEN** a wall shelf's brackets are calculated, so its outer brackets are "100–200 mm from each end"
+- **THEN** no bracket is drawn for that shelf, and its bracket row has `shown` 0
+
+#### Scenario: Free line not drawn
+- **WHEN** a design lists `wall-anchors` ×10 as a hand-written line
+- **THEN** no object is drawn for it, and its row has `shown` 0
+
+#### Scenario: Confirmat never drawn
+- **WHEN** any carcass is built
+- **THEN** the `confirmat-7x50` row has `shown` 0, and no screw object exists
+
+#### Scenario: Layer switch
+- **WHEN** a built version has drawn hardware
+- **THEN** its `spec.json` layers name `hardware`, and switching it off in the inspector hides exactly those objects
+
+### Requirement: A module can carry hanging rails
+A module SHALL accept `hanging_rails`, at most 4 entries. Each entry gives:
+- `bay`: 1-based, default 1;
+- `z`: the rail centre in mm above the top of the bottom panel. Required.
+- optional `inset_y_mm`: from the front of the sides, default half the inner depth;
+- optional `finish`: a catalog finish, default `chrome`;
+- optional `key`: the rail item, default `rail-oval-30x15`;
+- optional `support_key`: default `rail-support-oval`.
+
+The entry SHALL be refused, naming the field, when:
+- the bay does not exist;
+- the rail crosses a shelf or divider in its bay;
+- the rail's top is closer to the board above than the hook clearance (40 mm, fixed in code, with the rail's 30 mm section);
+- the module has `side_folds` (not supported yet).
+
+The hardware SHALL hold:
+- one rail line per key and cut length, id `<key>-<cut length>`, the cut length being the bay's inner width less 1 mm at each end (fixed in code), with the item naming it ("Wardrobe rail oval 30×15 mm, cut to 894 mm");
+- one support line per support key: two per rail, plus any centre supports the rail-support count rule gives for the rail's length. Without that rule, the note SHALL say no centre-support rule applies.
+
+The rail and its supports SHALL be drawn as set out in "Hardware with an exact position is drawn". `revise_package` SHALL change a module's `hanging_rails` as a whole list, and its change line SHALL describe the rails before and after.
+
+#### Scenario: Rail in a wardrobe bay
+- **WHEN** a 932 mm wide module with 18 mm sides carries `hanging_rails: [{"z": 1650}]`
+- **THEN** the hardware holds `rail-oval-30x15-894` (cut to 894 mm) and `rail-support-oval` ×2, and the model draws the rail and both supports in the `hardware` layer
+
+#### Scenario: Rail through a shelf refused
+- **WHEN** a rail's `z` falls within a shelf's thickness in its bay
+- **THEN** it is refused naming `modules[i].hanging_rails[j].z` and the shelf
+
+#### Scenario: Missing height refused
+- **WHEN** a rail entry gives no `z`
+- **THEN** it is refused naming `z`, and no height is assumed
+
+### Requirement: A module can state how it is mounted
+A module SHALL accept an optional `mounting`, either `floor` or `wall`. Any other value SHALL be refused, naming the field and the allowed values. Leaving it out SHALL mean "not stated".
+
+`mounting` SHALL NOT change the cut list, hardware, drilling list, built model or renders. A document with no `mounting` SHALL derive the same outputs as before.
+
+`revise_package` SHALL be able to set a module's `mounting` or clear it, and its change line SHALL state the mounting before and after.
+
+#### Scenario: Wall cabinet marked
+- **WHEN** a document gives module `upper-left` `mounting: "wall"`
+- **THEN** it is accepted, and its cut list and hardware equal those of the same document without `mounting`
+
+#### Scenario: Unknown mounting
+- **WHEN** a module gives `mounting: "ceiling"`
+- **THEN** the document is refused naming `modules.0.mounting` and the values `floor` and `wall`
+
+#### Scenario: Revision sets mounting
+- **WHEN** the Designer revises `upper-left` with `mounting: "wall"` and the owner confirms
+- **THEN** the new version's module carries `mounting: "wall"`, and the change line reads "upper-left mounting: not stated → wall"

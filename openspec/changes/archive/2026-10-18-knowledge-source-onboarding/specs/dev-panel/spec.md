@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Source onboarding is prefilled but every decision is explicit
-The developer Knowledge page SHALL list catalogue entries not yet registered and register one only when the developer presses Register, as metadata only and unverified. The rights form SHALL offer prefilled reviewer, an editable draft evidence note and named grant presets that list their exact operations; no preset SHALL be preselected. A rights decision, a revocation and a technical review SHALL be recorded only by an explicit click on that decision, never as a side effect of registration, ingestion, a preset or a catalogue field. A catalogue or drafted value SHALL NOT set `approved_for_embedding`, a verification status or a reviewer.
+The Engineering Knowledge view of the Design Studio's Design Knowledge tab SHALL list catalogue entries not yet registered and register one only when the developer presses Register, as metadata only and unverified. The rights form SHALL offer prefilled reviewer, an editable draft evidence note and named grant presets that list their exact operations; no preset SHALL be preselected. A rights decision, a revocation and a technical review SHALL be recorded only by an explicit click on that decision, never as a side effect of registration, ingestion, a preset or a catalogue field. A catalogue or drafted value SHALL NOT set `approved_for_embedding`, a verification status or a reviewer. While the evidence note still holds the draft's `[STATE YOUR BASIS HERE]` marker, Record approval SHALL stay disabled and the form SHALL say, next to the button, that the marker must be replaced with the basis for permission before approval can be recorded; the message SHALL go once the marker is gone.
 
 #### Scenario: Catalogue entry registered
 - **WHEN** the developer registers an unregistered catalogue entry
@@ -14,6 +14,10 @@ The developer Knowledge page SHALL list catalogue entries not yet registered and
 #### Scenario: Preset confirmed
 - **WHEN** the developer edits the evidence note and presses Record approval with the "Local use" preset
 - **THEN** one append-only decision grants only extraction, local embedding, local retrieval and retention, with the stated reviewer and evidence
+
+#### Scenario: Draft basis not stated
+- **WHEN** the developer edits the draft evidence note but leaves "Basis for permission: [STATE YOUR BASIS HERE]" in it
+- **THEN** Record approval is disabled and the form says to replace `[STATE YOUR BASIS HERE]` with the basis for permission; once it is replaced, the message goes and the button is enabled
 
 #### Scenario: Catalogue claims verification
 - **WHEN** a catalogue entry carries a verified status or an embedding approval

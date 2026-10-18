@@ -506,3 +506,47 @@ Each message in the chat SHALL offer an "Add to decisions" action, shown as a bo
 #### Scenario: The button's look
 - **WHEN** a chat message shows "Add to decisions"
 - **THEN** the button is bold, framed and light green
+
+### Requirement: An answered engineering question does not make later turns engineering turns
+When a turn is routed to the engineering path, the owner's message of that turn SHALL belong to the engineering exchange together with its replies and tool results. Later routing and agent calls SHALL leave out the whole exchange, the question as well as the answer, as they already leave out its replies. A later message SHALL be an engineering turn only when its own text names an engineering term, or when the routing model flags that message itself. In conversations stored before this change, an owner message followed in its turn by an engineering reply SHALL count as part of that exchange, without changing stored data. The owner's chat view SHALL still show every message.
+
+#### Scenario: The reported loop
+- **WHEN** the owner asks "Will the bridge be structurally stable if the dividers are removed?", gets the engineering status reply, then writes "Keep and shorten the dividers."
+- **THEN** the second message is not routed as an engineering turn by the earlier question, the Designer's reply reaches the owner, and the earlier question and its status reply are not in the second turn's requests
+
+#### Scenario: A new engineering question still is one
+- **WHEN** after an answered engineering question the owner asks "Can the shelf carry 30 kg?"
+- **THEN** that turn is an engineering turn
+
+#### Scenario: An existing looping conversation recovers
+- **WHEN** a conversation stored before this change holds an unmarked owner question followed by an engineering status reply, and the owner sends a design request
+- **THEN** the routing call does not contain that question, and the stored messages are unchanged
+
+### Requirement: A room render started in a thread is followed and points to its result
+When a specialist's tool starts a render of a room or apartment composition in a thread, the service SHALL record it against that thread. While it is queued or running, the thread's progress SHALL report `rendering`. A recorded render SHALL count only while that composition version's status shows it queued or running, so a record left behind by a failed process never keeps the thread rendering. The record SHALL be removed when the render's notice is posted.
+
+The notice of a finished room render SHALL name the composition and version, and say that it can also be found on the Rooms page, for example "The draft turntable of wohnen version 11 is ready. You can also find it on the Rooms page." It SHALL store the composition and version. When the thread is read, the notice SHALL carry a link to its result: a turntable's viewer, labelled "Open the turntable viewer", or a still's image, labelled "Open the still". Each link uses the composition's file route, and is included only while its file exists. A failed room render's notice SHALL carry no link. A notice posted before this requirement SHALL carry none.
+
+#### Scenario: Room render followed
+- **WHEN** the owner asks in the Murphy bed conversation for a draft turntable of the Wohnen composition and it is running
+- **THEN** that thread's progress reports `rendering`
+
+#### Scenario: Stale record ignored
+- **WHEN** a recorded room render's composition version shows no queued or running render
+- **THEN** the thread's progress does not report `rendering` for it
+
+#### Scenario: Turntable ready with a link
+- **WHEN** the draft turntable of `wohnen` version 11 finishes
+- **THEN** the thread holds a notice saying "The draft turntable of wohnen version 11 is ready. You can also find it on the Rooms page." with a link "Open the turntable viewer" to `/compositions/wohnen/versions/11/files/viewer.html`
+
+#### Scenario: Still ready with a link
+- **WHEN** the draft still of `wohnen` version 11 finishes
+- **THEN** its notice carries a link "Open the still" to `/compositions/wohnen/versions/11/files/still.png`
+
+#### Scenario: File gone
+- **WHEN** `wohnen` version 11 is deleted after its notice was posted
+- **THEN** reading the thread shows the notice with no link
+
+#### Scenario: Failed room render
+- **WHEN** a room turntable started in a conversation fails
+- **THEN** its notice says it did not finish and carries no link
