@@ -363,6 +363,36 @@ test("the version dropdown lists the newest five and the card follows the chosen
   expect(card.queryByTestId("canvas")).not.toBeInTheDocument();
 });
 
+test("a built room version offers its Blender file, model and picture for download", async () => {
+  const user = userEvent.setup();
+  const withBlend = {
+    ...versioned,
+    version_views: versioned.version_views.map((v) =>
+      v.version === 7 ? { ...v, blend: "/compositions/wohnen/versions/7/files/model.blend" } : v,
+    ),
+  };
+  stubFetch((call) => {
+    if (call === "GET /compositions") return { body: [withBlend] };
+  });
+  show("/studio/rooms/compositions/wohnen");
+  const card = within(await screen.findByRole("dialog", { name: "Wohnen" }));
+  const panel = within(card.getByRole("region", { name: "Download the room (version 7)" }));
+  const blend = panel.getByRole("link", { name: "Download Blender file (version 7)" });
+  expect(blend).toHaveAttribute("href", "/compositions/wohnen/versions/7/files/model.blend");
+  expect(blend).toHaveAttribute("download", "wohnen-v7.blend");
+  expect(panel.getByRole("link", { name: "Download glTF model (version 7)" })).toHaveAttribute("download", "wohnen-v7.glb");
+  expect(panel.getByRole("link", { name: "Download Screenshot (version 7)" })).toHaveAttribute(
+    "href", "/compositions/wohnen/versions/7/files/screenshot.png",
+  );
+
+  await user.selectOptions(card.getByRole("combobox", { name: "Version of Wohnen" }), "6");
+  expect(card.queryByRole("link", { name: /Download Blender file/ })).toBeNull();
+  expect(card.getByRole("link", { name: "Download glTF model (version 6)" })).toBeInTheDocument();
+
+  await user.selectOptions(card.getByRole("combobox", { name: "Version of Wohnen" }), "5");
+  expect(card.queryByRole("region", { name: /Download the room/ })).toBeNull();
+});
+
 test("dimensions are read only when switched on and label the chosen version", async () => {
   const user = userEvent.setup();
   const calls = serveVersions();

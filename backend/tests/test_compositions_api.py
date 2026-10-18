@@ -120,6 +120,25 @@ def test_the_newest_five_versions_are_offered_for_the_dropdown(client: TestClien
     assert listed["version_views"][1]["model"] is None
 
 
+def test_a_version_offers_its_blender_file_for_download(client: TestClient, render_root: Path) -> None:
+    sign_in(client)
+    seed(client, render_root, approved=True)
+    with Session(client.app.state.engine) as session:
+        composition = house_file.composition_by_scope(session, "room", "Wohnen")
+        house_file.record_composition_version(session, composition, 2, 1, [])
+        folder = storage.composition_version_dir(render_root, "wohnen", 2)
+        folder.mkdir(parents=True)
+        storage.write_status(folder, status="succeeded")
+        (folder / "model.blend").write_bytes(b"BLENDER")
+        session.commit()
+    [listed] = client.get("/compositions").json()
+    newest, older = listed["version_views"][:2]
+    assert newest["blend"] == "/compositions/wohnen/versions/2/files/model.blend"
+    assert older["blend"] is None
+    response = client.get(newest["blend"])
+    assert response.status_code == 200 and response.content == b"BLENDER"
+
+
 # --- room dimensions (project-room-inspection) ---------------------------------------------
 
 WOHNEN_PLAN = [[0.0, 0.0], [6200.0, 0.0], [6200.0, 5700.0], [3500.0, 5700.0], [1289.0, 6064.0]]

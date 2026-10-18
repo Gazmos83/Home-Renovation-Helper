@@ -264,6 +264,22 @@ def test_an_imported_piece_is_recorded_in_the_confirmed_room(make_ctx, tool_deps
         assert house_file.piece_room_name(session, "hall-cabinet") == "Hall"
 
 
+def test_an_import_in_a_conversation_that_declined_a_room_is_unassigned(
+    make_ctx, tool_deps, tool_state, upload_root
+) -> None:
+    """optional-room-question: "Imported piece without a room"."""
+    thread = new_thread(tool_deps)
+    with tool_deps.session() as session:
+        house_file.decline_room(session, thread)
+        session.commit()
+    upload = attach(tool_deps, upload_root, thread, design(name="Lamellen-Kommode"))
+    run({"upload_id": upload, "package_id": "lamellen-kommode"}, replace(make_ctx(thread_id=thread), approved=True))
+    with tool_deps.session() as session:
+        assert house_file.piece_room_name(session, "lamellen-kommode") is None
+        listed = {p["package_id"]: p for p in house_file.pieces(session, tool_state.settings.render_root)}
+    assert listed["lamellen-kommode"]["room_id"] is None
+
+
 def test_an_import_in_a_confirmed_apartment_asks_which_room(make_ctx, tool_deps, tool_state, upload_root) -> None:
     thread = new_thread(tool_deps)
     _confirmed(tool_deps, thread, apartment="Wohnung")
@@ -271,3 +287,75 @@ def test_an_import_in_a_confirmed_apartment_asks_which_room(make_ctx, tool_deps,
     refused = preview({"upload_id": upload, "package_id": "hall-cabinet"}, make_ctx(thread_id=thread))
     assert isinstance(refused, str) and "Wohnung" in refused and "which room" in refused
     assert storage.versions(tool_state.settings.render_root, "hall-cabinet") == []
+
+
+# --- hardware corrections (hardware-catalog) -------------------------------------------------------
+
+DUPLICATE_HINGES = {"id": "cabinet-hinges", "item": "110 degree soft-close concealed cabinet hinges", "qty": 4, "notes": ""}
+
+
+def test_the_preview_lists_hardware_corrections(make_ctx, tool_deps, upload_root) -> None:
+    thread = new_thread(tool_deps)
+    upload = attach(tool_deps, upload_root, thread, design(name="Wall unit", hardware=[DUPLICATE_HINGES]))
+    shown = preview({"upload_id": upload, "package_id": "wall-unit"}, make_ctx(thread_id=thread))
+    assert isinstance(shown, Confirmation)
+    assert "\nHardware corrections:\n- Removed `cabinet-hinges`" in shown.summary
+    assert "`hinge-concealed-110`" in shown.summary
+
+
+def test_yes_stores_the_corrected_design(make_ctx, tool_deps, tool_state, upload_root) -> None:
+    thread = new_thread(tool_deps)
+    upload = attach(tool_deps, upload_root, thread, design(name="Wall unit", hardware=[DUPLICATE_HINGES]))
+    run({"upload_id": upload, "package_id": "wall-unit"}, replace(make_ctx(thread_id=thread), approved=True))
+    folder = storage.version_dir(tool_state.settings.render_root, "wall-unit", 1)
+    wait_for_status(folder)
+    stored = json.loads((folder / storage.INPUT_FILE).read_text(encoding="utf-8"))
+    assert all(line["id"] != "cabinet-hinges" for line in stored.get("hardware") or [])
+
+
+def test_a_design_with_nothing_to_correct_lists_no_corrections(make_ctx, tool_deps, upload_root) -> None:
+    thread = new_thread(tool_deps)
+    upload = attach(tool_deps, upload_root, thread, design(name="Wall unit"))
+    shown = preview({"upload_id": upload, "package_id": "wall-unit"}, make_ctx(thread_id=thread))
+    assert "Hardware corrections" not in shown.summary
+
+
+# --- door slats (door-slats) -------------------------------------------------------------
+
+
+def test_the_preview_warns_about_a_handle_on_slats(make_ctx, tool_deps, upload_root) -> None:
+    template = load_template()["build"]
+    cabinet = template["modules"][0] | {
+        "fronts": [{
+            "type": "door", "count": 2, "opening": "hinge", "handle": {"kind": "knob"},
+            "slats": {"count": 8, "width": 30, "material": "slats", "leaves": [2]},
+        }]
+    }
+    materials = template["materials"] | {"slats": {"material": "12 mm MDF", "thickness_mm": 12}}
+    thread = new_thread(tool_deps)
+    upload = attach(tool_deps, upload_root, thread, design(name="Kommode", materials=materials, modules=[cabinet]))
+    shown = preview({"upload_id": upload, "package_id": "kommode"}, make_ctx(thread_id=thread))
+    assert isinstance(shown, Confirmation)
+    assert "Slat-handle warnings: the handle on door 2 of cabinet-door-1 is mounted over the slats" in shown.summary
+
+
+# --- door leaf materials (door-leaf-materials) ------------------------------------------------------
+
+
+def test_the_preview_names_a_black_right_door(make_ctx, tool_deps, tool_state, upload_root) -> None:
+    template = load_template()["build"]
+    cabinet = template["modules"][0] | {
+        "fronts": [{"type": "door", "count": 2, "opening": "hinge", "leaf_materials": {"2": "black_paint"}}]
+    }
+    materials = template["materials"] | {"black_paint": {"material": "18 mm black painted MDF", "thickness_mm": 18}}
+    thread = new_thread(tool_deps)
+    upload = attach(tool_deps, upload_root, thread, design(name="Kommode", materials=materials, modules=[cabinet]))
+    shown = preview({"upload_id": upload, "package_id": "kommode"}, make_ctx(thread_id=thread))
+    assert isinstance(shown, Confirmation)
+    assert "\nDoor materials: cabinet door 2 black_paint" in shown.summary
+    run({"upload_id": upload, "package_id": "kommode"}, replace(make_ctx(thread_id=thread), approved=True))
+    from app.blender.custom_build.derive import derive
+
+    stored = json.loads((storage.version_dir(tool_state.settings.render_root, "kommode", 1) / storage.INPUT_FILE).read_text())
+    ids = [row["id"] for row in derive(stored)[0] if row["name"] == "Door"]
+    assert ids == ["cabinet-door-1-1", "cabinet-door-1-2"]

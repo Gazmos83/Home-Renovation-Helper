@@ -12,7 +12,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.blender.custom_build.derive import derive, module_bounds, signed_degrees
+from app.blender.custom_build.derive import (
+    derive,
+    handle_spec,
+    module_bounds,
+    signed_degrees,
+    slat_spec,
+)
 from app.blender.schemas import CustomBuildSpec, PackageChanges
 from app.blender.spec_contract import SpecValidationError
 
@@ -53,24 +59,97 @@ def _plural(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
-def describe_front(front: dict[str, Any]) -> str:
-    """One front in words: type, count, height when set, and its opening."""
+def describe_handle(front: dict[str, Any]) -> str:
+    """A front's handle in words, e.g. "bar 900 mm vertical, meeting edges, black"; "" without one."""
+    handle = handle_spec(front) if front.get("handle") else None
+    if handle is None:
+        return ""
+    words = f"bar {handle['length']} mm {handle['orientation']}" if handle["kind"] == "bar" else "knob"
+    details = [words]
+    if handle["edge"] is not None:
+        details.append("meeting edges" if handle["edge"] == "meeting" else f"{handle['edge']} edge")
+    details.append(handle["finish"])
+    if front["handle"].get("key"):
+        details.append(f"key {handle['key']}")
+    return ", ".join(details)
+
+
+def describe_slats(front: dict[str, Any]) -> str:
+    """A door's slats in words, e.g. "8 vertical slats 30 mm on door 2"; "" without them (door-slats)."""
+    slats = slat_spec(front)
+    if slats is None:
+        return ""
+    words = f"{_plural(slats['count'], slats['orientation'] + ' slat')} {slats['width']} mm"
+    if slats["margin_mm"]:
+        words += f", {slats['margin_mm']} mm margin"
+    stated = front["slats"].get("leaves")
+    if stated:
+        doors = "door" if len(stated) == 1 else "doors"
+        words += ("," if slats["margin_mm"] else "") + f" on {doors} {', '.join(str(leaf) for leaf in stated)}"
+    return words
+
+
+def describe_leaf_materials(front: dict[str, Any], carcass: str | None = None) -> str:
+    """The doors cut from their own slot, e.g. "door 2 black_paint"; a door in the carcass
+    slot is not named; "" without any (door-leaf-materials)."""
+    named = sorted((front.get("leaf_materials") or {}).items(), key=lambda item: int(item[0]))
+    return ", ".join(f"door {door} {slot}" for door, slot in named if slot != carcass)
+
+
+def describe_front(front: dict[str, Any], carcass: str | None = None) -> str:
+    """One front in words: type, count, height when set, its opening, its handle, the doors
+    with their own material and its slats when set."""
     kind = front.get("type")
     height = f" {front['height']} mm" if front.get("height") else ""
+    handle = describe_handle(front)
     if kind == "flap":
-        return f"1 flap{height} ({front.get('hinged')}-hinged)"
+        details = [f"{front.get('hinged')}-hinged"] + ([handle] if handle else [])
+        return f"1 flap{height} ({', '.join(details)})"
     if kind == "door":
         details = [str(front.get("opening"))]
         hinge = front.get("hinge", DEFAULT_HINGE)
         if front.get("opening") == "hinge" and hinge != DEFAULT_HINGE:
             details.append(hinge)
+        if handle:
+            details.append(handle)
+        materials = describe_leaf_materials(front, carcass)
+        if materials:
+            details.append(materials)
+        slats = describe_slats(front)
+        if slats:
+            details.append(slats)
         return f"{_plural(front.get('count', 1), 'door')}{height} ({', '.join(details)})"
-    return f"{_plural(front.get('count', 1), str(kind))}{height}"
+    return f"{_plural(front.get('count', 1), str(kind))}{height}" + (f" ({handle})" if handle else "")
 
 
-def describe_fronts(fronts: list[dict[str, Any]] | None) -> str:
+def describe_fronts(fronts: list[dict[str, Any]] | None, carcass: str | None = None) -> str:
     """A module's fronts as written, in words, e.g. "1 door (hinge), 1 drawer 200 mm"."""
-    return ", ".join(describe_front(front) for front in fronts or []) or "none"
+    return ", ".join(describe_front(front, carcass) for front in fronts or []) or "none"
+
+
+def _layout_words(fronts: list[dict[str, Any]] | None) -> str:
+    entries = list(fronts or [])
+    if len(entries) == 1:
+        only = entries[0]
+        kind = str(only.get("type"))
+        count = int(only.get("count", 1))
+        arranged = " side by side" if count > 1 else ""
+        return f"1 entry of {_plural(count, kind)}{arranged}"
+    each = "; ".join(_plural(int(front.get("count", 1)), str(front.get("type"))) for front in entries)
+    return f"{len(entries)} entries stacked top to bottom ({each})" if entries else "no fronts"
+
+
+def front_layout_change(module_id: str, before: list[dict[str, Any]] | None, after: list[dict[str, Any]] | None) -> str | None:
+    """A line for the revise confirmation when the module's front layout changes: the number
+    of entries, or an entry's type or door count, between two layouts that both have fronts;
+    materials, handles, slats and heights do not count. Written by code, so a pair turned into stacked entries is never silent
+    (door-leaf-materials)."""
+    if not before or not after:
+        return None  # fronts added or removed: the fronts line already says so
+    shape = [(front.get("type"), int(front.get("count", 1))) for front in before]
+    if shape == [(front.get("type"), int(front.get("count", 1))) for front in after]:
+        return None
+    return f"{module_id}: front layout changes from {_layout_words(before)} to {_layout_words(after)}"
 
 
 def describe_hardware(lines: list[dict[str, Any]] | None) -> str:
@@ -86,6 +165,21 @@ def describe_folds(folds: list[dict[str, Any]] | None) -> str:
         f"{fold['side']} from {fold['from_mm']} mm along {fold['along']}, {fold['angle_deg']}°, {fold['towards']}"
         for fold in folds
     )
+
+
+def describe_rails(rails: list[dict[str, Any]] | None) -> str:
+    """A module's hanging rails in words, e.g. 'bay 1 at 1650 mm, chrome' (hardware-catalog)."""
+    if not rails:
+        return "none"
+    words = []
+    for rail in rails:
+        text = f"bay {rail.get('bay', 1)} at {rail['z']} mm"
+        if rail.get("inset_y_mm") is not None:
+            text += f", {rail['inset_y_mm']} mm from the front"
+        if rail.get("finish"):
+            text += f", {rail['finish']}"
+        words.append(text)
+    return "; ".join(words)
 
 
 def describe_spans(spans: list[dict[str, Any]] | None) -> str:
@@ -166,20 +260,46 @@ def _apply_module_change(module: dict[str, Any], change: dict[str, Any], lines: 
         if field in _CLEARED_BY:
             _set_interior(module, field, value, change, lines)
             continue
+        if field == "mounting":
+            _set_mounting(module, value, lines)
+            continue
         if field == "dividers" and not value and module.get("divider_positions_mm") and "divider_positions_mm" not in change:
             lines.append(f"{module_id}: divider_positions_mm {module.pop('divider_positions_mm')} → not set")
         if field == "dividers" and not value and module.get("divider_spans") and "divider_spans" not in change:
             lines.append(f"{module_id}: divider_spans {describe_spans(module.pop('divider_spans'))} → full height")
         before = module.get(field)
-        if _same(before, value):
+        if _same(before, value) or (field == "hanging_rails" and not value and not before):
             continue  # a value the module already has changes nothing
+        if field == "hanging_rails":
+            lines.append(f"{module_id}: hanging_rails {describe_rails(before)} → {describe_rails(value)}")
+            if value:
+                module[field] = value
+            else:
+                module.pop(field, None)
+            continue
         if field == "fronts":
-            lines.append(f"{module_id}: fronts {describe_fronts(before)} → {describe_fronts(value)}")
+            carcass = module.get("carcass")
+            lines.append(f"{module_id}: fronts {describe_fronts(before, carcass)} → {describe_fronts(value, carcass)}")
+            layout = front_layout_change(module_id, before, value)
+            if layout:
+                lines.append(layout)
         elif field == "hardware":
             lines.append(f"{module_id}: hardware {describe_hardware(before)} → {describe_hardware(value)}")
         else:
             lines.append(f"{module_id}: {field} {before} → {value}")
         module[field] = value
+
+
+def _set_mounting(module: dict[str, Any], value: str, lines: list[str]) -> None:
+    before = module.get("mounting") or "not stated"
+    after = "not stated" if value == "unset" else value
+    if before == after:
+        return  # a value the module already has changes nothing
+    lines.append(f"{module['id']}: mounting {before} → {after}")
+    if value == "unset":
+        module.pop("mounting", None)
+    else:
+        module["mounting"] = value
 
 
 def _set_interior(module: dict[str, Any], field: str, value: Any, change: dict[str, Any], lines: list[str]) -> None:

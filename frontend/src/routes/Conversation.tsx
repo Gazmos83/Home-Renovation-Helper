@@ -41,6 +41,7 @@ import { BriefPanel } from "@/components/chat/BriefPanel";
 import { DecisionsNote } from "@/components/chat/DecisionsNote";
 import { DeleteCompositionVersion } from "@/components/DeleteCompositionVersion";
 import { DeleteVersion } from "@/components/DeleteVersion";
+import { ApprovalRow } from "@/components/ApprovalRow";
 
 const STEP_LABELS: Record<string, string> = {
   brief: "Brief confirmed",
@@ -746,6 +747,10 @@ export function useConversation(threadId: string, showPane: (pane: "piece" | "ro
     );
     if (slug) showPane("room");
   }
+  /** The placement question's "Room layout": shows the room pane, sending nothing (view-piece-in-room). */
+  function showRoomLayout() {
+    showPane("room");
+  }
   const sentFiles = Boolean(thread.data?.messages.some((m) => m.upload_ids?.length));
   const uploads = useQuery({ queryKey: ["uploads", threadId], queryFn: () => api.uploads(threadId), enabled: sentFiles });
   const uploadById = new Map((uploads.data ?? []).map((u) => [u.upload_id, u]));
@@ -865,6 +870,7 @@ export function useConversation(threadId: string, showPane: (pane: "piece" | "ro
     tierHint,
     placeInspector,
     inspectRoom,
+    showRoomLayout,
     send,
     answer,
     stop,
@@ -1039,6 +1045,7 @@ export function ChatPane({ c }: { c: ConversationState }) {
               questions={pending.questions ?? []}
               disabled={running !== null}
               onAnswer={(value) => void c.answer(pending, value)}
+              onRoomLayout={pending.layout === "room" ? c.showRoomLayout : undefined}
             />
           ) : (
             <ConfirmationCard
@@ -1080,6 +1087,23 @@ export function PiecePane({ c }: { c: ConversationState }) {
     enabled: shown !== null,
     retry: false,
   });
+  // The same query the inspector reads, so both show one state (workspace-pane-approval).
+  const info = useQuery({
+    queryKey: ["version", shown?.packageId, shown?.version],
+    queryFn: () => api.version(shown?.packageId as string, shown?.version as number),
+    enabled: shown !== null && Number.isInteger(shown.version) && shown.version > 0,
+  });
+  const queryClient = useQueryClient();
+  const approval = useMutation({
+    mutationFn: ({ approve, packageId, version }: { approve: boolean; packageId: string; version: number }) =>
+      approve ? api.approveVersion(packageId, version) : api.unapproveVersion(packageId, version),
+    onSuccess: (_, { packageId }) => {
+      queryClient.invalidateQueries({ queryKey: ["progress", c.threadId] });
+      queryClient.invalidateQueries({ queryKey: ["version", packageId] });
+      queryClient.invalidateQueries({ queryKey: ["piece-versions", packageId] });
+      queryClient.invalidateQueries({ queryKey: ["pieces"] });
+    },
+  });
   if (!shown) {
     return (
       <div className={paneClass}>
@@ -1096,6 +1120,18 @@ export function PiecePane({ c }: { c: ConversationState }) {
   return (
     <aside aria-label="Inspector" className={paneClass}>
       <h2>{spec.data?.name || shown.packageId}</h2>
+      {info.data && (
+        <ApprovalRow
+          label="Approval of the shown version"
+          version={shown.version}
+          approved={Boolean(info.data.approved_at)}
+          built={info.data.status === "succeeded"}
+          pending={approval.isPending}
+          error={message(approval.error)}
+          onApprove={() => approval.mutate({ approve: true, packageId: shown.packageId, version: shown.version })}
+          onUnapprove={() => approval.mutate({ approve: false, packageId: shown.packageId, version: shown.version })}
+        />
+      )}
       {/* Keyed by piece only: following a new version keeps the view and its notice. */}
       <InspectorView
         key={shown.packageId}
@@ -1118,6 +1154,15 @@ export function PiecePane({ c }: { c: ConversationState }) {
  */
 export function RoomPane({ c }: { c: ConversationState }) {
   const p = c.progress.data;
+  const queryClient = useQueryClient();
+  const approval = useMutation({
+    mutationFn: ({ approve, slug, version }: { approve: boolean; slug: string; version: number }) =>
+      approve ? api.approveCompositionVersion(slug, version) : api.unapproveCompositionVersion(slug, version),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["progress", c.threadId] });
+      queryClient.invalidateQueries({ queryKey: ["compositions"] });
+    },
+  });
   if (!p) {
     return (
       <div className={paneClass}>
@@ -1163,6 +1208,18 @@ export function RoomPane({ c }: { c: ConversationState }) {
           versions={versions}
           value={chosen.version}
           onChange={(next) => c.inspectRoom(slug, next)}
+        />
+      )}
+      {chosen && (
+        <ApprovalRow
+          label={`Approval of ${room.name}`}
+          version={chosen.version}
+          approved={room.approved_version === chosen.version}
+          built={chosen.status === "succeeded"}
+          pending={approval.isPending}
+          error={message(approval.error)}
+          onApprove={() => approval.mutate({ approve: true, slug, version: chosen.version })}
+          onUnapprove={() => approval.mutate({ approve: false, slug, version: chosen.version })}
         />
       )}
       {shown.model && shown.surfaces ? (

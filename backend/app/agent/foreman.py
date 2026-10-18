@@ -74,9 +74,11 @@ from app.agent.tools.shared import read_input
 from app.assets import models as model_library
 from app.blender import storage
 from app.config import Settings
+from app.design_import import unwrap
 from app.engineering import chat as engineering_chat
 from app.feedback import ratings, verdicts
 from app.observability.usage import UsageRecorder, tokens_today
+from app.packages.placements import read_placement
 from app.plugins.binding import bound_tool_names
 from app.plugins.loader import Plugins
 
@@ -102,12 +104,26 @@ SPECIALIST_LABELS: Final[dict[str, str]] = {
 }
 # The Foreman's fixed replies, composed by the application.
 ROOM_QUESTION: Final = "Which room is this for?"
+# Asked first; "Which room is this for?" follows only a yes (optional-room-question).
+ROOM_OFFER: Final = "Would you like to view this piece in a room?"
+ROOM_YES_WORDS: Final = frozenset({"yes", "ja", "yeah", "sure", "ok", "okay"})
 # Kept so older threads that asked this still recognise the reply as the Foreman's.
 WHICH_PIECE: Final = "Which piece do you mean: {names}?"
 WHICH_PIECE_PREFIX: Final = "Which piece do you mean"
 PIECE_HAS_CONVERSATION: Final = (
     "{piece} already has a conversation. Open it from the Pieces page."
 )
+# A design file named like an existing piece, in a conversation with no piece (delete-piece).
+DESIGN_MATCHES_PIECE: Final = (
+    "The attached design `{file}` matches your piece {name} (`{package_id}`). {update} "
+    "To start over, delete {name} on the Pieces page, then attach the file again. "
+    "To keep both, change the design's name and attach it again."
+)
+DESIGN_UPDATE_IN_CONVERSATION: Final = (
+    "To update that piece, attach the file in its conversation (Pieces page → {name}) "
+    "and it becomes the next version."
+)
+DESIGN_UPDATE_HERE: Final = "To update that piece, name {package_id} here and attach the file again."
 # The turn's reply when a specialist answers empty twice (piece-versions-and-chat-delete).
 EMPTY_REPLY: Final = "{role} gave no answer. Please rephrase your message or ask again."
 _TOOL_NAME: Final = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -174,6 +190,8 @@ class ChatState(TypedDict, total=False):
     detail_ready: bool
     image_attached: bool
     design_attached: bool
+    # The piece an attached design file is named like, `{package_id, name, file, has_conversation}`.
+    design_matches_piece: dict[str, Any] | None
     # A design file attached while no room was confirmed, `{"upload_id", "name"}`; Intake's turn
     # that confirms the room hands it to the Designer (pending-design-import).
     pending_design: dict[str, str] | None
@@ -182,7 +200,15 @@ class ChatState(TypedDict, total=False):
     room_confirmed: bool
     room_named: bool
     room_asked: bool
+    # The owner's answer to ROOM_OFFER on this turn: "room", "yes" or "no"; `None` otherwise.
+    room_answer: str | None
+    room_declined: bool
     build_room_ok: bool
+    # view-piece-in-room: the latest version has a saved place in the confirmed room; the turn
+    # asks to see the piece in it; `ask_placement` saved a place during this turn.
+    placement_ready: bool
+    views_in_room: bool
+    placement_saved: bool
     ambiguous_pieces: list[str]
     piece_has_conversation: str | None
     brief: dict[str, Any]
@@ -208,6 +234,10 @@ class Decision(BaseModel):
     asks_help: bool = Field(
         default=False,
         description="true when the owner asks how to use the app, not for design, build, render, review or price work",
+    )
+    views_in_room: bool = Field(
+        default=False,
+        description="true when the owner wants to see the conversation's piece in its room (placed there, or a picture of it there)",
     )
 
 
@@ -253,6 +283,48 @@ def _pending_design(engine: Engine, messages: list[AnyMessage]) -> dict[str, str
             if designs:
                 upload_id, name = designs[-1]
                 return {"upload_id": upload_id, "name": name}
+    return None
+
+
+def _attached_design(engine: Engine, settings: Settings, messages: list[AnyMessage]) -> tuple[str, str | None] | None:
+    """`(file name, name inside the design)` of the newest design file the newest owner
+    message carries, read from the stored upload, never by a model; `None` without one."""
+    newest = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
+    ids = newest.additional_kwargs.get("upload_ids") if newest is not None else None
+    if not ids:
+        return None
+    _images, designs, _notes = _designs(engine, list(ids))
+    if not designs:
+        return None
+    upload_id, file_name = designs[-1]
+    with Session(engine) as session:
+        upload = uploads.get_upload(session, UUID(upload_id))
+        path = uploads.upload_path(settings.upload_root, upload.thread_id, upload.id, upload.kind) if upload else None
+    try:
+        document = json.loads(path.read_text(encoding="utf-8")) if path is not None else None
+    except (OSError, ValueError):
+        document = None
+    build, _refusal = unwrap(document)
+    name = build.get("name") if isinstance(build, dict) else None
+    return file_name, name.strip() if isinstance(name, str) and name.strip() else None
+
+
+def design_match(file_name: str, design_name: str | None, pieces: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The first piece the design file is named like: its file name without `.json` is the
+    piece's id, its name made into an id is the id, or its name is the piece's name
+    (ignoring case)."""
+    stem = file_name[:-5] if file_name.casefold().endswith(".json") else file_name
+    slug = None
+    if design_name:
+        try:
+            slug = storage.apartment_slug(design_name)
+        except storage.InvalidPackageId:
+            slug = None
+    for piece in pieces:
+        if stem == piece["package_id"] or slug == piece["package_id"] or (
+            design_name and design_name.casefold() == str(piece["name"]).casefold()
+        ):
+            return piece
     return None
 
 
@@ -413,6 +485,20 @@ def room_named(
     return any(_whole_word(str(item["name"]), lowered) for item in [*rooms, *apartments])
 
 
+def room_answer(messages: list[AnyMessage], *, names_room: bool) -> str | None:
+    """How the owner's latest message answers ROOM_OFFER, read by code: "room" when it names
+    a room (or carries a plan or photo, `names_room`), "yes" when its first word is a yes,
+    else "no"; `None` when the last reply was not ROOM_OFFER."""
+    owner, reply = _latest_texts(messages)
+    if reply.strip() != ROOM_OFFER:
+        return None
+    if names_room:
+        return "room"
+    words = owner.split()
+    first = re.sub(r"[^\w]", "", words[0]).casefold() if words else ""
+    return "yes" if first in ROOM_YES_WORDS else "no"
+
+
 def room_question_asked(messages: list[AnyMessage]) -> bool:
     """Whether the last reply with text before the owner's message was the room question."""
     return _latest_texts(messages)[1].strip() == ROOM_QUESTION
@@ -451,7 +537,10 @@ def _confirmation_payload(confirmation: Confirmation, tool: str) -> dict[str, An
 
 
 def _questions_payload(questions: Questions, tool: str) -> dict[str, Any]:
-    return {"kind": "questions", "tool": tool, "questions": questions.questions}
+    payload = {"kind": "questions", "tool": tool, "questions": questions.questions}
+    if questions.layout:
+        payload["layout"] = questions.layout
+    return payload
 
 
 def _answered_rows(questions: Questions, answer: Any) -> dict[str, Any]:
@@ -586,6 +675,15 @@ def build_graph(
                 [house_file.describe_room(r) for r in stored_rooms],
                 [{"name": a.name} for a in house_file.apartments(session)],
             )
+            # The answer to "Would you like to view this piece in a room?" (optional-room-question).
+            room_declined = bool(thread is not None and thread.room_declined)
+            answer = None
+            if not room_confirmed and not room_declined:
+                answer = room_answer(messages, names_room=room_is_named or _attached(engine, messages)[0])
+                if answer == "no" and thread_id is not None:
+                    house_file.decline_room(session, thread_id)
+                    session.commit()
+                    room_declined = True
         package_id = active or state.get("package_id")
         bound = next((p for p in all_pieces if p["package_id"] == package_id), None)
         piece_ready = bool(bound and bound["latest_version"])
@@ -607,6 +705,12 @@ def build_graph(
                 report_statuses = active_report_statuses(session, settings.render_root, package_id)
             if report_statuses:
                 piece_text += "\nEngineering report IDs/status (fetch complete current evidence; visual approval does not verify engineering): " + json.dumps(report_statuses)
+        placement_ready = bool(
+            bound
+            and bound["latest_version"]
+            and scope_room_name is not None
+            and read_placement(storage.version_dir(settings.render_root, package_id, bound["latest_version"]), scope_room_name)
+        )
         open_review = []
         recent_feedback: list[dict[str, Any]] = []
         open_verdicts: list[dict[str, Any]] = []
@@ -636,6 +740,8 @@ def build_graph(
             room_fact = f"room {scope_room_name}"
         elif scope_apartment_name is not None:
             room_fact = f"apartment {scope_apartment_name}"
+        elif room_declined:
+            room_fact = "no room (the owner chose not to view this piece in a room; do not ask for one)"
         else:
             room_fact = "no room confirmed yet"
         shell_ready = any(a["shell_version"] for a in apartments)
@@ -674,6 +780,19 @@ def build_graph(
             )
             facts += f" Apartments: {listed}."
         image_attached, design_attached = _attached(engine, messages)
+        design_conflict = None
+        if design_attached and package_id is None:
+            attached = _attached_design(engine, settings, messages)
+            matched = design_match(attached[0], attached[1], all_pieces) if attached else None
+            if matched is not None:
+                with Session(engine) as session:
+                    has_conversation = house_file.thread_id_for_piece(session, matched["package_id"]) is not None
+                design_conflict = {
+                    "package_id": matched["package_id"],
+                    "name": matched["name"],
+                    "file": attached[0],
+                    "has_conversation": has_conversation,
+                }
         pending_design = None
         if thread_id is not None and not room_confirmed and package_id is None:
             with Session(engine) as session:
@@ -723,13 +842,22 @@ def build_graph(
             "detail_ready": detail_ready,
             "image_attached": image_attached,
             "design_attached": design_attached,
+            "design_matches_piece": design_conflict,
             "pending_design": pending_design,
             "handoff_design": None,
             "piece_named": bool(matches) and active is None and piece_taken is None,
             "room_confirmed": room_confirmed,
             "room_named": room_is_named,
             "room_asked": room_question_asked(messages),
-            "build_room_ok": package_id is None or (bound_room is not None and bound_room in scope_room_names),
+            "room_answer": answer,
+            "room_declined": room_declined,
+            # A conversation that declined a room places no piece (optional-room-question).
+            "build_room_ok": package_id is None
+            or room_declined
+            or (bound_room is not None and bound_room in scope_room_names),
+            "placement_ready": placement_ready,
+            "views_in_room": False,
+            "placement_saved": False,
             "ambiguous_pieces": ambiguous,
             "piece_has_conversation": piece_taken,
             "round_count": 0,
@@ -796,6 +924,10 @@ def build_graph(
                 engine, UUID(str(raw_thread)), call, state.get("package_id"), memory
             )
             through = summaries.covered_through(engine, UUID(str(raw_thread)), state.get("package_id"))
+        elif raw_thread and not engineering:
+            # Routing reads the stored note but never writes one (conversation-recent-inputs).
+            summarize = summaries.stored_note(engine, UUID(str(raw_thread)), state.get("package_id"))
+            through = summaries.covered_through(engine, UUID(str(raw_thread)), state.get("package_id"))
         fitted, _counted = prepare(
             budget,
             system,
@@ -807,6 +939,7 @@ def build_graph(
             trigger_percent=memory.trigger_percent,
             keep_turns=memory.keep_turns,
             covered_through=through,
+            recent_inputs=0 if engineering else memory.recent_inputs,
         )
         # Recheck after fitting/summary work, immediately before dispatch. Refit
         # whole packets if current rights or reviewed properties changed.
@@ -856,6 +989,17 @@ def build_graph(
     ) -> Command[
         Literal["intake", "designer", "builder", "lighting", "reviewer", "researcher", "__end__"]
     ]:
+        # A design file named like an existing piece is answered by code, before any model
+        # call or specialist, and nothing is imported (delete-piece).
+        conflict = state.get("design_matches_piece")
+        if conflict:
+            update_way = (DESIGN_UPDATE_IN_CONVERSATION if conflict["has_conversation"] else DESIGN_UPDATE_HERE).format(
+                name=conflict["name"], package_id=conflict["package_id"]
+            )
+            fixed = DESIGN_MATCHES_PIECE.format(
+                file=conflict["file"], name=conflict["name"], package_id=conflict["package_id"], update=update_way
+            )
+            return Command(update={"messages": [AIMessage(fixed)], "specialist": ""}, goto=END)
         instruction = loaded["foreman"]
         system = compose_agent_prompt(instruction.text, state.get("facts", ""), state.get("house_note", ""))
         try:
@@ -912,12 +1056,29 @@ def build_graph(
                 fixed = PIECE_HAS_CONVERSATION.format(piece=state["piece_has_conversation"])
             elif state.get("ambiguous_pieces"):
                 fixed = WHICH_PIECE.format(names=", ".join(state["ambiguous_pieces"]))
-            elif not state.get("room_confirmed") and not (
-                state.get("image_attached") or state.get("room_named") or state.get("room_asked")
+            elif (
+                not state.get("room_confirmed")
+                and not state.get("room_declined")
+                and not (state.get("image_attached") or state.get("room_named") or state.get("room_asked"))
             ):
-                fixed = ROOM_QUESTION
+                # The room is offered first; "Which room is this for?" follows only a yes.
+                fixed = ROOM_QUESTION if state.get("room_answer") == "yes" else ROOM_OFFER
             if fixed is not None:
                 return Command(update={"messages": [AIMessage(fixed)], "specialist": ""}, goto=END)
+        # On the turn the owner declines a room, a design file sent before it is the Designer's to
+        # import, as on the turn that confirms a room (optional-room-question).
+        pending = state.get("pending_design")
+        if state.get("room_answer") == "no" and pending and not state.get("package_id"):
+            return Command(
+                update={
+                    "specialist": "designer",
+                    "reason": reason,
+                    "engineering_turn": False,
+                    "handoff_design": pending,
+                    "pending_design": None,
+                },
+                goto="designer",
+            )
         # A piece with a version, or an apartment with a shell, gives the Builder something to work on.
         buildable = state.get("piece_ready") or state.get("shell_ready") or state.get("composition_ready")
         if not buildable and chosen == "builder":
@@ -943,17 +1104,33 @@ def build_graph(
             and not naming
         ):
             chosen = "intake"
+        # Seeing the built piece in the confirmed room: the Builder renders it where it was placed,
+        # and without a place the Designer asks for one first (view-piece-in-room). A conversation
+        # that declined a room is asked which room.
+        views = bool(getattr(decision, "views_in_room", False)) and bool(state.get("detail_ready")) and not engineering
+        if views and not state.get("room_confirmed"):
+            return Command(update={"messages": [AIMessage(ROOM_QUESTION)], "specialist": ""}, goto=END)
+        if views:
+            chosen = "builder" if state.get("placement_ready") else "designer"
         # Only Intake reads plans and photos, so an image turn the model gave the Designer goes to Intake.
         if chosen == "designer" and state.get("image_attached"):
             chosen = "intake"
         # With a room confirmed, an attached design file is the Designer's to import,
         # whatever else the thread holds (design-import).
-        if state.get("design_attached") and state.get("room_confirmed"):
+        if state.get("design_attached") and (state.get("room_confirmed") or state.get("room_declined")):
             chosen = "designer"
         # A build with no room, or in a room outside the conversation's, is placed first.
         if chosen in ("designer", "builder", "reviewer", "lighting") and not state.get("build_room_ok", True):
             chosen = "intake"
-        return Command(update={"specialist": chosen, "reason": reason, "engineering_turn": engineering}, goto=chosen)
+        return Command(
+            update={
+                "specialist": chosen,
+                "reason": reason,
+                "engineering_turn": engineering,
+                "views_in_room": views and chosen in ("designer", "builder"),
+            },
+            goto=chosen,
+        )
 
     # --- a specialist ------------------------------------------------------------
 
@@ -981,10 +1158,25 @@ def build_graph(
                 notes.append(state.get("feedback_note", ""))
             handoff = state.get("handoff_design") if name == "designer" else None
             if handoff:
+                when = (
+                    "and chose not to view the piece in a room"
+                    if state.get("room_declined") and not state.get("room_confirmed")
+                    else "before the room was confirmed; it is now confirmed"
+                )
                 notes.append(
                     f"(The owner attached the design file '{neutralise(handoff['name'])}' as upload "
-                    f"{handoff['upload_id']} before the room was confirmed; it is now confirmed. "
-                    "Import it with import_design.)"
+                    f"{handoff['upload_id']} {when}. Import it with import_design.)"
+                )
+            if state.get("views_in_room") and name == "designer":
+                notes.append(
+                    "(The owner wants to see the piece in this conversation's room and it has no place "
+                    "there yet. Call ask_placement now; do not explain what is missing.)"
+                )
+            if state.get("views_in_room") and name == "builder":
+                notes.append(
+                    "(The owner wants to see the piece in this conversation's room, and its place there is "
+                    'saved. Start a draft still now: call render_turntable with the piece\'s package_id, kind "still", '
+                    'tier "draft" and in_room true.)'
                 )
             # The templates only for a new piece: a revision sees only the active build's figures.
             if name == "designer" and not state.get("package_id"):
@@ -1211,15 +1403,28 @@ def build_graph(
             goto="designer",
         )
 
+    def after_designer(state: ChatState, config: RunnableConfig) -> Command[Literal["builder", "__end__"]]:
+        """When the owner asked to see the piece in the room and `ask_placement` saved its place
+        this turn, the same turn goes on to the Builder for a draft still in the room
+        (view-piece-in-room). Decided here, never by a model."""
+        if not (state.get("views_in_room") and state.get("placement_saved")):
+            return Command(goto=END)
+        return Command(
+            update={"specialist": "builder", "round_count": 0, "placement_saved": False, "placement_ready": True},
+            goto="builder",
+        )
+
     graph = StateGraph(ChatState)
     graph.add_node("load_house", load_house)
     graph.add_node("foreman", foreman)
     for name in SPECIALISTS:
         graph.add_node(name, specialist_graph(name))
-        if name != "intake":
+        if name not in ("intake", "designer"):
             graph.add_edge(name, END)
     graph.add_node("after_intake", after_intake)
     graph.add_edge("intake", "after_intake")
+    graph.add_node("after_designer", after_designer)
+    graph.add_edge("designer", "after_designer")
     graph.add_edge(START, "load_house")
     graph.add_edge("load_house", "foreman")
     compiled = graph.compile(checkpointer=checkpointer)

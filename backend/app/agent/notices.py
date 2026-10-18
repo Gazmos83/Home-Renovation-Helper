@@ -21,6 +21,7 @@ from app.render.guard import RenderQuote
 logger = logging.getLogger("app")
 
 PANEL_SENTENCE = " You can also check it in the Piece panel."
+ROOMS_SENTENCE = " You can also find it on the Rooms page."
 
 
 def _what(quote: RenderQuote) -> str:
@@ -52,6 +53,8 @@ def notice_text(quote: RenderQuote, outcome: str) -> str:
         return f"{subject} did not finish for every variant; the ones that finished are ready. You can ask for the rest again."
     if outcome != "succeeded":
         return f"{subject} did not finish, so nothing new was published. You can ask for it again."
+    if quote.record == "room":
+        return f"{subject} is ready.{ROOMS_SENTENCE}"
     return f"{subject} is ready." + (PANEL_SENTENCE if quote.record == "piece" else "")
 
 
@@ -63,6 +66,8 @@ def post(deps: Any, thread_id: UUID | None, quote: RenderQuote, outcome: str) ->
     try:
         count = _message_count(deps, thread_id)
         piece = quote.record == "piece"
+        room = quote.record == "room"
+        key = storage.render_key(quote.kind, quote.room, quote.source)
         with deps.session() as session:
             house_file.add_notice(
                 session,
@@ -72,11 +77,32 @@ def post(deps: Any, thread_id: UUID | None, quote: RenderQuote, outcome: str) ->
                 tier=quote.tier.name,
                 text=notice_text(quote, outcome),
                 package_id=quote.package_id if piece else None,
-                version=quote.version if piece else None,
+                version=quote.version if piece or room else None,
+                composition_slug=quote.package_id if room else None,
+                render_key=key if room else None,
             )
+            if room:
+                house_file.stop_following_room_render(session, thread_id, quote.package_id, quote.version, key)
             session.commit()
     except Exception:
         logger.exception("could not post a render notice")
+
+
+def follow_room(deps: Any, thread_id: UUID | None, quote: RenderQuote) -> None:
+    """Record a room or apartment composition render the conversation started, so the
+    thread's progress follows it until its notice is posted (room-render-notices). Never
+    raises: a failure is logged and the render goes ahead."""
+    if thread_id is None or quote.record != "room":
+        return
+    try:
+        with deps.session() as session:
+            house_file.follow_room_render(
+                session, thread_id, quote.package_id, quote.version,
+                storage.render_key(quote.kind, quote.room, quote.source),
+            )
+            session.commit()
+    except Exception:
+        logger.exception("could not record a room render to follow")
 
 
 def finished(deps: Any, thread_id: UUID | None, run_id: Any, quote: RenderQuote, outcome: str) -> None:

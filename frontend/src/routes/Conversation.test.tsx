@@ -647,6 +647,7 @@ test("a Markdown table in a reply is a table with a header row", async () => {
 test("a calc block is a framed box between the paragraphs around it", async () => {
   messages = [reply("The height adds up:\n\n```calc\n430 + 430 + 400 + 100 + 100 = 1460\n```\n\nThat fits under the window.")];
   show();
+  await userEvent.setup().click(await screen.findByRole("button", { name: "Show the maths" }));
   const box = await screen.findByRole("figure", { name: "Calculation" });
   expect(box).toHaveTextContent("430 + 430 + 400 + 100 + 100 = 1460");
   expect(box.className).toContain("border-2");
@@ -749,6 +750,38 @@ test("two questions are asked one at a time and the answers become a Question | 
   expect(within(table).getByText("2500 mm")).toBeInTheDocument();
   expect(within(table).getByText("900 EUR")).toBeInTheDocument();
   expect(await screen.findByLabelText("Message")).toBeInTheDocument();
+});
+
+// --- the placement questions (view-piece-in-room) -----------------------------------------
+
+test("the placement question's Room layout button shows the room and keeps the question", async () => {
+  const user = userEvent.setup();
+  setWorkspaceLayout("chat-piece");
+  progressNow = progress(["brief", "piece", "built"], { room: HALL });
+  serveRoom();
+  pending = {
+    ...questions,
+    layout: "room",
+    questions: [
+      { text: "Where would you like to place the piece? Check out the Room layout.", unit: null, choices: ["Wall 1 (3000 mm)", "Wall 2 (2000 mm)"] },
+      { text: "How far from the left end of that wall should the piece start? (seen facing the wall)", unit: "mm", choices: [] },
+    ],
+  };
+  show();
+  const form = within(await screen.findByRole("region", { name: "Questions" }));
+  const sent = calls.length;
+  await user.click(form.getByRole("button", { name: "Room layout" }));
+  expect(await screen.findByRole("complementary", { name: "Room view" })).toBeInTheDocument();
+  expect(window.localStorage.getItem("studio.workspace.layout")).toBe("chat-room");
+  expect(screen.getByRole("region", { name: "Questions" })).toBeInTheDocument();
+  expect(calls.slice(sent).some(([method]) => method === "POST")).toBe(false);
+});
+
+test("other question sets show no Room layout button", async () => {
+  pending = questions;
+  show();
+  const form = within(await screen.findByRole("region", { name: "Questions" }));
+  expect(form.queryByRole("button", { name: "Room layout" })).not.toBeInTheDocument();
 });
 
 test("a question's choices are buttons and choosing one answers it", async () => {

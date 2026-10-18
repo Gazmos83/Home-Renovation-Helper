@@ -1,6 +1,7 @@
-import type { ComponentProps, ReactNode } from "react";
+import { type ComponentProps, type ReactNode, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 // A render file's route in a reply: a piece's, a composition's or a shell's, and nothing
@@ -33,6 +34,23 @@ function RouteLink({ href, children }: { href: string; children: ReactNode }) {
   );
 }
 
+/** A `calc` block, hidden behind its own "Show the maths" button; nothing is sent. */
+function CalcBlock({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="space-y-2">
+      <Button type="button" variant="outline" size="sm" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? "Hide the maths" : "Show the maths"}
+      </Button>
+      {open && (
+        <figure aria-label="Calculation" className="rounded-md border-2 bg-muted/40 px-4 py-3">
+          <pre className="whitespace-pre-wrap font-mono text-sm">{children}</pre>
+        </figure>
+      )}
+    </div>
+  );
+}
+
 function codeText(children: ReactNode): string {
   return Array.isArray(children) ? children.join("") : String(children ?? "");
 }
@@ -50,11 +68,7 @@ const components: Components = {
     const first = node?.children[0];
     const classes = first && first.type === "element" ? first.properties.className : undefined;
     if (Array.isArray(classes) && classes.includes("language-calc")) {
-      return (
-        <figure aria-label="Calculation" className="rounded-md border-2 bg-muted/40 px-4 py-3">
-          <pre className="whitespace-pre-wrap font-mono text-sm">{children}</pre>
-        </figure>
-      );
+      return <CalcBlock>{children}</CalcBlock>;
     }
     return <pre className="overflow-x-auto rounded-md bg-muted px-3 py-2 text-sm">{children}</pre>;
   },
@@ -78,7 +92,7 @@ const components: Components = {
 
 /**
  * A reply as formatted text: headings, lists, tables, emphasis and code. Raw HTML stays
- * text and is never rendered; a `calc` block is a framed box of its own.
+ * text and is never rendered; a `calc` block is a framed box of its own, shown on request.
  */
 export function Reply({ text }: { text: string }) {
   return (

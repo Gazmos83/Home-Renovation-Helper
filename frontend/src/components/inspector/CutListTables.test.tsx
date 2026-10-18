@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { expect, test } from "vitest";
 import type { DrillingList, PieceSpec, SpecPart } from "@/lib/api";
-import { changedCutIds, CutListTables } from "./CutListTables";
+import { changedCutIds, CutListTables, notShownMark } from "./CutListTables";
 
 const base: PieceSpec = {
   overall: { w: 1500, h: 400, d: 250 }, layers: {}, parts: [], hardware: [{ id: "shelf-pin", item: "Shelf pin", qty: "", notes: "No quantity" }],
@@ -106,4 +106,54 @@ test("without a baseline no row is marked changed", () => {
   expect([...changedCutIds(spec, null).parts]).toEqual([]);
   render(<CutListTables spec={spec} />);
   expect(screen.getByText("cabinet-divider").closest("tr")).not.toHaveAttribute("data-changed");
+});
+
+// hardware-catalog: the `*` beside hardware the model does not show.
+function hardwareRow(id: string): HTMLElement {
+  const row = within(screen.getByRole("region", { name: "Hardware" })).getByText(id).closest("tr");
+  if (!row) throw new Error(`no row for ${id}`);
+  return row;
+}
+
+test("an unshown line is marked and the legend is shown (Unshown line marked)", () => {
+  render(
+    <CutListTables
+      spec={{
+        ...base,
+        hardware: [{ id: "murphy-mechanism", item: "Vertical Murphy bed mechanism", qty: 1, notes: "", shown: 0 }],
+      }}
+    />,
+  );
+  expect(within(hardwareRow("murphy-mechanism")).getByText("*")).toBeInTheDocument();
+  expect(screen.getByText("* not shown in the model")).toBeInTheDocument();
+});
+
+test("a partly shown line says how many are shown (Partly shown)", () => {
+  render(
+    <CutListTables
+      spec={{ ...base, hardware: [{ id: "hinge-concealed-110", item: "Concealed hinge 110°", qty: 24, notes: "", shown: 16 }] }}
+    />,
+  );
+  expect(within(hardwareRow("hinge-concealed-110")).getByText("* (16 of 24 shown)")).toBeInTheDocument();
+});
+
+test("fully shown lines are not marked (Fully shown, no mark)", () => {
+  render(
+    <CutListTables
+      spec={{ ...base, hardware: [{ id: "drawer-runner-450", item: "Drawer runner pair, 450 mm", qty: 3, notes: "", shown: 3 }] }}
+    />,
+  );
+  expect(within(hardwareRow("drawer-runner-450")).queryByText(/\*/)).toBeNull();
+  expect(screen.queryByText("* not shown in the model")).toBeNull();
+});
+
+test("a version built before hardware was drawn marks nothing (Older version)", () => {
+  render(<CutListTables spec={base} />);
+  expect(screen.queryByText("* not shown in the model")).toBeNull();
+  expect(notShownMark({ id: "shelf-pin", item: "Shelf pin", qty: "", notes: "" })).toBeNull();
+});
+
+test("a line without a quantity is marked only when nothing of it is shown", () => {
+  expect(notShownMark({ id: "shelf-pin", item: "Shelf pin", qty: "", notes: "", shown: 0 })).toBe("*");
+  expect(notShownMark({ id: "shelf-pin", item: "Shelf pin", qty: "", notes: "", shown: 4 })).toBeNull();
 });

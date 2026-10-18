@@ -120,6 +120,7 @@ class PendingOut(BaseModel):
     summary: str
     proposal: dict[str, Any]
     questions: list[QuestionOut]
+    layout: Literal["room"] | None = None
 
 
 class TurnOut(BaseModel):
@@ -141,6 +142,11 @@ class AnswerRowOut(BaseModel):
     answer: str
 
 
+class NoticeLinkOut(BaseModel):
+    label: str
+    href: str
+
+
 class MessageOut(BaseModel):
     role: Literal["owner", "assistant", "confirmation", "notice"]
     text: str
@@ -160,6 +166,8 @@ class MessageOut(BaseModel):
     tier: str | None = Field(default=None, exclude_if=lambda v: v is None)
     package_id: str | None = Field(default=None, exclude_if=lambda v: v is None)
     version: int | None = Field(default=None, exclude_if=lambda v: v is None)
+    # A finished room render's links to its result (room-render-notices); left out when there are none.
+    links: list[NoticeLinkOut] | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class ThreadDetailOut(ThreadOut):
@@ -259,6 +267,7 @@ def _pending_out(pending: chat.Pending | None) -> PendingOut | None:
             QuestionOut(text=str(q.get("text", "")), unit=q.get("unit") or None, choices=list(q.get("choices") or []))
             for q in pending.questions
         ],
+        layout="room" if pending.layout == "room" else None,
     )
 
 
@@ -483,10 +492,14 @@ def read_thread(
 ) -> ThreadDetailOut:
     thread = _load_thread(request, thread_id)
     graph = _graph(request)
+    root = request.app.state.settings.render_root
     with Session(request.app.state.engine) as session:
         notices = house_file.notices_for(session, thread_id)
+        links = {notice.id: progress.room_notice_links(root, notice) for notice in notices if notice.composition_slug}
     try:
-        messages = chat.history(graph, thread_id=thread_id, owner_id=login.user_id, notices=notices)
+        messages = chat.history(
+            graph, thread_id=thread_id, owner_id=login.user_id, notices=notices, notice_links=links
+        )
         waiting = chat.pending(graph, thread_id=thread_id, owner_id=login.user_id)
     except psycopg.OperationalError as error:
         logger.error("chat memory unavailable", extra={"context": {"error_type": type(error).__name__}})
@@ -513,22 +526,37 @@ def delete_thread(thread_id: UUID, request: Request) -> Response:
     """Delete a conversation: its memory first, then its index entry (with its upload
     records and tool settings), then its upload files. Pieces and versions stay."""
     graph = _graph(request)
-    with _running_lock:
-        with Session(request.app.state.engine) as session:
-            if house_file.get_thread(session, thread_id) is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not Found")
-        if thread_id in _running:
-            raise _refusal(status.HTTP_409_CONFLICT, "turn_running", TURN_RUNNING)
-        try:
-            chat.forget(graph, thread_id)
-        except Exception as error:  # noqa: BLE001 - any memory failure leaves everything in place
-            logger.error("chat memory unavailable", extra={"context": {"error_type": type(error).__name__}})
-            raise _refusal(status.HTTP_503_SERVICE_UNAVAILABLE, "unavailable", MEMORY_DOWN) from None
-        with Session(request.app.state.engine) as session:
-            house_file.delete_thread(session, thread_id)
-            session.commit()
-    shutil.rmtree(request.app.state.settings.upload_root / str(thread_id), ignore_errors=True)
+    with Session(request.app.state.engine) as session:
+        if house_file.get_thread(session, thread_id) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not Found")
+    with conversations_forgotten(request, [thread_id], graph=graph), Session(request.app.state.engine) as session:
+        house_file.delete_thread(session, thread_id)
+        session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@contextmanager
+def conversations_forgotten(
+    request: Request, thread_ids: list[UUID], *, graph: Any = None, running: str = TURN_RUNNING
+) -> Iterator[None]:
+    """Delete conversations the way the conversation delete does (delete-piece): under the
+    turn lock, refuse with 409 while a turn runs in any of them and forget each one's
+    memory (503, nothing deleted, when it cannot be reached); the caller removes their
+    index rows inside the block. Their upload folders go once the block has succeeded."""
+    if thread_ids and graph is None:
+        graph = _graph(request)
+    with _running_lock:
+        if any(thread_id in _running for thread_id in thread_ids):
+            raise _refusal(status.HTTP_409_CONFLICT, "turn_running", running)
+        for thread_id in thread_ids:
+            try:
+                chat.forget(graph, thread_id)
+            except Exception as error:  # noqa: BLE001 - any memory failure leaves everything in place
+                logger.error("chat memory unavailable", extra={"context": {"error_type": type(error).__name__}})
+                raise _refusal(status.HTTP_503_SERVICE_UNAVAILABLE, "unavailable", MEMORY_DOWN) from None
+        yield
+    for thread_id in thread_ids:
+        shutil.rmtree(request.app.state.settings.upload_root / str(thread_id), ignore_errors=True)
 
 
 class BriefIn(BaseModel):
@@ -673,6 +701,10 @@ def read_progress(
             brief_confirmed=confirmed,
         )
         room = progress.room_progress(session, request.app.state.settings.render_root, thread_id)
+        # A room render the thread started keeps the chat following it (room-render-notices).
+        if progress.room_rendering(session, request.app.state.settings.render_root, thread_id):
+            found["rendering"] = True
+        session.commit()
     return ProgressOut(**found, room=room)
 
 

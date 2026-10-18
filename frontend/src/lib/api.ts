@@ -23,6 +23,8 @@ export type Pending = {
   summary: string;
   proposal: Record<string, unknown>;
   questions?: Question[];
+  /** "room": the placement questions offer the Room layout (view-piece-in-room). */
+  layout?: "room" | null;
 };
 
 export type AnswerRow = { question: string; answer: string };
@@ -41,7 +43,11 @@ export type ChatMessage = {
   tier?: string;
   package_id?: string;
   version?: number;
+  /** A finished room render's links to its viewer or still (room-render-notices). */
+  links?: NoticeLink[];
 };
+
+export type NoticeLink = { label: string; href: string };
 
 export type ThreadDetail = Thread & { messages: ChatMessage[]; pending: Pending | null };
 
@@ -169,6 +175,7 @@ export type OpenItem = { file: string; line: number; text: string };
 export type ConversationNote = { package_id: string | null; note: string | null; owner_edited: boolean };
 
 export type MemorySettings = {
+  recent_inputs: number;
   trigger_percent: number;
   keep_turns: number;
   note_tokens: number;
@@ -369,6 +376,16 @@ export type HardwareDataSheet = {
 
 export type NewHardwareDataSheet = Omit<HardwareDataSheet, "id" | "updated_at">;
 
+/** What deleting a whole piece would remove (delete-piece); `refusal` says why it would not run. */
+export type PieceDeletion = {
+  package_id: string;
+  name: string;
+  versions: number[];
+  approved: { version: number; priced: boolean }[];
+  conversations: string[];
+  refusal: string | null;
+};
+
 export type PieceSummary = {
   package_id: string;
   versions: number[];
@@ -425,6 +442,8 @@ export type CompositionVersion = {
   viewer: string | null;
   items: CompositionItem[];
   model: string | null;
+  /** The version's Blender file for download, when it has one (version-file-downloads). */
+  blend?: string | null;
   surfaces: string | null;
   dimensions: string | null;
   approved_at?: string | null;
@@ -527,7 +546,8 @@ export type SpecPart = {
 };
 
 /** `""` when a missing data-sheet value leaves the quantity unknown (hardware-drilling). */
-export type SpecHardware = { id: string; item: string; qty: number | ""; notes: string };
+/** `shown`: how many of the line's pieces the model draws (hardware-catalog); absent on older versions. */
+export type SpecHardware = { id: string; item: string; qty: number | ""; notes: string; shown?: number };
 
 /** A drilling position: an exact value, a range, or its rule in words (hardware-drilling). */
 export type DrillForm = { mm: number } | { min_mm: number; max_mm: number } | { rule: string };
@@ -623,6 +643,70 @@ export type VerdictRow = {
   matches: number;
   mismatch: number;
   latest_note_at: string | null;
+};
+
+/** One recommended source for wall-hung items of an approved version (installation-reading). */
+export type ReadingEntry = {
+  version_id: string;
+  title: string;
+  publisher: string;
+  edition: string;
+  standard_or_model: string;
+  page_section: string;
+  jurisdiction: string;
+  verification_status: "unverified" | "needs_review" | "verified";
+  source_url: string | null;
+  /** Ids of the wall-hung items this source is for. */
+  items: string[];
+  /** The rule that matched, per item id. */
+  matched_by: Record<string, string>;
+};
+
+export type ReadingList = {
+  notice: string;
+  items: { id: string; name: string; kind: "wall_shelf" | "wall_module" }[];
+  entries: ReadingEntry[];
+  gaps: { item: string; name: string; reason: string }[];
+  message?: string;
+};
+
+export type ReadingBlock = {
+  block_id: string;
+  kind: string;
+  text: string;
+  pages: number[];
+  printed_pages: string[];
+  section: string | null;
+  headers: string[];
+  conditions: string[];
+  verification_status: string;
+};
+
+/** One page of a source's locally readable blocks, or the reason it cannot be read here. */
+export type ReadingBlocks = {
+  version_id: string;
+  title: string | null;
+  source_url: string | null;
+  readable: boolean;
+  reason: string | null;
+  page: number;
+  more: boolean;
+  blocks: ReadingBlock[];
+};
+
+/** A stored engineering report, read locally; conformity is never established. */
+export type EngineeringReport = {
+  report_id: string;
+  version: number;
+  overall: string;
+  stale: boolean;
+  stale_reasons: string[];
+  conformity: string;
+  evidence_unavailable?: boolean;
+  limitation?: string;
+  snapshot?: {
+    evidence?: Record<string, { packet: { block: { pages: number[]; section: string | null }; text: string; metadata: { title?: string } } }>;
+  };
 };
 
 export type VerdictNote = {
@@ -1058,6 +1142,10 @@ export const api = {
     request<VersionInfo>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/approval`, {
       method: "DELETE",
     }),
+  /** What deleting the whole piece would remove, and why it would be refused (delete-piece). */
+  pieceDeletion: (packageId: string) => request<PieceDeletion>(`/packages/${encodeURIComponent(packageId)}/deletion`),
+  /** Delete a whole piece with every version and its conversations (delete-piece). */
+  deletePiece: (packageId: string) => request<void>(`/packages/${encodeURIComponent(packageId)}`, { method: "DELETE" }),
   /** Delete one version with its renders, reviews and pricings; the last one deletes the piece. */
   deleteVersion: (packageId: string, version: number) =>
     request<void>(`/packages/${encodeURIComponent(packageId)}/versions/${version}`, { method: "DELETE" }),
@@ -1097,6 +1185,14 @@ export const api = {
       `/packages/${encodeURIComponent(packageId)}/versions/${version}/verdict/status`,
       { method: "PATCH", body: JSON.stringify({ status }) },
     ),
+  reading: (packageId: string, version: number) =>
+    request<ReadingList>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/reading`),
+  readingBlocks: (packageId: string, version: number, sourceVersionId: string, page = 1) =>
+    request<ReadingBlocks>(
+      `/packages/${encodeURIComponent(packageId)}/versions/${version}/reading/sources/${encodeURIComponent(sourceVersionId)}/blocks?page=${page}`,
+    ),
+  engineeringReports: (packageId: string, version: number) =>
+    request<EngineeringReport[]>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/engineering/reports`),
   verdictSummary: (days = 30) => request<VerdictRow[]>(`/admin/feedback/verdicts?days=${days}`),
   verdictNotes: (row: { slot: string | null; model: string | null }) =>
     request<VerdictNote[]>(

@@ -58,6 +58,7 @@ from app.api.models import router as models_router
 from app.api.packages import router as packages_router
 from app.api.price_list import router as price_list_router
 from app.api.pricing import router as pricing_router
+from app.api.reading import router as reading_router
 from app.api.renders import router as renders_router
 from app.api.reviews import item_router as review_item_router
 from app.api.reviews import version_router as package_reviews_router
@@ -66,9 +67,11 @@ from app.api.tool_toggles import router as tool_toggles_router
 from app.api.uploads import router as uploads_router
 from app.auth.accounts import ensure_owner
 from app.blender import storage
+from app.blender.hardware_catalog import default_catalog
 from app.config import Settings, get_settings
 from app.db.migrate import current_revision, upgrade_to_head
 from app.db.session import make_engine
+from app.engineering.reading import load_reading_rules
 from app.guidelines.rule_overrides import effective_rules
 from app.guidelines.rules import load_rules
 from app.help import load_help
@@ -339,6 +342,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.tiers = load_tiers()
     # The hard design rules; a rule without a source stops startup naming it.
     app.state.design_rules = load_rules()
+    # The reading rule table; a malformed file stops startup naming it.
+    app.state.reading_rules = load_reading_rules()
+    # The hardware catalog; a malformed entry stops startup naming the file and the entry.
+    app.state.hardware_catalog = default_catalog()
     app.state.help = load_help()
     app.state.render_approvals = ApprovalStore()
     # Built in the lifespan; `None` until then, and without a checkpointer.
@@ -391,6 +398,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_guidelines_router)
     app.include_router(admin_knowledge_router)
     app.include_router(engineering_router)
+    app.include_router(reading_router)
     app.include_router(engineering_methods_router)
     app.include_router(admin_rules_router)
     app.include_router(admin_memory_router)

@@ -46,6 +46,7 @@ from app.db.models import (
     Thread,
     ThreadNotice,
     ThreadPiece,
+    ThreadRoomRender,
     VersionVerdict,
 )
 
@@ -606,6 +607,11 @@ def _version_refusal(session: Session, root: Path, package_id: str, version: int
             f"{package_id} version {version} is placed in the room composition "
             f"{', '.join(placed)}; it cannot be deleted while it is placed"
         )
+    return _busy_refusal(session, root, package_id, version)
+
+
+def _busy_refusal(session: Session, root: Path, package_id: str, version: int) -> str | None:
+    """Why a version still building or rendering cannot be deleted now, or `None`."""
     state = storage.read_status(storage.version_dir(root, package_id, version)) or {}
     if state.get("status") in _BUSY:
         return f"{package_id} version {version} is still building; delete it once the build has finished"
@@ -646,28 +652,7 @@ def delete_version(session: Session, root: Path, package_id: str, version: int) 
     last = not ((recorded | on_disk) - {version})
     hidden = storage.move_version_aside(root, package_id, version) if folder.is_dir() else None
     try:
-        reviews = select(Review.id).where(Review.package_id == package_id, Review.version == version)
-        session.execute(delete(ReviewItem).where(ReviewItem.review_id.in_(reviews)))
-        session.execute(delete(Review).where(Review.package_id == package_id, Review.version == version))
-        runs = select(RenderRun.id).where(RenderRun.package_id == package_id, RenderRun.version == version)
-        session.execute(delete(RenderFeedback).where(RenderFeedback.run_id.in_(runs)))
-        session.execute(delete(RenderRun).where(RenderRun.package_id == package_id, RenderRun.version == version))
-        session.execute(
-            delete(VersionVerdict).where(VersionVerdict.package_id == package_id, VersionVerdict.version == version)
-        )
-        pricings = select(CutListPricing.id).where(
-            CutListPricing.package_id == package_id, CutListPricing.version == version
-        )
-        session.execute(delete(CutListPricingEntry).where(CutListPricingEntry.pricing_id.in_(pricings)))
-        session.execute(
-            delete(CutListPricing).where(CutListPricing.package_id == package_id, CutListPricing.version == version)
-        )
-        session.execute(
-            update(ThreadNotice)
-            .where(ThreadNotice.package_id == package_id, ThreadNotice.version == version)
-            .values(package_id=None, version=None)
-        )
-        session.execute(delete(PieceVersion).where(PieceVersion.package_id == package_id, PieceVersion.version == version))
+        _remove_version_rows(session, package_id, version)
         if last:
             session.execute(delete(ThreadPiece).where(ThreadPiece.package_id == package_id))
             session.execute(update(Thread).where(Thread.package_id == package_id).values(package_id=None))
@@ -681,6 +666,144 @@ def delete_version(session: Session, root: Path, package_id: str, version: int) 
     if hidden is not None:
         storage.discard_version(root, package_id, hidden)
     return last
+
+
+def _remove_version_rows(session: Session, package_id: str, version: int) -> None:
+    """Delete the records one version owns and clear notices naming it; no commit."""
+    reviews = select(Review.id).where(Review.package_id == package_id, Review.version == version)
+    session.execute(delete(ReviewItem).where(ReviewItem.review_id.in_(reviews)))
+    session.execute(delete(Review).where(Review.package_id == package_id, Review.version == version))
+    runs = select(RenderRun.id).where(RenderRun.package_id == package_id, RenderRun.version == version)
+    session.execute(delete(RenderFeedback).where(RenderFeedback.run_id.in_(runs)))
+    session.execute(delete(RenderRun).where(RenderRun.package_id == package_id, RenderRun.version == version))
+    session.execute(
+        delete(VersionVerdict).where(VersionVerdict.package_id == package_id, VersionVerdict.version == version)
+    )
+    pricings = select(CutListPricing.id).where(
+        CutListPricing.package_id == package_id, CutListPricing.version == version
+    )
+    session.execute(delete(CutListPricingEntry).where(CutListPricingEntry.pricing_id.in_(pricings)))
+    session.execute(
+        delete(CutListPricing).where(CutListPricing.package_id == package_id, CutListPricing.version == version)
+    )
+    session.execute(
+        update(ThreadNotice)
+        .where(ThreadNotice.package_id == package_id, ThreadNotice.version == version)
+        .values(package_id=None, version=None)
+    )
+    session.execute(delete(PieceVersion).where(PieceVersion.package_id == package_id, PieceVersion.version == version))
+
+
+# --- deleting a whole piece (delete-piece) --------------------------------------------
+
+
+class PieceMissing(HouseFileError):
+    """The piece has neither a folder nor a record."""
+
+
+def _piece_versions(session: Session, root: Path, package_id: str) -> list[int]:
+    recorded = {
+        row.version for row in session.scalars(select(PieceVersion).where(PieceVersion.package_id == package_id))
+    }
+    return sorted(recorded | set(storage.versions(root, package_id)))
+
+
+def _piece_conversations(session: Session, package_id: str) -> list[UUID]:
+    """Every conversation bound to the piece, or holding it as a build while bound to no
+    other piece, oldest first, once each."""
+    return list(
+        dict.fromkeys(
+            session.scalars(
+                select(Thread.id)
+                .outerjoin(ThreadPiece, ThreadPiece.thread_id == Thread.id)
+                .where(
+                    (Thread.package_id == package_id)
+                    | ((ThreadPiece.package_id == package_id) & Thread.package_id.is_(None))
+                )
+                .order_by(Thread.created_at)
+            )
+        )
+    )
+
+
+def piece_deletion(session: Session, root: Path, package_id: str) -> dict[str, Any]:
+    """What deleting the whole piece removes, and the first reason it cannot be deleted now.
+
+    Approved versions do not refuse (the owner's decision of 2026-10-17); placed, building
+    and rendering versions do, as for a version delete. Raises `PieceMissing` when the
+    piece has neither a folder nor a record.
+    """
+    from app.compositions import pieces_in_use
+
+    package_id = storage.validate_package_id(package_id)
+    piece = session.get(Piece, package_id)
+    numbers = _piece_versions(session, root, package_id)
+    if piece is None and not numbers:
+        raise PieceMissing(f"there is no piece {package_id}")
+    priced = set(session.scalars(select(CutListPricing.version).where(CutListPricing.package_id == package_id)))
+    approved = [
+        {"version": row.version, "priced": row.version in priced}
+        for row in session.scalars(
+            select(PieceVersion)
+            .where(PieceVersion.package_id == package_id, PieceVersion.approved_at.is_not(None))
+            .order_by(PieceVersion.version)
+        )
+    ]
+    refusal = None
+    for version in numbers:
+        placed = pieces_in_use(root, package_id, version)
+        if placed:
+            refusal = (
+                f"{package_id} version {version} is placed in the room composition "
+                f"{', '.join(placed)}; remove it from the composition first"
+            )
+            break
+    if refusal is None:
+        for version in numbers:
+            reason = _busy_refusal(session, root, package_id, version)
+            if reason is not None:
+                refusal = reason
+                break
+    return {
+        "package_id": package_id,
+        "name": piece.name if piece else package_id,
+        "versions": numbers,
+        "approved": approved,
+        "conversations": [str(thread_id) for thread_id in _piece_conversations(session, package_id)],
+        "refusal": refusal,
+    }
+
+
+def delete_piece(session: Session, root: Path, package_id: str, thread_ids: Sequence[UUID]) -> None:
+    """Delete a whole piece: every version's records, its piece record, its conversation
+    links and the index rows of `thread_ids` (their memory is forgotten by the caller
+    first), then its folder after the commit, which frees the id.
+
+    Refuses with `HouseFileError` (nothing changed) as `piece_deletion` does. Engineering
+    records and generator-extension requests are kept. Like `delete_version` this commits.
+    """
+    summary = piece_deletion(session, root, package_id)
+    if summary["refusal"] is not None:
+        raise HouseFileError(summary["refusal"])
+    package_id = summary["package_id"]
+    folder = storage.package_dir(root, package_id)
+    hidden = storage.move_package_aside(root, package_id) if folder.is_dir() else None
+    try:
+        for version in summary["versions"]:
+            _remove_version_rows(session, package_id, version)
+        session.execute(delete(ThreadPiece).where(ThreadPiece.package_id == package_id))
+        if thread_ids:
+            session.execute(delete(Thread).where(Thread.id.in_(list(thread_ids))))
+        session.execute(update(Thread).where(Thread.package_id == package_id).values(package_id=None))
+        session.execute(delete(Piece).where(Piece.package_id == package_id))
+        session.commit()
+    except Exception:
+        session.rollback()
+        if hidden is not None:
+            storage.move_package_back(root, package_id, hidden)
+        raise
+    if hidden is not None:
+        storage.discard_package(hidden)
 
 
 # --- room compositions (room-composition) ---------------------------------------------
@@ -1184,6 +1307,8 @@ def add_notice(
     package_id: str | None = None,
     version: int | None = None,
     kind: str = "render",
+    composition_slug: str | None = None,
+    render_key: str | None = None,
 ) -> ThreadNotice | None:
     """Record a render or build notice in a conversation; nothing when the thread is gone."""
     if session.get(Thread, thread_id) is None:
@@ -1197,10 +1322,32 @@ def add_notice(
         text=text,
         package_id=package_id,
         version=version,
+        composition_slug=composition_slug,
+        render_key=render_key,
     )
     session.add(notice)
     session.flush()
     return notice
+
+
+def follow_room_render(session: Session, thread_id: UUID, slug: str, version: int, render_key: str) -> None:
+    """Record a composition render the conversation is following; nothing when the thread is gone."""
+    if session.get(Thread, thread_id) is None:
+        return
+    if session.get(ThreadRoomRender, (thread_id, slug, version, render_key)) is None:
+        session.add(ThreadRoomRender(thread_id=thread_id, composition_slug=slug, version=version, render_key=render_key))
+    session.flush()
+
+
+def stop_following_room_render(session: Session, thread_id: UUID, slug: str, version: int, render_key: str) -> None:
+    row = session.get(ThreadRoomRender, (thread_id, slug, version, render_key))
+    if row is not None:
+        session.delete(row)
+        session.flush()
+
+
+def followed_room_renders(session: Session, thread_id: UUID) -> list[ThreadRoomRender]:
+    return list(session.scalars(select(ThreadRoomRender).where(ThreadRoomRender.thread_id == thread_id)))
 
 
 def notices_for(session: Session, thread_id: UUID) -> list[ThreadNotice]:
@@ -1301,6 +1448,17 @@ def write_owner_summary(session: Session, thread_id: UUID, summary: str, package
 
 
 # --- a conversation's room and builds (conversation-projects) -----------------------
+
+
+def decline_room(session: Session, thread_id: UUID) -> bool:
+    """Record that the conversation declined a room (optional-room-question); a room
+    confirmed later does not clear it. Whether the thread exists."""
+    thread = session.get(Thread, thread_id)
+    if thread is None:
+        return False
+    thread.room_declined = True
+    session.flush()
+    return True
 
 
 def set_thread_room(session: Session, thread_id: UUID, room: Room) -> None:

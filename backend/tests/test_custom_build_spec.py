@@ -12,6 +12,7 @@ import copy
 import csv
 import io
 import json
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -28,7 +29,10 @@ from app.blender.custom_build.derive import (
     end_cut_edges,
     extra_piece_corners,
     extra_piece_faces,
+    handle_layout,
     overall,
+    slat_handle_warnings,
+    slat_layout,
 )
 from app.blender.schemas import CustomBuildSpec
 from app.blender.schemas import describe_validation_error as _describe_validation_error
@@ -883,3 +887,537 @@ def test_end_cuts_are_noted_on_the_row_and_keep_its_size(desk: dict) -> None:
     row = parts[-1]
     assert "ends cut 30° / −30° across width" in row["notes"]
     assert (row["qty"], row["l"], row["w"], row["t"]) == (1, 1000, 60, 18)
+
+
+# --- front handles (front-handles) -----------------------------------------------------
+
+
+BAR = {"kind": "bar", "length": 160}
+
+
+@pytest.mark.parametrize(
+    ("front", "named"),
+    [
+        ({"type": "door", "count": 1, "opening": "hinge", "handle": {"kind": "bar"}}, "handle.length"),
+        ({"type": "door", "count": 1, "opening": "hinge", "handle": {"kind": "knob", "length": 30}}, "handle.length"),
+        (
+            {"type": "door", "count": 1, "opening": "hinge", "handle": {"kind": "knob", "orientation": "vertical"}},
+            "handle.orientation",
+        ),
+        ({"type": "drawer", "count": 1, "handle": {**BAR, "edge": "left"}}, "handle.edge"),
+        ({"type": "flap", "hinged": "bottom", "handle": {**BAR, "edge": "right"}}, "handle.edge"),
+        ({"type": "door", "count": 3, "opening": "hinge", "handle": {**BAR, "edge": "meeting"}}, "handle.edge"),
+        ({"type": "door", "count": 1, "opening": "hinge", "handle": {**BAR, "grip": "round"}}, "grip"),
+    ],
+)
+def test_a_handle_that_breaks_its_rules_is_refused_naming_the_field(desk: dict, front: dict, named: str) -> None:
+    desk["modules"] = [_module(width=900, fronts=[front])]
+
+    message = _refusal(desk)
+
+    assert "modules.0.fronts.0" in message
+    assert named in message
+
+
+def test_a_handle_on_a_push_latch_door_is_refused(desk: dict) -> None:
+    desk["modules"] = [_module(fronts=[{"type": "door", "count": 1, "opening": "push_latch", "handle": BAR}])]
+
+    message = _refusal(desk)
+
+    assert "handle" in message
+    assert "push-latch door takes no handle" in message
+
+
+def test_a_front_without_a_handle_serialises_as_before(desk: dict) -> None:
+    desk["modules"] = [_module(fronts=[{"type": "door", "count": 1, "opening": "hinge"}, {"type": "drawer", "count": 1}])]
+
+    dumped = CustomBuildSpec.model_validate(desk).model_dump(mode="json")
+
+    assert all("handle" not in front for front in dumped["modules"][0]["fronts"])
+
+
+def test_a_handle_keeps_only_its_stated_fields(desk: dict) -> None:
+    desk["modules"] = [_module(fronts=[{"type": "door", "count": 2, "opening": "hinge", "handle": BAR}])]
+
+    dumped = CustomBuildSpec.model_validate(desk).model_dump(mode="json")
+
+    assert dumped["modules"][0]["fronts"][0]["handle"] == {"kind": "bar", "length": 160, "finish": "black"}
+
+
+def _laid_out(desk: dict, **module) -> list[dict]:
+    desk["modules"] = [_module(**module)]
+    spec = CustomBuildSpec.model_validate(desk).model_dump(mode="json")
+    t = spec["materials"]["carcass"]["thickness_mm"]
+    return handle_layout(spec["modules"][0], t, spec["materials"]["back"]["thickness_mm"])
+
+
+def test_bar_handles_on_a_pair_of_doors_sit_on_the_meeting_edges(desk: dict) -> None:
+    door = {"type": "door", "count": 2, "opening": "hinge", "handle": {"kind": "bar", "length": 900}}
+
+    records = _laid_out(desk, width=900, height=2034, fronts=[door])
+
+    assert [(r["row"], r["leaf"]) for r in records] == [("m-door-1", 0), ("m-door-1", 1)]
+    # Leaves are 447 wide from 1.5 and 451.5: the meeting edges are at 448.5 and 451.5.
+    assert [r["x"] for r in records] == [408.5, 491.5]
+    assert [r["z"] for r in records] == [1017.0, 1017.0]
+    assert {(r["key"], r["orientation"], r["w"], r["h"]) for r in records} == {("handle-bar-900-black", "vertical", 12, 900)}
+
+
+def test_drawer_handles_are_centred_across_and_inset_from_the_top(desk: dict) -> None:
+    drawers = {"type": "drawer", "count": 5, "handle": {"kind": "bar", "length": 160, "inset_mm": 30}}
+
+    records = _laid_out(desk, width=900, height=900, fronts=[drawers])
+
+    assert len(records) == 5
+    assert {r["row"] for r in records} == {"m-drawer-1-front"}
+    assert {r["x"] for r in records} == {450.0}
+    # Drawer fronts are 177 high; the top one runs from 721.5 to 898.5.
+    assert records[0]["z"] == 898.5 - 30
+    assert {(r["orientation"], r["w"], r["h"]) for r in records} == {("horizontal", 160, 12)}
+
+
+def test_handle_defaults_follow_the_front_type(desk: dict) -> None:
+    fronts = [
+        {"type": "flap", "hinged": "bottom", "height": 300, "handle": {"kind": "knob", "finish": "brass"}},
+        {"type": "door", "count": 1, "opening": "hinge", "handle": {"kind": "bar", "length": 200, "edge": "left", "at_mm": 150}},
+    ]
+
+    flap, door = _laid_out(desk, width=600, height=800, fronts=fronts)
+
+    assert (flap["key"], flap["item"], flap["w"]) == ("handle-knob-brass", "Knob, brass", 30)
+    assert flap["z"] == 798.5 - 40  # opposite the bottom hinge: 40 mm below the flap's top edge
+    assert flap["x"] == 300.0
+    assert door["x"] == 1.5 + 40  # the left edge
+    assert door["z"] == 1.5 + 150
+
+
+def test_a_handle_too_long_for_its_leaf_is_refused_naming_the_leaf(desk: dict) -> None:
+    drawers = {"type": "drawer", "count": 1, "handle": {"kind": "bar", "length": 500}}
+    desk["modules"] = [_module(width=450, fronts=[drawers])]
+
+    message = _refusal(desk)
+
+    assert "modules[0].fronts[0].handle" in message
+    assert "447 × 797 mm" in message
+
+
+def test_a_handle_on_a_folded_module_is_refused(desk: dict) -> None:
+    door = {"type": "door", "count": 1, "opening": "hinge", "handle": {"kind": "knob"}}
+    fold = {"side": "left", "from_mm": 400, "along": "height", "angle_deg": 10, "towards": "inside"}
+    desk["modules"] = [_module(fronts=[door], side_folds=[fold])]
+
+    message = _refusal(desk)
+
+    assert "modules[0].fronts[0].handle" in message
+    assert "handles on a folded module are not supported" in message
+
+
+def test_handles_add_one_hardware_line_per_key_and_name_it_on_the_door_row(desk: dict) -> None:
+    fronts = [
+        {"type": "door", "count": 2, "opening": "hinge", "handle": {"kind": "bar", "length": 160}},
+        {"type": "drawer", "count": 3, "handle": {"kind": "bar", "length": 160}},
+    ]
+    desk["modules"] = [_module(width=900, height=1600, fronts=fronts)]
+
+    parts, hardware, _assembly = derive(CustomBuildSpec.model_validate(desk).model_dump(mode="json"))
+    lines = {line["id"]: line for line in hardware}
+    door = next(row for row in parts if row["id"] == "m-door-1")
+
+    assert lines["handle-bar-160-black"] == {
+        "id": "handle-bar-160-black",
+        "item": "Bar handle 160 mm, black",
+        "qty": 5,
+        "notes": "Rule: one handle per leaf",
+    }
+    assert door["notes"].endswith("; handle handle-bar-160-black")
+    assert not any("handle" in row["id"] for row in parts)
+
+
+def test_a_hand_written_handle_line_is_kept_beside_a_modelled_one(desk: dict) -> None:
+    door = {"type": "door", "count": 1, "opening": "hinge", "handle": {"kind": "knob", "key": "knob-oak"}}
+    hand = {"id": "bar-handle", "item": "Bar handle", "qty": 1}
+    desk["modules"] = [_module(fronts=[door], hardware=[hand])]
+
+    _parts, hardware, _assembly = derive(CustomBuildSpec.model_validate(desk).model_dump(mode="json"))
+    lines = {line["id"]: line["qty"] for line in hardware}
+
+    assert lines["bar-handle"] == 1
+    assert lines["knob-oak"] == 1
+
+
+def test_a_door_without_a_handle_keeps_its_note(desk: dict) -> None:
+    desk["modules"] = [_module(fronts=[{"type": "door", "count": 1, "opening": "hinge"}])]
+
+    parts, hardware, _assembly = derive(CustomBuildSpec.model_validate(desk).model_dump(mode="json"))
+
+    assert next(row for row in parts if row["id"] == "m-door-1")["notes"].endswith("; handle as specified")
+    assert not any(line["id"].startswith("handle-") for line in hardware)
+
+
+# --- door slats (door-slats) -------------------------------------------------------------
+
+
+SLAT_SLOT = {"material": "12 mm oak-veneered MDF", "thickness_mm": 12}
+
+
+def _slat_door(**slats) -> dict:
+    return {
+        "type": "door",
+        "count": 2,
+        "opening": "hinge",
+        "slats": {"count": 8, "width": 30, "material": "slats", **slats},
+    }
+
+
+def _kommode(desk: dict, *fronts: dict, **module) -> dict:
+    """The Höffner dresser: 800 mm wide, two doors of 397 × 747 mm."""
+    desk["materials"]["slats"] = dict(SLAT_SLOT)
+    desk["modules"] = [_module(id="kommode", width=800, height=750, fronts=list(fronts), **module)]
+    return desk
+
+
+def _slat_rows(desk: dict) -> tuple[dict, list[dict]]:
+    spec = CustomBuildSpec.model_validate(desk).model_dump(mode="json")
+    parts, _hardware, _assembly = derive(spec)
+    return spec, parts
+
+
+def _slats_of(spec: dict) -> list[dict]:
+    module = spec["modules"][0]
+    return slat_layout(module, spec["materials"], 18, spec["materials"]["back"]["thickness_mm"])
+
+
+def test_vertical_slats_on_the_right_door_only(desk: dict) -> None:
+    spec, parts = _slat_rows(_kommode(desk, _slat_door(leaves=[2])))
+
+    row = next(row for row in parts if row["id"] == "kommode-door-1-slat")
+    assert (row["name"], row["qty"], row["l"], row["w"], row["t"]) == ("Door slat", 8, 747, 30, 12)
+    assert row["material"] == "12 mm oak-veneered MDF"
+    assert row["grain"] == "length (vertical)"
+    assert row["notes"] == "Rule: 8 vertical slats per door, 22.4 mm gap, glued to the door face"
+    slats = _slats_of(spec)
+    assert {record["leaf"] for record in slats} == {1}
+    # The right door runs from 401.5 to 798.5: the outer slats lie flush with its edges.
+    assert slats[0]["x"] - 15 == 401.5
+    assert slats[-1]["x"] + 15 == 798.5
+    assert [record["x"] for record in slats] == sorted(record["x"] for record in slats)
+
+
+def test_horizontal_slats_run_across_the_door_top_to_bottom(desk: dict) -> None:
+    spec, parts = _slat_rows(_kommode(desk, _slat_door(count=10, width=40, orientation="horizontal", leaves=[2])))
+
+    row = next(row for row in parts if row["id"] == "kommode-door-1-slat")
+    assert (row["qty"], row["l"], row["w"], row["t"]) == (10, 397, 40, 12)
+    assert row["grain"] == "length (left-right)"
+    assert "10 horizontal slats per door" in row["notes"]
+    slats = _slats_of(spec)
+    # The door runs from z 1.5 to 748.5; the first slat sits on its top edge, the last on its bottom.
+    assert slats[0]["z"] + 20 == 748.5
+    assert slats[-1]["z"] - 20 == 1.5
+    assert [record["z"] for record in slats] == sorted((record["z"] for record in slats), reverse=True)
+    assert {(record["w"], record["h"]) for record in slats} == {(397, 40)}
+
+
+def test_slats_go_on_every_door_by_default(desk: dict) -> None:
+    spec, parts = _slat_rows(_kommode(desk, _slat_door(count=6, width=40)))
+
+    assert next(row for row in parts if row["id"] == "kommode-door-1-slat")["qty"] == 12
+    assert [record["leaf"] for record in _slats_of(spec)] == [0] * 6 + [1] * 6
+
+
+def test_fewer_slats_are_re_spaced(desk: dict) -> None:
+    spec, parts = _slat_rows(_kommode(desk, _slat_door(count=5, leaves=[2])))
+
+    assert next(row for row in parts if row["id"] == "kommode-door-1-slat")["qty"] == 5
+    slats = _slats_of(spec)
+    gaps = {round(later["x"] - earlier["x"] - 30, 6) for earlier, later in pairwise(slats)}
+    assert gaps == {round((397 - 150) / 4, 6)}
+
+
+def test_slats_follow_a_resized_door(desk: dict) -> None:
+    _spec, parts = _slat_rows(_kommode(desk, _slat_door(leaves=[2])))
+    desk["modules"][0]["width"] = 900
+    wider, wider_parts = _slat_rows(desk)
+
+    before = next(row for row in parts if row["id"] == "kommode-door-1-slat")
+    after = next(row for row in wider_parts if row["id"] == "kommode-door-1-slat")
+    assert (after["qty"], after["l"]) == (before["qty"], before["l"])
+    slats = _slats_of(wider)
+    # Doors are 447 wide: the right door runs from 451.5 to 898.5.
+    assert (slats[0]["x"] - 15, slats[-1]["x"] + 15) == (451.5, 898.5)
+
+
+def test_a_margin_shortens_and_insets_the_slats(desk: dict) -> None:
+    spec, parts = _slat_rows(_kommode(desk, _slat_door(margin_mm=20, leaves=[2])))
+
+    assert next(row for row in parts if row["id"] == "kommode-door-1-slat")["l"] == 707
+    slats = _slats_of(spec)
+    assert (slats[0]["x"] - 15, slats[-1]["x"] + 15) == (421.5, 778.5)
+
+
+def test_a_single_slat_is_centred(desk: dict) -> None:
+    spec, parts = _slat_rows(_kommode(desk, _slat_door(count=1, width=60, leaves=[1])))
+
+    (slat,) = _slats_of(spec)
+    assert slat["x"] == 1.5 + 397 / 2
+    assert "1 vertical slat per door, centred" in next(row for row in parts if row["id"] == "kommode-door-1-slat")["notes"]
+
+
+def test_too_many_slats_are_refused_with_the_count_that_fits(desk: dict) -> None:
+    message = _refusal(_kommode(desk, _slat_door(count=13)))
+
+    assert "fronts[0].slats" in message
+    assert "397 mm wide" in message
+    assert "at most 12 such slats fit" in message
+
+
+def test_a_margin_without_room_is_refused(desk: dict) -> None:
+    message = _refusal(_kommode(desk, _slat_door(count=2, margin_mm=200)))
+
+    assert "slats.margin_mm" in message
+    assert "397 × 747 mm" in message
+
+
+@pytest.mark.parametrize(
+    ("slats", "named", "says"),
+    [
+        ({"leaves": [3]}, "slats.leaves", "the entry has 2 doors"),
+        ({"leaves": [2, 2]}, "slats.leaves", "each door may be named once"),
+        ({"material": "veneer"}, "slats.material", "undefined material slot 'veneer'"),
+        ({"pattern": "fluted"}, "pattern", "Extra inputs are not permitted"),
+    ],
+)
+def test_bad_slats_are_refused_naming_the_field(desk: dict, slats: dict, named: str, says: str) -> None:
+    message = _refusal(_kommode(desk, _slat_door(**slats)))
+
+    assert named in message
+    assert says in message
+
+
+def test_slats_on_a_drawer_are_an_unknown_field(desk: dict) -> None:
+    drawer = {"type": "drawer", "count": 1, "slats": {"count": 4, "width": 30, "material": "slats"}}
+
+    message = _refusal(_kommode(desk, drawer))
+
+    assert "slats" in message
+    assert "Extra inputs are not permitted" in message
+
+
+def test_slats_on_a_folded_module_are_refused(desk: dict) -> None:
+    fold = {"side": "left", "from_mm": 500, "along": "height", "angle_deg": 10, "towards": "inside"}
+
+    message = _refusal(_kommode(desk, _slat_door(count=4), side_folds=[fold]))
+
+    assert "fronts[0].slats" in message
+    assert "slats on a folded module are not supported" in message
+
+
+def test_slats_keep_only_their_stated_fields(desk: dict) -> None:
+    spec, _parts = _slat_rows(_kommode(desk, _slat_door(), {"type": "door", "count": 1, "opening": "hinge"}))
+
+    fronts = spec["modules"][0]["fronts"]
+    assert fronts[0]["slats"] == {"count": 8, "width": 30, "material": "slats"}
+    assert "slats" not in fronts[1]
+
+
+def test_slats_change_nothing_else(desk: dict) -> None:
+    plain = copy.deepcopy(_kommode(desk, {"type": "door", "count": 2, "opening": "hinge", "handle": {"kind": "knob"}}))
+    slatted = copy.deepcopy(plain)
+    slatted["modules"][0]["fronts"][0]["slats"] = {"count": 8, "width": 30, "material": "slats", "leaves": [2]}
+
+    plain_spec, plain_parts = _slat_rows(plain)
+    slatted_spec, slatted_parts = _slat_rows(slatted)
+
+    assert [row for row in slatted_parts if not row["id"].endswith("-slat")] == plain_parts
+    assert derive(slatted_spec)[1] == derive(plain_spec)[1]
+    assert overall(slatted_spec) == overall(plain_spec)
+    assert drilling(slatted_spec, {}) == drilling(plain_spec, {})
+
+
+def test_a_handle_on_slats_is_warned_about_in_the_cut_list(desk: dict) -> None:
+    door = _slat_door(leaves=[2])
+    door["handle"] = {"kind": "knob"}
+
+    spec, parts = _slat_rows(_kommode(desk, door))
+
+    warning = (
+        "the handle on door 2 of kommode-door-1 is mounted over the slats, so its screws pass through a slat "
+        "into the door and its posts may land on a slat or in a gap; check the screw length and the handle's "
+        "position before drilling"
+    )
+    assert slat_handle_warnings(spec) == [warning]
+    notes = next(row for row in parts if row["id"] == "kommode-door-1-slat")["notes"]
+    assert notes.endswith(f"glued to the door face. Warning: {warning}.")
+    assert "Warning" not in next(row for row in parts if row["id"] == "kommode-door-1")["notes"]
+
+
+def test_slats_without_a_handle_carry_no_warning(desk: dict) -> None:
+    spec, parts = _slat_rows(_kommode(desk, _slat_door()))
+
+    assert slat_handle_warnings(spec) == []
+    assert "Warning" not in next(row for row in parts if row["id"] == "kommode-door-1-slat")["notes"]
+
+
+def test_the_shipped_templates_derive_no_slats() -> None:
+    for name in ("custom-build.json", "fold-down-desk.json", "blank-build.json"):
+        document = json.loads((TEMPLATES / name).read_text(encoding="utf-8"))
+        parts, _hardware, _assembly = derive(CustomBuildSpec.model_validate(document).model_dump(mode="json"))
+        assert not any(row["id"].endswith("-slat") for row in parts)
+
+
+# --- mounting ------------------------------------------------------------------------
+
+
+def test_a_wall_mounting_is_accepted_and_kept(desk: dict) -> None:
+    desk["modules"][0]["mounting"] = "wall"
+
+    dumped = CustomBuildSpec.model_validate(desk).model_dump(mode="json")
+
+    assert dumped["modules"][0]["mounting"] == "wall"
+
+
+def test_an_unknown_mounting_is_refused_naming_the_allowed_values(desk: dict) -> None:
+    desk["modules"][0]["mounting"] = "ceiling"
+
+    message = _refusal(desk)
+
+    assert "modules.0.mounting" in message
+    assert "'floor'" in message and "'wall'" in message
+
+
+def test_a_document_without_mounting_normalises_as_before(desk: dict) -> None:
+    dumped = CustomBuildSpec.model_validate(desk).model_dump(mode="json")
+
+    assert all("mounting" not in module for module in dumped["modules"])
+
+
+def test_mounting_changes_no_derived_output(desk: dict) -> None:
+    from app.blender.custom_build.derive import hardware_layout
+    from tests.drill_helpers import inputs
+
+    plain = CustomBuildSpec.model_validate(desk).model_dump(mode="json")
+    marked_document = copy.deepcopy(desk)
+    for module in marked_document["modules"]:
+        module["mounting"] = "wall"
+    marked = CustomBuildSpec.model_validate(marked_document).model_dump(mode="json")
+
+    assert derive(marked) == derive(plain)
+    assert drilling(marked, inputs()) == drilling(plain, inputs())
+    assert hardware_layout(marked, inputs()) == hardware_layout(plain, inputs())
+
+
+# --- door leaf materials (door-leaf-materials) ----------------------------------------------
+
+
+BLACK_SLOT = {"material": "18 mm black painted MDF", "thickness_mm": 18}
+
+
+def _black_right(desk: dict, door: dict | None = None, **module) -> dict:
+    door = door or {"type": "door", "count": 2, "opening": "hinge"}
+    door["leaf_materials"] = {"2": "black_paint"}
+    desk["materials"]["black_paint"] = dict(BLACK_SLOT)
+    return _kommode(desk, door, **module)
+
+
+def _hinges(hardware: list[dict]) -> dict[str, int]:
+    return {line["id"]: line["qty"] for line in hardware if "hinge" in line["id"]}
+
+
+def test_a_black_right_door_beside_an_oak_one_splits_the_row(desk: dict) -> None:
+    pair = _kommode(copy.deepcopy(desk), {"type": "door", "count": 2, "opening": "hinge"})
+    _parts, pair_hardware, _assembly = derive(CustomBuildSpec.model_validate(pair).model_dump(mode="json"))
+    spec, parts = _slat_rows(_black_right(desk))
+    doors = {row["id"]: row for row in parts if row["name"] == "Door"}
+    assert list(doors) == ["kommode-door-1-1", "kommode-door-1-2"]
+    assert doors["kommode-door-1-1"]["material"] == "18 mm oak-veneered birch"
+    assert doors["kommode-door-1-2"]["material"] == "18 mm black painted MDF"
+    assert {(row["qty"], row["l"], row["w"], row["t"]) for row in doors.values()} == {(1, 747, 397, 18)}
+    _parts, hardware, _assembly = derive(spec)
+    assert _hinges(hardware) == _hinges(pair_hardware)
+
+
+def test_slats_on_the_black_door_follow_its_row(desk: dict) -> None:
+    spec, parts = _slat_rows(_black_right(desk, _slat_door(leaves=[2])))
+    slat = next(row for row in parts if row["id"] == "kommode-door-1-2-slat")
+    assert slat["qty"] == 8
+    assert not any(row["id"] == "kommode-door-1-slat" for row in parts)
+    assert {record["row"] for record in _slats_of(spec)} == {"kommode-door-1-2"}
+
+
+def test_a_handle_on_a_split_door_sits_on_its_own_row(desk: dict) -> None:
+    door = _slat_door(leaves=[2])
+    door["handle"] = {"kind": "knob"}
+    spec = CustomBuildSpec.model_validate(_black_right(desk, door)).model_dump(mode="json")
+    rows = [record["row"] for record in handle_layout(spec["modules"][0], 18, 12)]
+    assert rows == ["kommode-door-1-1", "kommode-door-1-2"]
+    warning = (
+        "the handle on door 2 of kommode-door-1-2 is mounted over the slats, so its screws pass through a slat "
+        "into the door and its posts may land on a slat or in a gap; check the screw length and the handle's "
+        "position before drilling"
+    )
+    assert slat_handle_warnings(spec) == [warning]
+
+
+@pytest.mark.parametrize("named", [None, {"1": "carcass", "2": "carcass"}])
+def test_doors_in_one_material_keep_one_row(desk: dict, named) -> None:
+    door = {"type": "door", "count": 2, "opening": "hinge"}
+    if named:
+        door["leaf_materials"] = named
+    _spec, parts = _slat_rows(_kommode(desk, door))
+    assert [(row["id"], row["qty"]) for row in parts if row["name"] == "Door"] == [("kommode-door-1", 2)]
+
+
+def test_a_spec_without_leaf_materials_serialises_unchanged(desk: dict) -> None:
+    spec = CustomBuildSpec.model_validate(_kommode(desk, {"type": "door", "count": 2, "opening": "hinge"})).model_dump(mode="json")
+    assert "leaf_materials" not in spec["modules"][0]["fronts"][0]
+
+
+def test_a_door_outside_the_count_is_refused(desk: dict) -> None:
+    document = _black_right(desk)
+    document["modules"][0]["fronts"][0]["leaf_materials"] = {"3": "black_paint"}
+    message = _refusal(document)
+    assert "leaf_materials" in message and "the entry has 2 doors" in message
+
+
+def test_an_unknown_leaf_slot_is_refused(desk: dict) -> None:
+    document = _black_right(desk)
+    document["modules"][0]["fronts"][0]["leaf_materials"] = {"2": "walnut"}
+    message = _refusal(document)
+    assert "fronts[0].leaf_materials" in message and "undefined material slot 'walnut'" in message
+
+
+def test_a_leaf_slot_of_another_thickness_is_refused(desk: dict) -> None:
+    document = _black_right(desk)
+    document["materials"]["black_paint"] = {"material": "12 mm black painted MDF", "thickness_mm": 12}
+    message = _refusal(document)
+    assert "fronts[0].leaf_materials" in message and "12 mm but the carcass is 18 mm" in message
+
+
+def test_leaf_materials_on_a_folded_module_are_refused(desk: dict) -> None:
+    fold = {"side": "left", "from_mm": 500, "along": "height", "angle_deg": 10, "towards": "inside"}
+    message = _refusal(_black_right(desk, side_folds=[fold]))
+    assert "per-door materials on a folded module are not supported" in message
+
+
+def test_leaf_materials_on_a_drawer_are_an_unknown_field(desk: dict) -> None:
+    desk["materials"]["black_paint"] = dict(BLACK_SLOT)
+    message = _refusal(_kommode(desk, {"type": "drawer", "count": 1, "leaf_materials": {"1": "black_paint"}}))
+    assert "leaf_materials" in message
+
+
+def test_an_override_of_the_former_pair_row_is_refused(desk: dict) -> None:
+    document = _black_right(desk)
+    document["part_overrides"] = [{"id": "kommode-door-1", "qty": 2}]
+    message = _refusal(document)
+    assert "no derived cut-list row is named 'kommode-door-1'" in message
+
+
+def test_the_drilling_list_names_each_split_door(desk: dict) -> None:
+    spec = CustomBuildSpec.model_validate(_black_right(desk)).model_dump(mode="json")
+    pair = CustomBuildSpec.model_validate(
+        _kommode(copy.deepcopy(desk), {"type": "door", "count": 2, "opening": "hinge"})
+    ).model_dump(mode="json")
+    result = drilling(spec, {})
+    hinge_parts = [entry["part"] for entry in result["entries"] if entry["calculation"] == "hinges"]
+    assert hinge_parts == ["kommode-door-1-1", "kommode-door-1-2"]
+    assert result["counts"]["hinge_cup_borings"] == drilling(pair, {})["counts"]["hinge_cup_borings"]

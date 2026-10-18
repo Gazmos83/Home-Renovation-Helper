@@ -507,3 +507,46 @@ def test_a_revision_that_leaves_the_fold_alone_needs_no_fold_entry(make_ctx, too
     assert isinstance(shown, Confirmation), shown
     assert "side_folds" not in shown.summary
     assert "cabinet: y 0 → 162 mm" in shown.summary and "envelope depth 400 → 562 mm" in shown.summary
+
+
+# --- door slats (door-slats) -------------------------------------------------------------
+
+
+def test_a_handle_over_slats_is_warned_about_before_confirming(make_ctx, tool_state) -> None:
+    document = desk()
+    document["materials"]["slats"] = {"material": "12 mm MDF", "thickness_mm": 12}
+    door = {"type": "door", "count": 2, "opening": "hinge", "slats": {"count": 8, "width": 30, "material": "slats", "leaves": [2]}}
+    document["modules"][0]["fronts"] = [door]
+    create_run({"package_id": "hall-bench", "spec": document}, replace(make_ctx(), approved=True))
+    wait_for_status(storage.version_dir(tool_state.settings.render_root, "hall-bench", 1))
+
+    knobs = door | {"handle": {"kind": "knob"}}
+    shown = preview({"package_id": "hall-bench", "changes": {"modules": {"cabinet": {"fronts": [knobs]}}}}, make_ctx())
+
+    assert isinstance(shown, Confirmation)
+    assert "8 vertical slats 30 mm on door 2" in shown.summary
+    assert "\nSlat-handle warnings: the handle on door 2 of cabinet-door-1 is mounted over the slats" in shown.summary
+    assert "door 1 of" not in shown.summary
+
+
+# --- door leaf materials (door-leaf-materials) ------------------------------------------------------
+
+
+def test_the_confirmation_says_when_the_front_layout_changes(make_ctx, tool_state) -> None:
+    document = desk()
+    document["materials"]["black_paint"] = {"material": "18 mm black painted MDF", "thickness_mm": 18}
+    pair = {"type": "door", "count": 2, "opening": "hinge"}
+    document["modules"][0]["fronts"] = [pair]
+    create_run({"package_id": "hall-bench", "spec": document}, replace(make_ctx(), approved=True))
+    wait_for_status(storage.version_dir(tool_state.settings.render_root, "hall-bench", 1))
+
+    black = pair | {"leaf_materials": {"2": "black_paint"}}
+    shown = preview({"package_id": "hall-bench", "changes": {"modules": {"cabinet": {"fronts": [black]}}}}, make_ctx())
+    assert isinstance(shown, Confirmation), shown
+    assert "2 doors (hinge, door 2 black_paint)" in shown.summary
+    assert "front layout changes" not in shown.summary
+
+    single = {"type": "door", "count": 1, "opening": "hinge"}
+    shown = preview({"package_id": "hall-bench", "changes": {"modules": {"cabinet": {"fronts": [single, single]}}}}, make_ctx())
+    assert isinstance(shown, Confirmation), shown
+    assert "cabinet: front layout changes from 1 entry of 2 doors side by side to 2 entries stacked top to bottom" in shown.summary

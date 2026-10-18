@@ -66,8 +66,9 @@ def test_a_shell_and_a_composition_notice_has_no_piece_and_no_panel_sentence(too
     notices.post(deps, harness.thread, quote(tool_state.tiers, "draft", package_id="wohnen", record="room"), "succeeded")
     shell, room = stored(tool_state, harness.thread)
     assert shell[2] == "The draft turntable of the flat shell version 1 is ready."
-    assert room[2] == "The draft turntable of wohnen version 1 is ready."
-    assert (shell[3], shell[4], room[3], room[4]) == (None, None, None, None)
+    # room-render-notices: a room notice names the Rooms page and keeps its version for the link.
+    assert room[2] == "The draft turntable of wohnen version 1 is ready. You can also find it on the Rooms page."
+    assert (shell[3], shell[4], room[3], room[4]) == (None, None, None, 1)
 
 
 def test_a_failed_render_says_so_without_error_text(tool_state) -> None:
@@ -224,3 +225,84 @@ def test_a_revision_notice_that_cannot_be_posted_is_logged(tool_state, caplog) -
     tool_state.graph = None
     notices.post_revision(ToolDeps(tool_state), harness.thread, "hall-bench", 1)
     assert "could not post a revision notice" in caplog.text
+
+
+# --- room renders (room-render-notices) ------------------------------------------------------------
+
+
+def _room_folder(tool_state, slug: str = "wohnen", version: int = 11, status: str = "running", key: str = "turntable"):
+    from app.blender import storage
+
+    folder = storage.composition_version_dir(tool_state.settings.render_root, slug, version)
+    folder.mkdir(parents=True, exist_ok=True)
+    storage.write_render_status(folder, key, status=status, tier="draft")
+    return folder
+
+
+def _followed(tool_state, thread) -> list[tuple[str, int, str]]:
+    with ToolDeps(tool_state).session() as session:
+        return [(r.composition_slug, r.version, r.render_key) for r in house_file.followed_room_renders(session, thread)]
+
+
+def test_a_room_render_is_followed_until_its_notice_is_posted(tool_state) -> None:
+    """Scenario: Room render followed."""
+    from app.agent import progress
+
+    harness = make_harness(tool_state)
+    tool_state.graph = harness.graph
+    deps = ToolDeps(tool_state)
+    room = quote(tool_state.tiers, package_id="wohnen", version=11, record="room")
+    _room_folder(tool_state)
+    notices.follow_room(deps, harness.thread, room)
+    assert _followed(tool_state, harness.thread) == [("wohnen", 11, "turntable")]
+    with deps.session() as session:
+        assert progress.room_rendering(session, tool_state.settings.render_root, harness.thread) is True
+    notices.post(deps, harness.thread, room, "succeeded")
+    assert _followed(tool_state, harness.thread) == []
+    with deps.session() as session:
+        notice = house_file.notices_for(session, harness.thread)[-1]
+        assert (notice.composition_slug, notice.version, notice.render_key) == ("wohnen", 11, "turntable")
+
+
+def test_a_stale_room_render_record_is_dropped(tool_state) -> None:
+    """Scenario: Stale record ignored."""
+    from app.agent import progress
+
+    harness = make_harness(tool_state)
+    deps = ToolDeps(tool_state)
+    _room_folder(tool_state, status="succeeded")
+    notices.follow_room(deps, harness.thread, quote(tool_state.tiers, package_id="wohnen", version=11, record="room"))
+    with deps.session() as session:
+        assert progress.room_rendering(session, tool_state.settings.render_root, harness.thread) is False
+        session.commit()
+    assert _followed(tool_state, harness.thread) == []
+
+
+def test_a_piece_render_is_not_recorded_as_a_room_render(tool_state) -> None:
+    harness = make_harness(tool_state)
+    notices.follow_room(ToolDeps(tool_state), harness.thread, quote(tool_state.tiers))
+    assert _followed(tool_state, harness.thread) == []
+
+
+def test_room_notice_links_point_at_existing_files_only(tool_state) -> None:
+    """Scenarios: Turntable ready with a link, Still ready with a link, File gone, Failed room render."""
+    from app.agent import progress
+
+    root = tool_state.settings.render_root
+    folder = _room_folder(tool_state, status="succeeded")
+    notice = SimpleNamespace(outcome="succeeded", composition_slug="wohnen", version=11, render_key="turntable")
+    assert progress.room_notice_links(root, notice) == []
+    (folder / "viewer.html").write_text("<html></html>", encoding="utf-8")
+    (folder / "still.png").write_bytes(b"png")
+    assert progress.room_notice_links(root, notice) == [
+        {"label": "Open the turntable viewer", "href": "/compositions/wohnen/versions/11/files/viewer.html"}
+    ]
+    still = SimpleNamespace(**{**vars(notice), "render_key": "still"})
+    assert progress.room_notice_links(root, still) == [
+        {"label": "Open the still", "href": "/compositions/wohnen/versions/11/files/still.png"}
+    ]
+    failed = SimpleNamespace(**{**vars(notice), "outcome": "failed"})
+    assert progress.room_notice_links(root, failed) == []
+    old = SimpleNamespace(**{**vars(notice), "composition_slug": None})
+    assert progress.room_notice_links(root, old) == []
+

@@ -34,7 +34,10 @@ from app.agent.tools.shared import (
     checked_package_id,
     latest_version,
 )
+from app.blender.hardware_catalog import default_catalog
+from app.blender.import_corrections import correct, rule_lines
 from app.design_import import parse_import
+from app.guidelines.hardware_inputs import freeze_inputs
 from app.guidelines.rules import piece_outcome
 from plugins.create_piece.tool import (
     checked_new_id,
@@ -86,8 +89,25 @@ def _read_upload(upload_id: UUID, ctx: ToolContext) -> tuple[tuple[Any, str, str
     return (document, name, bound), ""
 
 
-def _checked(arguments: dict[str, Any], ctx: ToolContext) -> tuple[tuple[str, dict[str, Any], str] | None, str]:
-    """`(package_id, design, file name)` ready to create, or a refusal."""
+def _corrected(design: dict[str, Any], ctx: ToolContext) -> tuple[dict[str, Any], list[str]]:
+    """The design with its hand-written hardware corrected against the rules in force, and the
+    correction lines the preview lists (hardware-catalog)."""
+    with ctx.deps.session() as session:
+        inputs = freeze_inputs(session, ctx.deps.design_rules, design)
+    found = correct(design, rule_lines(design, inputs), default_catalog())
+    return found.design, found.lines()
+
+
+def _with_corrections(summary: str, corrections: list[str]) -> str:
+    if not corrections:
+        return summary
+    return summary + "\nHardware corrections:\n" + "\n".join(f"- {line}" for line in corrections)
+
+
+def _checked(
+    arguments: dict[str, Any], ctx: ToolContext
+) -> tuple[tuple[str, dict[str, Any], str, list[str]] | None, str]:
+    """`(package_id, corrected design, file name, hardware corrections)` ready to create, or a refusal."""
     args, problem = parse_args(ImportDesignArgs, arguments)
     if args is None:
         return None, problem
@@ -115,14 +135,15 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext) -> tuple[tuple[str, di
     design, refusal = parse_import(document, ctx, package_id)
     if design is None:
         return None, _quoted(refusal, name, args.upload_id)
-    return (package_id, design, name), ""
+    design, corrections = _corrected(design, ctx)
+    return (package_id, design, name, corrections), ""
 
 
 def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
     checked, problem = _checked(arguments, ctx)
     if checked is None:
         return problem
-    package_id, design, name = checked
+    package_id, design, name, corrections = checked
     unavailable = builds_unavailable(ctx.deps)
     if unavailable:
         return unavailable
@@ -132,7 +153,7 @@ def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
     summary, proposal = summarise(package_id, design, warnings)
     return Confirmation(
         subject="import_design",
-        summary=f"Import {name}\n{summary}",
+        summary=_with_corrections(f"Import {name}\n{summary}", corrections),
         proposal={**proposal, "file": name},
     )
 
@@ -143,7 +164,7 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
     checked, problem = _checked(arguments, ctx)
     if checked is None:
         return problem
-    package_id, design, name = checked
+    package_id, design, name, _corrections = checked
     unavailable = builds_unavailable(ctx.deps)
     if unavailable:
         return unavailable
@@ -183,8 +204,9 @@ class ImportVersionArgs(BaseModel):
 
 def _checked_version(
     arguments: dict[str, Any], ctx: ToolContext
-) -> tuple[tuple[str, int, dict[str, Any], str] | None, str]:
-    """`(package_id, latest version, design, file name)` ready to record, or a refusal."""
+) -> tuple[tuple[str, int, dict[str, Any], str, list[str]] | None, str]:
+    """`(package_id, latest version, corrected design, file name, hardware corrections)` ready to record,
+    or a refusal."""
     args, problem = parse_args(ImportVersionArgs, arguments)
     if args is None:
         return None, problem
@@ -206,14 +228,15 @@ def _checked_version(
     design, refusal = parse_import(document, ctx, package_id)
     if design is None:
         return None, _quoted(refusal, name, args.upload_id)
-    return (package_id, latest, design, name), ""
+    design, corrections = _corrected(design, ctx)
+    return (package_id, latest, design, name, corrections), ""
 
 
 def version_preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
     checked, problem = _checked_version(arguments, ctx)
     if checked is None:
         return problem
-    package_id, latest, design, name = checked
+    package_id, latest, design, name, corrections = checked
     unavailable = builds_unavailable(ctx.deps)
     if unavailable:
         return unavailable
@@ -224,7 +247,10 @@ def version_preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation
     summary = summary.replace("New piece", "Design", 1)
     return Confirmation(
         subject="import_version",
-        summary=f"Import {name} as {package_id} version {latest + 1}, replacing version {latest}'s design\n{summary}",
+        summary=_with_corrections(
+            f"Import {name} as {package_id} version {latest + 1}, replacing version {latest}'s design\n{summary}",
+            corrections,
+        ),
         proposal={**proposal, "file": name, "revised_from": latest, "version": latest + 1},
     )
 
@@ -235,7 +261,7 @@ def version_run(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str
     checked, problem = _checked_version(arguments, ctx)
     if checked is None:
         return problem
-    package_id, latest, design, name = checked
+    package_id, latest, design, name, _corrections = checked
     unavailable = builds_unavailable(ctx.deps)
     if unavailable:
         return unavailable

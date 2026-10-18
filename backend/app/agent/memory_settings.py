@@ -45,6 +45,9 @@ class MemorySettings(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     # Compression (token-budget).
+    # Only the exchanges from the Nth most recent owner input are sent in full; older ones
+    # always go into the summary note. 0 leaves it to the trigger (conversation-recent-inputs).
+    recent_inputs: int = Field(default=5, ge=0, le=20)
     trigger_percent: int = Field(default=100, ge=50, le=100)
     keep_turns: int = Field(default=0, ge=0, le=20)
     note_tokens: int = Field(default=400, ge=100, le=2000)

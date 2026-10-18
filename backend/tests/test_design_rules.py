@@ -89,7 +89,7 @@ def test_every_check_is_loadable_by_its_name(tmp_path: Path) -> None:
                    {"end_distance_mm": {"min": 100, "max": 200, "unit": "mm"}, "even_tolerance_mm": 10},
                    applies_to="piece")
     rules = table(tmp_path, passage(900), swing(), height(), span(1000), bracket_count(), spacing,
-                  pin_count(), hinge_count())
+                  pin_count(), hinge_count(), rail_supports())
     assert {r.check for r in rules} == set(CHECKS)
 
 
@@ -330,3 +330,27 @@ def test_the_shipped_count_rules_cite_the_owner_notes() -> None:
     assert hinges.source.publication == "owner:a8147011-0f73-4e5e-a5f2-e3a9f8fd9852" and "101.6 cm" in hinges.source.quote
     assert [(row.max_height_mm, row.hinges) for row in hinges.params.table] == [(1016, 2), (1524, 3), (2032, 4)]
     assert hinges.params.beyond == 5
+
+
+# --- rail-support count (hardware-catalog) --------------------------------------------------------
+
+
+def rail_supports(rule_id: str = "rail-supports") -> dict:
+    return rule(rule_id, "rail_support_count_for_length",
+                {"table": [{"max_length_mm": 1000, "supports": 2}], "beyond": 3}, applies_to="piece")
+
+
+def test_a_rail_support_table_parses_and_judges_nothing(tmp_path: Path) -> None:
+    (supports,) = table(tmp_path, rail_supports())
+    assert [(row.max_length_mm, row.supports) for row in supports.params.table] == [(1000, 2)]
+    assert supports.params.beyond == 3
+
+
+def test_a_second_rail_support_rule_is_refused(tmp_path: Path) -> None:
+    """Scenario: Second rail-support rule refused."""
+    with pytest.raises(DesignRulesError, match="'rail-supports' and 'rail-supports-2' both name"):
+        table(tmp_path, rail_supports(), rail_supports("rail-supports-2"))
+
+
+def test_no_rail_support_rule_ships() -> None:
+    assert not [r for r in load_rules() if r.check == "rail_support_count_for_length"]

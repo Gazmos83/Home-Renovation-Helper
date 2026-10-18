@@ -313,11 +313,34 @@ test("a built version offers the design and the bundle downloads", async () => {
   expect(line).not.toContainElement(inspect);
 });
 
+test("a built version lists each of its files for download, in workshop order", async () => {
+  serve([turntable], (call) => {
+    if (call === "GET /packages/bench/versions/2") {
+      return { body: { ...info(2, null), files: ["cutlist.csv", "model.glb", "status.json", "model.blend", "spec.json", "front.png"] } };
+    }
+  });
+  show();
+  const panel = await screen.findByRole("region", { name: "Download the package (version 2)" });
+  const links = within(panel).getAllByRole("link");
+  expect(links.map((link) => link.getAttribute("aria-label"))).toEqual([
+    "Download Blender file (version 2)",
+    "Download glTF model (version 2)",
+    "Download Spec (JSON) (version 2)",
+    "Download Cut list (CSV) (version 2)",
+    "Download Front view (version 2)",
+  ]);
+  const blend = within(panel).getByRole("link", { name: "Download Blender file (version 2)" });
+  expect(blend).toHaveAttribute("href", "/packages/bench/versions/2/files/model.blend");
+  expect(blend).toHaveAttribute("download", "bench-v2.blend");
+  expect(within(panel).getByRole("link", { name: "Download Cut list (CSV) (version 2)" })).toHaveAttribute("download", "bench-v2-cutlist.csv");
+});
+
 test("a version still building offers the design but not the bundle", async () => {
   serve([turntable], undefined, { approved: null, status: "running" });
   show();
   expect(await screen.findByRole("link", { name: "Download design (version 2)" })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Download bundle/ })).toBeNull();
+  expect(screen.queryByRole("region", { name: /Download the package/ })).toBeNull();
   expect(screen.queryByRole("link", { name: /Inspect/ })).toBeNull();
 });
 
@@ -503,6 +526,36 @@ test("deleting the only version says the piece goes and drops the piece", async 
   expect(screen.getByText(/the whole piece will be deleted/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Yes, delete version 2" }));
   expect(await screen.findByText("No pieces yet. Use Create A New Piece to start a conversation and describe one.")).toBeInTheDocument();
+});
+
+// --- deleting a whole piece (delete-piece) ------------------------------------------------
+
+test("a confirmed piece delete closes the dialog and drops the piece", async () => {
+  const user = userEvent.setup();
+  let gone = false;
+  const calls = serve([turntable], (call) => {
+    if (call === "GET /packages") return { body: gone ? [] : [{ package_id: "bench", versions: [2, 1] }] };
+    if (call === "GET /packages/bench/deletion") {
+      return {
+        body: {
+          package_id: "bench", name: "Bench", versions: [1, 2], approved: [{ version: 2, priced: true }],
+          conversations: ["t-1"], refusal: null,
+        },
+      };
+    }
+    if (call === "DELETE /packages/bench") {
+      gone = true;
+      return { status: 204 };
+    }
+  });
+  show();
+  await user.click(await screen.findByRole("button", { name: "Delete piece" }));
+  expect(await screen.findByText("Approved: version 2, priced")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Yes, delete Bench" }));
+  expect(await screen.findByText("No pieces yet. Use Create A New Piece to start a conversation and describe one.")).toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await waitFor(() => expect(address()).toBe("/studio/pieces"));
+  expect(calls.some(([m, u]) => m === "DELETE" && u === "/packages/bench")).toBe(true);
 });
 
 // --- piece conversations (piece-conversation-link) ---------------------------------------

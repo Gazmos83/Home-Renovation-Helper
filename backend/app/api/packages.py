@@ -16,6 +16,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, Final
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -391,6 +392,40 @@ def delete_version(package_id: str, version: int, request: Request) -> None:
             raise not_found() from None
         except house_file.HouseFileError as error:
             raise refused(status.HTTP_409_CONFLICT, "version_in_use", str(error)) from None
+
+
+@router.get("/{package_id}/deletion")
+def piece_deletion(package_id: str, request: Request) -> dict[str, Any]:
+    """What deleting the whole piece would remove, and why it would be refused (delete-piece)."""
+    with Session(request.app.state.engine) as session:
+        try:
+            return house_file.piece_deletion(session, render_root(request), package_id)
+        except (house_file.PieceMissing, storage.InvalidPackageId):
+            raise not_found() from None
+
+
+@router.delete("/{package_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_piece(package_id: str, request: Request) -> None:
+    """Delete a whole piece with every version and its conversations (delete-piece).
+    Refused (nothing changed) when a composition places it, it is building or rendering,
+    a turn runs in one of its conversations, or their memory cannot be reached."""
+    from app.api.chat import conversations_forgotten
+
+    root = render_root(request)
+    with Session(request.app.state.engine) as session:
+        try:
+            summary = house_file.piece_deletion(session, root, package_id)
+        except (house_file.PieceMissing, storage.InvalidPackageId):
+            raise not_found() from None
+    if summary["refusal"] is not None:
+        raise refused(status.HTTP_409_CONFLICT, "piece_in_use", summary["refusal"])
+    thread_ids = [UUID(thread_id) for thread_id in summary["conversations"]]
+    running = "a reply is still being written in one of its conversations; delete the piece once it has ended"
+    with conversations_forgotten(request, thread_ids, running=running), Session(request.app.state.engine) as session:
+        try:
+            house_file.delete_piece(session, root, package_id, thread_ids)
+        except house_file.HouseFileError as error:
+            raise refused(status.HTTP_409_CONFLICT, "piece_in_use", str(error)) from None
 
 
 @router.put("/{package_id}/spec", status_code=status.HTTP_202_ACCEPTED)

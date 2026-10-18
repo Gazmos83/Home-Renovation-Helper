@@ -23,6 +23,7 @@ from app.agent.revise import (
     describe_fronts,
     describe_hardware,
     describe_placements,
+    describe_rails,
 )
 from app.blender import storage
 from app.blender.custom_build.derive import (
@@ -31,6 +32,7 @@ from app.blender.custom_build.derive import (
     front_layout,
     overall,
     shelf_centres,
+    slat_handle_warnings,
     span_words,
 )
 from app.restyle.presets import APPEARANCE_NOTE
@@ -80,7 +82,12 @@ table.
 one step per line, for example:
 ```calc
 430 + 430 + 400 + 100 + 100 = 1460
-```"""
+```
+- When the owner asks for one figure (a distance, gap, size, height, count or \
+price), answer in one sentence that gives the figure and its unit, for example \
+"The gap between the murphy bed and wall 3 is 1350 mm." Put how you found it \
+(positions, lengths, steps) only in a `calc` block after that sentence; do not \
+explain it in the text."""
 
 # Composed by code on every Designer turn so a revision cannot miss `side_folds`
 # (owner test 5.2: the model refused a panel bend as having no field).
@@ -431,7 +438,7 @@ def front_positions(module: Mapping[str, Any], thickness: int = 18, back: int = 
             where = "at the top" if high >= top else "at the bottom" if low <= 0 else "between"
             covered = [str(n) for n, centre in enumerate(centres, start=1) if low <= centre <= high]
             shelves = f"covers shelf {' and '.join(covered)}" if covered else "covers no shelf"
-            parts.append(f"{describe_front(front)} {where}, {low:g}–{high:g} mm above the bottom, {shelves}")
+            parts.append(f"{describe_front(front, module.get('carcass'))} {where}, {low:g}–{high:g} mm above the bottom, {shelves}")
     except (DeriveError, KeyError, TypeError, ValueError):
         return ""
     return "; ".join(parts)
@@ -490,6 +497,8 @@ def piece_note(package_id: str, version: int | None, document: Mapping[str, Any]
             f"{fold['angle_deg']}°, {fold['towards']}"
             for fold in folds
         )
+        if module.get("hanging_rails"):
+            fold_note += f", hanging rails: {describe_rails(module['hanging_rails'])} (z above the bottom panel)"
         carcass = (document.get("materials") or {}).get(module.get("carcass")) or {}
         back_slot = (document.get("materials") or {}).get(module.get("back")) or {}
         placed = front_positions(module, carcass.get("thickness_mm") or 18, back_slot.get("thickness_mm") or 12)
@@ -498,7 +507,7 @@ def piece_note(package_id: str, version: int | None, document: Mapping[str, Any]
             f'- {module["id"]} "{module.get("name", "")}": '
             f"{module['width']}×{module['height']}×{module['depth']} mm "
             f"at x{module['x']} y{module['y']} z{module['z']}, carcass {module['carcass']}{back}, {shelves}{fold_note}, "
-            f"fronts: {placed or describe_fronts(module.get('fronts'))}, hardware: {describe_hardware(module.get('hardware'))}"
+            f"fronts: {placed or describe_fronts(module.get('fronts'), module.get('carcass'))}, hardware: {describe_hardware(module.get('hardware'))}"
         )
     for shelf in document.get("wall_shelves") or []:
         positions = shelf.get("bracket_positions_mm")
@@ -524,4 +533,10 @@ def piece_note(package_id: str, version: int | None, document: Mapping[str, Any]
     overrides = document.get("part_overrides") or []
     if overrides:
         lines.append("Part overrides: " + ", ".join(str(override["id"]) for override in overrides))
+    try:
+        warnings = slat_handle_warnings(document)
+    except (DeriveError, KeyError, TypeError, ValueError):
+        warnings = []
+    if warnings:
+        lines.append("Warnings: " + "; ".join(warnings))
     return neutralise("\n".join(lines))

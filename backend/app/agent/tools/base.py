@@ -189,9 +189,11 @@ class Confirmation:
 
 @dataclass(frozen=True)
 class Questions:
-    """A pause for the owner's answers. Each question is `{text, unit, choices}`."""
+    """A pause for the owner's answers. Each question is `{text, unit, choices}`; `layout`
+    names a Workspace layout the set offers to open ("room": the Room layout button)."""
 
     questions: list[dict[str, Any]]
+    layout: str | None = None
 
 
 @dataclass(frozen=True)

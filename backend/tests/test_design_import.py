@@ -10,6 +10,7 @@ import pytest
 
 from app.agent import house_file
 from app.blender.custom_build.derive import derive
+from app.blender.schemas import CustomBuildSpec
 from app.design_import import (
     SURVEY_REFUSAL,
     export_document,
@@ -128,3 +129,43 @@ def test_the_guide_names_extra_part_placements_and_end_cuts() -> None:
         assert field in guide, field
     assert "An extra part without placements is laid flat beside the build" in guide
     assert "only modules are drawn assembled" not in guide
+
+
+def test_the_guide_names_handles() -> None:
+    guide = " ".join(load_template()["guide"])
+    for field in ("handle", "kind", "orientation", "edge", "inset_mm", "at_mm", "finish"):
+        assert field in guide
+    assert "A push-latch door takes no handle" in guide
+    assert "do not also write it as a hardware line" in guide
+
+
+def test_the_guide_names_rule_counted_hardware() -> None:
+    """Scenario: Guide names rule-counted hardware."""
+    guide = " ".join(load_template()["guide"])
+    assert "build.modules[].hanging_rails" in guide
+    assert "Hardware the app counts itself: hinges, shelf pins, drawer runners" in guide
+    assert "Write a knob or pull as a front's `handle`" in guide
+    assert "Every hardware line needs a whole-number qty" in guide
+
+
+def test_a_hardware_line_without_a_quantity_is_still_refused() -> None:
+    """Scenario: Missing quantity still refused."""
+    build = load_template()["build"]
+    build["hardware"] = [{"id": "knobs", "item": "Knobs", "notes": ""}]
+    with pytest.raises(ValueError, match="hardware.0.qty"):
+        CustomBuildSpec.model_validate(build)
+
+
+def test_the_guide_names_slats() -> None:
+    guide = " ".join(load_template()["guide"])
+    for field in ("slats", "count", "width", "orientation", "margin_mm", "leaves"):
+        assert field in guide, field
+    assert "do not also write them as extra_parts" in guide
+
+
+def test_the_guide_names_per_door_materials() -> None:
+    """door-leaf-materials: one guide line for `leaf_materials`, within the line limit."""
+    guide = load_template()["guide"]
+    line = next(line for line in guide if "leaf_materials" in line)
+    assert "numbered from 1 on the left" in line and "side by side" in line
+    assert len(line) <= 500

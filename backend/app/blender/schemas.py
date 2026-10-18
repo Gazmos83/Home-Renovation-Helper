@@ -90,6 +90,75 @@ class HardwareLineIn(BaseModel):
     notes: Note = ""
 
 
+class HandleIn(BaseModel):
+    """A modelled handle on every leaf of one front entry (front-handles).
+
+    Unstated fields take the defaults `derive.handle_spec` resolves, so a stored
+    document keeps only what was written.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    kind: Literal["bar", "knob"]
+    length: Annotated[int, Field(ge=20, le=2000)] | None = None
+    orientation: Literal["vertical", "horizontal"] | None = None
+    edge: Literal["meeting", "left", "right"] | None = None
+    inset_mm: Position | None = None
+    at_mm: Position | None = None
+    finish: Literal["black", "aluminium", "steel", "brass"] = "black"
+    key: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")] | None = None
+
+    @model_validator(mode="after")
+    def _kind_fields(self) -> HandleIn:
+        if self.kind == "bar" and self.length is None:
+            raise ValueError("handle.length: a bar handle needs a length")
+        if self.kind == "knob" and self.length is not None:
+            raise ValueError("handle.length: a knob takes no length")
+        if self.kind == "knob" and self.orientation is not None:
+            raise ValueError("handle.orientation: a knob takes no orientation")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_unstated(self, handler: Any) -> dict[str, Any]:
+        dumped = handler(self)
+        for field in ("length", "orientation", "edge", "inset_mm", "at_mm", "key"):
+            if dumped.get(field) is None:
+                dumped.pop(field, None)
+        return dumped
+
+
+def _omit_unstated_handle(dumped: dict[str, Any]) -> dict[str, Any]:
+    # A front without a handle serialises exactly as before.
+    if dumped.get("handle") is None:
+        dumped.pop("handle", None)
+    return dumped
+
+
+class SlatsIn(BaseModel):
+    """Slats glued to the face of a door entry's leaves, spaced to follow the leaf (door-slats).
+
+    Unstated optional fields are omitted on serialisation, so a stored document
+    keeps only what was written; `derive.slat_layout` resolves the defaults.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    count: Annotated[int, Field(ge=1, le=40)]
+    width: Millimetres
+    material: SlotName
+    orientation: Literal["vertical", "horizontal"] | None = None
+    margin_mm: Annotated[int, Field(ge=0, le=500)] | None = None
+    leaves: Annotated[list[Annotated[int, Field(ge=1, le=20)]], Field(min_length=1, max_length=20)] | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unstated(self, handler: Any) -> dict[str, Any]:
+        dumped = handler(self)
+        for field in ("orientation", "margin_mm", "leaves"):
+            if dumped.get(field) is None:
+                dumped.pop(field, None)
+        return dumped
+
+
 class DoorIn(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -98,6 +167,53 @@ class DoorIn(BaseModel):
     opening: Literal["hinge", "push_latch"]
     height: Millimetres | None = None
     hinge: Slug = "hinge-concealed-110"
+    handle: HandleIn | None = None
+    slats: SlatsIn | None = None
+    # A door number (from 1 on the left) to its own material slot; unnamed doors keep the
+    # carcass slot (door-leaf-materials).
+    leaf_materials: (
+        Annotated[dict[Annotated[str, StringConstraints(pattern=r"^[1-9][0-9]?$")], SlotName], Field(min_length=1)]
+        | None
+    ) = None
+
+    @model_validator(mode="after")
+    def _handle_fits_door(self) -> DoorIn:
+        if self.handle is None:
+            return self
+        if self.opening == "push_latch":
+            raise ValueError("handle: a push-latch door takes no handle")
+        if self.handle.edge == "meeting" and self.count % 2:
+            raise ValueError("handle.edge: meeting edges need an even number of doors")
+        return self
+
+    @model_validator(mode="after")
+    def _slat_leaves(self) -> DoorIn:
+        if self.slats is None or self.slats.leaves is None:
+            return self
+        leaves = self.slats.leaves
+        if any(leaf > self.count for leaf in leaves):
+            noun = "door" if self.count == 1 else "doors"
+            raise ValueError(f"slats.leaves: the entry has {self.count} {noun}; number them 1 to {self.count}")
+        if len(set(leaves)) != len(leaves):
+            raise ValueError("slats.leaves: each door may be named once")
+        return self
+
+    @model_validator(mode="after")
+    def _leaf_material_doors(self) -> DoorIn:
+        if self.leaf_materials and any(int(door) > self.count for door in self.leaf_materials):
+            noun = "door" if self.count == 1 else "doors"
+            raise ValueError(f"leaf_materials: the entry has {self.count} {noun}; number them 1 to {self.count}")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_handle(self, handler: Any) -> dict[str, Any]:
+        dumped = _omit_unstated_handle(handler(self))
+        # A door without slats serialises exactly as before.
+        if dumped.get("slats") is None:
+            dumped.pop("slats", None)
+        if dumped.get("leaf_materials") is None:
+            dumped.pop("leaf_materials", None)
+        return dumped
 
 
 class DrawerIn(BaseModel):
@@ -106,6 +222,17 @@ class DrawerIn(BaseModel):
     type: Literal["drawer"]
     count: Annotated[int, Field(ge=1, le=20)]
     height: Millimetres | None = None
+    handle: HandleIn | None = None
+
+    @model_validator(mode="after")
+    def _no_edge(self) -> DrawerIn:
+        if self.handle is not None and self.handle.edge is not None:
+            raise ValueError("handle.edge: only a door handle takes an edge; a drawer's sits on its top edge")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_handle(self, handler: Any) -> dict[str, Any]:
+        return _omit_unstated_handle(handler(self))
 
 
 class FlapIn(BaseModel):
@@ -114,6 +241,17 @@ class FlapIn(BaseModel):
     type: Literal["flap"]
     hinged: Literal["bottom", "top"]
     height: Millimetres | None = None
+    handle: HandleIn | None = None
+
+    @model_validator(mode="after")
+    def _no_edge(self) -> FlapIn:
+        if self.handle is not None and self.handle.edge is not None:
+            raise ValueError("handle.edge: only a door handle takes an edge; a flap's sits opposite its hinge")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_handle(self, handler: Any) -> dict[str, Any]:
+        return _omit_unstated_handle(handler(self))
 
 
 FrontIn = Annotated[DoorIn | DrawerIn | FlapIn, Field(discriminator="type")]
@@ -165,7 +303,42 @@ MIN_SHELF_DEPTH_MM = 50
 ShelfNumber = Annotated[int, Field(ge=1, le=40)]
 ShelfKind = Literal["fixed", "adjustable"]
 ShelfDepthAlign = Literal["back", "front"]
+Mounting = Literal["floor", "wall"]
+MOUNTING_DESCRIPTION = (
+    "How the module is fixed: `floor` (standing) or `wall` (hung on the wall). "
+    "Leave it out when not stated; it changes no cut list, hardware or model."
+)
 ShelfDepthEntry = Millimetres | None
+
+
+HANGING_RAILS_DESCRIPTION = (
+    "Clothes rails hung across a bay (hardware-catalog). `z` is the rail centre in mm above the top of "
+    "the bottom panel and is required; `bay` counts from 1 on the left; `inset_y_mm` is from the front "
+    "of the sides (default half the inner depth). The rail is cut to the bay's inner width and gets two "
+    "end supports; both are drawn and listed, so they are not also written as hardware lines."
+)
+MAX_HANGING_RAILS = 4
+
+
+class HangingRailIn(BaseModel):
+    """One clothes rail across a bay, with its end supports (hardware-catalog)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    bay: Annotated[int, Field(ge=1, le=MAX_DIVIDERS + 1)] = 1
+    z: Millimetres
+    inset_y_mm: Millimetres | None = None
+    finish: Literal["black", "aluminium", "steel", "brass", "nickel", "chrome"] | None = None
+    key: Slug | None = None
+    support_key: Slug | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unstated(self, handler: Any) -> dict[str, Any]:
+        dumped = handler(self)
+        for field in ("inset_y_mm", "finish", "key", "support_key"):
+            if dumped.get(field) is None:
+                dumped.pop(field, None)
+        return dumped
 
 
 class DividerSpanIn(BaseModel):
@@ -212,6 +385,10 @@ class ModuleIn(BaseModel):
     ] | None = None
     shelf_depth_align: Annotated[ShelfDepthAlign, Field(description=SHELF_DEPTH_ALIGN_DESCRIPTION)] | None = None
     side_folds: Annotated[list[SideFoldIn], Field(max_length=2, description=SIDE_FOLDS_DESCRIPTION)] = []
+    hanging_rails: Annotated[
+        list[HangingRailIn], Field(max_length=MAX_HANGING_RAILS, description=HANGING_RAILS_DESCRIPTION)
+    ] = []
+    mounting: Annotated[Mounting, Field(description=MOUNTING_DESCRIPTION)] | None = None
     fronts: Annotated[list[FrontIn], Field(max_length=10)] = []
     hardware: Annotated[list[HardwareLineIn], Field(max_length=50)] = []
 
@@ -233,6 +410,7 @@ class ModuleIn(BaseModel):
             "shelf_kinds",
             "shelf_depths_mm",
             "shelf_depth_align",
+            "mounting",
         ):
             if dumped.get(field) is None:
                 dumped.pop(field, None)
@@ -240,6 +418,8 @@ class ModuleIn(BaseModel):
             dumped.pop("dividers", None)
         if not dumped.get("side_folds"):
             dumped.pop("side_folds", None)
+        if not dumped.get("hanging_rails"):
+            dumped.pop("hanging_rails", None)
         return dumped
 
 
@@ -376,6 +556,18 @@ class CustomBuildContext:
     """What a caller outside the derivation needs: the build's overall size."""
 
     overall: dict[str, int]
+
+
+def _check_hanging_rails(where: str, module: ModuleIn, t: int, b: int) -> None:
+    """Each rail in an existing bay, clear of the shelves, below the board above by the hook clearance."""
+    if not module.hanging_rails:
+        return
+    dumped = module.model_dump(mode="json")
+    for index in range(len(module.hanging_rails)):
+        problem = custom_derive.hanging_rail_problem(dumped, t, b, index)
+        if problem is not None:
+            field, reason = problem
+            raise SpecValidationError(f"{where}.hanging_rails[{index}].{field}: {reason}")
 
 
 def _check_interior(where: str, module: ModuleIn, t: int, b: int = 0) -> None:
@@ -621,6 +813,7 @@ class CustomBuildSpec(BaseModel):
                     raise SpecValidationError(f"{where}: module {module.id!r} lies outside the envelope")
             self._check_fronts(where, module, t, b)
             _check_interior(where, module, t, b)
+            _check_hanging_rails(where, module, t, b)
             _check_folded_dividers(where, module, t, b)
 
         for index, part in enumerate(self.extra_parts):
@@ -750,6 +943,43 @@ class CustomBuildSpec(BaseModel):
                         raise SpecValidationError(
                             f"{where}.fronts[{index}]: module {module.id!r} is too narrow for a drawer box"
                         )
+        for index, front in enumerate(module.fronts):
+            if front.handle is not None and module.side_folds:
+                raise SpecValidationError(
+                    f"{where}.fronts[{index}].handle: handles on a folded module are not supported"
+                )
+            leaf_materials = getattr(front, "leaf_materials", None) or {}
+            for slot in leaf_materials.values():
+                if slot not in self.materials:
+                    raise SpecValidationError(
+                        f"{where}.fronts[{index}].leaf_materials: undefined material slot {slot!r}"
+                    )
+                if self.materials[slot].thickness_mm != t:
+                    raise SpecValidationError(
+                        f"{where}.fronts[{index}].leaf_materials: slot {slot!r} is "
+                        f"{self.materials[slot].thickness_mm:g} mm but the carcass is {t:g} mm; "
+                        "a door must be as thick as the carcass"
+                    )
+            if leaf_materials and module.side_folds:
+                raise SpecValidationError(
+                    f"{where}.fronts[{index}].leaf_materials: per-door materials on a folded module are not supported"
+                )
+            slats = getattr(front, "slats", None)
+            if slats is None:
+                continue
+            if slats.material not in self.materials:
+                raise SpecValidationError(
+                    f"{where}.fronts[{index}].slats.material: undefined material slot {slats.material!r}"
+                )
+            if module.side_folds:
+                raise SpecValidationError(
+                    f"{where}.fronts[{index}].slats: slats on a folded module are not supported"
+                )
+        try:
+            custom_derive.handle_layout(document, t, b)
+            custom_derive.slat_layout(document, self.model_dump(mode="json")["materials"], t, b)
+        except custom_derive.DeriveError as error:
+            raise SpecValidationError(f"{where}.{error}") from None
 
     @property
     def context(self) -> CustomBuildContext:
@@ -787,6 +1017,14 @@ class ModuleChange(BaseModel):
     ] | None = None
     shelf_depth_align: Annotated[ShelfDepthAlign, Field(description=SHELF_DEPTH_ALIGN_DESCRIPTION)] | None = None
     side_folds: Annotated[list[SideFoldIn], Field(max_length=2, description=SIDE_FOLDS_DESCRIPTION)] | None = None
+    # A whole new list of rails; `[]` removes every rail.
+    hanging_rails: Annotated[
+        list[HangingRailIn], Field(max_length=MAX_HANGING_RAILS, description=HANGING_RAILS_DESCRIPTION)
+    ] | None = None
+    # "unset" clears it back to not stated.
+    mounting: Annotated[
+        Mounting | Literal["unset"], Field(description=MOUNTING_DESCRIPTION + ' "unset" clears it.')
+    ] | None = None
     hinge: Slug | None = None  # sets the hinge item of every hinged door in the module
     fronts: Annotated[list[FrontIn], Field(max_length=10)] | None = None
     hardware: Annotated[list[HardwareLineIn], Field(max_length=50)] | None = None

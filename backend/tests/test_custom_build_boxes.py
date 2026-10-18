@@ -132,3 +132,49 @@ def test_every_shelf_and_divider_row_has_one_box_per_piece(generator, fields: di
         if "shelf" in row["id"] or "divider" in row["id"]:
             assert len(placed[row["id"]][1]) == row["qty"]
             assert all(box[0][0] in (row["l"], row["w"]) or box[0][2] == row["l"] for box in placed[row["id"]][1])
+
+
+def _black_right_spec(slats: bool = True) -> dict:
+    """The Höffner dresser: an oak left door and a black right door carrying slats (door-leaf-materials)."""
+    from app.blender.schemas import CustomBuildSpec
+
+    door = {"type": "door", "count": 2, "opening": "hinge", "leaf_materials": {"2": "black_paint"}}
+    if slats:
+        door["slats"] = {"count": 8, "width": 30, "material": "slats", "leaves": [2]}
+    document = {
+        "kind": "custom_build", "schema_version": 1, "units": "mm", "name": "Kommode",
+        "materials": {
+            "carcass": {"material": "16 mm oak Möbelbauplatte", "thickness_mm": 16},
+            "back": {"material": "3 mm mdf", "thickness_mm": 3},
+            "black_paint": {"material": "16 mm black painted MDF", "thickness_mm": 16},
+            "slats": {"material": "12 mm oak-veneered MDF", "thickness_mm": 12},
+        },
+        "modules": [
+            {"id": "kommode", "name": "Kommode", "x": 0, "y": 20, "z": 100, "width": 800, "height": 750,
+             "depth": 400, "carcass": "carcass", "back": "back", "fronts": [door]},
+        ],
+    }
+    return CustomBuildSpec.model_validate(document).model_dump(mode="json")
+
+
+def test_split_doors_are_a_box_each_where_the_pair_was(generator) -> None:
+    from app.blender.custom_build.derive import derive
+
+    spec = _black_right_spec()
+    pieces = generator._module_boxes(spec["modules"][0], spec["materials"])
+    plain = dict(spec, modules=[dict(spec["modules"][0], fronts=[{"type": "door", "count": 2, "opening": "hinge"}])])
+    pair = generator._module_boxes(plain["modules"][0], plain["materials"])["kommode-door-1"][1]
+    assert "kommode-door-1" not in pieces
+    assert [pieces["kommode-door-1-1"][1][0], pieces["kommode-door-1-2"][1][0]] == pair
+    assert len(pieces["kommode-door-1-2-slat"][1]) == 8
+    parts, _hardware, _assembly = derive(spec)
+    for row in parts:
+        assert len(pieces[row["id"]][1]) == int(row["qty"]), row["id"]
+
+
+def test_doors_without_leaf_materials_are_laid_out_as_before(generator) -> None:
+    spec = _black_right_spec(slats=False)
+    del spec["modules"][0]["fronts"][0]["leaf_materials"]
+    pieces = generator._module_boxes(spec["modules"][0], spec["materials"])
+    assert len(pieces["kommode-door-1"][1]) == 2
+    assert not any(name.startswith("kommode-door-1-") for name in pieces)

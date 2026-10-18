@@ -1,0 +1,102 @@
+# The hardware catalog (hardware-catalog spec): how each hardware item is drawn.
+#
+# Each entry names an item `key`, or a `pattern` ending in one `*` (an exact key wins over a pattern,
+# and of two patterns the longer prefix wins), with:
+#   shape         hinge_concealed | shelf_pin | drawer_runner | shelf_bracket | hanging_rail |
+#                 rail_support | bar | knob
+#   size          the fields that shape takes, in mm (see app/blender/hardware_catalog.py)
+#   finish        black | aluminium | steel | brass | nickel | chrome
+#   rule_counted  true when the app's rules count the item, so an import drops a hand-written copy
+#   matches       phrases (lower-cased substrings) that identify the item in a hand-written line
+#
+# The sizes are typical catalogue sizes of the drawn shape (TODO(user): confirm), not drilling or
+# engineering values: drilling comes from the data sheets, counts from the design rules. A malformed
+# entry stops startup naming this file and the entry. Adding an item needs no code change.
+
+entries:
+  - key: hinge-concealed-110
+    shape: hinge_concealed
+    size: {cup_diameter_mm: 35, cup_depth_mm: 12, arm_width_mm: 18, arm_height_mm: 12,
+           plate_length_mm: 50, plate_height_mm: 16, plate_thickness_mm: 3}
+    finish: nickel
+    rule_counted: true
+    matches: ["concealed hinge", "cabinet hinge", "cup hinge", "soft-close hinge", "110 degree", "110°"]
+
+  - pattern: hinge-*
+    shape: hinge_concealed
+    size: {cup_diameter_mm: 35, cup_depth_mm: 12, arm_width_mm: 18, arm_height_mm: 12,
+           plate_length_mm: 50, plate_height_mm: 16, plate_thickness_mm: 3}
+    finish: nickel
+    rule_counted: true
+    matches: ["hinge"]
+
+  - key: shelf-pin
+    shape: shelf_pin
+    size: {diameter_mm: 5, length_mm: 16}
+    finish: nickel
+    rule_counted: true
+    matches: ["shelf pin", "shelf support pin", "shelf peg", "shelf support"]
+
+  - pattern: drawer-runner-*
+    shape: drawer_runner
+    size: {width_mm: 12.5, height_mm: 45}
+    finish: steel
+    rule_counted: true
+    matches: ["drawer runner", "drawer slide", "drawer rail"]
+
+  - key: confirmat-7x50
+    shape: bar
+    size: {section_mm: 7, proud_mm: 0.5}
+    finish: black
+    rule_counted: true
+    # Only the brand word: a "cabinet connector screw" joining two sections is not a carcass screw.
+    matches: ["confirmat"]
+
+  - key: flap-stay
+    shape: bar
+    size: {section_mm: 10, proud_mm: 5}
+    finish: steel
+    rule_counted: true
+    matches: ["flap stay", "lid stay"]
+
+  - key: push-latch
+    shape: knob
+    size: {diameter_mm: 20, depth_mm: 40}
+    finish: black
+    rule_counted: true
+    matches: ["push latch", "push-to-open", "touch latch"]
+
+  - pattern: bracket-*
+    shape: shelf_bracket
+    size: {arm_length_mm: 200, height_mm: 150, width_mm: 25, thickness_mm: 4}
+    finish: steel
+    rule_counted: true
+    matches: ["shelf bracket", "wall bracket"]
+
+  - pattern: handle-bar-*
+    shape: bar
+    size: {section_mm: 12, proud_mm: 30}
+    finish: black
+    rule_counted: true
+    matches: ["bar handle", "bar pull", "pull handle", "drawer pull", "cabinet pull"]
+
+  - pattern: handle-knob-*
+    shape: knob
+    size: {diameter_mm: 30, depth_mm: 25}
+    finish: black
+    rule_counted: true
+    matches: ["knob"]
+
+  - key: rail-oval-30x15
+    shape: hanging_rail
+    size: {width_mm: 15, height_mm: 30}
+    finish: chrome
+    rule_counted: true
+    matches: ["wardrobe rail", "clothes rail", "hanging rail", "garment rail", "closet rod"]
+
+  - key: rail-support-oval
+    shape: rail_support
+    size: {width_mm: 40, height_mm: 40, thickness_mm: 12}
+    finish: chrome
+    rule_counted: true
+    matches: ["rail support", "rail bracket", "rail end support", "rod support"]

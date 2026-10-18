@@ -73,6 +73,26 @@ def test_removing_the_last_version_removes_the_package_folder(tmp_path: Path) ->
     assert storage.list_packages(tmp_path) == []
 
 
+def test_a_package_moved_aside_is_not_listed_and_comes_back(tmp_path: Path) -> None:
+    for number in (1, 2):
+        storage.version_dir(tmp_path, "desk", number).mkdir(parents=True)
+    hidden = storage.move_package_aside(tmp_path, "desk")
+    assert hidden.name.startswith(".deleting-desk-")
+    assert storage.list_packages(tmp_path) == []
+    storage.move_package_back(tmp_path, "desk", hidden)
+    assert storage.list_packages(tmp_path) == [("desk", [1, 2])]
+
+
+def test_a_discarded_package_starts_again_at_version_1(tmp_path: Path) -> None:
+    for number in (1, 2):
+        storage.version_dir(tmp_path, "desk", number).mkdir(parents=True)
+    storage.remove_version(tmp_path, "desk", 2)
+    assert storage.next_version(tmp_path, "desk") == 3
+    storage.discard_package(storage.move_package_aside(tmp_path, "desk"))
+    assert list(tmp_path.iterdir()) == []
+    assert storage.next_version(tmp_path, "desk") == 1
+
+
 def test_moving_a_missing_version_aside_is_refused(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         storage.move_version_aside(tmp_path, "desk", 1)

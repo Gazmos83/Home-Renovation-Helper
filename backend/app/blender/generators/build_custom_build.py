@@ -253,6 +253,7 @@ def _add_front_boxes(
     inner_w, inner_d = width - 2 * t, module["depth"] - b
     mid = module["id"]
     rects = rules.front_layout(module, t, b)
+    slat_records = rules.slat_layout(module, materials, t, b)
     bottom_t = materials[back]["thickness_mm"] if back is not None else t
     for index, front in enumerate(module["fronts"]):
         entry = [rect for rect in rects if rect["entry"] == index]
@@ -266,7 +267,19 @@ def _add_front_boxes(
             )
 
         if front["type"] != "drawer":
-            pieces[prefix] = ("fronts", [panel(rect) for rect in entry])
+            # One piece per cut-list row: doors cut from different slots are a row each (door-leaf-materials).
+            for (row_id, _position), rect in zip(rules.door_rows(module, front, index, len(entry)), entry, strict=True):
+                pieces.setdefault(row_id, ("fronts", []))[1].append(panel(rect))
+            for record in slat_records:
+                if record["entry"] != index:
+                    continue
+                # Glued in front of the door face, in slat_layout's order (door-slats).
+                pieces.setdefault(f"{record['row']}-slat", ("fronts", []))[1].append(
+                    (
+                        (record["w"], record["thickness"], record["h"]),
+                        (x + record["x"], y - t - record["thickness"] / 2, z + record["z"]),
+                    )
+                )
             continue
         runner = rules.runner_length(inner_d) or 0
         box_w = inner_w - 2 * rules.DRAWER_SIDE_CLEARANCE_MM
@@ -569,6 +582,235 @@ def _extra_piece(extra: Mapping[str, Any], placement: Mapping[str, Any], t: int)
     )
 
 
+# Modelled handles (front-handles): how far a bar stands proud on its posts, how far
+# in from each end a post sits, and a knob's depth and facets.
+BAR_PROUD_MM = 30
+POST_INSET_MM = 15
+KNOB_DEPTH_MM = 25
+KNOB_SIDES = 16
+
+
+def _cuboid(x0: float, x1: float, y0: float, y1: float, z0: float, z1: float, base: int) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
+    verts = [(x, y, z) for z in (z0, z1) for y in (y0, y1) for x in (x0, x1)]
+    faces = [(0, 2, 3, 1), (4, 5, 7, 6), (0, 1, 5, 4), (2, 6, 7, 3), (0, 4, 6, 2), (1, 3, 7, 5)]
+    return verts, [tuple(base + i for i in face) for face in faces]
+
+
+def _handle_shape(record: Mapping[str, Any], cx: float, front_y: float, cz: float) -> Placement:
+    """One handle as a single mesh in build millimetres, standing proud of the front face at `front_y`."""
+    verts: list[tuple[float, float, float]] = []
+    faces: list[tuple[int, ...]] = []
+    if record["kind"] == "knob":
+        radius = rules.KNOB_DIAMETER_MM / 2
+        for y in (front_y - KNOB_DEPTH_MM, front_y):
+            for n in range(KNOB_SIDES):
+                angle = 2 * math.pi * n / KNOB_SIDES
+                verts.append((cx + radius * math.cos(angle), y, cz + radius * math.sin(angle)))
+        faces.append(tuple(range(KNOB_SIDES - 1, -1, -1)))
+        faces.append(tuple(range(KNOB_SIDES, 2 * KNOB_SIDES)))
+        for n in range(KNOB_SIDES):
+            following = (n + 1) % KNOB_SIDES
+            faces.append((n, following, KNOB_SIDES + following, KNOB_SIDES + n))
+        return Placement((0.0, 0.0, 0.0), (cx, front_y, cz), verts=tuple(verts), faces=tuple(faces))
+    half = rules.BAR_SECTION_MM / 2
+    along, length = ("z" if record["orientation"] == "vertical" else "x"), record["length"]
+    bar_y0, bar_y1 = front_y - BAR_PROUD_MM, front_y - BAR_PROUD_MM + rules.BAR_SECTION_MM
+    # Two posts 15 mm in from the ends, or one in the middle of a bar too short for two.
+    reach = length / 2 - POST_INSET_MM - half
+    offsets = (-reach, reach) if reach > half else (0.0,)
+    boxes = [(-length / 2, length / 2, bar_y0, bar_y1)] + [(o - half, o + half, bar_y1, front_y) for o in offsets]
+    for a0, a1, y0, y1 in boxes:
+        if along == "z":
+            box = _cuboid(cx - half, cx + half, y0, y1, cz + a0, cz + a1, len(verts))
+        else:
+            box = _cuboid(cx + a0, cx + a1, y0, y1, cz - half, cz + half, len(verts))
+        verts.extend(box[0])
+        faces.extend(box[1])
+    return Placement((0.0, 0.0, 0.0), (cx, front_y, cz), verts=tuple(verts), faces=tuple(faces))
+
+
+def _handle_pieces(spec: Mapping[str, Any]) -> list[tuple[str, str, str, str, Placement]]:
+    """Every modelled handle: (object name, owning module, finish, key, shape), in front-row order."""
+    pieces: list[tuple[str, str, str, str, Placement]] = []
+    for module in spec["modules"]:
+        t = spec["materials"][module["carcass"]]["thickness_mm"]
+        back = module.get("back")
+        b = spec["materials"][back]["thickness_mm"] if back is not None else 0
+        # A handle on a slatted leaf stands proud of the slats' face (door-slats).
+        slat_depth = {
+            (record["row"], record["leaf"]): record["thickness"]
+            for record in rules.slat_layout(module, spec["materials"], t, b)
+        }
+        for record in rules.handle_layout(module, t, b):
+            name = f"{record['row']}-handle" + (f"#{record['leaf'] + 1}" if record["leaf"] else "")
+            front_y = module["y"] - t - slat_depth.get((record["row"], record["leaf"]), 0)
+            shape = _handle_shape(record, module["x"] + record["x"], front_y, module["z"] + record["z"])
+            pieces.append((name, module["id"], record["finish"], record["key"], shape))
+    return pieces
+
+
+# Drawn hardware (hardware-catalog): each piece of `rules.hardware_layout` is one object named
+# `<line id>#<n>`, built here in its own frame around the record's anchor point, so pieces of one line
+# with the same geometry share one mesh. Facets per round section, and the bevel each piece gets.
+HARDWARE_SIDES = 20
+HARDWARE_BEVEL_MM = 0.4
+# Physically based metal per finish: (base colour, roughness, metallic); hardware-catalog design 5.
+HARDWARE_FINISHES: dict[str, tuple[tuple[float, float, float], float, float]] = {
+    "chrome": ((0.8, 0.8, 0.82), 0.08, 1.0),
+    "nickel": ((0.66, 0.64, 0.6), 0.2, 1.0),
+    "steel": ((0.56, 0.57, 0.58), 0.3, 1.0),
+    "aluminium": ((0.82, 0.83, 0.85), 0.35, 1.0),
+    "brass": ((0.71, 0.53, 0.23), 0.25, 1.0),
+    "black": ((0.03, 0.03, 0.035), 0.5, 0.3),
+}
+
+Mesh = tuple[list[tuple[float, float, float]], list[tuple[int, ...]], list[int]]  # verts, faces, smooth faces
+
+
+def _add_box(mesh: Mesh, x0: float, x1: float, y0: float, y1: float, z0: float, z1: float) -> None:
+    verts, faces = _cuboid(min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1), min(z0, z1), max(z0, z1), len(mesh[0]))
+    mesh[0].extend(verts)
+    mesh[1].extend(faces)
+
+
+def _add_tube(
+    mesh: Mesh, axis: str, start: float, end: float, centre: tuple[float, float], radii: tuple[float, float]
+) -> None:
+    """A capped round (or oval) section along `axis` from `start` to `end`; `centre` and `radii` are in
+    the two other axes, in x-y-z order. Its side faces are smoothed."""
+    verts, faces, smooth = mesh
+    base = len(verts)
+    lo, hi = min(start, end), max(start, end)
+    for at in (lo, hi):
+        for n in range(HARDWARE_SIDES):
+            angle = 2 * math.pi * n / HARDWARE_SIDES
+            a = centre[0] + radii[0] * math.cos(angle)
+            b = centre[1] + radii[1] * math.sin(angle)
+            verts.append({"x": (at, a, b), "y": (a, at, b), "z": (a, b, at)}[axis])
+    ring = range(HARDWARE_SIDES)
+    first = tuple(base + n for n in ring)
+    second = tuple(base + HARDWARE_SIDES + n for n in ring)
+    faces.append(first[::-1] if axis != "y" else first)
+    faces.append(second if axis != "y" else second[::-1])
+    for n in ring:
+        following = (n + 1) % HARDWARE_SIDES
+        smooth.append(len(faces))
+        faces.append((base + n, base + following, base + HARDWARE_SIDES + following, base + HARDWARE_SIDES + n))
+
+
+def _hardware_mesh(record: Mapping[str, Any]) -> tuple[tuple[Any, ...], tuple[float, float, float], Mesh]:
+    """(geometry signature, anchor point in build mm, mesh around that anchor) for one layout record."""
+    size, shape = record["size"], record["shape"]
+    mesh: Mesh = ([], [], [])
+    if shape == "hinge_concealed":
+        cx, cy, cz = record["cup"]
+        sign = -1 if record["side"] == "left" else 1
+        reach = record["plate_x"] - cx  # to the side's inner face
+        radius = size["cup_diameter_mm"] / 2
+        _add_tube(mesh, "y", -size["cup_depth_mm"], 1.0, (0.0, 0.0), (radius, radius))
+        thickness = size["plate_thickness_mm"]
+        arm_w, arm_h = size["arm_width_mm"], size["arm_height_mm"]
+        _add_box(mesh, -sign * radius * 0.4, reach - sign * thickness, 1.0, 1.0 + arm_h, -arm_w / 2, arm_w / 2)
+        _add_box(mesh, reach - sign * thickness, reach, 2.0, 2.0 + size["plate_length_mm"],
+                 -size["plate_height_mm"] / 2, size["plate_height_mm"] / 2)
+        return (record["line"], shape, record["side"], round(reach, 3)), (cx, cy, cz), mesh
+    if shape == "shelf_pin":
+        radius = size["diameter_mm"] / 2
+        facing = record["facing"]
+        _add_tube(mesh, "x", 0.0, facing * size["length_mm"], (0.0, -radius), (radius, radius))
+        return (record["line"], shape, facing), record["at"], mesh
+    if shape == "drawer_runner":
+        span = record["right_x"] - record["left_x"]
+        width, height, length = size["width_mm"], size["height_mm"], record["length"]
+        _add_box(mesh, 0.0, width, 0.0, length, 0.0, height)
+        _add_box(mesh, span - width, span, 0.0, length, 0.0, height)
+        return (record["line"], shape, span), (record["left_x"], record["y0"], record["z"]), mesh
+    if shape == "hanging_rail":
+        _add_tube(mesh, "x", 0.0, record["length"], (0.0, 0.0), (size["width_mm"] / 2, size["height_mm"] / 2))
+        return (record["line"], shape, record["length"]), (record["x0"], record["y"], record["z"]), mesh
+    if shape == "rail_support":
+        x, y, z = record["at"]
+        width, height, thickness = size["width_mm"], size["height_mm"], size["thickness_mm"]
+        if record["mount"] == "side":
+            _add_box(mesh, 0.0, record["facing"] * thickness, -width / 2, width / 2, -height / 2, height / 2)
+            return (record["line"], shape, record["facing"]), (x, y, z), mesh
+        drop = record["top_z"] - z
+        _add_box(mesh, -thickness / 2, thickness / 2, -width / 4, width / 4, 0.0, drop)
+        return (record["line"], shape, "above", round(drop, 3)), (x, y, z), mesh
+    if shape == "shelf_bracket":
+        arm = min(size["arm_length_mm"], record["depth"] - 10)
+        width, thickness = size["width_mm"], size["thickness_mm"]
+        _add_box(mesh, -width / 2, width / 2, -thickness, 0.0, -size["height_mm"], 0.0)
+        _add_box(mesh, -width / 2, width / 2, -arm, 0.0, -thickness, 0.0)
+        return (record["line"], shape, round(arm, 3)), record["at"], mesh
+    raise GeneratorError(f"build: hardware shape {shape!r} cannot be drawn")
+
+
+def _hardware_material(state: BuildState, finish: str) -> bpy.types.Material:
+    name = f"Hardware {finish}"
+    existing = state.materials.get(name)
+    if existing is not None:
+        return existing
+    colour, roughness, metallic = HARDWARE_FINISHES.get(finish, HARDWARE_FINISHES["steel"])
+    material = bpy.data.materials.new(name)
+    material.diffuse_color = (*colour, 1)
+    material.metallic = metallic
+    material.roughness = roughness
+    material.use_nodes = True
+    shader = next((node for node in material.node_tree.nodes if node.type == "BSDF_PRINCIPLED"), None)
+    if shader is not None:
+        shader.inputs["Base Color"].default_value = (*colour, 1)
+        shader.inputs["Roughness"].default_value = roughness
+        shader.inputs["Metallic"].default_value = metallic
+    state.materials[name] = material
+    return material
+
+
+def _draw_hardware(
+    state: BuildState,
+    shift: tuple[float, float, float],
+    collections: Mapping[str, bpy.types.Collection],
+    empties: Mapping[str, bpy.types.Object],
+) -> None:
+    """Draw every `hardware_layout` record in the `hardware` layer, one object per piece."""
+    import bmesh  # only inside Blender; the box tests import this module with a stand-in `bpy`
+
+    meshes: dict[tuple[Any, ...], bpy.types.Mesh] = {}
+    numbers: dict[str, int] = {}
+    for record in rules.hardware_layout(state.spec, state.inputs):
+        signature, anchor, (verts, faces, smooth) = _hardware_mesh(record)
+        signature = (*signature, record["finish"])
+        mesh = meshes.get(signature)
+        if mesh is None:
+            mesh = bpy.data.meshes.new(f"HW_{record['line']}_{len(meshes) + 1}")
+            mesh.from_pydata([tuple(m(value) for value in vertex) for vertex in verts], [], [list(face) for face in faces])
+            shaped = bmesh.new()
+            shaped.from_mesh(mesh)
+            bmesh.ops.recalc_face_normals(shaped, faces=shaped.faces)
+            shaped.to_mesh(mesh)
+            shaped.free()
+            for index in smooth:
+                mesh.polygons[index].use_smooth = True
+            mesh.update()
+            mesh.materials.append(_hardware_material(state, record["finish"]))
+            meshes[signature] = mesh
+        numbers[record["line"]] = numbers.get(record["line"], 0) + 1
+        name = f"{record['line']}#{numbers[record['line']]}"
+        obj = bpy.data.objects.new(name, mesh)
+        obj.location = tuple(m(value - offset) for value, offset in zip(anchor, shift, strict=True))
+        bevel = obj.modifiers.new("Bevel", "BEVEL")
+        bevel.width = m(HARDWARE_BEVEL_MM)
+        bevel.segments = 2
+        bevel.limit_method = "ANGLE"
+        owner = record["module"]
+        parent = empties[owner]
+        obj.parent = parent
+        obj.matrix_parent_inverse = parent.matrix_world.inverted()
+        _link(obj, collections[owner])
+        obj["hardware_key"] = record["key"]
+        state.layers.add(name, rules.HARDWARE_LAYER)
+
+
 def _wall_shelf_boxes(spec: Mapping[str, Any]) -> dict[str, tuple[str, list[Box]]]:
     """Each wall shelf is one board at its stated position; brackets are never drawn."""
     pieces: dict[str, tuple[str, list[Box]]] = {}
@@ -585,12 +827,15 @@ def _wall_shelf_boxes(spec: Mapping[str, Any]) -> dict[str, tuple[str, list[Box]
 
 _COLOURS: tuple[tuple[str, tuple[float, float, float], float, float], ...] = (
     ("oak", (0.48, 0.29, 0.145), 0.45, 0.0),
+    ("anthracite", (0.09, 0.09, 0.1), 0.5, 0.0),
+    ("anthrazit", (0.09, 0.09, 0.1), 0.5, 0.0),
     ("black", (0.035, 0.035, 0.04), 0.55, 0.0),
     ("mdf", (0.62, 0.55, 0.45), 0.6, 0.0),
     ("birch", (0.72, 0.62, 0.42), 0.5, 0.0),
     ("shs", (0.12, 0.12, 0.13), 0.32, 1.0),
     ("steel", (0.12, 0.12, 0.13), 0.32, 1.0),
     ("aluminium", (0.55, 0.56, 0.58), 0.3, 1.0),
+    ("brass", (0.71, 0.53, 0.23), 0.3, 1.0),
 )
 
 
@@ -803,6 +1048,14 @@ def _build_scene(state: BuildState, parts: list[dict[str, Any]]) -> None:
                     state, name, (shifted.size, shifted.centre), row["material"], layer,
                     collections[owner], empties[owner], shifted.rotation_deg,
                 )
+
+    for name, owner, finish, key, shape in _handle_pieces(spec):
+        shifted = at_placement(shape)
+        _prism(state, name, shifted.verts, shifted.faces, f"Handle {finish}", "handles", collections[owner], empties[owner])
+        handle = bpy.data.objects[name]
+        del handle["part_id"]
+        handle["hardware_key"] = key
+    _draw_hardware(state, shift, collections, empties)
 
     _build_dimensions(overall, z0, root_collection, root)
     _build_cameras_lights(overall, z0)

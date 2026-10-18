@@ -3,13 +3,14 @@
 Uses the approved (else latest) composition version's corners and openings when
 that document has a room plan — the same source as the inspector dimensions —
 and falls back to the house-file room otherwise. Builds a room-scene document,
-runs the room contract, and returns either the refusal or the placement and the
-document a room render uses.
+runs the room contract, and returns either the refusal or the placement. A
+placement that fits is stored with the version (view-piece-in-room), so a render
+in that room reads it; no model copies the document between tools.
 """
 
 from __future__ import annotations
 
-import json
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
@@ -23,6 +24,7 @@ from app.blender.custom_build import derive as custom_derive
 from app.blender.room_contract import normalise_room_scene
 from app.blender.spec_contract import SpecValidationError
 from app.guidelines.rules import evaluate, partition, refusal_text, warnings_note
+from app.packages.placements import write_placement
 
 
 class RoomFitArgs(BaseModel):
@@ -91,30 +93,53 @@ def _room_for_fit(session, root, room_name: str) -> Any | None:
     return house_file.room_by_name(session, room_name)
 
 
-def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
-    args, problem = parse_args(RoomFitArgs, arguments)
-    if args is None:
-        return problem
+@dataclass(frozen=True)
+class Fit:
+    """A placement that fits: what was stored, and the design-rule warnings."""
+
+    package_id: str
+    version: int
+    room: str
+    wall: int
+    offset_mm: float
+    placement: dict[str, Any]
+    scene: dict[str, Any]
+    warnings: str
+
+
+def fit(
+    ctx: ToolContext,
+    room_name: str,
+    package_id: str,
+    version: int | None,
+    wall: int,
+    offset_mm: float,
+    *,
+    left_mm: float | None = None,
+    store: bool = True,
+) -> Fit | str:
+    """Check the placement; on success store it with the version (unless `store` is false).
+    A refusal is returned as text."""
     with ctx.deps.session() as session:
-        room = _room_for_fit(session, ctx.deps.render_root, args.room_name)
+        room = _room_for_fit(session, ctx.deps.render_root, room_name)
         if room is None:
             names = [r.name for r in house_file.rooms(session)]
             known = f"its rooms are: {', '.join(names)}" if names else "no rooms are recorded yet"
             return (
-                f"there is no room {args.room_name!r} in the house file; {known}. "
+                f"there is no room {room_name!r} in the house file; {known}. "
                 "Intake records a room from its measurements or a plan"
             )
-        document = room_document(room, args.wall, args.offset_mm)
+        document = room_document(room, wall, offset_mm)
         fit_room = room
 
-    folder, number, problem = version_folder(ctx.deps, args.package_id, args.version)
-    if folder is None:
+    folder, number, problem = version_folder(ctx.deps, package_id, version)
+    if folder is None or number is None:
         return problem
     stored = read_input(folder)
     if stored is None:
-        return f"version {number} of {args.package_id!r} has no readable document"
+        return f"version {number} of {package_id!r} has no readable document"
     overall = custom_derive.overall(stored)
-    blocked = opening_in_the_way(fit_room, args.wall, args.offset_mm, overall)
+    blocked = opening_in_the_way(fit_room, wall, offset_mm, overall)
     if blocked:
         return blocked
     try:
@@ -131,13 +156,44 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
     refusals, warnings = partition(evaluate(ctx.deps.design_rules, "placement", context))
     if refusals:
         return refusal_text(refusals)
-    note = f"Design-rule warnings: {warnings_note(warnings)}\n" if warnings else ""
+    scene = context.input_document()
+    if store:
+        write_placement(
+            folder,
+            room_name,
+            {
+                "room": room_name,
+                "wall": wall,
+                "offset_mm": offset_mm,
+                "left_mm": left_mm,
+                "placement": placement,
+                "scene": scene,
+            },
+        )
+    return Fit(
+        package_id=package_id,
+        version=number,
+        room=room_name,
+        wall=wall,
+        offset_mm=offset_mm,
+        placement=placement,
+        scene=scene,
+        warnings=warnings_note(warnings) if warnings else "",
+    )
+
+
+def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
+    args, problem = parse_args(RoomFitArgs, arguments)
+    if args is None:
+        return problem
+    result = fit(ctx, args.room_name, args.package_id, args.version, args.wall, args.offset_mm)
+    if isinstance(result, str):
+        return result
+    note = f"\nDesign-rule warnings: {result.warnings}" if result.warnings else ""
     return (
-        f"{args.package_id} version {number} fits in {args.room_name} on wall {args.wall} at "
-        f"offset {args.offset_mm:g} mm.\n"
-        f"{note}"
-        f"Placement: {json.dumps(placement)}\n"
-        f"Room document (pass it as `room` to render_turntable): {json.dumps(context.input_document())}"
+        f"{args.package_id} version {result.version} fits in {args.room_name} on wall {args.wall} at "
+        f"offset {args.offset_mm:g} mm. Placement saved for {args.room_name}; the Builder renders "
+        f"it in the room with render_turntable in_room true.{note}"
     )
 
 
@@ -146,8 +202,8 @@ room_fit = AgentTool(
     description=(
         "Check whether a piece fits a room: give the room's name, the piece and version, a wall "
         "index and an offset along it. Uses the approved room composition's plan when one exists "
-        "(the same walls and openings as the inspector), otherwise the house-file room. Returns "
-        "the placement and the room document, or says what is in the way."
+        "(the same walls and openings as the inspector), otherwise the house-file room. A "
+        "placement that fits is saved for a render in that room; otherwise it says what is in the way."
     ),
     schema=RoomFitArgs,
     run=run,

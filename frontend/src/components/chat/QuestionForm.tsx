@@ -9,10 +9,12 @@ import { cardClass } from "@/components/ui/card";
  * one has an answer, earlier ones can be revisited, and all answers go in one step. The
  * owner may decline the set and answer in their own words instead.
  */
-export function QuestionForm({ questions, disabled, onAnswer }: {
+export function QuestionForm({ questions, disabled, onAnswer, onRoomLayout }: {
   questions: Question[];
   disabled: boolean;
   onAnswer: (answer: ResumeBody) => void;
+  /** Given for the placement questions: a "Room layout" button that shows the room and sends nothing. */
+  onRoomLayout?: () => void;
 }) {
   const [answers, setAnswers] = useState<string[]>(() => questions.map(() => ""));
   const [at, setAt] = useState(0);
@@ -56,6 +58,11 @@ export function QuestionForm({ questions, disabled, onAnswer }: {
           next();
         }}
       >
+        {onRoomLayout && (
+          <Button type="button" variant="outline" size="sm" onClick={onRoomLayout}>
+            Room layout
+          </Button>
+        )}
         <label className="block space-y-2">
           <span className="block font-chat text-base">{question.text}</span>
           <span className="flex items-center gap-2">

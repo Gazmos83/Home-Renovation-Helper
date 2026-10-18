@@ -321,7 +321,7 @@ def test_a_symlink_leading_outside_the_root_is_not_served(
     [("GET", "/packages"), ("GET", "/packages/x"), ("POST", "/packages"),
      ("GET", "/packages/x/versions/1/files/spec.json"), ("PUT", "/packages/x/spec"),
      ("PUT", "/packages/x/versions/1/approval"), ("DELETE", "/packages/x/versions/1/approval"),
-     ("DELETE", "/packages/x/versions/1"),
+     ("DELETE", "/packages/x/versions/1"), ("GET", "/packages/x/deletion"), ("DELETE", "/packages/x"),
      ("GET", "/packages/x/versions/1/design"), ("GET", "/packages/x/versions/1/bundle"),
      ("PUT", "/packages/x/room"), ("GET", "/rooms"), ("DELETE", "/rooms/x")],
 )

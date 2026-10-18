@@ -99,6 +99,8 @@ def composition_version_views(
                 "viewer": _composition_route(slug, number, "viewer.html") if (folder / "viewer.html").is_file() else None,
                 "items": house_file.placed_items(session, document),
                 "model": _composition_route(slug, number, "model.glb") if modelled else None,
+                # The Blender file for download (version-file-downloads).
+                "blend": _composition_route(slug, number, "model.blend") if (folder / "model.blend").is_file() else None,
                 "surfaces": _composition_route(slug, number, "report.json") if modelled else None,
                 "dimensions": f"/compositions/{slug}/versions/{number}/dimensions" if modelled else None,
                 "approved_at": when.get(number),
@@ -164,6 +166,49 @@ def _next_step(steps: list[dict[str, Any]], build_status: str | None, has_piece:
     if not done["final"]:
         return "Ask for a final render"
     return "Every step is done; ask for a change any time"
+
+
+# A room render's notice links to its result (room-render-notices): the turntable's viewer or the still.
+ROOM_NOTICE_LINKS: Final = {
+    "turntable": ("Open the turntable viewer", "viewer.html"),
+    "still": ("Open the still", "still.png"),
+}
+
+
+def room_notice_links(root: Path, notice: Any) -> list[dict[str, str]]:
+    """The links a finished room render's notice shows, only for files that still exist."""
+    slug, version, key = notice.composition_slug, notice.version, notice.render_key
+    if notice.outcome != "succeeded" or not slug or version is None or key not in ROOM_NOTICE_LINKS:
+        return []
+    label, name = ROOM_NOTICE_LINKS[key]
+    try:
+        folder = storage.composition_version_dir(root, slug, version)
+    except (storage.InvalidPackageId, ValueError):
+        return []
+    if not (folder / name).is_file():
+        return []
+    return [{"label": label, "href": _composition_route(slug, version, name)}]
+
+
+def room_rendering(session: Session, root: Path, thread_id: UUID) -> bool:
+    """Whether a room or apartment render the thread started is still queued or running
+    (room-render-notices). A record whose composition version no longer shows that render
+    queued or running is deleted, so a failed process never keeps the thread rendering."""
+    running = False
+    for record in house_file.followed_room_renders(session, thread_id):
+        try:
+            folder = storage.composition_version_dir(root, record.composition_slug, record.version)
+            state = storage.read_status(folder) or {}
+        except (storage.InvalidPackageId, ValueError):
+            state = {}
+        job = (state.get("renders") or {}).get(record.render_key) or {}
+        if job.get("status") in ("queued", "running"):
+            running = True
+        else:
+            house_file.stop_following_room_render(
+                session, thread_id, record.composition_slug, record.version, record.render_key
+            )
+    return running
 
 
 def piece_progress(

@@ -530,6 +530,11 @@ class Thread(Base):
         ),
         nullable=True,
     )
+    # The owner answered no to "Would you like to view this piece in a room?"
+    # (optional-room-question); neither room question is asked again here.
+    room_declined: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -566,6 +571,30 @@ class ThreadNotice(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     package_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # A room or apartment composition's render (room-render-notices): its slug and render key, so
+    # reading the thread can link the notice to the composition's viewer or still. `version` holds
+    # its version; `package_id` stays empty, as it names only pieces.
+    composition_slug: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    render_key: Mapped[str | None] = mapped_column(String(96), nullable=True)
+
+
+class ThreadRoomRender(Base):
+    """A room or apartment composition render a conversation started and is following
+    (room-render-notices). Removed when its notice is posted; it counts only while the
+    composition version's status shows the render queued or running."""
+
+    __tablename__ = "thread_room_renders"
+
+    thread_id: Mapped[UUID] = mapped_column(
+        ForeignKey("threads.id", ondelete="CASCADE", name="fk_thread_room_renders_thread_id_threads"),
+        primary_key=True,
+    )
+    composition_slug: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    render_key: Mapped[str] = mapped_column(String(96), primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class ThreadPiece(Base):

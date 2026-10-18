@@ -115,6 +115,20 @@ test("the cut list tab lists every part and hardware row", async () => {
   expect(screen.queryByTestId("canvas")).not.toBeInTheDocument();
 });
 
+test("the Files tab offers the version's files for download", async () => {
+  serve("succeeded", [...FILES_WITH_VIEWS, "model.blend", "hardware.csv", "status.json"]);
+  show();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Files" }));
+  const panel = within(screen.getByRole("region", { name: "Download the package (version 1)" }));
+  expect(panel.getAllByRole("link")).toHaveLength(9);
+  const blend = panel.getByRole("link", { name: "Download Blender file (version 1)" });
+  expect(blend).toHaveAttribute("href", "/packages/murphy-bed/versions/1/files/model.blend");
+  expect(blend).toHaveAttribute("download", "murphy-bed-v1.blend");
+  expect(panel.getByRole("link", { name: "Download Hardware (CSV) (version 1)" })).toHaveAttribute("download", "murphy-bed-v1-hardware.csv");
+  expect(screen.queryByTestId("canvas")).not.toBeInTheDocument();
+});
+
 test("a building version shows its state and no model", async () => {
   serve("running", []);
   show();

@@ -596,6 +596,18 @@ def _hall(db_session):
     return house_file.upsert_room(db_session, "Hall", LIVING, 2600)
 
 
+def test_a_declined_room_is_recorded_and_survives_a_later_room(db_session) -> None:
+    from uuid import uuid4
+
+    thread = house_file.create_thread(db_session, "Shoe bench")
+    assert thread.room_declined is False
+    assert house_file.decline_room(db_session, thread.id) is True
+    assert house_file.get_thread(db_session, thread.id).room_declined is True
+    house_file.set_thread_room(db_session, thread.id, _hall(db_session))
+    assert house_file.get_thread(db_session, thread.id).room_declined is True
+    assert house_file.decline_room(db_session, uuid4()) is False
+
+
 def test_a_new_thread_has_no_confirmed_room(db_session) -> None:
     hall = _hall(db_session)
     first = house_file.create_thread(db_session, "First")

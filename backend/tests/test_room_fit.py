@@ -35,18 +35,45 @@ def fit(make_ctx, **overrides) -> str:
     return run({**args, **overrides}, make_ctx())
 
 
-def test_a_piece_that_fits_returns_the_placement_and_a_valid_room_document(
+def test_a_piece_that_fits_stores_the_placement_and_a_valid_room_document(
     make_ctx, tool_deps, tool_state
 ) -> None:
+    from app.blender import storage
+    from app.blender.custom_build import derive as custom_derive
+    from app.packages.placements import placement_file, read_placement
+
     setup(tool_deps, tool_state)
     result = fit(make_ctx)
     assert "fits in Living room on wall 0 at offset 500 mm" in result
-    document = json.loads(re.search(r"Room document[^:]*: (\{.*\})$", result, re.MULTILINE).group(1))
-    spec = RoomSceneSpec.model_validate(document)
+    assert "Placement saved for Living room" in result
+    assert "Room document" not in result and "schema_version" not in result
+    folder = storage.version_dir(tool_state.settings.render_root, "bench", 1)
+    assert placement_file(folder, "Living room") == folder / "placements" / "living-room.json"
+    stored = read_placement(folder, "Living room")
+    assert stored["wall"] == 0 and stored["offset_mm"] == 500
+    assert stored["placement"]["wall"] == 0
+    spec = RoomSceneSpec.model_validate(stored["scene"])
     assert spec.placement.wall == 0
-    from app.blender.custom_build import derive as custom_derive
-
     spec.context({k: float(v) for k, v in custom_derive.overall(desk()).items()})
+
+
+def test_a_refused_placement_stores_nothing(make_ctx, tool_deps, tool_state) -> None:
+    from app.blender import storage
+    from app.packages.placements import read_placement
+
+    setup(tool_deps, tool_state)
+    assert fit(make_ctx, offset_mm=3900).startswith("it does not fit:")
+    assert read_placement(storage.version_dir(tool_state.settings.render_root, "bench", 1), "Living room") is None
+
+
+def test_the_placement_goes_with_its_version(make_ctx, tool_deps, tool_state) -> None:
+    from app.blender import storage
+
+    setup(tool_deps, tool_state)
+    fit(make_ctx)
+    root = tool_state.settings.render_root
+    storage.remove_version(root, "bench", 1)
+    assert not (root / "bench").exists()
 
 
 def test_too_wide_is_refused_naming_the_wall_and_the_excess(make_ctx, tool_deps, tool_state) -> None:

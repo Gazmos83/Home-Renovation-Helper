@@ -154,6 +154,24 @@ def summarizer(
     return summarize
 
 
+def stored_note(
+    engine: Engine, thread_id: UUID, package_id: str | None = None
+) -> Callable[[list[BaseMessage]], str | None]:
+    """The routing call's read-only `summarize`: the stored note when there is one, never a
+    new one (conversation-recent-inputs). `None` sends the shortened-history note instead."""
+
+    def note(_dropped: list[BaseMessage]) -> str | None:
+        with Session(engine) as session:
+            from app.engineering.chat import has_engineering_history
+
+            if has_engineering_history(session, thread_id):
+                return None
+            stored, _through = house_file.read_summary(session, thread_id, package_id)
+        return stored or None
+
+    return note
+
+
 def covered_through(engine: Engine, thread_id: UUID, package_id: str | None = None) -> str | None:
     """The id of the last message the active note covers, or `None` when there is no note."""
     with Session(engine) as session:

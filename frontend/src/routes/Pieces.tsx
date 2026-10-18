@@ -5,6 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { PieceVariants } from "../components/Variants";
 import { RenderRating } from "@/components/RenderRating";
 import { api, downloads, versionFile, type PieceSummary, type Pricing, type RenderItem, type VersionInfo } from "../lib/api";
+import { VersionFiles } from "@/components/studio/VersionFiles";
 import { pictureVersion } from "../lib/pieces";
 import { euros } from "../lib/money";
 import { FieldError } from "../lib/form";
@@ -13,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { cardClass } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DeletePiece } from "@/components/DeletePiece";
 import { DeleteVersion } from "@/components/DeleteVersion";
 import { Tile } from "@/components/studio/Tile";
 import { TileGrid } from "@/components/studio/TileGrid";
@@ -185,32 +187,42 @@ function Downloads({ packageId, version }: { packageId: string; version: number 
     queryKey: ["version", packageId, version],
     queryFn: () => api.version(packageId, version),
   });
+  const built = info.data?.status === "succeeded";
   return (
-    <p className="flex flex-wrap gap-2 text-sm" aria-label={`Downloads of ${packageId} version ${version}`}>
-      <span>Downloads:</span>{" "}
-      <a
-        href={downloads.design(packageId, version)}
-        download={`${packageId}-v${version}.json`}
-        aria-label={`Download design (version ${version})`}
-        className="underline"
-      >
-        Design (JSON)
-      </a>
-      {info.data?.status === "succeeded" && (
-        <>
-          {" "}
-          <span aria-hidden>·</span>{" "}
-          <a
-            href={downloads.bundle(packageId, version)}
-            download={`${packageId}-v${version}.zip`}
-            aria-label={`Download bundle (version ${version})`}
-            className="underline"
-          >
-            Bundle (ZIP)
-          </a>
-        </>
+    <div className="grid gap-3">
+      <p className="flex flex-wrap gap-2 text-sm" aria-label={`Downloads of ${packageId} version ${version}`}>
+        <span>Downloads:</span>{" "}
+        <a
+          href={downloads.design(packageId, version)}
+          download={`${packageId}-v${version}.json`}
+          aria-label={`Download design (version ${version})`}
+          className="underline"
+        >
+          Design (JSON)
+        </a>
+        {built && (
+          <>
+            {" "}
+            <span aria-hidden>·</span>{" "}
+            <a
+              href={downloads.bundle(packageId, version)}
+              download={`${packageId}-v${version}.zip`}
+              aria-label={`Download bundle (version ${version})`}
+              className="underline"
+            >
+              Bundle (ZIP)
+            </a>
+          </>
+        )}
+      </p>
+      {built && (
+        <VersionFiles
+          owner={packageId}
+          version={version}
+          files={(info.data?.files ?? []).map((name) => ({ name, href: versionFile(packageId, version, name) }))}
+        />
       )}
-    </p>
+    </div>
   );
 }
 
@@ -335,11 +347,13 @@ function PieceDetail({
   versions,
   room,
   threadId,
+  onDeleted,
 }: {
   id: string;
   versions: number[];
   room: string | null;
   threadId: string | null;
+  onDeleted: () => void;
 }) {
   const queryClient = useQueryClient();
   const [chosen, setVersion] = useState(versions[0]);
@@ -403,6 +417,7 @@ function PieceDetail({
         />
       )}
       <Version packageId={id} version={version} />
+      <DeletePiece packageId={id} onDeleted={onDeleted} />
     </>
   );
 }
@@ -534,6 +549,13 @@ export default function Pieces() {
               versions={opened.versions}
               room={opened.room}
               threadId={opened.thread_id}
+              onDeleted={() => {
+                queryClient.removeQueries({ queryKey: ["version", opened.package_id] });
+                queryClient.invalidateQueries({ queryKey: ["pieces"] });
+                queryClient.invalidateQueries({ queryKey: ["threads"] });
+                queryClient.invalidateQueries({ queryKey: ["compositions"] });
+                dialog.dismiss();
+              }}
             />
           </DialogContent>
         )}

@@ -113,6 +113,12 @@ DRAWER_BOX_HEIGHT_REDUCTION_MM: Final = 40
 # Standard runner lengths, and the clearance left behind the longest that fits.
 RUNNER_LENGTHS_MM: Final = (250, 300, 350, 400, 450, 500, 550, 600)
 RUNNER_REAR_CLEARANCE_MM: Final = 10
+# Modelled handles (front-handles): a bar's square section, a knob's diameter,
+# the default distance from the handle edge, and the least room left around one.
+BAR_SECTION_MM: Final = 12
+KNOB_DIAMETER_MM: Final = 30
+HANDLE_INSET_MM: Final = 40
+HANDLE_MARGIN_MM: Final = 10
 
 HINGE_ID: Final = "hinge-concealed-110"
 FLAP_HINGE_ID: Final = "hinge-flap"
@@ -123,12 +129,24 @@ BRACKET_COUNT_CHECK: Final = "shelf_bracket_count_for_length"
 BRACKET_SPACING_CHECK: Final = "shelf_bracket_spacing_mm"
 PIN_COUNT_CHECK: Final = "shelf_pin_count_for_width"
 HINGE_COUNT_CHECK: Final = "hinge_count_for_height"
+RAIL_SUPPORT_CHECK: Final = "rail_support_count_for_length"
 # Rules the calculators read from a version's frozen inputs; at most one rule may name each.
-CALCULATOR_CHECKS: Final = (BRACKET_COUNT_CHECK, BRACKET_SPACING_CHECK, PIN_COUNT_CHECK, HINGE_COUNT_CHECK)
+CALCULATOR_CHECKS: Final = (
+    BRACKET_COUNT_CHECK, BRACKET_SPACING_CHECK, PIN_COUNT_CHECK, HINGE_COUNT_CHECK, RAIL_SUPPORT_CHECK,
+)
 CONFIRMAT_ID: Final = "confirmat-7x50"
 EXTRAS_MODULE: Final = "extras"
+# Hanging rails (hardware-catalog): the default rail and support items, how far each rail end is cut
+# short of its bay's side to sit in its support, the rail's section height, and the least clear room
+# left above the rail's top for a hanger hook.
+RAIL_ID: Final = "rail-oval-30x15"
+RAIL_SUPPORT_ID: Final = "rail-support-oval"
+RAIL_END_ALLOWANCE_MM: Final = 1
+RAIL_SECTION_MM: Final = 30
+RAIL_HOOK_CLEARANCE_MM: Final = 40
+HARDWARE_LAYER: Final = "hardware"
 # The generated model's stable logical layers (furniture-package-generation).
-LAYER_NAMES: Final = ("carcass", "backs", "shelves", "fronts", "extras")
+LAYER_NAMES: Final = ("carcass", "backs", "shelves", "fronts", "extras", "handles", HARDWARE_LAYER)
 
 
 class DeriveError(ValueError):
@@ -1087,6 +1105,268 @@ def front_layout(
     return rects
 
 
+def handle_spec(front: Mapping[str, Any]) -> dict[str, Any] | None:
+    """A front entry's handle with every default resolved, or None without one (front-handles).
+
+    Bars default to vertical on doors and horizontal on drawers and flaps; door
+    handles to the meeting edges of an even count, else the right edge; the
+    key to `handle-bar-<length>-<finish>` or `handle-knob-<finish>`.
+    """
+    handle = front.get("handle")
+    if not handle:
+        return None
+    kind = handle["kind"]
+    finish = handle.get("finish") or "black"
+    resolved = {
+        "kind": kind,
+        "length": handle.get("length"),
+        "orientation": None,
+        "edge": None,
+        "inset_mm": handle.get("inset_mm"),
+        "at_mm": handle.get("at_mm"),
+        "finish": finish,
+    }
+    if kind == "bar":
+        default = "vertical" if front["type"] == "door" else "horizontal"
+        resolved["orientation"] = handle.get("orientation") or default
+        resolved["key"] = handle.get("key") or f"handle-bar-{handle['length']}-{finish}"
+        resolved["item"] = f"Bar handle {handle['length']} mm, {finish}"
+    else:
+        resolved["key"] = handle.get("key") or f"handle-knob-{finish}"
+        resolved["item"] = f"Knob, {finish}"
+    if front["type"] == "door":
+        resolved["edge"] = handle.get("edge") or ("meeting" if front["count"] % 2 == 0 else "right")
+    return resolved
+
+
+def handle_row_id(module_id: str, front: Mapping[str, Any], index: int) -> str:
+    """The cut-list row a front entry's leaves are cut as: the row its handles sit on."""
+    prefix = f"{module_id}-{front['type']}-{index + 1}"
+    return f"{prefix}-front" if front["type"] == "drawer" else prefix
+
+
+def leaf_slot(module: Mapping[str, Any], front: Mapping[str, Any], leaf_index: int) -> str:
+    """The material slot a door leaf is cut from: its `leaf_materials` slot (doors numbered
+    from 1 on the left), else the carcass slot (door-leaf-materials)."""
+    return (front.get("leaf_materials") or {}).get(str(leaf_index + 1), module["carcass"])
+
+
+def door_rows(module: Mapping[str, Any], front: Mapping[str, Any], index: int, count: int) -> list[tuple[str, int]]:
+    """Each leaf's `(cut-list row id, position in that row)`, left to right. A door entry
+    whose leaves are cut from more than one slot splits into `<entry row>-<n>`, one leaf
+    each; any other entry keeps its one row (door-leaf-materials)."""
+    row = handle_row_id(module["id"], front, index)
+    if front["type"] == "door" and len({leaf_slot(module, front, n) for n in range(count)}) > 1:
+        return [(f"{row}-{n}", 0) for n in range(1, count + 1)]
+    return [(row, n) for n in range(count)]
+
+
+def handle_layout(module: Mapping[str, Any], t: int | None = None, b: int | None = None) -> list[dict[str, Any]]:
+    """Every handle of one module, one per leaf, in the module's front-face frame.
+
+    Each record gives the row it sits on (`row`, and `leaf` counting from 0 in
+    the row's object order), the resolved handle, and its centre `x`/`z` and
+    footprint `w`/`h` (x from the module's left face, z from its bottom face).
+    A handle that is not at least `HANDLE_MARGIN_MM` inside its leaf raises
+    `DeriveError` naming `fronts[<entry>].handle` and the leaf's size.
+    """
+    rects = front_layout(module, t, b)
+    records: list[dict[str, Any]] = []
+    for index, front in enumerate(module["fronts"]):
+        handle = handle_spec(front)
+        if handle is None:
+            continue
+        leaves = [rect for rect in rects if rect["entry"] == index]
+        rows = door_rows(module, front, index, len(leaves))
+        for leaf_index, leaf in enumerate(leaves):
+            x0, z0, w, h = leaf["x"], leaf["z"], leaf["w"], leaf["h"]
+            if handle["kind"] == "knob":
+                foot_w = foot_h = KNOB_DIAMETER_MM
+            elif handle["orientation"] == "vertical":
+                foot_w, foot_h = BAR_SECTION_MM, handle["length"]
+            else:
+                foot_w, foot_h = handle["length"], BAR_SECTION_MM
+            inset, at = handle["inset_mm"], handle["at_mm"]
+            if front["type"] == "door":
+                edge = handle["edge"]
+                if edge == "meeting":
+                    edge = "right" if leaf_index % 2 == 0 else "left"
+                inset = HANDLE_INSET_MM if inset is None else inset
+                cx = x0 + w - inset if edge == "right" else x0 + inset
+                cz = z0 + (h / 2 if at is None else at)
+            else:
+                cx = x0 + (w / 2 if at is None else at)
+                if front["type"] == "drawer":
+                    cz = z0 + h / 2 if inset is None else z0 + h - inset
+                elif front["hinged"] == "bottom":
+                    cz = z0 + h - (HANDLE_INSET_MM if inset is None else inset)
+                else:
+                    cz = z0 + (HANDLE_INSET_MM if inset is None else inset)
+            margin = HANDLE_MARGIN_MM
+            if (
+                cx - foot_w / 2 < x0 + margin
+                or cx + foot_w / 2 > x0 + w - margin
+                or cz - foot_h / 2 < z0 + margin
+                or cz + foot_h / 2 > z0 + h - margin
+            ):
+                raise DeriveError(
+                    f"fronts[{index}].handle: the handle does not lie at least {margin} mm inside its "
+                    f"{front['type']} front of {math.floor(w)} × {math.floor(h)} mm"
+                )
+            records.append(
+                {
+                    "row": rows[leaf_index][0],
+                    "leaf": rows[leaf_index][1],
+                    "door": leaf_index + 1,
+                    "entry": index,
+                    "type": front["type"],
+                    **handle,
+                    "x": cx,
+                    "z": cz,
+                    "w": foot_w,
+                    "h": foot_h,
+                }
+            )
+    return records
+
+
+def slat_spec(front: Mapping[str, Any]) -> dict[str, Any] | None:
+    """A door entry's slats with every default resolved, or None without them (door-slats).
+
+    Slats are vertical unless stated, the margin is 0, and `leaves` (numbered
+    from 1 on the left) defaults to every leaf of the entry.
+    """
+    slats = front.get("slats") if front.get("type") == "door" else None
+    if not slats:
+        return None
+    return {
+        "count": slats["count"],
+        "width": slats["width"],
+        "material": slats["material"],
+        "orientation": slats.get("orientation") or "vertical",
+        "margin_mm": slats.get("margin_mm") or 0,
+        "leaves": list(slats.get("leaves") or range(1, front["count"] + 1)),
+    }
+
+
+def slat_layout(
+    module: Mapping[str, Any],
+    materials: Mapping[str, Mapping[str, Any]],
+    t: int | None = None,
+    b: int | None = None,
+) -> list[dict[str, Any]]:
+    """Every slat of one module, in the module's front-face frame (door-slats).
+
+    One record per slat, leaf by leaf from the left, then left to right for
+    vertical slats or top to bottom for horizontal ones. Each gives the door row
+    it sits on (`row`, and `leaf` counting from 0), the slat's centre `x`/`z` and
+    face size `w`/`h`, its `length`, the `gap` between neighbours and the slot's
+    `thickness`. The outer slats lie on the margins and the gaps are equal; a
+    single slat is centred. A gap under `GAP_MM`, or a margin that leaves no
+    room, raises `DeriveError` naming `fronts[<entry>].slats`.
+    """
+    if module.get("side_folds") and any(slat_spec(front) for front in module["fronts"]):
+        raise DeriveError("slats on a folded module are not supported")
+    rects = front_layout(module, t, b)
+    records: list[dict[str, Any]] = []
+    for index, front in enumerate(module["fronts"]):
+        slats = slat_spec(front)
+        if slats is None:
+            continue
+        count, width, margin = slats["count"], slats["width"], slats["margin_mm"]
+        vertical = slats["orientation"] == "vertical"
+        thickness = materials[slats["material"]]["thickness_mm"]
+        leaves = [rect for rect in rects if rect["entry"] == index]
+        rows = door_rows(module, front, index, len(leaves))
+        for leaf_index, leaf in enumerate(leaves):
+            if leaf_index + 1 not in slats["leaves"]:
+                continue
+            across = leaf["w"] if vertical else leaf["h"]
+            length = (leaf["h"] if vertical else leaf["w"]) - 2 * margin
+            span = across - 2 * margin
+            if length <= 0 or span < width:
+                raise DeriveError(
+                    f"fronts[{index}].slats.margin_mm: a {margin} mm margin leaves no room for a "
+                    f"{width} mm slat on a door of {math.floor(leaf['w'])} × {math.floor(leaf['h'])} mm"
+                )
+            if count == 1:
+                gap = 0.0
+                offsets = [(span - width) / 2]
+            else:
+                gap = (span - count * width) / (count - 1)
+                if gap < GAP_MM:
+                    fits = math.floor((span + GAP_MM) / (width + GAP_MM))
+                    side = "wide" if vertical else "high"
+                    raise DeriveError(
+                        f"fronts[{index}].slats: {count} slats {width} mm wide leave less than {GAP_MM} mm "
+                        f"between them on a door {math.floor(across)} mm {side}; at most {fits} such slats fit"
+                    )
+                offsets = [n * (width + gap) for n in range(count)]
+            for offset in offsets:
+                start = margin + offset + width / 2
+                if vertical:
+                    x, z, w, h = leaf["x"] + start, leaf["z"] + leaf["h"] / 2, width, length
+                else:
+                    x, z, w, h = leaf["x"] + leaf["w"] / 2, leaf["z"] + leaf["h"] - start, length, width
+                records.append(
+                    {
+                        "row": rows[leaf_index][0],
+                        "leaf": rows[leaf_index][1],
+                        "door": leaf_index + 1,
+                        "entry": index,
+                        "orientation": slats["orientation"],
+                        "count": count,
+                        "width": width,
+                        "length": length,
+                        "gap": gap,
+                        "material": slats["material"],
+                        "thickness": thickness,
+                        "x": x,
+                        "z": z,
+                        "w": w,
+                        "h": h,
+                    }
+                )
+    return records
+
+
+def slat_handle_warning(row: str, leaf: int) -> str:
+    """The warning for a handle drawn over slats; `leaf` is the door's place in its entry,
+    counting from 0 (door-slats)."""
+    return (
+        f"the handle on door {leaf + 1} of {row} is mounted over the slats, so its screws pass through "
+        "a slat into the door and its posts may land on a slat or in a gap; check the screw length and "
+        "the handle's position before drilling"
+    )
+
+
+def module_slat_handle_warnings(
+    module: Mapping[str, Any], materials: Mapping[str, Mapping[str, Any]], t: int, b: int
+) -> list[tuple[str, str]]:
+    """(slat row id, warning) for every leaf of one module carrying both slats and a handle."""
+    handled = {index for index, front in enumerate(module["fronts"]) if handle_spec(front)}
+    seen: set[tuple[str, int]] = set()
+    warnings: list[tuple[str, str]] = []
+    for record in slat_layout(module, materials, t, b):
+        key = (record["row"], record["leaf"])
+        if record["entry"] in handled and key not in seen:
+            seen.add(key)
+            warnings.append((f"{record['row']}-slat", slat_handle_warning(record["row"], record["door"] - 1)))
+    return warnings
+
+
+def slat_handle_warnings(spec: Mapping[str, Any]) -> list[str]:
+    """Every slat-handle warning of a build, in module and front-row order (door-slats)."""
+    materials = spec.get("materials") or {}
+    warnings: list[str] = []
+    for module in spec.get("modules") or []:
+        if not any(slat_spec(front) for front in module.get("fronts") or []):
+            continue
+        t, b = _carcass_tb(module, materials)
+        warnings += [warning for _row, warning in module_slat_handle_warnings(module, materials, t, b)]
+    return warnings
+
+
 def _part(
     identifier: str,
     name: str,
@@ -1181,6 +1461,20 @@ def _group_leaves(prefix: str, leaves: list[dict[str, Any]]) -> list[tuple[str, 
     return [(f"{prefix}-{n}", [leaf]) for n, leaf in enumerate(leaves, start=1)]
 
 
+def leaf_groups(
+    module: Mapping[str, Any], front: Mapping[str, Any], index: int, prefix: str, leaves: list[dict[str, Any]]
+) -> list[tuple[str, list[dict[str, Any]], int]]:
+    """`(row id, leaves, first leaf's place in the entry)` per cut-list row: one row per door
+    when the doors are cut from different slots (door-leaf-materials), else `_group_leaves`."""
+    leaf_rows = door_rows(module, front, index, len(leaves))
+    if leaves and leaf_rows[0][0] != prefix:
+        return [(row_id, [leaf], n) for n, ((row_id, _position), leaf) in enumerate(zip(leaf_rows, leaves, strict=True))]
+    groups = _group_leaves(prefix, leaves)
+    if len(groups) == 1:
+        return [(groups[0][0], groups[0][1], 0)]
+    return [(row_id, group, n) for n, (row_id, group) in enumerate(groups)]
+
+
 def _net_note(profile: FoldProfile, kind: str, extra: str) -> str:
     folds = ", ".join(
         f"{fold.side} {fold.angle_deg}° from {fold.from_mm} mm" for fold in profile.folds
@@ -1205,6 +1499,39 @@ def _cut_wh(leaf: Mapping[str, Any], *, vertical: bool) -> tuple[int, int]:
     return (height, width) if vertical else (width, height)
 
 
+def _add_slat_rows(
+    rows: list[dict[str, Any]], module: Mapping[str, Any], materials: Mapping[str, Mapping[str, Any]], t: int, b: int
+) -> None:
+    """One `<door row id>-slat` row per slatted door row, ending with any slat-handle warning (door-slats)."""
+    records = slat_layout(module, materials, t, b)
+    if not records:
+        return
+    warnings: dict[str, list[str]] = {}
+    for row_id, warning in module_slat_handle_warnings(module, materials, t, b):
+        warnings.setdefault(row_id, []).append(warning)
+    by_row: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        by_row.setdefault(record["row"], []).append(record)
+    for row, slats in by_row.items():
+        first = slats[0]
+        vertical = first["orientation"] == "vertical"
+        noun = "slat" if first["count"] == 1 else "slats"
+        spacing = "centred" if first["count"] == 1 else f"{first['gap']:.1f} mm gap"
+        notes = f"Rule: {first['count']} {first['orientation']} {noun} per door, {spacing}, glued to the door face"
+        row_warnings = warnings.get(f"{row}-slat", [])
+        if row_warnings:
+            notes += "." + "".join(f" Warning: {warning}." for warning in row_warnings)
+        slot = materials[first["material"]]
+        rows.append(
+            _part(
+                f"{row}-slat", "Door slat", qty=len(slats), l=math.floor(first["length"]), w=first["width"],
+                t=slot["thickness_mm"], material=slot["material"],
+                grain="length (vertical)" if vertical else "length (left-right)", banding="all edges",
+                notes=notes, module=module["id"],
+            )
+        )
+
+
 def _add_front_rows(
     rows: list[dict[str, Any]],
     module: Mapping[str, Any],
@@ -1217,6 +1544,8 @@ def _add_front_rows(
     inner_d: int,
     inputs: Mapping[str, Any] | None,
     profile: FoldProfile | None,
+    *,
+    materials: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> None:
     mid = module["id"]
     rects = front_layout(module, t, b)
@@ -1225,10 +1554,21 @@ def _add_front_rows(
         prefix = f"{mid}-{front['type']}-{index + 1}"
         if front["type"] == "door":
             push = front["opening"] == "push_latch"
+            modelled = handle_spec(front)
             handle = (
-                "; push-latch, no handle" if push else "; handle as specified"
+                "; push-latch, no handle"
+                if push
+                else f"; handle {modelled['key']}" if modelled else "; handle as specified"
             )
-            for part_id, leaves in _group_leaves(prefix, entry):
+            # Doors cut from more than one slot are one row each (door-leaf-materials).
+            groups = (
+                leaf_groups(module, front, index, prefix, entry)
+                if profile is None
+                else [(part_id, leaves, 0) for part_id, leaves in _group_leaves(prefix, entry)]
+            )
+            for part_id, leaves, first_leaf in groups:
+                slot = leaf_slot(module, front, first_leaf)
+                leaf_material = materials[slot]["material"] if materials is not None else material
                 first = leaves[0]
                 qty = len(leaves)
                 length, width = _cut_wh(first, vertical=True)
@@ -1238,7 +1578,7 @@ def _add_front_rows(
                     notes = _net_note(profile, "door", handle) if profile else f"Rule: overlay door, 3 mm gap{handle}"
                 rows.append(
                     _part(
-                        part_id, "Door", qty=qty, l=length, w=width, t=t, material=material,
+                        part_id, "Door", qty=qty, l=length, w=width, t=t, material=leaf_material,
                         grain="length (vertical)", banding="all edges", notes=notes, module=mid,
                     )
                 )
@@ -1318,6 +1658,14 @@ def _add_front_rows(
             )
             hardware.add(FLAP_HINGE_ID, "Flap hinge", 2, "Rule: two per flap")
             hardware.add(FLAP_STAY_ID, "Flap stay", 2, "Rule: one pair per flap")
+        _handle_lines(front, len(entry), hardware)
+
+
+def _handle_lines(front: Mapping[str, Any], leaves: int, hardware: _Hardware) -> None:
+    """One handle per leaf of an entry that carries one, keyed by its handle key (front-handles)."""
+    handle = handle_spec(front)
+    if handle is not None:
+        hardware.add(handle["key"], handle["item"], leaves, "Rule: one handle per leaf")
 
 
 def _divider_layout_rows(
@@ -1628,7 +1976,11 @@ def _module_rows(
     if uses_divider_layout(module):
         rows += _divider_layout_rows(module, hardware, t, b, material, inner_d, 0, inputs)
         bottom_slot = back if back is not None else carcass
-        _add_front_rows(rows, module, hardware, t, b, material, bottom_slot, inner_w, inner_d, inputs, None)
+        _add_front_rows(
+            rows, module, hardware, t, b, material, bottom_slot, inner_w, inner_d, inputs, None, materials=materials,
+        )
+        _add_slat_rows(rows, module, materials, t, b)
+        _rail_lines(module, t, inputs, hardware)
         hardware.free(module.get("hardware") or [])
         return rows
     dividers = module.get("dividers", 0)
@@ -1753,8 +2105,10 @@ def _module_rows(
 
     bottom_slot = back if back is not None else carcass
     _add_front_rows(
-        rows, module, hardware, t, b, material, bottom_slot, inner_w, inner_d, inputs, None,
+        rows, module, hardware, t, b, material, bottom_slot, inner_w, inner_d, inputs, None, materials=materials,
     )
+    _add_slat_rows(rows, module, materials, t, b)
+    _rail_lines(module, t, inputs, hardware)
     hardware.free(module.get("hardware") or [])
     return rows
 
@@ -1895,6 +2249,81 @@ def _rule_words(rule: Mapping[str, Any], limit_key: str, count_key: str, each: s
     rows = sorted(rule["params"]["table"], key=lambda row: row[limit_key])
     steps = ", ".join(f"{row[count_key]} per {each} up to {row[limit_key]} mm {measure}" for row in rows)
     return f"Rule: {steps}, {rule['params']['beyond']} beyond ({rule['rule_id']}; {rule['source']['publication']})"
+
+
+def rail_length(module: Mapping[str, Any], t: int, rail: Mapping[str, Any]) -> int:
+    """A hanging rail's cut length: its bay's inner width less the allowance at each end."""
+    _left, width = bays(module, t)[rail.get("bay", 1) - 1]
+    return width - 2 * RAIL_END_ALLOWANCE_MM
+
+
+def rail_supports(rule: Mapping[str, Any] | None, length: int) -> int:
+    """Supports for one rail: the rail-support rule's count for its length, else the two end supports."""
+    return _count_for(rule, "max_length_mm", "supports", length) if rule is not None else 2
+
+
+def hanging_rail_problem(module: Mapping[str, Any], t: int, b: int, index: int) -> tuple[str, str] | None:
+    """(field, reason) when rail `index` of the module cannot hang where it is stated, else None.
+
+    `z` is the rail centre above the top of the bottom panel. The rail must lie in an existing bay,
+    clear of every shelf, below the board above by the hook clearance, above the bottom panel,
+    and inside the reach of the dividers that bound its bay.
+    """
+    rail = module["hanging_rails"][index]
+    found = bays(module, t)
+    bay = rail.get("bay", 1)
+    if bay > len(found):
+        return "bay", f"bay {bay} does not exist; the module has {len(found)} bay(s)"
+    if module.get("side_folds"):
+        return "z", "a hanging rail on a module with side folds is not supported yet"
+    centre = t + rail["z"]
+    low, high = centre - RAIL_SECTION_MM / 2, centre + RAIL_SECTION_MM / 2
+    if low <= t:
+        return "z", "the rail must sit above the bottom panel"
+    above = module["height"] - t
+    for number, shelf in enumerate(shelf_centres(module, t), start=1):
+        bottom, top = shelf - t / 2, shelf + t / 2
+        if low < top and high > bottom:
+            return "z", f"the rail crosses shelf {number} ({_n(bottom - t)}–{_n(top - t)} mm above the bottom panel)"
+        if bottom >= high:
+            above = min(above, bottom)
+    if above - high < RAIL_HOOK_CLEARANCE_MM:
+        return "z", (
+            f"the rail's top is {_n(above - high)} mm below the board above; "
+            f"a hanger needs at least {RAIL_HOOK_CLEARANCE_MM} mm"
+        )
+    ends = divider_ends(module, t) if module.get("dividers") else []
+    for divider in (bay - 2, bay - 1):
+        if 0 <= divider < len(ends):
+            bottom, top = ends[divider]
+            if not bottom <= centre <= top:
+                return "z", f"divider {divider + 1} at the edge of bay {bay} does not reach the rail"
+    inset = rail.get("inset_y_mm")
+    depth = module["depth"] - b
+    if inset is not None and not 0 < inset < depth:
+        return "inset_y_mm", f"must lie inside the module's depth ({depth} mm)"
+    return None
+
+
+def _rail_lines(module: Mapping[str, Any], t: int, inputs: Mapping[str, Any] | None, hardware: _Hardware) -> None:
+    """One rail line per key and cut length, and the supports: two per rail, or the rail-support rule's count."""
+    rule = _rule(inputs, RAIL_SUPPORT_CHECK)
+    for rail in module.get("hanging_rails") or []:
+        key = rail.get("key") or RAIL_ID
+        length = rail_length(module, t, rail)
+        name = "oval 30×15 mm" if key == RAIL_ID else key
+        hardware.add(
+            f"{key}-{length}",
+            f"Wardrobe rail {name}, cut to {length} mm",
+            1,
+            f"Rule: rail item {key} cut to the bay's inner width less {RAIL_END_ALLOWANCE_MM} mm each end",
+        )
+        if rule is not None:
+            note = _rule_words(rule, "max_length_mm", "supports", "rail", "long")
+        else:
+            note = "Rule: two end supports per rail; no centre-support rule applies"
+        support = rail.get("support_key") or RAIL_SUPPORT_ID
+        hardware.add(support, f"Rail support {support}", rail_supports(rule, length), note)
 
 
 def _pin_line(
@@ -2508,8 +2937,8 @@ def _hinge_entries(spec: Mapping[str, Any], inputs: Mapping[str, Any]) -> list[D
             key = front.get("hinge") or HINGE_ID
             prefix = f"{module['id']}-door-{index + 1}"
             sheet = _sheet(inputs, key)
-            groups = _group_leaves(prefix, leaves)
-            for part_id, group in groups:
+            groups = leaf_groups(module, front, index, prefix, leaves)
+            for part_id, group, _first in groups:
                 first = group[0]
                 doors = len(group)
                 height = _door_height(first)
@@ -2746,6 +3175,218 @@ def drilling_lines(result: Mapping[str, Any] | None) -> list[str]:
     return lines
 
 
+# --- drawn hardware (hardware-catalog) --------------------------------------------------
+#
+# `hardware_layout` gives every hardware piece whose position the spec and its frozen inputs fix
+# exactly, one record per piece, in build millimetres. Derive counts the records per hardware line
+# (`shown` in `spec.json`) and the generator draws exactly these records, so the two agree. A
+# position the drilling data gives only as a range or a rule in words is never narrowed: that piece
+# is not drawn. Handles keep their own layout (`handle_layout`) and layer.
+
+
+def resolve_catalog_entry(entries: list[Mapping[str, Any]] | None, key: str) -> Mapping[str, Any] | None:
+    """The entry of the exact key, else of the longest pattern prefix `key` starts with, else None."""
+    exact = next((entry for entry in entries or [] if entry.get("key") == key), None)
+    if exact is not None:
+        return exact
+    patterns = [
+        entry for entry in entries or []
+        if entry.get("pattern") and key.startswith(entry["pattern"][:-1])
+    ]
+    return max(patterns, key=lambda entry: len(entry["pattern"]), default=None)
+
+
+def _catalog(inputs: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
+    return list((inputs or {}).get("hardware_catalog") or [])
+
+
+def _piece(
+    entries: list[Mapping[str, Any]], key: str, line: str, owner: str, shape: str, **placement: Any
+) -> dict[str, Any] | None:
+    """One drawn piece of `line`, or None when the catalog has no entry of `shape` for `key`."""
+    entry = resolve_catalog_entry(entries, key)
+    if entry is None or entry["shape"] != shape:
+        return None
+    finish = placement.pop("finish", None) or entry["finish"]
+    return {"line": line, "key": key, "module": owner, "shape": shape, "size": dict(entry["size"]), "finish": finish,
+            **placement}
+
+
+def _exact_mm(form: Form | None) -> float | None:
+    return form["mm"] if form is not None and "mm" in form else None
+
+
+def _hinge_pieces(spec: Mapping[str, Any], module: Mapping[str, Any], inputs: Mapping[str, Any] | None,
+                  entries: list[Mapping[str, Any]], t: int, b: int) -> list[dict[str, Any]]:
+    pieces: list[dict[str, Any]] = []
+    x, y, z = module["x"], module["y"], module["z"]
+    rects = front_layout(module, t, b)
+    for index, front in enumerate(module["fronts"]):
+        if front["type"] != "door" or front.get("opening") != "hinge":
+            continue
+        key = front.get("hinge") or HINGE_ID
+        sheet = _sheet(inputs, key)
+        if sheet is None:
+            continue
+        raw = sheet.get("values") or {}
+        end = _form(raw.get("end_distance_mm"))
+        centre = _cup_centre(_form(raw.get("cup_edge_distance_mm")), _form(raw.get("cup_diameter_mm")))
+        cup_from_edge = _exact_mm(centre)
+        if end is None or "mm" not in end or cup_from_edge is None:
+            continue
+        plate = raw.get("plate_item")
+        leaves = [rect for rect in rects if rect["entry"] == index]
+        for position, leaf in enumerate(leaves):
+            side = "left" if len(leaves) == 1 or position == 0 else "right"
+            height = _door_height(leaf)
+            per_door, _words = _hinge_count(sheet, int(height), _rule(inputs, HINGE_COUNT_CHECK))
+            if 2 * end["mm"] >= height:
+                continue
+            cup_x = x + leaf["x"] + (cup_from_edge if side == "left" else leaf["w"] - cup_from_edge)
+            plate_x = x + t if side == "left" else x + module["width"] - t
+            for along in _along(height, per_door, end, ("door's bottom end", "door's top end")):
+                piece = _piece(
+                    entries, key, key, module["id"], "hinge_concealed",
+                    cup=(cup_x, y, z + leaf["z"] + along["position"]["mm"]), side=side, plate_x=plate_x,
+                    plate_line=plate,
+                )
+                if piece is not None:
+                    pieces.append(piece)
+    return pieces
+
+
+def _pin_pieces(module: Mapping[str, Any], inputs: Mapping[str, Any] | None, entries: list[Mapping[str, Any]],
+                t: int, b: int) -> list[dict[str, Any]]:
+    if not module.get("adjustable_shelves"):
+        return []
+    key = module.get("shelf_pin") or SHELF_PIN_ID
+    raw = (_sheet(inputs, key) or {}).get("values") or {}
+    front, rear = _exact_mm(_form(raw.get("front_setback_mm"))), _exact_mm(_form(raw.get("rear_setback_mm")))
+    if front is None or rear is None:
+        return []
+    x, y, z = module["x"], module["y"], module["z"]
+    inner_d = module["depth"] - b
+    pieces: list[dict[str, Any]] = []
+    for board in shelf_boards(module, t, b):
+        if board.kind != "adjustable":
+            continue
+        underside = z + board.centre - t / 2
+        for face_x, facing in ((x + board.x0, 1), (x + board.x0 + board.width, -1)):
+            for pin_y in (y + front, y + inner_d - rear):
+                piece = _piece(entries, key, key, module["id"], "shelf_pin", at=(face_x, pin_y, underside), facing=facing)
+                if piece is not None:
+                    pieces.append(piece)
+    return pieces
+
+
+def _runner_pieces(module: Mapping[str, Any], entries: list[Mapping[str, Any]], t: int, b: int) -> list[dict[str, Any]]:
+    x, y, z = module["x"], module["y"], module["z"]
+    runner = runner_length(module["depth"] - b)
+    if runner is None:
+        return []
+    key = f"drawer-runner-{runner}"
+    pieces: list[dict[str, Any]] = []
+    for rect in front_layout(module, t, b):
+        if rect["type"] != "drawer":
+            continue
+        piece = _piece(
+            entries, key, key, module["id"], "drawer_runner",
+            left_x=x + t, right_x=x + module["width"] - t, y0=y, length=runner,
+            z=z + rect["z"] + DRAWER_BOX_HEIGHT_REDUCTION_MM / 2,
+        )
+        if piece is not None:
+            pieces.append(piece)
+    return pieces
+
+
+def _rail_pieces(module: Mapping[str, Any], inputs: Mapping[str, Any] | None, entries: list[Mapping[str, Any]],
+                 t: int, b: int) -> list[dict[str, Any]]:
+    x, y, z = module["x"], module["y"], module["z"]
+    inner_d = module["depth"] - b
+    rule = _rule(inputs, RAIL_SUPPORT_CHECK)
+    centres = shelf_centres(module, t)
+    pieces: list[dict[str, Any]] = []
+    for rail in module.get("hanging_rails") or []:
+        bay_left, bay_width = bays(module, t)[rail.get("bay", 1) - 1]
+        key, support = rail.get("key") or RAIL_ID, rail.get("support_key") or RAIL_SUPPORT_ID
+        length = rail_length(module, t, rail)
+        left_face = x + t + bay_left
+        centre_z = z + t + rail["z"]
+        rail_y = y + (rail.get("inset_y_mm") if rail.get("inset_y_mm") is not None else inner_d / 2)
+        piece = _piece(
+            entries, key, f"{key}-{length}", module["id"], "hanging_rail",
+            x0=left_face + RAIL_END_ALLOWANCE_MM, length=length, y=rail_y, z=centre_z, finish=rail.get("finish"),
+        )
+        if piece is not None:
+            pieces.append(piece)
+        for face_x, facing in ((left_face, 1), (left_face + bay_width, -1)):
+            end = _piece(entries, support, support, module["id"], "rail_support", at=(face_x, rail_y, centre_z),
+                         facing=facing, mount="side", finish=rail.get("finish"))
+            if end is not None:
+                pieces.append(end)
+        extra = rail_supports(rule, length) - 2
+        if extra > 0:
+            above = min((c - t / 2 for c in centres if c - t / 2 > rail["z"] + t), default=module["height"] - t)
+            for n in range(1, extra + 1):
+                mid = _piece(
+                    entries, support, support, module["id"], "rail_support",
+                    at=(left_face + bay_width * n / (extra + 1), rail_y, centre_z), facing=0, mount="above",
+                    top_z=z + above, finish=rail.get("finish"),
+                )
+                if mid is not None:
+                    pieces.append(mid)
+    return pieces
+
+
+def _bracket_pieces(spec: Mapping[str, Any], entries: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    pieces: list[dict[str, Any]] = []
+    for shelf in spec.get("wall_shelves") or []:
+        for position in shelf.get("bracket_positions_mm") or []:
+            piece = _piece(
+                entries, shelf["bracket"], shelf["bracket"], shelf["id"], "shelf_bracket",
+                at=(shelf["x"] + position, shelf["y"] + shelf["depth"], shelf["z"]), depth=shelf["depth"],
+            )
+            if piece is not None:
+                pieces.append(piece)
+    return pieces
+
+
+def hardware_layout(spec: Mapping[str, Any], inputs: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Every drawn hardware piece, in module order: hinges, shelf pins, runners, rails; then brackets.
+
+    Each record names its hardware `line`, its item `key`, the owning `module` (a wall shelf's id for a
+    bracket), its catalog `shape`, `size` and `finish`, and its placement. Nothing is drawn without the
+    version's frozen catalog, on a folded module, or where a position is not exact.
+    """
+    entries = _catalog(inputs)
+    if not entries:
+        return []
+    pieces: list[dict[str, Any]] = []
+    for module in spec["modules"]:
+        if module.get("side_folds"):
+            continue
+        t, b = _carcass_tb(module, spec["materials"])
+        pieces += _hinge_pieces(spec, module, inputs, entries, t, b)
+        pieces += _pin_pieces(module, inputs, entries, t, b)
+        pieces += _runner_pieces(module, entries, t, b)
+        pieces += _rail_pieces(module, inputs, entries, t, b)
+    return pieces + _bracket_pieces(spec, entries)
+
+
+def shown_counts(spec: Mapping[str, Any], inputs: Mapping[str, Any] | None) -> dict[str, int]:
+    """Pieces drawn per hardware line: the layout's records, a hinge's plate with it, and every handle."""
+    counts: dict[str, int] = {}
+    for piece in hardware_layout(spec, inputs):
+        counts[piece["line"]] = counts.get(piece["line"], 0) + 1
+        if piece.get("plate_line"):
+            counts[piece["plate_line"]] = counts.get(piece["plate_line"], 0) + 1
+    for module in spec["modules"]:
+        t, b = _carcass_tb(module, spec["materials"])
+        for record in handle_layout(module, t, b):
+            counts[record["key"]] = counts.get(record["key"], 0) + 1
+    return counts
+
+
 def derive(
     spec: Mapping[str, Any], inputs: Mapping[str, Any] | None = None
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -2779,6 +3420,8 @@ def emitted_spec(spec: Mapping[str, Any], inputs: Mapping[str, Any] | None = Non
             fronts.append(
                 {**emitted, "module": module["id"], "x": module["x"] + rect["x"], "z": module["z"] + rect["z"]}
             )
+    shown = shown_counts(spec, inputs)
+    hardware = [{**line, "shown": shown.get(line["id"], 0)} for line in hardware]
     document = _emitted(spec, parts, hardware, assembly, fronts)
     if inputs is not None:
         document["drilling"] = drilling(spec, inputs)

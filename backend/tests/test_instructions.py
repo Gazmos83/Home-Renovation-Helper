@@ -46,7 +46,8 @@ def test_each_agent_names_exactly_its_tools() -> None:
     assert set(loaded["designer"].tools) == {
         "create_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit", "compose_room",
         "read_room_version_dimensions", "edit_decisions", "record_version_verdict", "search_guidelines",
-        "ask_owner", "search_engineering_knowledge", "record_assessment_inputs", "calculate_engineering", "get_engineering_report",
+        "ask_owner", "ask_placement", "search_engineering_knowledge", "record_assessment_inputs", "calculate_engineering",
+        "get_engineering_report",
     }
     assert set(loaded["builder"].tools) == {
         "blender_build", "build_shell", "render_turntable", "restyle_render", "record_render_feedback",
@@ -157,7 +158,7 @@ def _break(tmp_path: Path, name: str, edit) -> str:
 
 def test_an_unknown_tool_fails_naming_the_file(tmp_path: Path) -> None:
     message = _break(
-        tmp_path, "designer", lambda text: text.replace("ask_owner]", "ask_owner, run_bpy]", 1)
+        tmp_path, "designer", lambda text: text.replace("ask_placement]", "ask_placement, run_bpy]", 1)
     )
     assert message.startswith("designer.md:")
     assert "run_bpy" in message
@@ -376,6 +377,13 @@ def test_the_designer_lays_rugs_on_the_floor_layer() -> None:
     assert '`layer: "floor"`' in text and "may lie under other furniture" in text
 
 
+def test_the_designer_knows_modelled_handles() -> None:
+    text = load_instructions()["designer"].text
+    assert "`handle`" in text and '{"kind": "bar", "length": 160}' in text
+    assert "never also write a hardware line for a modelled handle" in text
+    assert "A push-latch door takes no handle" in text
+
+
 def test_the_designer_records_a_verdict_only_when_the_owner_gives_one() -> None:
     """version-verdict: the verdict tool and the open verdicts in the house file."""
     text = load_instructions()["designer"].text
@@ -389,6 +397,13 @@ def test_the_foreman_sends_a_verdict_on_a_version_to_the_designer() -> None:
     assert "a version of the piece is right or wrong" in text and "records the verdict" in text
 
 
+def test_the_designer_knows_hanging_rails_and_import_corrections() -> None:
+    text = load_instructions()["designer"].text
+    assert "`hanging_rails`" in text and '`{"z": 1650}`' in text
+    assert "use only a height the owner gave, and ask when there is none" in text
+    assert "When an import preview lists hardware corrections, pass them on as they are" in text
+
+
 def test_the_designer_offers_cited_suggestions_for_a_new_piece() -> None:
     """guideline-design-suggestions: cited style suggestions before the first draft."""
     text = load_instructions()["designer"].text
@@ -396,3 +411,42 @@ def test_the_designer_offers_cited_suggestions_for_a_new_piece() -> None:
     assert "`search_guidelines`" in line and "`create_piece`" in line
     assert "at most three" in line and "advice only" in line and "generator-extension" in line
     assert "revisions, imports or rebuilds" in line
+
+
+def test_the_designer_knows_door_slats() -> None:
+    text = load_instructions()["designer"].text
+    for word in ("`slats`", "`count`", "`orientation`", "`margin_mm`", "`leaves`", "never write slats as extra parts"):
+        assert word in text, word
+    assert "pass that warning on to the owner" in text
+
+
+def test_no_model_insists_on_a_room_the_conversation_declined() -> None:
+    """optional-room-question: the app offers the room; Intake never asks it after a no."""
+    loaded = load_instructions()
+    intake = loaded["intake"].text
+    assert "The app asks the owner whether they want to view the piece in a room; never ask that yourself." in intake
+    assert "When the facts say the owner chose not to view this piece in a room, never ask for a room" in intake
+    assert "Ask once whether the owner wants to name the room now" not in intake
+    for name in ("foreman", "intake"):
+        assert "Which room is this for?" not in loaded[name].text
+
+
+def test_missing_information_is_asked_for_not_explained() -> None:
+    """view-piece-in-room: ask, don't explain; never name internals to the owner."""
+    loaded = load_instructions()
+    for name in ("designer", "builder", "intake"):
+        text = loaded[name].text
+        assert "Ask, don't explain" in text
+        assert "Never name a tool, a document, a field or a JSON key to the owner." in text
+    assert "call `ask_placement`" in loaded["designer"].text
+    builder = loaded["builder"].text
+    assert "`in_room` true" in builder
+    assert "room document" not in builder and "room_fit" not in builder
+
+
+def test_the_designer_gives_one_door_its_own_material_without_splitting_the_pair() -> None:
+    """door-leaf-materials: per-door colour is `leaf_materials`, never stacked entries."""
+    text = load_instructions()["designer"].text
+    assert "`leaf_materials`" in text
+    assert "Never split a pair or row of doors into separate entries for this" in text
+    assert "keep the front layout" in text

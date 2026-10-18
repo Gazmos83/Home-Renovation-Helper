@@ -41,7 +41,11 @@ from app.agent.tools.shared import (
     version_limit_refusal,
 )
 from app.blender import storage
-from app.blender.custom_build.derive import DeriveError, check_adjustable_shelf_depths
+from app.blender.custom_build.derive import (
+    DeriveError,
+    check_adjustable_shelf_depths,
+    slat_handle_warnings,
+)
 from app.blender.schemas import PackageChanges, describe_validation_error
 from app.db.models import Piece
 from app.guidelines.hardware_inputs import freeze_inputs
@@ -180,6 +184,9 @@ def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
     summary = f"Revise {package_id} (from version {latest}):\n" + "\n".join(lines)
     if warnings:
         summary += f"\nDesign-rule warnings: {warnings}"
+    slat_warnings = slat_handle_warnings(spec)
+    if slat_warnings:
+        summary += f"\nSlat-handle warnings: {'; '.join(slat_warnings)}"
     heads_up = version_limit_line(ctx.deps, package_id)
     if heads_up:
         summary += f"\n{heads_up}"

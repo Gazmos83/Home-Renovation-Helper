@@ -194,6 +194,28 @@ def remove_version(root: Path, package_id: str, version: int) -> None:
     discard_version(root, package_id, move_version_aside(root, package_id, version))
 
 
+def move_package_aside(root: Path, package_id: str) -> Path:
+    """Move a whole package folder to a hidden `.deleting-<id>-<hex>` sibling that no
+    listing matches (delete-piece). Raises `FileNotFoundError` when it has no folder."""
+    folder = package_dir(root, package_id)
+    if not folder.is_dir():
+        raise FileNotFoundError(f"{package_id} has no folder")
+    hidden = folder.parent / f".deleting-{folder.name}-{uuid4().hex[:12]}"
+    os.replace(folder, hidden)
+    return hidden
+
+
+def move_package_back(root: Path, package_id: str, hidden: Path) -> None:
+    """Undo `move_package_aside`."""
+    os.replace(hidden, package_dir(root, package_id))
+
+
+def discard_package(hidden: Path) -> None:
+    """Remove a package folder moved aside, `.last_version` included, so its id starts
+    again at version 1. A leftover hidden folder is never listed, so errors are ignored."""
+    shutil.rmtree(hidden, ignore_errors=True)
+
+
 # --- apartment shells: `<root>/shells/<apartment-slug>/v<N>/` -----------------------------
 
 

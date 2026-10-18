@@ -22,6 +22,11 @@
 #                                            (a door takes the first row whose height is at least its own, `beyond`
 #                                            past the last row; it gives the hinge count when the hinge's data sheet
 #                                            has no count table, and judges nothing)
+#   rail_support_count_for_length piece     params: table [{max_length_mm, supports}], beyond
+#                                            (a hanging rail takes the first row whose length is at least its cut
+#                                            length, `beyond` past the last row; it gives the rail its support count,
+#                                            two end supports without it, and judges nothing; no rule ships for it
+#                                            until the owner adds a note with the clause to cite, TODO(user))
 # At most one rule may name each bracket or count check.
 # with a severity (warn | refuse) and the clause the limit is quoted from:
 #   source: {publication: <id in guideline_sources.yaml, or owner:<note uuid>>, section: ..., quote: ...}

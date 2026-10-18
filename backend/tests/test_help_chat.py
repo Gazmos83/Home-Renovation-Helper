@@ -56,7 +56,7 @@ def test_a_help_question_in_a_new_thread_reaches_intake(tool_state) -> None:
     harness = make_harness(tool_state, models, room=None)
     state = harness.turn("How do I use the design template?")
     assert state["specialist"] == "intake"
-    assert last_reply(state) != "Which room is this for?"
+    assert last_reply(state) not in ("Which room is this for?", "Would you like to view this piece in a room?")
     assert models["designer"].calls == 0
 
 
@@ -79,7 +79,7 @@ def test_a_design_file_is_never_a_help_question(tool_state, tmp_path) -> None:
         {"messages": [HumanMessage("how does this work?", additional_kwargs={"upload_ids": [design]})]},
         config=harness.config,
     )
-    assert last_reply(state) == "Which room is this for?"
+    assert last_reply(state) == "Would you like to view this piece in a room?"
     assert models["intake"].calls == 0
 
 

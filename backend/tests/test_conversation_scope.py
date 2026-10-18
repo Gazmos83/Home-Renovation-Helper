@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.agent import house_file
-from app.agent.foreman import ROOM_QUESTION, last_reply
+from app.agent.foreman import ROOM_OFFER, ROOM_QUESTION, last_reply
 from app.agent.tools.base import ToolDeps
 from tests.fakes import tool_call
 from tests.graph_helpers import fake_models, make_harness, place_in_room
@@ -43,14 +45,89 @@ def _builds(tool_state, harness) -> list[str]:
 # --- the room gate ----------------------------------------------------------------------
 
 
-def test_a_new_wish_with_no_confirmed_room_asks_which_room_and_no_specialist_runs(tool_state) -> None:
+def test_a_new_wish_with_no_confirmed_room_offers_a_room_and_no_specialist_runs(tool_state) -> None:
     models = fake_models(foreman={"decisions": [decision("intake")]})
     harness = make_harness(tool_state, models, room=None)
     state = harness.turn("I want a shoe bench")
-    assert last_reply(state) == ROOM_QUESTION
+    assert last_reply(state) == ROOM_OFFER
     assert state["specialist"] == ""
     assert all(models[slot].calls == 0 for slot in ("intake", "designer", "builder"))
-    assert ROOM_QUESTION in [m.content for m in harness.snapshot().values["messages"]]
+    assert ROOM_OFFER in [m.content for m in harness.snapshot().values["messages"]]
+
+
+# --- the room offer (optional-room-question) ---------------------------------------------
+
+
+def _declined(tool_state, harness) -> bool:
+    with ToolDeps(tool_state).session() as session:
+        return house_file.get_thread(session, harness.thread).room_declined
+
+
+@pytest.mark.parametrize("answer", ["yes", "Yes!", "ja", "Sure, why not", "ok", "Okay."])
+def test_a_yes_to_the_offer_asks_which_room(tool_state, answer: str) -> None:
+    models = fake_models(foreman={"decisions": [decision("intake"), decision("intake")]})
+    harness = make_harness(tool_state, models, room=None)
+    assert last_reply(harness.turn("I want a shoe bench")) == ROOM_OFFER
+    state = harness.turn(answer)
+    assert last_reply(state) == ROOM_QUESTION
+    assert state["specialist"] == ""
+    assert models["intake"].calls == 0
+    assert not _declined(tool_state, harness)
+
+
+def test_naming_the_room_in_the_answer_goes_to_intake(tool_state) -> None:
+    _house(tool_state)
+    models = fake_models(
+        foreman={"decisions": [decision("intake"), decision("intake")]}, intake={"replies": ["Is it 5000 × 4000?"]},
+    )
+    harness = make_harness(tool_state, models, room=None)
+    harness.turn("I want a shoe bench")
+    state = harness.turn("yes, Wohnen")
+    assert state["specialist"] == "intake"
+    assert last_reply(state) == "Is it 5000 × 4000?"
+    assert not _declined(tool_state, harness)
+
+
+def test_a_no_records_the_decline_and_intake_answers(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("intake"), decision("intake"), decision("designer")]},
+        intake={"replies": ["What is the bench for?", "Noted."]},
+    )
+    harness = make_harness(tool_state, models, room=None)
+    harness.turn("I want a shoe bench")
+    state = harness.turn("no")
+    assert state["specialist"] == "intake"
+    assert last_reply(state) == "What is the bench for?"
+    assert _declined(tool_state, harness)
+    assert "the owner chose not to view this piece in a room" in state["facts"]
+    # Not asked again: a later turn is routed by the other rules.
+    state = harness.turn("make it 10 cm wider")
+    assert last_reply(state) not in (ROOM_OFFER, ROOM_QUESTION)
+    assert state["specialist"] == "intake"
+
+
+def test_a_vague_answer_counts_as_no(tool_state) -> None:
+    models = fake_models(foreman={"decisions": [decision("intake"), decision("intake")]}, intake={"replies": ["Fine."]})
+    harness = make_harness(tool_state, models, room=None)
+    harness.turn("I want a shoe bench")
+    harness.turn("maybe later")
+    assert _declined(tool_state, harness)
+
+
+def test_an_unassigned_piece_in_a_declined_conversation_goes_to_the_designer(tool_state) -> None:
+    _house(tool_state)
+    models = fake_models(
+        foreman={"decisions": [decision("designer"), decision("designer"), decision("designer")]},
+        designer={"replies": ["Shall I?", "Revised."]},
+    )
+    harness = make_harness(tool_state, models, room=None)
+    harness.start(package_id="murphy-bed")
+    assert last_reply(harness.turn("make it wider")) == ROOM_OFFER
+    harness.turn("no")
+    state = harness.turn("make it 10 cm wider")
+    assert state["specialist"] == "designer"
+    assert last_reply(state) == "Revised."
+    assert models["intake"].calls == 0
 
 
 def test_a_wish_naming_a_stored_room_goes_to_intake(tool_state) -> None:
@@ -63,11 +140,12 @@ def test_a_wish_naming_a_stored_room_goes_to_intake(tool_state) -> None:
 
 def test_the_answer_to_the_room_question_goes_to_intake(tool_state) -> None:
     models = fake_models(
-        foreman={"decisions": [decision("designer"), decision("designer")]},
+        foreman={"decisions": [decision("designer"), decision("designer"), decision("designer")]},
         intake={"replies": ["How big is the attic?"]},
     )
     harness = make_harness(tool_state, models, room=None)
-    assert last_reply(harness.turn("I want a shoe bench")) == ROOM_QUESTION
+    assert last_reply(harness.turn("I want a shoe bench")) == ROOM_OFFER
+    assert last_reply(harness.turn("yes")) == ROOM_QUESTION
     state = harness.turn("the attic, 3 by 4 metres")
     assert state["specialist"] == "intake"
     assert last_reply(state) == "How big is the attic?"
@@ -106,15 +184,39 @@ def test_a_design_file_without_a_confirmed_room_gets_the_question_and_is_not_imp
         {"messages": [HumanMessage("import this", additional_kwargs={"upload_ids": [upload_id]})]},
         config=harness.config,
     )
-    assert last_reply(state) == ROOM_QUESTION
+    assert last_reply(state) == ROOM_OFFER
     assert models["designer"].calls == 0
     assert _builds(tool_state, harness) == []
+
+
+def test_declining_the_room_hands_the_design_file_to_the_designer(tool_state, tmp_path) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("designer"), decision("intake")]}, designer={"replies": ["Imported."]},
+    )
+    harness = make_harness(tool_state, models, room=None)
+    upload_id = _attach(tool_state, harness, tmp_path, name="lamellen-kommode.json")
+    models["designer"].tool_call_scripts.append(
+        [tool_call("import_design", {"upload_id": upload_id, "package_id": "lamellen-kommode"})]
+    )
+    assert last_reply(_send(harness, "import this", upload_id)) == ROOM_OFFER
+    state = harness.turn("no")
+    assert state["specialist"] == "designer"
+    assert state["__interrupt__"][0].value["subject"] == "import_design"
+    prompt = "\n".join(str(m.content) for m in models["designer"].prompts[0])
+    assert f"'lamellen-kommode.json' as upload {upload_id} and chose not to view the piece in a room" in prompt
+    assert _builds(tool_state, harness) == []
+    state = harness.answer("yes")
+    assert _active(tool_state, harness) == "lamellen-kommode"
+    with ToolDeps(tool_state).session() as session:
+        assert house_file.piece_room_name(session, "lamellen-kommode") is None
 
 
 # --- a design file attached before the room (pending-design-import) ---------------------
 
 
-def _attach(tool_state, harness, tmp_path, name: str = "kommode-harmony.json", kind: str = "design") -> str:
+def _attach(
+    tool_state, harness, tmp_path, name: str = "kommode-harmony.json", kind: str = "design", design_name: str | None = None
+) -> str:
     import io
     import json
 
@@ -125,7 +227,10 @@ def _attach(tool_state, harness, tmp_path, name: str = "kommode-harmony.json", k
     tool_state.settings.upload_root = tmp_path / "uploads"
     if kind == "design":
         # The bare design form: the test is about the hand-off, not the template's guide.
-        content = json.dumps(load_template()["build"]).encode("utf-8")
+        build = load_template()["build"]
+        if design_name is not None:
+            build["name"] = design_name
+        content = json.dumps(build).encode("utf-8")
     else:
         _png(tmp_path / "photo.png")
         content = (tmp_path / "photo.png").read_bytes()
@@ -152,13 +257,14 @@ def _room_confirming(tool_state, tmp_path, *, designer: dict | None = None):
     Intake will offer `Wohnen` with `confirm_room`."""
     _house(tool_state)
     models = fake_models(
-        foreman={"decisions": [decision("designer"), decision("intake"), decision("designer")]},
+        foreman={"decisions": [decision("designer"), decision("designer"), decision("intake"), decision("designer")]},
         intake={"steps": [[tool_call("confirm_room", {"room": "Wohnen"})], "This conversation now works in Wohnen."]},
         designer=designer or {},
     )
     harness = make_harness(tool_state, models, room=None)
     upload_id = _attach(tool_state, harness, tmp_path)
-    assert last_reply(_send(harness, "I'd like to view this dresser", upload_id)) == ROOM_QUESTION
+    assert last_reply(_send(harness, "I'd like to view this dresser", upload_id)) == ROOM_OFFER
+    assert last_reply(harness.turn("yes")) == ROOM_QUESTION
     return harness, models, upload_id
 
 
@@ -229,7 +335,7 @@ def test_a_conversation_with_a_piece_does_not_hand_off(tool_state, tmp_path) -> 
 
 def test_a_brief_naming_a_room_hands_off_too(tool_state, tmp_path) -> None:
     models = fake_models(
-        foreman={"decisions": [decision("designer"), decision("intake")]},
+        foreman={"decisions": [decision("designer"), decision("designer"), decision("intake")]},
         intake={
             "steps": [
                 [
@@ -250,11 +356,67 @@ def test_a_brief_naming_a_room_hands_off_too(tool_state, tmp_path) -> None:
     )
     harness = make_harness(tool_state, models, room=None)
     upload_id = _attach(tool_state, harness, tmp_path)
-    assert last_reply(_send(harness, "I'd like to view this dresser", upload_id)) == ROOM_QUESTION
+    assert last_reply(_send(harness, "I'd like to view this dresser", upload_id)) == ROOM_OFFER
+    assert last_reply(harness.turn("yes")) == ROOM_QUESTION
     harness.turn("the hall, 1.2 by 3 metres, 2.4 high")
     state = harness.answer("yes")
     assert state["specialist"] == "designer"
     assert last_reply(state) == "Shall I import it?"
+
+
+# --- a design file named like an existing piece (delete-piece) ----------------------------
+
+
+def test_a_file_named_like_an_existing_piece_is_answered_by_code(tool_state, tmp_path) -> None:
+    _house(tool_state)
+    models = fake_models(foreman={"decisions": [decision("designer")]}, designer={"replies": ["Never."]})
+    harness = make_harness(tool_state, models, room=None)
+    state = _send(harness, "import this", _attach(tool_state, harness, tmp_path, name="murphy-bed.json"))
+    reply = last_reply(state)
+    assert reply.startswith("The attached design `murphy-bed.json` matches your piece Oak queen Murphy bed (`murphy-bed`).")
+    assert "name murphy-bed here and attach the file again" in reply
+    assert "delete Oak queen Murphy bed on the Pieces page" in reply
+    assert "change the design's name" in reply
+    assert ROOM_OFFER not in reply and ROOM_QUESTION not in reply
+    assert state["specialist"] == ""
+    assert all(models[slot].calls == 0 for slot in ("foreman", "intake", "designer"))
+    assert _builds(tool_state, harness) == []
+
+
+def test_a_matching_piece_with_a_conversation_points_to_it(tool_state, tmp_path) -> None:
+    _house(tool_state)
+    with ToolDeps(tool_state).session() as session:
+        house_file.create_thread(session, "Bench", package_id="hall-bench")
+        session.commit()
+    harness = make_harness(tool_state, fake_models(foreman={"decisions": [decision("designer")]}), room=None)
+    reply = last_reply(_send(harness, "import this", _attach(tool_state, harness, tmp_path, name="hall-bench.json")))
+    assert "attach the file in its conversation (Pieces page → Hall bench)" in reply
+
+
+def test_the_name_inside_the_design_matches_a_piece(tool_state, tmp_path) -> None:
+    _house(tool_state)
+    harness = make_harness(tool_state, fake_models(foreman={"decisions": [decision("designer")]}), room=None)
+    upload_id = _attach(tool_state, harness, tmp_path, name="export.json", design_name="shoe RACK")
+    reply = last_reply(_send(harness, "import this", upload_id))
+    assert "`export.json` matches your piece Shoe rack (`shoe-rack`)" in reply
+
+
+def test_a_file_matching_no_piece_is_handled_as_before(tool_state, tmp_path) -> None:
+    _house(tool_state)
+    harness = make_harness(tool_state, fake_models(foreman={"decisions": [decision("designer")]}), room=None)
+    state = _send(harness, "import this", _attach(tool_state, harness, tmp_path, name="lamellen-kommode.json"))
+    assert state["design_matches_piece"] is None
+    assert last_reply(state) == ROOM_OFFER
+
+
+def test_a_conversation_bound_to_the_matching_piece_gets_no_conflict_reply(tool_state, tmp_path) -> None:
+    _house(tool_state)
+    models = fake_models(foreman={"decisions": [decision("designer")]}, designer={"replies": ["Shall I import it?"]})
+    harness = make_harness(tool_state, models)
+    harness.start(package_id="hall-bench")
+    state = _send(harness, "import this", _attach(tool_state, harness, tmp_path, name="hall-bench.json"))
+    assert state["design_matches_piece"] is None
+    assert "matches your piece" not in last_reply(state)
 
 
 def test_the_pending_file_is_the_newest_design_and_ignores_images(tool_state, tmp_path) -> None:

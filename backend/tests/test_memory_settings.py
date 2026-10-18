@@ -57,6 +57,16 @@ def test_without_a_stored_value_the_settings_are_todays_constants(engine) -> Non
     assert f"{settings.note_instructions} {summaries.FIXED_NOTE_RULES}" == summaries.SUMMARY_INSTRUCTION
 
 
+def test_recent_inputs_default_to_five_and_are_stored_and_reset(engine) -> None:
+    """conversation-recent-inputs: older settings without the key read the default."""
+    from app.agent.memory_settings import reset_memory_setting
+
+    assert read_memory_settings(engine).recent_inputs == 5
+    assert write_memory_settings(engine, {"recent_inputs": 8}).recent_inputs == 8
+    assert read_memory_settings(engine).recent_inputs == 8
+    assert reset_memory_setting(engine, "recent_inputs").recent_inputs == 5
+
+
 def test_version_verdicts_are_included_by_default_and_can_be_left_out(engine) -> None:
     """version-verdict: the slice switch for open verdicts."""
     assert read_memory_settings(engine).include_version_verdicts is True
@@ -66,7 +76,10 @@ def test_version_verdicts_are_included_by_default_and_can_be_left_out(engine) ->
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("trigger_percent", 40), ("keep_turns", 50), ("note_tokens", 50), ("tool_result_chars", 3000), ("render_ratings", 11)],
+    [
+        ("trigger_percent", 40), ("keep_turns", 50), ("note_tokens", 50), ("tool_result_chars", 3000),
+        ("render_ratings", 11), ("recent_inputs", 21), ("recent_inputs", -1),
+    ],
 )
 def test_an_out_of_range_value_is_refused_naming_the_field(engine, field: str, value: int) -> None:
     with pytest.raises(ValidationError) as caught:
@@ -138,6 +151,52 @@ def test_an_earlier_trigger_summarises_history_that_would_still_fit() -> None:
     )
     assert seen and seen[0][0].id == "h0"
     assert request[len(SYSTEM)].content.startswith(wrap_summary("notes")[:20])
+
+
+def test_only_the_recent_inputs_are_sent_and_older_ones_go_to_the_note() -> None:
+    """conversation-recent-inputs: the cut applies even when everything would fit."""
+    history = _thread_of(40)
+    budget = RequestBudget(limit=200_000, output_reserve=500)
+    seen: list[list[BaseMessage]] = []
+    request = fit(budget, SYSTEM, history, summarize=lambda d: seen.append(d) or "notes", recent_inputs=5)
+    [dropped] = seen
+    assert dropped[0].id == "h0" and dropped[-1].id == "a34"
+    assert request[len(SYSTEM)].content.startswith(wrap_summary("notes")[:20])
+    assert [m.id for m in request[len(SYSTEM) + 1 :]] == [
+        *[f"{kind}{n}" for n in range(35, 40) for kind in ("h", "a")], "now",
+    ]
+
+
+def test_a_short_thread_is_sent_whole_without_a_note() -> None:
+    history = _thread_of(3)
+    budget = RequestBudget(limit=200_000, output_reserve=500)
+    seen: list = []
+    request = fit(budget, SYSTEM, history, summarize=lambda d: seen.append(d) or "notes", recent_inputs=5)
+    assert seen == [] and request == [*SYSTEM, *history]
+
+
+@pytest.mark.parametrize("turns", [3, 40])
+def test_recent_inputs_zero_is_todays_request(turns: int) -> None:
+    history = _thread_of(turns)
+    budget = RequestBudget(limit=3_000, output_reserve=500)
+    summarize = lambda _d: "notes"
+    assert fit(budget, SYSTEM, history, summarize=summarize, recent_inputs=0) == fit(
+        budget, SYSTEM, history, summarize=summarize
+    )
+
+
+def test_the_recent_cut_never_splits_a_tool_call_from_its_result() -> None:
+    from langchain_core.messages import ToolMessage
+
+    from tests.test_budget import _tool_exchange
+
+    history = [m for n in range(10) for m in _tool_exchange(n)] + [HumanMessage("and now?", id="now")]
+    request = fit(RequestBudget(limit=200_000, output_reserve=500), SYSTEM, history,
+                  summarize=lambda _d: "notes", recent_inputs=2)
+    sent = request[len(SYSTEM) + 1 :]
+    assert isinstance(sent[0], HumanMessage) and sent[0].id == "h8"
+    calls = {c["id"] for m in sent if isinstance(m, AIMessage) for c in m.tool_calls}
+    assert all(m.tool_call_id in calls for m in sent if isinstance(m, ToolMessage))
 
 
 def test_the_kept_turns_are_sent_in_full() -> None:
@@ -419,3 +478,58 @@ def test_the_decision_route_checks_the_session_and_the_text(client) -> None:
     assert client.post(f"/chat/threads/{thread}/note/decision", json={"text": "x" * 9000}).status_code == 422
     client.post("/auth/logout")
     assert client.post(f"/chat/threads/{thread}/note/decision", json={"text": "hi"}).status_code == 401
+
+
+# --- the recent inputs in a real graph (conversation-recent-inputs) -----------------------------------
+
+
+def _decision(specialist: str) -> dict:
+    return {"specialist": specialist, "reason": "test"}
+
+
+def test_agents_and_routing_get_only_the_recent_inputs_and_the_note(tool_state, engine) -> None:
+    from tests.graph_helpers import make_harness
+
+    models = fake_models(
+        foreman={"decisions": [_decision("intake")] * 8, "replies": ["NOTE: hall bench 1200 mm."] * 20},
+        intake={"replies": [f"noted {n}" for n in range(8)]},
+    )
+    harness = make_harness(tool_state, models)
+    for n in range(8):
+        harness.turn(f"owner input {n}")
+
+    agent_sent = "\n".join(str(m.content) for m in models["intake"].prompts[-1])
+    for n in range(2):
+        assert f"owner input {n}" not in agent_sent  # older than the 5 recent inputs
+    for n in range(2, 8):
+        assert f"owner input {n}" in agent_sent  # inputs 2-6 are the 5 recent ones, 7 is current
+    assert "NOTE: hall bench 1200 mm." in agent_sent
+
+    routing_sent = "\n".join(str(m.content) for m in models["foreman"].decision_prompts[-1])
+    assert "owner input 0" not in routing_sent and "owner input 7" in routing_sent
+    assert "NOTE: hall bench 1200 mm." in routing_sent  # the stored note, read only
+
+
+def test_routing_never_writes_a_note(tool_state, engine) -> None:
+
+
+    with ToolDeps(tool_state).session() as session:
+        thread = house_file.create_thread(session, "test")
+        session.commit()
+        thread_id = thread.id
+    note = summaries.stored_note(engine, thread_id)
+    assert note([HumanMessage("old", id="h0")]) is None  # nothing stored: the shortened-history note is sent
+    with Session(engine) as session:
+        assert house_file.read_summary(session, thread_id, None)[0] in (None, "")
+
+
+def test_the_setting_off_sends_the_whole_short_history(tool_state, engine) -> None:
+    from tests.graph_helpers import make_harness
+
+    write_memory_settings(engine, {"recent_inputs": 0})
+    models = fake_models(foreman={"decisions": [_decision("intake")] * 8}, intake={"replies": ["ok"] * 8})
+    harness = make_harness(tool_state, models)
+    for n in range(8):
+        harness.turn(f"owner input {n}")
+    agent_sent = "\n".join(str(m.content) for m in models["intake"].prompts[-1])
+    assert all(f"owner input {n}" in agent_sent for n in range(8))

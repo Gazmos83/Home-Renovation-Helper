@@ -191,3 +191,59 @@ def test_extra_part_placements_and_end_cuts_are_listed() -> None:
             in lines["slat"])
     assert "tilt 30° towards z" in lines["brace"] and "ends cut 30° / −30° across width" in lines["brace"]
     assert lines["trim"].endswith("beside the build")
+
+
+def test_handles_are_named_with_their_fronts() -> None:
+    document = _starter()
+    document["modules"][0] |= {
+        "id": "centre-drawers",
+        "width": 900,
+        "height": 2034,
+        "fronts": [
+            {"type": "door", "count": 2, "opening": "hinge"},
+            {"type": "drawer", "count": 5, "height": 850, "handle": {"kind": "bar", "length": 160}},
+        ],
+    }
+    note = piece_note("amesbury-wardrobe", 2, document)
+    line = next(line for line in note.splitlines() if line.startswith("- centre-drawers "))
+    assert "5 drawers 850 mm (bar 160 mm horizontal, black)" in line
+    assert "2 doors (hinge) at the top" in line
+
+
+# --- door slats (door-slats) -------------------------------------------------------------
+
+
+def _kommode(handle: bool) -> dict:
+    document = _starter()
+    document["materials"]["slats"] = {"material": "12 mm MDF", "thickness_mm": 12}
+    door = {
+        "type": "door", "count": 2, "opening": "hinge",
+        "slats": {"count": 10, "width": 40, "material": "slats", "orientation": "horizontal", "margin_mm": 20, "leaves": [2]},
+    }
+    if handle:
+        door["handle"] = {"kind": "bar", "length": 300}
+    document["modules"][0] |= {"id": "kommode", "width": 800, "height": 750, "shelves": 1, "fronts": [door]}
+    return document
+
+
+def test_slats_are_named_with_their_doors() -> None:
+    note = piece_note("kommode", 1, _kommode(handle=False))
+    line = next(line for line in note.splitlines() if line.startswith("- kommode "))
+    assert "2 doors (hinge, 10 horizontal slats 40 mm, 20 mm margin, on door 2)" in line
+    assert "Warnings:" not in note
+
+
+def test_a_handle_on_slats_is_warned_about() -> None:
+    note = piece_note("kommode", 1, _kommode(handle=True))
+    warning = next(line for line in note.splitlines() if line.startswith("Warnings: "))
+    assert "the handle on door 2 of kommode-door-1 is mounted over the slats" in warning
+    assert "door 1 of" not in warning
+
+
+def test_doors_with_their_own_material_are_named() -> None:
+    document = _kommode(handle=False)
+    document["materials"]["black_paint"] = {"material": "18 mm black painted MDF", "thickness_mm": 18}
+    document["modules"][0]["fronts"][0]["leaf_materials"] = {"2": "black_paint"}
+    note = piece_note("kommode", 1, document)
+    line = next(line for line in note.splitlines() if line.startswith("- kommode "))
+    assert "2 doors (hinge, door 2 black_paint, 10 horizontal slats 40 mm" in line

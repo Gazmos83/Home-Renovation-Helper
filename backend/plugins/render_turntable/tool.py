@@ -11,6 +11,7 @@ composition. The render is enqueued on the app loop, never waited for.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,6 +22,7 @@ from app.agent.tools.shared import builds_unavailable, version_folder
 from app.blender import runner, storage
 from app.feedback import runs as feedback_runs
 from app.packages import service
+from app.packages.placements import read_placement
 from app.render import benchmark_store
 from app.render.calibration import calibrate_after_render
 from app.render.guard import RenderRefused, RenderTicket, authorise, quote
@@ -46,8 +48,9 @@ class RenderArgs(BaseModel):
     version: int | None = Field(default=None, description="a version number; the latest when left out")
     kind: str = Field(default="turntable", description="'turntable' or 'still'")
     tier: str | None = Field(default=None, description="required: draft or final")
-    room: dict[str, Any] | None = Field(
-        default=None, description="the room document from room_fit, to render the piece in its room"
+    in_room: bool = Field(
+        default=False,
+        description="true to render the piece where it was placed in the conversation's room",
     )
 
 
@@ -64,7 +67,7 @@ def _price_args(
         "tiers": ctx.deps.tiers,
         "benchmark": benchmark_store.read_benchmark(engine),
         "cycles_multiplier": benchmark_store.read_cycles_multiplier(engine),
-        "room": args.room is not None,
+        "room": args.in_room,
         "raw_fields": list((args.model_extra or {}).keys()),
     }
 
@@ -77,8 +80,8 @@ def _target(args: RenderArgs, ctx: ToolContext):
             "(a composed room)"
         )
     if args.composition:
-        if args.room is not None:
-            return "a composition is already a room; do not pass a room document with it"
+        if args.in_room:
+            return "a composed room is already a room; render it without in_room"
         with ctx.deps.session() as session:
             found = house_file.composition_by_scope(session, "room", args.composition) or (
                 house_file.composition_by_scope(session, "apartment", args.composition)
@@ -98,8 +101,8 @@ def _target(args: RenderArgs, ctx: ToolContext):
             return f"{args.composition!r} has no version {number}"
         return "room", slug, folder, number
     if args.shell:
-        if args.room is not None:
-            return "a shell cannot be rendered placed in a room"
+        if args.in_room:
+            return "an apartment's shell cannot be rendered placed in a room"
         with ctx.deps.session() as session:
             apartment = house_file.find_apartment(session, args.shell)
             if apartment is None:
@@ -128,6 +131,11 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext):
     args, problem = parse_args(RenderArgs, arguments)
     if args is None:
         return problem
+    if "room" in (args.model_extra or {}):
+        return (
+            "a piece is shown in the room with in_room true; its saved place in the conversation's "
+            "room is used, and the Designer asks the owner for one when there is none"
+        )
     target = _target(args, ctx)
     if isinstance(target, str):
         return target
@@ -144,7 +152,7 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext):
         priced = quote(**price_args)
     except RenderRefused as error:
         return error.reason
-    if record == "piece" and args.room is None and priced.tier.name == "draft" and priced.kind == "still":
+    if record == "piece" and not args.in_room and priced.tier.name == "draft" and priced.kind == "still":
         return "a draft of a piece is a turntable; ask for a draft turntable, or a final still"
     state = storage.read_status(folder) or {}
     if state.get("status") != "succeeded" or not (folder / "model.blend").is_file():
@@ -153,12 +161,36 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext):
             "build it first"
         )
     scene_document = None
-    if args.room is not None:
+    if args.in_room:
+        scene = _placed_scene(ctx, target_id, folder, number)
+        if isinstance(scene, str):
+            return scene
         try:
-            scene_document = service.room_scene_document(folder, args.kind, args.room)
-        except service.RoomDocumentRefused as error:
-            return f"the room document is not usable: {error}"
+            scene_document = service.room_scene_document(folder, args.kind, scene)
+        except service.RoomDocumentRefused:
+            return "the piece's saved place in the room no longer fits; the Designer will ask where it goes"
     return args, folder, number, price_args, scene_document, priced
+
+
+def _placed_scene(ctx: ToolContext, package_id: str, folder: Path, number: int) -> dict[str, Any] | str:
+    """The room scene of the version's saved place in the conversation's room, checked again
+    (the room may have been measured again since), or a plain refusal."""
+    from plugins.room_fit.tool import fit
+
+    room = None
+    if ctx.thread_id is not None:
+        with ctx.deps.session() as session:
+            confirmed, _apartment = house_file.thread_scope(session, ctx.thread_id)
+            room = confirmed.name if confirmed is not None else None
+    if room is None:
+        return "this conversation has no room yet; the owner can name one"
+    stored = read_placement(folder, room)
+    if stored is None:
+        return f"this piece has no place in {room} yet; the Designer will ask where it goes"
+    checked = fit(ctx, room, package_id, number, int(stored["wall"]), float(stored["offset_mm"]), store=False)
+    if isinstance(checked, str):
+        return f"the piece's saved place in {room} no longer fits ({checked}); the Designer will ask where it goes"
+    return checked.scene
 
 
 def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str | None:
@@ -202,6 +234,8 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
     settings = deps.settings
     runner.mark_render_queued(folder, ticket)
     run_id = feedback_runs.record_run(deps.engine, ticket.quote, feedback_runs.origin_from(ctx))
+    # A room render is followed by the thread's progress until its notice is posted (room-render-notices).
+    notices.follow_room(deps, ctx.thread_id, ticket.quote)
     asyncio.run_coroutine_threadsafe(
         runner.run_render(
             ticket,
@@ -247,7 +281,8 @@ render_turntable = AgentTool(
         "Render a still or a turntable of a built piece (package_id), of an apartment's shell "
         "(shell) or of a composed room (composition). A tier is required (draft or final) and decides "
         "frames, resolution and engine; never pass those. A draft of a piece on its own is a "
-        "turntable. Optionally pass the room document from room_fit to render a piece in its room. "
+        "turntable. Pass in_room true to render a piece where it was placed in the conversation's room "
+        "(a draft still). "
         "A draft starts now; final waits for the owner's yes."
     ),
     schema=RenderArgs,

@@ -178,6 +178,17 @@ def test_the_formatting_rules_are_composed_once_after_the_text_and_before_the_gu
         assert rule in FORMATTING_NOTE
 
 
+def test_a_one_figure_question_gets_one_sentence_and_the_working_in_calc(tool_state) -> None:
+    from app.agent.prompts import FORMATTING_NOTE
+
+    system = _specialist_system(tool_state)
+    rule = "When the owner asks for one figure"
+    assert system.count(rule) == 1
+    assert system.index(rule) < system.index(UNTRUSTED_CONTENT_PREAMBLE)
+    assert '"The gap between the murphy bed and wall 3 is 1350 mm."' in FORMATTING_NOTE
+    assert "only in a `calc` block" in FORMATTING_NOTE
+
+
 def test_an_edited_instruction_keeps_the_formatting_rules(tool_state) -> None:
     from app.agent.instructions import load_instructions
     from app.agent.prompts import FORMATTING_NOTE

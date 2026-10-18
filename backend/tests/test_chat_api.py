@@ -695,6 +695,85 @@ def test_a_memory_failure_deletes_nothing(client: TestClient, tmp_path: Path, mo
     assert client.get(f"/uploads/{uploaded[0]}").status_code == 200
 
 
+# --- deleting a whole piece (delete-piece) ---------------------------------------------------
+
+
+def test_deleting_a_piece_removes_it_and_its_conversation(client: TestClient, tmp_path: Path) -> None:
+    thread, uploaded = _conversation_with_a_piece_and_uploads(client, tmp_path)
+    with Session(client.app.state.engine) as session:
+        house_file.approve_version(session, "murphy-bed", 2)
+        session.commit()
+    summary = client.get("/packages/murphy-bed/deletion").json()
+    assert summary["versions"] == [1, 2]
+    assert summary["approved"] == [{"version": 2, "priced": False}]
+    assert summary["conversations"] == [thread]
+    assert summary["refusal"] is None
+
+    assert client.delete("/packages/murphy-bed").status_code == 204
+    assert "murphy-bed" not in [p["package_id"] for p in client.get("/packages").json()]
+    assert not (client.app.state.settings.render_root / "murphy-bed").exists()
+    assert client.get(f"/chat/threads/{thread}").status_code == 404
+    assert client.get(f"/uploads/{uploaded[0]}").status_code == 404
+    assert not (tmp_path / "uploads" / thread).exists()
+    memory = client.app.state.checkpointer.get_tuple({"configurable": {"thread_id": f"chat:{thread}", "checkpoint_ns": ""}})
+    assert memory is None
+
+
+def test_a_piece_whose_conversation_runs_a_turn_is_not_deleted(client: TestClient, tmp_path: Path) -> None:
+    from app.api import chat as chat_api
+
+    thread, _ = _conversation_with_a_piece_and_uploads(client, tmp_path)
+    chat_api._running.add(UUID(thread))
+    try:
+        response = client.delete("/packages/murphy-bed")
+    finally:
+        chat_api._running.discard(UUID(thread))
+    assert response.status_code == 409
+    assert response.json()["detail"]["failure_class"] == "turn_running"
+    assert "still being written" in response.json()["detail"]["reason"]
+    assert client.get(f"/chat/threads/{thread}").status_code == 200
+    assert (client.app.state.settings.render_root / "murphy-bed" / "v2").is_dir()
+
+
+def test_a_piece_placed_in_a_composition_is_refused_naming_it(client: TestClient, tmp_path: Path) -> None:
+    from app.blender import storage
+
+    thread, _ = _conversation_with_a_piece_and_uploads(client, tmp_path)
+    folder = storage.composition_version_dir(client.app.state.settings.render_root, "living-room", 3)
+    folder.mkdir(parents=True)
+    (folder / storage.INPUT_FILE).write_text(json.dumps({
+        "scope": {"room": "Living room"},
+        "items": [{"id": "bed", "type": "piece", "package_id": "murphy-bed", "version": 1}],
+    }), encoding="utf-8")
+    assert "Living room version 3" in client.get("/packages/murphy-bed/deletion").json()["refusal"]
+    response = client.delete("/packages/murphy-bed")
+    assert response.status_code == 409
+    assert response.json()["detail"]["failure_class"] == "piece_in_use"
+    assert "Living room version 3" in response.json()["detail"]["reason"]
+    assert client.get(f"/chat/threads/{thread}").status_code == 200
+
+
+def test_a_memory_failure_deletes_no_piece(client: TestClient, tmp_path: Path, monkeypatch) -> None:
+    from app.agent import chat as chat_module
+
+    thread, _ = _conversation_with_a_piece_and_uploads(client, tmp_path)
+
+    def broken(graph, thread_id) -> None:
+        raise RuntimeError("database down")
+
+    monkeypatch.setattr(chat_module, "forget", broken)
+    response = client.delete("/packages/murphy-bed")
+    assert response.status_code == 503
+    assert client.get(f"/chat/threads/{thread}").status_code == 200
+    assert "murphy-bed" in [p["package_id"] for p in client.get("/packages").json()]
+
+
+@pytest.mark.parametrize("method", ["GET", "DELETE"])
+def test_deleting_an_unknown_piece_is_not_found(client: TestClient, method: str) -> None:
+    path = "/packages/no-such-piece" + ("/deletion" if method == "GET" else "")
+    assert client.request(method, path).status_code == 404
+
+
 def test_deleting_an_unknown_conversation_is_not_found(client: TestClient) -> None:
     install(client, fake_models())
     assert client.delete(f"/chat/threads/{uuid4()}").status_code == 404
@@ -1096,6 +1175,43 @@ def test_a_render_notice_follows_the_reply_that_started_the_render(client: TestC
     body = json.dumps(messages).lower()
     assert "/home/" not in body and "openai/" not in body and "token" not in body
 
+
+
+def test_a_room_render_notice_links_to_its_viewer(client: TestClient, render_root: Path) -> None:
+    """room-render-notices: the thread carries the link while the file exists; progress follows the render."""
+    from app.blender import storage
+
+    install(client, fake_models(
+        foreman={"decisions": [{"specialist": "intake", "reason": "t"}]},
+        intake={"replies": ["Started a draft turntable of wohnen version 11."]},
+    ))
+    thread = start(client, title="Murphy bed")
+    client.post(f"/chat/threads/{thread}/turns", json={"message": "render the room"})
+    folder = storage.composition_version_dir(render_root, "wohnen", 11)
+    folder.mkdir(parents=True, exist_ok=True)
+    storage.write_render_status(folder, "turntable", status="running", tier="draft")
+    with Session(client.app.state.engine) as session:
+        house_file.follow_room_render(session, UUID(thread), "wohnen", 11, "turntable")
+        session.commit()
+    assert client.get(f"/chat/threads/{thread}/progress").json()["rendering"] is True
+
+    storage.write_render_status(folder, "turntable", status="succeeded", tier="draft")
+    (folder / "viewer.html").write_text("<html></html>", encoding="utf-8")
+    with Session(client.app.state.engine) as session:
+        house_file.add_notice(
+            session, UUID(thread), after_messages=2, outcome="succeeded", tier="draft",
+            text="The draft turntable of wohnen version 11 is ready. You can also find it on the Rooms page.",
+            version=11, composition_slug="wohnen", render_key="turntable",
+        )
+        session.commit()
+    assert client.get(f"/chat/threads/{thread}/progress").json()["rendering"] is False
+    notice = client.get(f"/chat/threads/{thread}").json()["messages"][-1]
+    assert notice["links"] == [
+        {"label": "Open the turntable viewer", "href": "/compositions/wohnen/versions/11/files/viewer.html"}
+    ]
+    assert "package_id" not in notice
+    (folder / "viewer.html").unlink()
+    assert "links" not in client.get(f"/chat/threads/{thread}").json()["messages"][-1]
 
 # --- stop and edit (app-check-2026-10-09) ---------------------------------------------
 

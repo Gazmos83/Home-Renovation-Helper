@@ -7,8 +7,10 @@ import { cardClass } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { CutListTables } from "@/components/inspector/CutListTables";
+import { ReadingTab } from "@/components/inspector/ReadingTab";
 import { RendersTab } from "@/components/inspector/RendersTab";
 import { VersionVerdict } from "@/components/inspector/VersionVerdict";
+import { VersionFiles } from "@/components/studio/VersionFiles";
 
 /**
  * One piece version, inspected (piece-inspector): its model in 3D with the camera
@@ -86,14 +88,14 @@ function stateWord(status: string | null): string {
   return "not built";
 }
 
-export type InspectorTab = "model" | "cutlist" | "renders";
+export type InspectorTab = "model" | "cutlist" | "renders" | "reading" | "files";
 
 /** The open tab and the render chosen on the Renders tab, as the address keeps them. */
 export type InspectorPlace = { tab: InspectorTab; render: string | null };
 
 /** `?tab=` as the address spelled it: one of the tabs, else the Model tab. */
 export function parseTab(value: string | null): InspectorTab {
-  return value === "cutlist" || value === "renders" ? value : "model";
+  return value === "cutlist" || value === "renders" || value === "reading" || value === "files" ? value : "model";
 }
 
 /** Polls the piece's versions while open; how often, in milliseconds. */
@@ -229,12 +231,23 @@ export function InspectorView({
             { id: "model", label: "Model" },
             { id: "cutlist", label: "Cut list" },
             { id: "renders", label: "Renders" },
+            { id: "reading", label: "Reading" },
+            { id: "files", label: "Files" },
           ]}
           value={tab}
           onChange={setTab}
         />
         {tab === "cutlist" ? (
           <CutListTables spec={spec.data} baseline={priorSpec.data ?? null} />
+        ) : tab === "files" ? (
+          <VersionFiles
+            owner={packageId}
+            version={version}
+            files={files.map((name) => ({ name, href: versionFile(packageId, version, name) }))}
+            note="Open the .blend in Blender: each part is a separate object named to the cut list, in millimetres."
+          />
+        ) : tab === "reading" ? (
+          <ReadingTab packageId={packageId} version={version} approved={Boolean(info.data.approved_at)} />
         ) : tab === "renders" ? (
           <RendersTab
             packageId={packageId}

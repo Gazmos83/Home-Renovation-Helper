@@ -1,8 +1,9 @@
 """The inputs a version's drilling list is calculated from, frozen into its folder.
 
-`hardware_inputs.json` holds a copy of each data sheet the spec names (by hardware key) and of the
-calculator rules (the bracket rules and the pin and hinge count rules), so editing a sheet or a rule
-later never changes an existing version.
+`hardware_inputs.json` holds a copy of each data sheet the spec names (by hardware key), of the
+calculator rules (the bracket rules and the pin, hinge and rail-support count rules) and of the
+hardware catalog the generator draws from, so editing a sheet, a rule or the catalog later never
+changes an existing version.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from app.blender.custom_build.derive import (
     HINGE_ID,
     SHELF_PIN_ID,
 )
+from app.blender.hardware_catalog import default_catalog
 from app.guidelines.datasheets import sheet_for_key
 
 
@@ -49,7 +51,7 @@ def freeze_inputs(session: Session, design_rules: Iterable[Any], spec: Mapping[s
                 "params": rule.params.model_dump(mode="json"),
                 "source": {"publication": rule.source.publication, "section": rule.source.section, "quote": rule.source.quote},
             }
-    return {"data_sheets": data_sheets, "rules": rules}
+    return {"data_sheets": data_sheets, "rules": rules, "hardware_catalog": default_catalog().frozen()}
 
 
 def _frozen_sheet(sheet: Any) -> dict[str, Any]:

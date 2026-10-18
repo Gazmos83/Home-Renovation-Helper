@@ -52,6 +52,18 @@ export function changedCutIds(
   return { parts, hardware };
 }
 
+/**
+ * The mark beside a hardware item the model does not fully show (hardware-catalog): `*` when fewer
+ * pieces are drawn than the line counts, or when nothing is drawn of a line without a quantity, with
+ * "(n of m shown)" when some are. A version built before `shown` existed is never marked.
+ */
+export function notShownMark(item: SpecHardware): string | null {
+  if (item.shown === undefined) return null;
+  if (item.qty === "") return item.shown === 0 ? "*" : null;
+  if (item.shown >= item.qty) return null;
+  return item.shown > 0 ? `* (${item.shown} of ${item.qty} shown)` : "*";
+}
+
 function rowClass(changed: boolean): string | undefined {
   return changed ? "text-destructive" : undefined;
 }
@@ -235,7 +247,10 @@ export function CutListTables({
                       data-changed={highlight || undefined}
                     >
                       <TableCell className="font-mono text-xs">{item.id}</TableCell>
-                      <TableCell>{item.item}</TableCell>
+                      <TableCell>
+                        {item.item}
+                        {notShownMark(item) && <span className="ml-1 text-muted-foreground">{notShownMark(item)}</span>}
+                      </TableCell>
                       <TableCell className="tabular-nums">{item.qty === "" ? "no quantity" : item.qty}</TableCell>
                       <TableCell className={cn("text-xs", highlight ? undefined : "text-muted-foreground")}>
                         {item.notes}
@@ -246,6 +261,9 @@ export function CutListTables({
               </TableBody>
             </Table>
           </div>
+        )}
+        {hardware.some((item) => notShownMark(item) !== null) && (
+          <p className="text-sm text-muted-foreground">* not shown in the model</p>
         )}
       </section>
       <section aria-label="Drilling" className="grid gap-2">

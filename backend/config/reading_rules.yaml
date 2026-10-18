@@ -1,0 +1,10 @@
+# Recommended reading for wall-hung items of an approved version (installation-reading).
+# A current source version matches an item kind when it carries at least one of the
+# kind's `applicable_furniture` values or `collections`. Matching is by these tags only:
+# no search, no model. Add or retag sources in config/engineering_sources.yaml.
+wall_shelf:
+  applicable_furniture: [shelf, wall_shelf]
+  collections: [kitchen_wall_anchoring]
+wall_module:
+  applicable_furniture: [wall_cabinet, kitchen_wall_cabinet]
+  collections: [kitchen_wall_anchoring]

@@ -13,9 +13,20 @@ import { isOpen, roomEntries } from "../lib/rooms";
 import { Tile } from "@/components/studio/Tile";
 import { TileGrid } from "@/components/studio/TileGrid";
 import { useStudioDialog } from "@/components/studio/useStudioDialog";
+import { VersionFiles, type VersionFile } from "@/components/studio/VersionFiles";
 
 function message(error: unknown): string | null {
   return error instanceof Error ? error.message : null;
+}
+
+/** A composition version's downloadable files, named as the file route serves them. */
+function roomFiles(view: { blend?: string | null; model: string | null; picture: string | null }): VersionFile[] {
+  const files: VersionFile[] = [];
+  if (view.blend) files.push({ name: "model.blend", href: view.blend });
+  if (view.model) files.push({ name: "model.glb", href: view.model });
+  const picture = view.picture?.split("/").pop()?.split("?")[0];
+  if (view.picture && picture) files.push({ name: picture, href: view.picture });
+  return files;
 }
 
 /**
@@ -126,6 +137,15 @@ function CompositionCard({ composition, inRoom = false }: { composition: Composi
       )}
       {succeeded && composition.slug && version !== null && (
         <RoomVariants slug={composition.slug} version={version} />
+      )}
+      {succeeded && composition.slug && version !== null && (
+        <VersionFiles
+          owner={composition.slug}
+          version={version}
+          files={roomFiles(shown)}
+          heading="Download the room"
+          note="Open the .blend in Blender: the room, its openings and every placed piece, in millimetres."
+        />
       )}
       {shown.viewer && (
         <p>

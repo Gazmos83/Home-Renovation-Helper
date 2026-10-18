@@ -16,6 +16,7 @@ const GROUPS: { title: string; rows: Row[] }[] = [
     rows: [
       { field: "trigger_percent", label: "Start compressing at (share of the context budget)", kind: "number", unit: "%" },
       { field: "keep_turns", label: "Recent turns always kept in full", kind: "number" },
+      { field: "recent_inputs", label: "Recent inputs sent in full (0 = the trigger decides)", kind: "number" },
       { field: "note_tokens", label: "Note length", kind: "number", unit: "tokens" },
       { field: "note_instructions", label: "Note headings and instructions", kind: "text" },
       { field: "tool_result_chars", label: "Tool result cut to", kind: "number", unit: "characters" },

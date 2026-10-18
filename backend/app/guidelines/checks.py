@@ -20,6 +20,7 @@ from app.blender.custom_build.derive import (
     BRACKET_SPACING_CHECK,
     HINGE_COUNT_CHECK,
     PIN_COUNT_CHECK,
+    RAIL_SUPPORT_CHECK,
     bay_cut_widths,
     uses_divider_layout,
     widest_shelf_board,
@@ -118,6 +119,12 @@ class HingeCountRow(BaseModel):
     hinges: int = Field(ge=1, le=64)
 
 
+class RailSupportRow(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    max_length_mm: int = Field(ge=1, le=10000)
+    supports: int = Field(ge=2, le=64)
+
+
 def _rising(limits: list[int]) -> None:
     if any(later <= earlier for earlier, later in pairwise(limits)):
         raise ValueError("table rows must rise, each limit above the one before")
@@ -146,6 +153,19 @@ class HingeCount(BaseModel):
     @model_validator(mode="after")
     def _rows_rise(self) -> HingeCount:
         _rising([row.max_height_mm for row in self.table])
+        return self
+
+
+class RailSupportCount(BaseModel):
+    """Supports per hanging rail: the first row whose length is at least the rail's cut length; `beyond` past the last row."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    table: list[RailSupportRow] = Field(min_length=1)
+    beyond: int = Field(ge=2, le=64)
+
+    @model_validator(mode="after")
+    def _rows_rise(self) -> RailSupportCount:
+        _rising([row.max_length_mm for row in self.table])
         return self
 
 
@@ -340,7 +360,7 @@ def shelf_bracket_spacing(spec: Mapping[str, Any], params: BracketSpacing) -> li
 
 
 def counts_only(_spec: Mapping[str, Any], _params: BaseModel) -> list[Measurement]:
-    """A spec states no pin or hinge count, so a count rule judges nothing; it only gives the calculator its count."""
+    """A spec states no pin, hinge or rail-support count, so a count rule judges nothing; it only gives the calculator its count."""
     return []
 
 
@@ -360,4 +380,5 @@ CHECKS: Final[dict[str, CheckSpec]] = {
     BRACKET_SPACING_CHECK: CheckSpec("piece", BracketSpacing, shelf_bracket_spacing),
     PIN_COUNT_CHECK: CheckSpec("piece", PinCount, counts_only),
     HINGE_COUNT_CHECK: CheckSpec("piece", HingeCount, counts_only),
+    RAIL_SUPPORT_CHECK: CheckSpec("piece", RailSupportCount, counts_only),
 }

@@ -136,6 +136,7 @@ def fit(
     trigger_percent: int = 100,
     keep_turns: int = 0,
     covered_through: str | None = None,
+    recent_inputs: int = 0,
 ) -> list[BaseMessage]:
     """The request to send. Raises `BudgetRefused` when the mandatory part does not fit.
 
@@ -144,8 +145,10 @@ def fit(
     Compression starts once the earlier history passes `trigger_percent` of the usable
     budget; the last `keep_turns` turns are sent in full while the whole request still
     fits; exchanges up to `covered_through` (the stored note's last message) are always
-    replaced by the note (conversation-memory-settings). The defaults are the behaviour
-    before those settings.
+    replaced by the note (conversation-memory-settings). With `recent_inputs` above 0, every
+    exchange before the Nth most recent owner input is replaced by the note as well, however
+    much room is left (conversation-recent-inputs). The defaults are the behaviour before
+    those settings.
     """
     earlier, current = _split_current(history)
     mandatory = count([*system, *current], tools)
@@ -156,6 +159,8 @@ def fit(
     if not earlier:
         return [*system, *current]
     covered = _covered(earlier, covered_through)
+    if recent_inputs > 0:
+        covered = max(covered, kept_turns_start(earlier, recent_inputs))
     threshold = usable * trigger_percent // 100
     if not covered and mandatory + count(earlier) <= threshold:
         return [*system, *earlier, *current]
@@ -229,6 +234,7 @@ def prepare(
     trigger_percent: int = 100,
     keep_turns: int = 0,
     covered_through: str | None = None,
+    recent_inputs: int = 0,
 ) -> tuple[list[BaseMessage], int]:
     """Fit the request, then refuse if it would pass the day's ceiling.
 
@@ -237,6 +243,7 @@ def prepare(
     fitted = fit(
         budget, [SystemMessage(system)], history, tools=tools, summarize=summarize,
         trigger_percent=trigger_percent, keep_turns=keep_turns, covered_through=covered_through,
+        recent_inputs=recent_inputs,
     )
     counted = count(fitted, tools)
     needed = counted + budget.output_reserve

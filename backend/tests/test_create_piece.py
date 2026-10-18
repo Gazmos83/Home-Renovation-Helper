@@ -178,6 +178,15 @@ def test_a_piece_without_any_room_stays_unassigned(make_ctx, tool_deps) -> None:
     assert _piece_room(tool_deps, "shoe-bench") is None
 
 
+def test_a_piece_in_a_conversation_that_declined_a_room_stays_unassigned(make_ctx, tool_deps) -> None:
+    thread = _thread_in(tool_deps)
+    with tool_deps.session() as session:
+        house_file.decline_room(session, thread)
+        session.commit()
+    run(arguments("shoe-bench"), replace(make_ctx(thread_id=thread), approved=True))
+    assert _piece_room(tool_deps, "shoe-bench") is None
+
+
 def test_an_apartment_without_a_room_is_refused_with_the_question_and_no_pause(make_ctx, tool_deps, tool_state) -> None:
     thread = _thread_in(tool_deps, apartment="Wohnung")
     refused = preview(arguments("shoe-bench"), make_ctx(thread_id=thread))
@@ -193,3 +202,29 @@ def test_an_apartment_with_one_of_its_rooms_in_the_brief_is_accepted(make_ctx, t
     ctx = replace(make_ctx(thread_id=thread), approved=True, brief={"room": "Living"})
     run(arguments("shoe-bench"), ctx)
     assert _piece_room(tool_deps, "shoe-bench") == "Living"
+
+
+# --- door slats (door-slats) -------------------------------------------------------------
+
+
+def _slatted_desk(handle: bool) -> dict:
+    document = desk()
+    document["materials"]["slats"] = {"material": "12 mm MDF", "thickness_mm": 12}
+    door = {"type": "door", "count": 2, "opening": "hinge", "slats": {"count": 8, "width": 30, "material": "slats", "leaves": [2]}}
+    if handle:
+        door["handle"] = {"kind": "knob"}
+    document["modules"][0]["fronts"] = [door]
+    return document
+
+
+def test_a_handle_on_slats_is_warned_about_in_the_preview(make_ctx) -> None:
+    shown = preview({"package_id": "kommode", "spec": _slatted_desk(handle=True)}, make_ctx())
+    assert isinstance(shown, Confirmation)
+    assert "\nSlat-handle warnings: the handle on door 2 of cabinet-door-1 is mounted over the slats" in shown.summary
+    assert "door 1 of" not in shown.summary
+
+
+def test_slats_without_a_handle_give_no_slat_warning(make_ctx) -> None:
+    shown = preview({"package_id": "kommode", "spec": _slatted_desk(handle=False)}, make_ctx())
+    assert isinstance(shown, Confirmation)
+    assert "Slat-handle warnings" not in shown.summary

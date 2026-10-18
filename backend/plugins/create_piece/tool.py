@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.agent import house_file, notices
 from app.agent.divider_questions import fix_shelf_question, position_question
+from app.agent.revise import describe_leaf_materials
 from app.agent.tools.base import (
     AgentTool,
     Confirmation,
@@ -128,6 +129,17 @@ def summarise(package_id: str, spec: dict[str, Any], warnings: str) -> tuple[str
     )
     if warnings:
         summary += f"\nDesign-rule warnings: {warnings}"
+    slat_warnings = custom_derive.slat_handle_warnings(spec)
+    if slat_warnings:
+        summary += f"\nSlat-handle warnings: {'; '.join(slat_warnings)}"
+    door_materials = [
+        f"{module['id']} {words}"
+        for module in spec["modules"]
+        for front in module.get("fronts") or []
+        if (words := describe_leaf_materials(front, module.get("carcass")))
+    ]
+    if door_materials:
+        summary += f"\nDoor materials: {'; '.join(door_materials)}"
     proposal = {
         "package_id": package_id,
         "name": spec["name"],

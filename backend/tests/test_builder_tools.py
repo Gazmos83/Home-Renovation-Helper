@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import replace
 
 from sqlalchemy import text
@@ -184,23 +183,74 @@ def test_an_unbuilt_version_cannot_be_rendered(make_ctx, tool_state) -> None:
     assert "is not built yet" in result
 
 
-def test_a_room_render_carries_the_room_fit_document(make_ctx, tool_deps, tool_state) -> None:
-    made(make_ctx, tool_state)
+def _living_room_thread(tool_deps):
     with tool_deps.session() as session:
-        house_file.upsert_room(session, "Living room", LIVING, 2600)
+        room = house_file.upsert_room(session, "Living room", LIVING, 2600)
+        thread = house_file.create_thread(session, "Bench", package_id="bench")
+        house_file.set_thread_room(session, thread.id, room)
         session.commit()
-    fitted = fit_run(
-        {"room_name": "Living room", "package_id": "bench", "wall": 0, "offset_mm": 500}, make_ctx()
-    )
-    document = json.loads(re.search(r"Room document[^:]*: (\{.*\})$", fitted, re.MULTILINE).group(1))
+        return thread.id
 
-    shown, result = render(make_ctx, kind="still", room=document)
+
+def test_a_room_render_uses_the_saved_placement(make_ctx, tool_deps, tool_state) -> None:
+    made(make_ctx, tool_state)
+    thread = _living_room_thread(tool_deps)
+    fitted = fit_run({"room_name": "Living room", "package_id": "bench", "wall": 0, "offset_mm": 500}, make_ctx())
+    assert "Placement saved for Living room" in fitted
+
+    args = {"package_id": "bench", "tier": "draft", "kind": "still", "in_room": True}
+    shown = render_preview(args, make_ctx(thread_id=thread))
+    result = render_run(args, make_ctx(thread_id=thread))
     assert shown is None
     assert "a Review button appears in this chat" in result and "still.png" not in result
     job = wait_job(folder_of(tool_state), "room-still")
     assert job["tier"] == "draft"
     scene = json.loads((folder_of(tool_state) / "room" / "scene.json").read_text(encoding="utf-8"))
     assert scene
+
+
+def test_a_room_render_without_a_placement_is_refused_and_starts_nothing(make_ctx, tool_deps, tool_state) -> None:
+    made(make_ctx, tool_state)
+    thread = _living_room_thread(tool_deps)
+    launched = len(tool_state.launched)
+    args = {"package_id": "bench", "tier": "draft", "kind": "still", "in_room": True}
+    result = render_run(args, make_ctx(thread_id=thread))
+    assert result == "this piece has no place in Living room yet; the Designer will ask where it goes"
+    assert len(tool_state.launched) == launched
+
+
+def test_a_room_document_from_the_model_is_refused(make_ctx, tool_deps, tool_state) -> None:
+    made(make_ctx, tool_state)
+    thread = _living_room_thread(tool_deps)
+    result = render_run(
+        {"package_id": "bench", "tier": "draft", "kind": "still", "room": {"kind": "room_scene"}},
+        make_ctx(thread_id=thread),
+    )
+    assert "in_room true" in result
+
+
+def test_in_room_with_a_composition_or_a_shell_is_refused(make_ctx, tool_state) -> None:
+    assert "render it without in_room" in render_run(
+        {"composition": "Wohnen", "tier": "draft", "kind": "still", "in_room": True}, make_ctx()
+    )
+    assert "cannot be rendered placed in a room" in render_run(
+        {"shell": "Flat", "tier": "draft", "kind": "still", "in_room": True}, make_ctx()
+    )
+
+
+def test_no_render_refusal_names_internal_documents(make_ctx, tool_deps, tool_state) -> None:
+    """view-piece-in-room 4.2: refusals the owner can resolve are plain words."""
+    made(make_ctx, tool_state)
+    thread = _living_room_thread(tool_deps)
+    results = [
+        render_run({"package_id": "bench", "tier": "draft", "kind": "still", "in_room": True}, make_ctx(thread_id=thread)),
+        render_run({"package_id": "bench", "tier": "draft", "kind": "still", "in_room": True}, make_ctx()),
+        render_run({"package_id": "bench", "tier": "draft", "kind": "still", "room": {}}, make_ctx(thread_id=thread)),
+        render_run({"composition": "Wohnen", "tier": "draft", "kind": "still", "in_room": True}, make_ctx()),
+        render_run({"shell": "Flat", "tier": "draft", "kind": "still", "in_room": True}, make_ctx()),
+    ]
+    for result in results:
+        assert "schema_version" not in result and "kind:" not in result and "room document" not in result
 
 
 # --- apartment shells (tier `draft` only) -------------------------------------------------

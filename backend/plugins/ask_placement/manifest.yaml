@@ -1,0 +1,7 @@
+name: ask_placement
+description: Ask the owner where the piece goes in the conversation's room, check it fits and save the place.
+kind: builtin
+role: designer
+tools: [ask_placement]
+enabled_by_default: true
+toggleable: false

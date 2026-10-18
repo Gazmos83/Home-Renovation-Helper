@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import type { ChatMessage } from "@/lib/api";
 
 /** The button's words: "Review draft v1", "Review final revision 2". */
@@ -10,8 +10,9 @@ export function reviewLabel(tier: string, version: number): string {
  * A notice the service posted when a render or a build started in this conversation ended.
  * A finished render of a piece version has a Review button, opening the inspector beside the
  * chat on its Renders tab, and a finished build an "Inspect version N" button opening it; a failed one, a
- * shell, a composition or a deleted version has none. A revision notice (revision-link-button)
- * is posted when the version is created and always has an "Open version N" button.
+ * shell or a deleted version has none. A revision notice (revision-link-button) is posted when the
+ * version is created and always has an "Open version N" button. A finished room render carries
+ * links to its viewer or still, opening in a new tab (room-render-notices).
  */
 export function Notice({
   m,
@@ -44,6 +45,18 @@ export function Notice({
               : reviewLabel(m.tier as string, m.version as number)}
         </Button>
       )}
+      {m.outcome === "succeeded" &&
+        (m.links ?? []).map((link) => (
+          <a
+            key={link.href}
+            href={link.href}
+            target="_blank"
+            rel="noreferrer"
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
+            {link.label}
+          </a>
+        ))}
     </section>
   );
 }

@@ -6,7 +6,7 @@ import { stubFetch } from "../../test/fetchStub";
 import Memory from "./Memory";
 
 const defaults = {
-  trigger_percent: 100, keep_turns: 0, note_tokens: 400, note_instructions: "You keep the notes.", tool_result_chars: 300,
+  recent_inputs: 5, trigger_percent: 100, keep_turns: 0, note_tokens: 400, note_instructions: "You keep the notes.", tool_result_chars: 300,
   reviews: "auto", save_preferences: true, other_builds: "line", include_preferences: true,
   include_review_items: true, include_version_verdicts: true, render_ratings: 5, include_extension_requests: true,
 };
@@ -51,6 +51,40 @@ test("an out-of-range value shows the refusal", async () => {
   await user.clear(kept);
   await user.type(kept, "50");
   await user.click(screen.getAllByRole("button", { name: "Save" })[1]);
+  expect(await screen.findByText(/less than or equal to 20/)).toBeInTheDocument();
+});
+
+test("recent inputs show the default of 5, save, reset and show a refusal", async () => {
+  let current = 5;
+  const calls = stubFetch((call, init) => {
+    if (call === "GET /admin/memory") return { body: { settings: { ...defaults, recent_inputs: current }, defaults, fixed_rules: [] } };
+    if (call === "PUT /admin/memory") {
+      const sent = JSON.parse(String(init?.body)).recent_inputs;
+      if (sent > 20) {
+        return { status: 422, body: { detail: { failure_class: "invalid_setting", field: "recent_inputs", reason: "Input should be less than or equal to 20" } } };
+      }
+      current = sent;
+      return { body: { settings: { ...defaults, recent_inputs: current }, defaults, fixed_rules: [] } };
+    }
+    if (call === "DELETE /admin/memory/recent_inputs") {
+      current = 5;
+      return { body: { settings: defaults, defaults, fixed_rules: [] } };
+    }
+  });
+  show();
+  const user = userEvent.setup();
+  const field = await screen.findByLabelText("Recent inputs sent in full (0 = the trigger decides)");
+  expect(field).toHaveValue(5);
+  await user.clear(field);
+  await user.type(field, "8");
+  await user.click(screen.getAllByRole("button", { name: "Save" })[2]);
+  expect(calls).toContainEqual(["PUT", "/admin/memory", { recent_inputs: 8 }]);
+  await user.click(await screen.findByRole("button", { name: "Reset Recent inputs sent in full (0 = the trigger decides)" }));
+  expect(calls.map(([m, u]) => `${m} ${u}`)).toContain("DELETE /admin/memory/recent_inputs");
+  const again = await screen.findByLabelText("Recent inputs sent in full (0 = the trigger decides)");
+  await user.clear(again);
+  await user.type(again, "21");
+  await user.click(screen.getAllByRole("button", { name: "Save" })[2]);
   expect(await screen.findByText(/less than or equal to 20/)).toBeInTheDocument();
 });
 

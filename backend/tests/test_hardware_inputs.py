@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.blender import storage
 from app.blender.custom_build.derive import derive, drilling, emitted_spec
+from app.blender.hardware_catalog import default_catalog
 from app.db.session import make_engine
 from app.guidelines import datasheets
 from app.guidelines.hardware_inputs import freeze_inputs
@@ -156,3 +157,10 @@ def test_the_file_is_plain_json_next_to_the_input(tmp_path: Path) -> None:
     created = service.create_version(tmp_path, "cab", SPEC, lambda v: None, inputs={"data_sheets": {}, "rules": {}})
     folder = storage.version_dir(tmp_path, "cab", created["version"])
     assert json.loads((folder / storage.HARDWARE_INPUTS_FILE).read_text()) == {"data_sheets": {}, "rules": {}}
+
+
+def test_the_rail_support_rule_and_the_hardware_catalog_are_frozen(session: Session) -> None:
+    supports = {"table": [{"max_length_mm": 1000, "supports": 2}], "beyond": 3}
+    frozen = freeze_inputs(session, (*RULES, _rule("rail_support_count_for_length", supports)), SPEC)
+    assert frozen["rules"]["rail_support_count_for_length"]["params"] == supports
+    assert frozen["hardware_catalog"] == default_catalog().frozen()

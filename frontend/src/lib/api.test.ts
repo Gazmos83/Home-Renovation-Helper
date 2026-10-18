@@ -67,3 +67,29 @@ test("a refusal before the stream opens is thrown in the service's words", async
   expect((error as ApiError).status).toBe(409);
   expect((error as ApiError).message).toBe("answer the pending questions first");
 });
+
+test("reading calls hit the owner's reading and report routes for the version", async () => {
+  const fetchMock = vi.fn(async () => new Response(JSON.stringify([]), { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
+  await api.reading("hall shelf", 3);
+  await api.readingBlocks("hall shelf", 3, "abc-1", 2);
+  await api.engineeringReports("hall shelf", 3);
+  expect(fetchMock.mock.calls.map((call) => (call as unknown as [string])[0])).toEqual([
+    "/packages/hall%20shelf/versions/3/reading",
+    "/packages/hall%20shelf/versions/3/reading/sources/abc-1/blocks?page=2",
+    "/packages/hall%20shelf/versions/3/engineering/reports",
+  ]);
+});
+
+test("an unapproved version's reading refusal is thrown in the service's words", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ detail: { reason: "version 4 must be approved first to see recommended reading" } }), {
+          status: 409,
+        }),
+    ),
+  );
+  await expect(api.reading("hall-shelf", 4)).rejects.toThrow("must be approved first");
+});

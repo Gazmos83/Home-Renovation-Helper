@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
@@ -40,6 +40,8 @@ class Pending:
     # summary or proposal, and a confirmation no questions.
     kind: str = "confirmation"
     questions: list[dict[str, Any]] = field(default_factory=list)
+    # A question set's Workspace layout button: "room" for the placement questions (view-piece-in-room).
+    layout: str | None = None
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,7 @@ def _pending_of(interrupt_obj: Any) -> Pending:
         proposal=dict(value.get("proposal") or {}),
         kind=str(value.get("kind") or "confirmation"),
         questions=[dict(q) for q in value.get("questions") or []],
+        layout=value.get("layout") if value.get("layout") == "room" else None,
     )
 
 
@@ -525,15 +528,19 @@ def _confirmation_line(answered: dict[str, Any]) -> str:
     return line
 
 
-def _notice_entry(notice: Any) -> dict[str, Any]:
+def _notice_entry(notice: Any, links: Mapping[Any, list[dict[str, str]]] | None = None) -> dict[str, Any]:
     entry = {"role": "notice", "kind": notice.kind, "text": notice.text, "outcome": notice.outcome, "tier": notice.tier}
     if notice.package_id is not None and notice.version is not None:
         entry |= {"package_id": notice.package_id, "version": notice.version}
+    found = (links or {}).get(getattr(notice, "id", None))
+    if found:
+        entry["links"] = found
     return entry
 
 
 def history(
-    graph: Any, *, thread_id: UUID, owner_id: UUID, notices: Sequence[Any] = ()
+    graph: Any, *, thread_id: UUID, owner_id: UUID, notices: Sequence[Any] = (),
+    notice_links: Mapping[Any, list[dict[str, str]]] | None = None,
 ) -> list[dict[str, Any]]:
     """The owner's messages (with the ids of the files sent with each), every reply with
     text, and each answered confirmation, in order.
@@ -543,7 +550,7 @@ def history(
     it was recorded on; an answered question set is its question and answer rows,
     and a declined one the owner's own words (studio-chat-polish). Each of `notices`
     (in `after_messages` order) comes after the messages the thread held when it was posted
-    (studio-layout).
+    (studio-layout), with its `notice_links` by notice id when it has any (room-render-notices).
     """
     config = _config(thread_id, owner_id)
     snapshot = graph.get_state(config)
@@ -559,7 +566,7 @@ def history(
     waiting_notices = list(notices)
     for position, message in enumerate(messages):
         while waiting_notices and waiting_notices[0].after_messages <= position:
-            shown.append(_notice_entry(waiting_notices.pop(0)))
+            shown.append(_notice_entry(waiting_notices.pop(0), notice_links))
         if isinstance(message, HumanMessage):
             entry = {"role": "owner", "text": _text(message.content)}
             if message.id:
@@ -577,5 +584,5 @@ def history(
                 shown.append({"role": "owner", "text": str(answered["declined"])})
             else:
                 shown.append({"role": "assistant", "kind": "answers", "text": "", "rows": list(answered.get("rows") or [])})
-    shown += [_notice_entry(notice) for notice in waiting_notices]
+    shown += [_notice_entry(notice, notice_links) for notice in waiting_notices]
     return shown

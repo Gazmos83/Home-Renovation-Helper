@@ -392,3 +392,126 @@ test("switching the layout shows the chat at its last message (Last message afte
     spies.forEach((spy) => spy.mockRestore());
   }
 });
+
+/**
+ * A stub that keeps approvals (workspace-pane-approval): `hall-bench` versions 1–3 (version 4 building)
+ * and the room `Hall` versions 1–2, approving one clearing the other as the API does.
+ */
+function stubApprovals({ piece = null as number | null, room = null as number | null, refuseRoom = false } = {}) {
+  const state = { piece, room };
+  const status = (n: number) => (n === 4 ? "running" : "succeeded");
+  const info = (n: number) => ({
+    package_id: "hall-bench", version: n, status: status(n),
+    approved_at: state.piece === n ? "2026-10-17T00:00:00Z" : null, files: ["model.glb", "spec.json"],
+  });
+  const roomVersion = (n: number) => ({
+    version: n, status: "succeeded", picture: null, viewer: null, items: [],
+    model: `/compositions/room-hall/versions/${n}/files/model.glb`,
+    surfaces: `/compositions/room-hall/versions/${n}/files/report.json`, dimensions: null,
+    approved_at: state.room === n ? "2026-10-17T00:00:00Z" : null,
+  });
+  return stubFetch((call) => {
+    if (call === "GET /chat/threads") return { body: [thread("t1", "Hall bench")] };
+    if (call === "GET /chat/threads/t1") return { body: { ...thread("t1", "Hall bench"), messages: [], pending: null } };
+    if (call === "GET /chat/threads/t1/progress") {
+      return {
+        body: {
+          ...progress, latest_version: 4, approved_version: state.piece, build_status: "running", version_count: 4,
+          room: { ...HALL, versions: [roomVersion(2), roomVersion(1)], approved_version: state.room, approved_picture: null },
+        },
+      };
+    }
+    if (call === "GET /packages/hall-bench") return { body: { package_id: "hall-bench", versions: [4, 3, 2, 1].map(info) } };
+    const version = /^GET \/packages\/hall-bench\/versions\/(\d)$/.exec(call);
+    if (version) return { body: info(Number(version[1])) };
+    if (/^GET \/packages\/hall-bench\/versions\/\d\/files\/spec.json$/.test(call)) return { body: SPEC };
+    const pieceApproval = /^(PUT|DELETE) \/packages\/hall-bench\/versions\/(\d)\/approval$/.exec(call);
+    if (pieceApproval) {
+      state.piece = pieceApproval[1] === "PUT" ? Number(pieceApproval[2]) : null;
+      return { body: info(Number(pieceApproval[2])) };
+    }
+    const roomApproval = /^(PUT|DELETE) \/compositions\/room-hall\/versions\/(\d)\/approval$/.exec(call);
+    if (roomApproval) {
+      if (refuseRoom) {
+        return {
+          status: 409,
+          body: { detail: { failure_class: "unapproved_pieces", reason: "Hall version 2 places hall-bench v3, which is not approved; approve those piece versions first" } },
+        };
+      }
+      const n = Number(roomApproval[2]);
+      state.room = roomApproval[1] === "PUT" ? n : null;
+      return { body: { slug: "room-hall", version: n, status: "succeeded", approved_at: state.room === n ? "2026-10-17T00:00:00Z" : null } };
+    }
+    if (/^GET \/compositions\/room-hall\/versions\/\d\/files\/report.json$/.test(call)) {
+      return { body: { surfaces: { "wall 1": ["Wall_0_0"] }, extent_mm: { min: [0, 0, 0], max: [3000, 2000, 2500] } } };
+    }
+  });
+}
+
+const sentTurn = (calls: [string, string, unknown][]) =>
+  calls.some(([method, url]) => method === "POST" && url.startsWith("/chat/threads/t1/"));
+
+test("the piece pane approves the version it shows, and the dropdown follows without a turn (Approve the shown piece version)", async () => {
+  const user = userEvent.setup();
+  const calls = stubApprovals();
+  show("/studio/workspace/t1?inspect=hall-bench/2");
+  const pane = await screen.findByRole("complementary", { name: "Inspector" });
+  await user.click(await within(pane).findByRole("button", { name: "Approve version 2" }));
+  expect(await within(pane).findByRole("button", { name: "Unapprove version 2" })).toBeInTheDocument();
+  expect(await within(pane).findByRole("option", { name: "Version 2, built, approved" })).toBeInTheDocument();
+  expect(calls.some(([method, url]) => method === "PUT" && url === "/packages/hall-bench/versions/2/approval")).toBe(true);
+  expect(sentTurn(calls)).toBe(false);
+});
+
+test("approving an older version from the piece pane's dropdown replaces the approval (Approve an older piece version)", async () => {
+  const user = userEvent.setup();
+  stubApprovals({ piece: 3 });
+  show("/studio/workspace/t1?inspect=hall-bench/3");
+  const pane = await screen.findByRole("complementary", { name: "Inspector" });
+  expect(await within(pane).findByRole("button", { name: "Unapprove version 3" })).toBeInTheDocument();
+  await user.selectOptions(within(pane).getByRole("combobox", { name: "Version" }), "2");
+  await user.click(await within(pane).findByRole("button", { name: "Approve version 2" }));
+  expect(await within(pane).findByRole("option", { name: "Version 2, built, approved" })).toBeInTheDocument();
+  expect(within(pane).getByRole("option", { name: "Version 3, built" })).toBeInTheDocument();
+});
+
+test("the piece pane unapproves the approved version it shows (Unapprove the shown piece version)", async () => {
+  const user = userEvent.setup();
+  stubApprovals({ piece: 2 });
+  show("/studio/workspace/t1?inspect=hall-bench/2");
+  const pane = await screen.findByRole("complementary", { name: "Inspector" });
+  await user.click(await within(pane).findByRole("button", { name: "Unapprove version 2" }));
+  expect(await within(pane).findByRole("button", { name: "Approve version 2" })).toBeInTheDocument();
+});
+
+test("a version still building offers no approval control in the piece pane (Unbuilt version offers no control)", async () => {
+  stubApprovals();
+  show("/studio/workspace/t1?inspect=hall-bench/4");
+  const pane = await screen.findByRole("complementary", { name: "Inspector" });
+  expect(await within(pane).findByText("Version 4 is not approved.")).toBeInTheDocument();
+  expect(within(pane).queryByRole("button", { name: /approve version 4/i })).not.toBeInTheDocument();
+});
+
+test("the room pane approves and unapproves the version it shows (Approve the shown room version)", async () => {
+  const user = userEvent.setup();
+  const calls = stubApprovals();
+  setWorkspaceLayout("chat-room");
+  show();
+  const pane = await screen.findByRole("complementary", { name: "Room view" });
+  await user.click(await within(pane).findByRole("button", { name: "Approve version 2" }));
+  expect(await within(pane).findByRole("option", { name: "Version 2 (approved)" })).toBeInTheDocument();
+  await user.click(within(pane).getByRole("button", { name: "Unapprove version 2" }));
+  expect(await within(pane).findByRole("button", { name: "Approve version 2" })).toBeInTheDocument();
+  expect(sentTurn(calls)).toBe(false);
+});
+
+test("a refused room approval is shown next to the control and nothing changes (Room approval refused)", async () => {
+  const user = userEvent.setup();
+  stubApprovals({ refuseRoom: true });
+  setWorkspaceLayout("chat-room");
+  show();
+  const pane = await screen.findByRole("complementary", { name: "Room view" });
+  await user.click(await within(pane).findByRole("button", { name: "Approve version 2" }));
+  expect(await within(pane).findByText(/places hall-bench v3, which is not approved/)).toBeInTheDocument();
+  expect(within(pane).getByRole("button", { name: "Approve version 2" })).toBeInTheDocument();
+});

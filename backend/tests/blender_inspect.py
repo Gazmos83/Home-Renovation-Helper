@@ -22,6 +22,15 @@ print(
                     "type": obj.type,
                     "parent": obj.parent.name if obj.parent else None,
                     "part_id": obj.get("part_id"),
+                    "hardware_key": obj.get("hardware_key"),
+                    "materials": [m.name for m in obj.data.materials] if obj.type == "MESH" else [],
+                    "metallic": [m.metallic for m in obj.data.materials] if obj.type == "MESH" else [],
+                    "colours": (
+                        [[round(c, 4) for c in list(m.diffuse_color)[:3]] for m in obj.data.materials]
+                        if obj.type == "MESH"
+                        else []
+                    ),
+                    "modifiers": [m.type for m in obj.modifiers],
                     "location": list(obj.matrix_world.translation),
                     "rotation_deg": [round(math.degrees(angle), 4) for angle in obj.rotation_euler],
                     "bound_box": [

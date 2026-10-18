@@ -168,7 +168,13 @@ def test_a_fronts_change_is_described_before_and_after(desk: dict) -> None:
             {"type": "drawer", "count": 1, "height": 200},
         ]}},
     )
-    assert lines == ["cabinet: fronts 2 doors (hinge) → 1 door (hinge), 1 drawer 200 mm"]
+    assert lines == [
+        "cabinet: fronts 2 doors (hinge) → 1 door (hinge), 1 drawer 200 mm",
+        (
+            "cabinet: front layout changes from 1 entry of 2 doors side by side to 2 entries stacked top to bottom "
+            "(1 door; 1 drawer)"
+        ),
+    ]
 
 
 def test_a_non_default_hinge_is_named_and_an_empty_list_reads_none(desk: dict) -> None:
@@ -414,3 +420,151 @@ def test_a_protruding_shelf_fit_moves_placed_pieces_with_the_build(desk: dict) -
     assert shift > 0
     assert revised["extra_parts"][0]["placements"][0]["y"] == shift
     assert f"fit: top-frame: extra part pieces move back {shift} mm" in lines
+
+
+# --- front handles (front-handles) ------------------------------------------------------
+
+
+def test_a_handle_added_to_fronts_is_described_in_full(desk: dict) -> None:
+    doors = _with_fronts(desk, DOORS)
+    bar = {"kind": "bar", "length": 900}
+    _revised, lines = _revise(
+        doors, modules={"cabinet": {"fronts": [{"type": "door", "count": 2, "opening": "hinge", "handle": bar}]}}
+    )
+    assert lines == ["cabinet: fronts 2 doors (hinge) → 2 doors (hinge, bar 900 mm vertical, meeting edges, black)"]
+
+
+def test_drawer_flap_and_knob_handles_are_worded(desk: dict) -> None:
+    from app.agent.revise import describe_front
+
+    drawers = {"type": "drawer", "count": 5, "height": 850, "handle": {"kind": "bar", "length": 160}}
+    flap = {"type": "flap", "hinged": "bottom", "handle": {"kind": "knob", "finish": "brass", "key": "knob-oak"}}
+    door = {"type": "door", "count": 1, "opening": "hinge", "handle": {"kind": "knob"}}
+
+    assert describe_front(drawers) == "5 drawers 850 mm (bar 160 mm horizontal, black)"
+    assert describe_front(flap) == "1 flap (bottom-hinged, knob, brass, key knob-oak)"
+    assert describe_front(door) == "1 door (hinge, knob, right edge, black)"
+
+
+def test_a_handle_on_a_push_latch_door_is_refused_in_a_change() -> None:
+    door = {"type": "door", "count": 1, "opening": "push_latch", "handle": {"kind": "knob"}}
+    with pytest.raises(ValidationError, match="push-latch door takes no handle"):
+        PackageChanges(modules={"cabinet": {"fronts": [door]}})
+
+
+def test_a_hanging_rail_change_reads_before_and_after(desk: dict) -> None:
+    module = desk["modules"][0]["id"]
+    revised, lines = revise_spec(desk, PackageChanges(modules={module: {"hanging_rails": [{"z": 300}]}}))
+    assert lines == [f"{module}: hanging_rails none → bay 1 at 300 mm"]
+    assert revised["modules"][0]["hanging_rails"] == [{"bay": 1, "z": 300}]
+    again, removed = revise_spec(revised, PackageChanges(modules={module: {"hanging_rails": []}}))
+    assert removed == [f"{module}: hanging_rails bay 1 at 300 mm → none"]
+    assert "hanging_rails" not in again["modules"][0]
+
+
+# --- door slats (door-slats) -------------------------------------------------------------
+
+
+SLATS = {"count": 8, "width": 30, "material": "slats", "leaves": [2]}
+
+
+def _slatted(desk: dict, slats: dict | None) -> dict:
+    door = {"type": "door", "count": 2, "opening": "hinge"} | ({"slats": slats} if slats else {})
+    document = _with_fronts(desk, [door])
+    return document | {"materials": document["materials"] | {"slats": {"material": "12 mm MDF", "thickness_mm": 12}}}
+
+
+def test_slats_added_to_a_door_are_described(desk: dict) -> None:
+    doors = _slatted(desk, None)
+    _revised, lines = _revise(
+        doors, modules={"cabinet": {"fronts": [{"type": "door", "count": 2, "opening": "hinge", "slats": SLATS}]}}
+    )
+    assert lines == ["cabinet: fronts 2 doors (hinge) → 2 doors (hinge, 8 vertical slats 30 mm on door 2)"]
+
+
+def test_a_slat_count_change_reads_before_and_after(desk: dict) -> None:
+    doors = _slatted(desk, SLATS)
+    fewer = {"type": "door", "count": 2, "opening": "hinge", "slats": SLATS | {"count": 5}}
+    revised, lines = _revise(doors, modules={"cabinet": {"fronts": [fewer]}})
+    assert lines == [
+        "cabinet: fronts 2 doors (hinge, 8 vertical slats 30 mm on door 2) → 2 doors (hinge, 5 vertical slats 30 mm on door 2)"
+    ]
+    assert revised["modules"][0]["fronts"][0]["slats"]["count"] == 5
+
+
+def test_slats_with_a_margin_and_a_handle_are_worded() -> None:
+    from app.agent.revise import describe_front
+
+    door = {
+        "type": "door", "count": 2, "opening": "hinge", "handle": {"kind": "knob"},
+        "slats": {"count": 10, "width": 40, "material": "slats", "orientation": "horizontal", "margin_mm": 20, "leaves": [2]},
+    }
+    assert describe_front(door) == (
+        "2 doors (hinge, knob, meeting edges, black, 10 horizontal slats 40 mm, 20 mm margin, on door 2)"
+    )
+    single = {"type": "door", "count": 3, "opening": "hinge", "slats": {"count": 1, "width": 60, "material": "slats", "leaves": [1, 3]}}
+    assert describe_front(single) == "3 doors (hinge, 1 vertical slat 60 mm on doors 1, 3)"
+
+
+# --- mounting (approval-reading-list) --------------------------------------------------
+
+
+def test_a_mounting_change_reads_before_and_after_and_clears(desk: dict) -> None:
+    module = desk["modules"][0]["id"]
+    revised, lines = revise_spec(desk, PackageChanges(modules={module: {"mounting": "wall"}}))
+    assert lines == [f"{module}: mounting not stated → wall"]
+    assert revised["modules"][0]["mounting"] == "wall"
+    again, cleared = revise_spec(revised, PackageChanges(modules={module: {"mounting": "unset"}}))
+    assert cleared == [f"{module}: mounting wall → not stated"]
+    assert "mounting" not in again["modules"][0]
+
+
+def test_an_unchanged_mounting_is_not_a_change(desk: dict) -> None:
+    module = desk["modules"][0]["id"]
+    revised, lines = revise_spec(desk, PackageChanges(modules={module: {"mounting": "unset"}}))
+    assert lines == []
+    assert "mounting" not in revised["modules"][0]
+
+
+# --- door leaf materials (door-leaf-materials) ------------------------------------------------------
+
+BLACK = {"material": "18 mm black painted MDF", "thickness_mm": 18}
+
+
+def test_one_door_made_black_is_named_and_keeps_the_layout(desk: dict) -> None:
+    doors = _slatted(desk, SLATS)
+    doors["materials"] = doors["materials"] | {"black_paint": BLACK}
+    black = {"type": "door", "count": 2, "opening": "hinge", "slats": SLATS, "leaf_materials": {"2": "black_paint"}}
+    revised, lines = _revise(doors, modules={"cabinet": {"fronts": [black]}})
+    assert lines == [
+        (
+            "cabinet: fronts 2 doors (hinge, 8 vertical slats 30 mm on door 2) → "
+            "2 doors (hinge, door 2 black_paint, 8 vertical slats 30 mm on door 2)"
+        )
+    ]
+    assert revised["modules"][0]["fronts"][0]["leaf_materials"] == {"2": "black_paint"}
+
+
+def test_a_pair_split_into_stacked_entries_says_the_layout_changes(desk: dict) -> None:
+    doors = _slatted(desk, None)
+    single = {"type": "door", "count": 1, "opening": "hinge"}
+    _revised, lines = _revise(doors, modules={"cabinet": {"fronts": [single, single]}})
+    assert lines[-1] == (
+        "cabinet: front layout changes from 1 entry of 2 doors side by side to "
+        "2 entries stacked top to bottom (1 door; 1 door)"
+    )
+
+
+def test_a_handle_change_is_not_a_layout_change() -> None:
+    from app.agent.revise import front_layout_change
+
+    pair = [{"type": "door", "count": 2, "opening": "hinge"}]
+    knobs = [{"type": "door", "count": 2, "opening": "hinge", "handle": {"kind": "knob"}}]
+    assert front_layout_change("cabinet", pair, knobs) is None
+
+
+def test_a_door_in_the_carcass_slot_is_not_named() -> None:
+    from app.agent.revise import describe_front
+
+    door = {"type": "door", "count": 2, "opening": "hinge", "leaf_materials": {"1": "carcass", "2": "black_paint"}}
+    assert describe_front(door, "carcass") == "2 doors (hinge, door 2 black_paint)"

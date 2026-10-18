@@ -23,10 +23,11 @@ router = APIRouter(prefix="/admin/workflow", tags=["admin"], dependencies=[Depen
 # The tools whose renders pass the render guard (CLAUDE.md §6); every other render-free tool does not.
 GUARDED_TOOLS: Final = frozenset({"render_turntable", "render_detail", "restyle_render"})
 HOMEOWNER: Final = "homeowner"
-INTERNAL_NODES: Final = frozenset({"__start__", "__end__", "load_house", "after_intake"})
+INTERNAL_NODES: Final = frozenset({"__start__", "__end__", "load_house", "after_intake", "after_designer"})
 # Code-only steps between agents, drawn as a hand-off from the agent before to the agents after
-# (pending-design-import: Intake hands a pending design file to the Designer).
-PASS_THROUGH_NODES: Final = frozenset({"after_intake"})
+# (pending-design-import: Intake hands a pending design file to the Designer; view-piece-in-room:
+# the Designer hands a saved placement to the Builder).
+PASS_THROUGH_NODES: Final = frozenset({"after_intake", "after_designer"})
 
 
 @router.get("")

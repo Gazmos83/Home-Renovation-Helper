@@ -75,27 +75,45 @@ def test_with_a_confirmed_brief_but_no_piece_the_builder_request_goes_to_the_des
     assert models["builder"].calls == 0
 
 
-def test_a_room_less_brief_routes_design_it_to_the_designer(tool_state) -> None:
-    piece_only = {
-        "purpose": "a listening wall about 2200 mm wide and 2200 mm tall",
-        "style": "light oak",
-        "budget_eur": 900,
-    }
+PIECE_ONLY = {
+    "purpose": "a listening wall about 2200 mm wide and 2200 mm tall",
+    "style": "light oak",
+    "budget_eur": 900,
+}
+
+
+def test_a_room_less_brief_is_offered_a_room_before_the_designer(tool_state) -> None:
     models = fake_models(
-        foreman={"decisions": [decision("intake"), decision("designer"), decision("designer")]},
-        intake={"tool_call_scripts": [[tool_call("record_brief", piece_only)]], "replies": ["Saved."]},
+        foreman={"decisions": [decision("intake"), decision("intake"), decision("designer"), decision("designer")]},
+        intake={"tool_call_scripts": [[tool_call("record_brief", PIECE_ONLY)]], "replies": ["Saved."]},
         designer={"replies": ["Here is a first design."]},
     )
     harness = make_harness(tool_state, models, room=None)
-    assert last_reply(harness.turn("a listening wall, light oak, 900 EUR")) == "Which room is this for?"
+    assert last_reply(harness.turn("a listening wall, light oak, 900 EUR")) == "Would you like to view this piece in a room?"
+    assert last_reply(harness.turn("yes")) == "Which room is this for?"
     harness.turn("no room yet: 2200 mm wide, 2200 mm tall, light oak, 900 EUR")
     harness.answer("yes")
     state = harness.turn("design it")
-    assert state["brief"] == piece_only
-    assert last_reply(state) == "Which room is this for?"
+    assert state["brief"] == PIECE_ONLY
+    assert last_reply(state) == "Would you like to view this piece in a room?"
     assert state["specialist"] == ""
     assert models["designer"].calls == 0
     assert models["intake"].calls == 2
+
+
+def test_a_room_less_brief_in_a_declined_conversation_routes_design_it_to_the_designer(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("intake"), decision("intake"), decision("designer")]},
+        intake={"tool_call_scripts": [[tool_call("record_brief", PIECE_ONLY)]], "replies": ["Saved."]},
+        designer={"replies": ["Here is a first design."]},
+    )
+    harness = make_harness(tool_state, models, room=None)
+    assert last_reply(harness.turn("a listening wall, light oak, 900 EUR")) == "Would you like to view this piece in a room?"
+    harness.turn("no room: 2200 mm wide, 2200 mm tall, light oak, 900 EUR")
+    harness.answer("yes")
+    state = harness.turn("design it")
+    assert state["specialist"] == "designer"
+    assert last_reply(state) == "Here is a first design."
 
 
 def test_the_designer_note_offers_the_custom_build_starter_first() -> None:
@@ -503,7 +521,7 @@ def test_the_prompt_carries_the_guard_once_and_binds_only_the_headers_tools(tool
     assert set(models["designer"].bound_tools) == {
         "create_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit",
         "compose_room", "read_room_version_dimensions", "edit_decisions", "record_version_verdict", "search_guidelines",
-        "ask_owner",
+        "ask_owner", "ask_placement",
     }
     assert models["intake"].bound_tools == ["record_brief", "record_plan", "confirm_room", "ask_owner", "read_help"]
     # The Foreman's own prompt is guarded and binds nothing.
@@ -866,10 +884,10 @@ def test_an_empty_room_compose_request_in_a_new_thread_reaches_the_designer(tool
     assert state["specialist"] == "designer"
 
 
-def test_a_compose_request_without_a_confirmed_room_still_asks_which_room(tool_state) -> None:
+def test_a_compose_request_without_a_confirmed_room_is_offered_a_room(tool_state) -> None:
     models = fake_models(foreman={"decisions": [decision("designer")]})
     state = make_harness(tool_state, models, room=None).turn("compose an empty room")
-    assert last_reply(state) == "Which room is this for?" and models["designer"].calls == 0
+    assert last_reply(state) == "Would you like to view this piece in a room?" and models["designer"].calls == 0
 
 
 def test_a_conversation_whose_room_was_deleted_is_asked_for_the_room_again(tool_state) -> None:
@@ -878,7 +896,7 @@ def test_a_conversation_whose_room_was_deleted_is_asked_for_the_room_again(tool_
     with ToolDeps(tool_state).session() as session:
         house_file.delete_room(session, tool_state.settings.render_root, "Wohnen")
     state = harness.turn("make it wider")
-    assert last_reply(state) == "Which room is this for?" and models["designer"].calls == 0
+    assert last_reply(state) == "Would you like to view this piece in a room?" and models["designer"].calls == 0
 
 
 PIECE_HEADER = "Piece hall-bench v1:"
@@ -1008,10 +1026,10 @@ def test_a_piece_wish_in_a_confirmed_room_still_goes_to_intake(tool_state) -> No
     assert models["designer"].calls == 0
 
 
-def test_composing_without_a_confirmed_room_still_asks_which_room(tool_state) -> None:
+def test_composing_without_a_confirmed_room_is_offered_a_room(tool_state) -> None:
     models = fake_models(foreman={"decisions": [composing("designer", True)]})
     state = make_harness(tool_state, models, room=None).turn("put a sofa against the window wall")
-    assert last_reply(state) == "Which room is this for?"
+    assert last_reply(state) == "Would you like to view this piece in a room?"
     assert models["designer"].calls == 0
 
 
