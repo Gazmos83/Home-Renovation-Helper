@@ -3,7 +3,14 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export type Panel = { id: string; label: string; icon: "tools" | "brief" | "project" | "piece" | "room" | "notes"; content: ReactNode };
+/** A rail entry: a flyout with `content`, or an action (`onSelect`) that opens none. */
+export type Panel = {
+  id: string;
+  label: string;
+  icon: "tools" | "brief" | "project" | "piece" | "room" | "notes";
+  content?: ReactNode;
+  onSelect?: () => void;
+};
 
 const ICONS = { tools: Wrench, brief: ClipboardList, project: Ruler, piece: Box, room: DoorOpen, notes: NotebookPen };
 const EXPANDED_KEY = "studio.rail.expanded";
@@ -83,7 +90,8 @@ export function RailLabelsToggle({ expanded, onToggle }: { expanded: boolean; on
  * their labels beside them when expanded (remembered in the browser). Choosing an icon
  * opens its panel as a flyout beside the rail; choosing it again, choosing another,
  * Escape or the close button closes or switches it. Focus moves into the flyout and back
- * to its icon.
+ * to its icon. An action entry (`onSelect`) closes any flyout and runs its action instead
+ * (workspace-opens-inspector).
  *
  * `row` is the same icons in a row, for the Workspace's chat pane header
  * (studio-pricing-and-agent-settings-tabs): each icon names itself on hover, its labels follow the
@@ -123,7 +131,7 @@ export function Rail({
     return () => document.removeEventListener("keydown", close);
   }, [open, onOpen]);
 
-  const shown = panels.find((p) => p.id === open);
+  const shown = panels.find((p) => p.id === open && !p.onSelect);
   return (
     <>
       <nav
@@ -147,8 +155,15 @@ export function Rail({
               )}
               aria-label={panel.label}
               title={variant === "row" ? panel.label : undefined}
-              aria-expanded={open === panel.id}
-              onClick={() => onOpen(open === panel.id ? null : panel.id)}
+              aria-expanded={panel.onSelect ? undefined : open === panel.id}
+              onClick={() => {
+                if (panel.onSelect) {
+                  // Focus stays on this icon once a flyout closes.
+                  last.current = panel.id;
+                  onOpen(null);
+                  panel.onSelect();
+                } else onOpen(open === panel.id ? null : panel.id);
+              }}
             >
               <Icon aria-hidden size={20} className="shrink-0" />
               {expanded && <span aria-hidden>{panel.label}</span>}

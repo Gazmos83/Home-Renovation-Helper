@@ -75,3 +75,28 @@ test("the flyout opens beside the rail's current width", () => {
   fireEvent.click(screen.getByRole("button", { name: "Show labels" }));
   expect(screen.getByRole("dialog", { name: "Tools" })).toHaveClass("left-[9.5rem]");
 });
+
+test("an action entry opens no dialog and closes an open flyout", () => {
+  const onSelect = vi.fn();
+  function WithAction() {
+    const [open, setOpen] = useState<string | null>(null);
+    return (
+      <Rail
+        variant="row"
+        panels={[...panels, { id: "piece", label: "Piece", icon: "piece", onSelect }]}
+        open={open}
+        onOpen={setOpen}
+      />
+    );
+  }
+  render(<WithAction />);
+  fireEvent.click(screen.getByRole("button", { name: "Tools" }));
+  expect(screen.getByRole("dialog", { name: "Tools" })).toBeInTheDocument();
+
+  const piece = screen.getByRole("button", { name: "Piece" });
+  expect(piece).not.toHaveAttribute("aria-expanded");
+  expect(piece).toHaveAttribute("title", "Piece");
+  fireEvent.click(piece);
+  expect(onSelect).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});

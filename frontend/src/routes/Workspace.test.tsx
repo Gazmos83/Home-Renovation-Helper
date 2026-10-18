@@ -490,6 +490,7 @@ test("a version still building offers no approval control in the piece pane (Unb
   const pane = await screen.findByRole("complementary", { name: "Inspector" });
   expect(await within(pane).findByText("Version 4 is not approved.")).toBeInTheDocument();
   expect(within(pane).queryByRole("button", { name: /approve version 4/i })).not.toBeInTheDocument();
+  expect(within(pane).queryByRole("button", { name: "Delete version 4" })).not.toBeInTheDocument();
 });
 
 test("the room pane approves and unapproves the version it shows (Approve the shown room version)", async () => {
@@ -514,4 +515,6 @@ test("a refused room approval is shown next to the control and nothing changes (
   await user.click(await within(pane).findByRole("button", { name: "Approve version 2" }));
   expect(await within(pane).findByText(/places hall-bench v3, which is not approved/)).toBeInTheDocument();
   expect(within(pane).getByRole("button", { name: "Approve version 2" })).toBeInTheDocument();
+  // The service's words only: no status code and no internal code (workspace-opens-inspector).
+  expect(pane.textContent).not.toMatch(/409|unapproved_pieces/);
 });

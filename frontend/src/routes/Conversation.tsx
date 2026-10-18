@@ -92,279 +92,6 @@ function Tools({ threadId }: { threadId: string }) {
   );
 }
 
-/** The conversation's room or apartment, with its 3D view or why there is none (project-room-inspection). */
-function RoomSection({
-  room,
-  threadId,
-  onInspectRoom,
-}: {
-  room: NonNullable<Progress["room"]>;
-  threadId: string;
-  onInspectRoom: (slug: string) => void;
-}) {
-  const queryClient = useQueryClient();
-  const what = room.scope === "apartment" ? "the apartment" : "the room";
-  const latest = room.versions?.[0] ?? null;
-  const approved = room.approved_version ?? null;
-  const canApproveLatest =
-    room.slug !== null && latest !== null && latest.status === "succeeded" && approved !== latest.version;
-  const reload = () => {
-    queryClient.invalidateQueries({ queryKey: ["progress", threadId] });
-    queryClient.invalidateQueries({ queryKey: ["compositions"] });
-  };
-  const change = useMutation({
-    mutationFn: (approve: boolean) => {
-      const slug = room.slug as string;
-      const version = approve ? (latest as { version: number }).version : (approved as number);
-      return approve
-        ? api.approveCompositionVersion(slug, version)
-        : api.unapproveCompositionVersion(slug, version);
-    },
-    onSuccess: reload,
-  });
-  return (
-    <div className="space-y-2" role="group" aria-label="Room">
-      <h3>Selected room</h3>
-      <p>
-        <strong>{room.name}</strong>
-      </p>
-      {room.slug && latest && (
-        <div className="space-y-2" role="group" aria-label={`Approval of ${room.name}`}>
-          <p>
-            Latest version {latest.version}.{" "}
-            {approved !== null ? (
-              <>
-                <Badge>Approved</Badge> version {approved}
-              </>
-            ) : (
-              <span className="text-muted-foreground">No version approved yet.</span>
-            )}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {canApproveLatest && (
-              <Button
-                type="button"
-                size="sm"
-                disabled={change.isPending}
-                onClick={() => change.mutate(true)}
-              >
-                Approve version {latest.version}
-              </Button>
-            )}
-            {approved !== null && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={change.isPending}
-                onClick={() => change.mutate(false)}
-              >
-                Unapprove version {approved}
-              </Button>
-            )}
-          </div>
-          <FieldError message={message(change.error)} />
-          {approved !== latest.version && (
-            <DeleteCompositionVersion
-              key={`${room.slug}/${latest.version}`}
-              slug={room.slug}
-              name={room.name}
-              version={latest.version}
-              only={(room.versions?.length ?? 1) === 1}
-              onDeleted={reload}
-            />
-          )}
-        </div>
-      )}
-      {room.approved_picture && approved !== null && (
-        <img
-          src={room.approved_picture}
-          alt={`Approved picture of ${room.name}, version ${approved}`}
-          className="max-h-56 rounded-md border"
-        />
-      )}
-      {room.slug && latest && latest.status === "succeeded" && (
-        <RoomVariants slug={room.slug} version={latest.version} />
-      )}
-      {room.slug && room.model && room.surfaces ? (
-        <p>
-          <Button type="button" variant="outline" onClick={() => onInspectRoom(room.slug as string)}>
-            Inspect {room.name}
-          </Button>
-        </p>
-      ) : room.slug ? (
-        <p className="text-sm text-muted-foreground">Composing {room.name} again adds the 3D view.</p>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          {room.name} has no 3D view yet. Ask the Designer to compose {what}.
-        </p>
-      )}
-    </div>
-  );
-}
-
-function PiecePanel({
-  threadId,
-  progress,
-  onInspect,
-  onDeleted,
-  onUseLook,
-}: {
-  threadId: string;
-  progress: UseQueryResult<Progress>;
-  /** Keep a restyle look: sends the owner's request to the conversation. */
-  onUseLook: (text: string) => void;
-  onInspect: (packageId: string, version: number) => void;
-  /** A version of the piece was deleted. */
-  onDeleted: (packageId: string, version: number) => void;
-}) {
-  const queryClient = useQueryClient();
-  const change = useMutation({
-    mutationFn: ({ approve, version }: { approve: boolean; version: number }) => {
-      const id = progress.data?.package_id ?? "";
-      return approve ? api.approveVersion(id, version) : api.unapproveVersion(id, version);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["progress", threadId] });
-      queryClient.invalidateQueries({ queryKey: ["version"] });
-    },
-  });
-
-  if (progress.error) return <FieldError message={message(progress.error)} />;
-  if (!progress.data) return <p>Loading piece…</p>;
-  const p: Progress = progress.data;
-  // A render replaces the blockout screenshot once there is one.
-  const picture = p.still ?? p.screenshot;
-  const canApproveLatest =
-    p.latest_version !== null && p.build_status === "succeeded" && p.approved_version !== p.latest_version;
-  const building = p.build_status === "queued" || p.build_status === "running";
-  // The heads-up shows from three short of the limit ("13 of 15 versions").
-  const nearLimit = p.package_id !== null && p.version_count > p.max_versions - 3;
-
-  return (
-    <section className="space-y-3" aria-label="Piece">
-      {p.package_id ? (
-        <p>
-          <strong>{p.name}</strong> <Badge variant="secondary">{p.package_id}</Badge>
-          {p.build_status && <Badge variant="outline" className="ml-2">{p.build_status}</Badge>}
-        </p>
-      ) : (
-        <p className="text-muted-foreground">No piece yet.</p>
-      )}
-      {p.package_id && p.latest_version !== null && (
-        <div className="space-y-2" role="group" aria-label="Approval">
-          <p>
-            {p.approved_version !== null ? (
-              <>
-                <Badge>Approved</Badge> version {p.approved_version}
-              </>
-            ) : (
-              <span className="text-muted-foreground">No version approved yet.</span>
-            )}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {canApproveLatest && p.latest_version !== null && (
-              <Button
-                type="button"
-                size="sm"
-                disabled={change.isPending}
-                onClick={() => change.mutate({ approve: true, version: p.latest_version as number })}
-              >
-                Approve version {p.latest_version}
-              </Button>
-            )}
-            {p.approved_version !== null && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={change.isPending}
-                onClick={() => change.mutate({ approve: false, version: p.approved_version as number })}
-              >
-                Unapprove version {p.approved_version}
-              </Button>
-            )}
-          </div>
-          <FieldError message={message(change.error)} />
-        </div>
-      )}
-      {p.package_id && p.latest_version !== null && (
-        <div className="space-y-2">
-          {nearLimit && (
-            <p className="text-sm">
-              {p.version_count} of {p.max_versions} versions
-            </p>
-          )}
-          {/* No delete while the latest version builds (it would be refused) or once it is approved. */}
-          {!building && p.approved_version !== p.latest_version && (
-            <DeleteVersion
-              key={`${p.package_id}/${p.latest_version}`}
-              packageId={p.package_id}
-              version={p.latest_version}
-              only={p.version_count === 1}
-              onDeleted={() => onDeleted(p.package_id as string, p.latest_version as number)}
-            />
-          )}
-        </div>
-      )}
-      {picture && <img src={picture} alt={`Latest picture of ${p.package_id}`} className="max-h-56 rounded-md border" />}
-      {p.package_id && p.latest_version !== null && p.build_status === "succeeded" && (
-        <p>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => onInspect(p.package_id as string, p.latest_version as number)}
-          >
-            Inspect version {p.latest_version}
-          </Button>
-        </p>
-      )}
-      {p.package_id && p.latest_version !== null && p.build_status === "succeeded" && (
-        <PieceVariants
-          packageId={p.package_id}
-          version={p.latest_version}
-          onUse={(variant) => onUseLook(keepLookRequest(p.package_id as string, p.latest_version as number, variant))}
-        />
-      )}
-      {p.open_requests.length > 0 && (
-        <div>
-          <h3>Waiting on a generator extension</h3>
-          <ul>
-            {p.open_requests.map((r) => (
-              <li key={r.field}>
-                <code>{r.field}</code>: {r.request}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function RoomPanel({
-  threadId,
-  progress,
-  onInspectRoom,
-}: {
-  threadId: string;
-  progress: UseQueryResult<Progress>;
-  onInspectRoom: (slug: string) => void;
-}) {
-  if (progress.error) return <FieldError message={message(progress.error)} />;
-  if (!progress.data) return <p>Loading room…</p>;
-  const room = progress.data.room;
-  return (
-    <section className="space-y-3" aria-label="Room">
-      {room ? (
-        <RoomSection room={room} threadId={threadId} onInspectRoom={onInspectRoom} />
-      ) : (
-        <p className="text-muted-foreground">No room selected yet.</p>
-      )}
-    </section>
-  );
-}
-
 function ProjectPanel({ progress }: { progress: UseQueryResult<Progress> }) {
   if (progress.error) return <FieldError message={message(progress.error)} />;
   if (!progress.data) return <p>Loading project…</p>;
@@ -626,12 +353,18 @@ export function useConversation(threadId: string, showPane: (pane: "piece" | "ro
     queryFn: () => api.progress(threadId),
     refetchInterval: (query) => {
       const status = query.state.data?.build_status;
-      return status === "queued" || status === "running" || query.state.data?.rendering ? 3000 : false;
+      // A composition build is followed too, so its version becomes approvable (workspace-opens-inspector).
+      const roomStatus = query.state.data?.room?.versions?.[0]?.status;
+      return status === "queued" || status === "running" || roomStatus === "queued" || roomStatus === "running" ||
+        query.state.data?.rendering
+        ? 3000
+        : false;
     },
   });
   const building = ["queued", "running"].includes(progress.data?.build_status ?? "");
+  const roomBuilding = ["queued", "running"].includes(progress.data?.room?.versions?.[0]?.status ?? "");
   // A render or a build posts its notice when it ends (version-cleanup-and-inspection).
-  const following = (progress.data?.rendering ?? false) || building;
+  const following = (progress.data?.rendering ?? false) || building || roomBuilding;
   const thread = useQuery({
     queryKey: ["thread", threadId],
     queryFn: () => api.thread(threadId),
@@ -871,6 +604,7 @@ export function useConversation(threadId: string, showPane: (pane: "piece" | "ro
     placeInspector,
     inspectRoom,
     showRoomLayout,
+    showPane,
     send,
     answer,
     stop,
@@ -933,37 +667,26 @@ export function ChatPane({ c }: { c: ConversationState }) {
               },
               { id: "brief", label: "Brief", icon: "brief", content: <BriefPanel threadId={threadId} /> },
               { id: "project", label: "Project", icon: "project", content: <ProjectPanel progress={progress} /> },
+              // The Piece and Room icons open their panes, not a flyout (workspace-opens-inspector).
               {
                 id: "piece",
                 label: "Piece",
                 icon: "piece",
-                content: (
-                  <PiecePanel
-                    threadId={threadId}
-                    progress={progress}
-                    onInspect={(packageId, version) => {
-                      c.inspect(packageId, version);
-                      c.setPanel(null);
-                    }}
-                    onDeleted={c.deleted}
-                    onUseLook={(text) => void c.send(text, [])}
-                  />
-                ),
+                onSelect: () => {
+                  const p = progress.data;
+                  if (p?.package_id && p.latest_version !== null) c.inspect(p.package_id, p.latest_version);
+                  else c.showPane("piece");
+                },
               },
               {
                 id: "room",
                 label: "Room",
                 icon: "room",
-                content: (
-                  <RoomPanel
-                    threadId={threadId}
-                    progress={progress}
-                    onInspectRoom={(slug) => {
-                      c.inspectRoom(slug);
-                      c.setPanel(null);
-                    }}
-                  />
-                ),
+                onSelect: () => {
+                  const slug = progress.data?.room?.slug;
+                  if (slug) c.inspectRoom(slug);
+                  else c.showPane("room");
+                },
               },
             ]}
           />
@@ -1104,6 +827,10 @@ export function PiecePane({ c }: { c: ConversationState }) {
       queryClient.invalidateQueries({ queryKey: ["pieces"] });
     },
   });
+  // The version limit and open requests belong to the conversation's own piece.
+  const own = p && p.package_id === shown?.packageId ? p : null;
+  // The heads-up shows from three short of the limit ("13 of 15 versions").
+  const nearLimit = own !== null && own.version_count > own.max_versions - 3;
   if (!shown) {
     return (
       <div className={paneClass}>
@@ -1131,6 +858,47 @@ export function PiecePane({ c }: { c: ConversationState }) {
           onApprove={() => approval.mutate({ approve: true, packageId: shown.packageId, version: shown.version })}
           onUnapprove={() => approval.mutate({ approve: false, packageId: shown.packageId, version: shown.version })}
         />
+      )}
+      {info.data && (
+        <div className="space-y-2">
+          <p>
+            <Badge variant="outline">{info.data.status}</Badge>
+          </p>
+          {nearLimit && (
+            <p className="text-sm">
+              {own?.version_count} of {own?.max_versions} versions
+            </p>
+          )}
+          {/* No delete while the shown version builds (it would be refused) or once it is approved. */}
+          {!info.data.approved_at && info.data.status !== "queued" && info.data.status !== "running" && (
+            <DeleteVersion
+              key={`${shown.packageId}/${shown.version}`}
+              packageId={shown.packageId}
+              version={shown.version}
+              only={own?.version_count === 1}
+              onDeleted={() => c.deleted(shown.packageId, shown.version)}
+            />
+          )}
+          {info.data.status === "succeeded" && (
+            <PieceVariants
+              packageId={shown.packageId}
+              version={shown.version}
+              onUse={(variant) => void c.send(keepLookRequest(shown.packageId, shown.version, variant), [])}
+            />
+          )}
+          {own && own.open_requests.length > 0 && (
+            <div>
+              <h3>Waiting on a generator extension</h3>
+              <ul>
+                {own.open_requests.map((r) => (
+                  <li key={r.field}>
+                    <code>{r.field}</code>: {r.request}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
       )}
       {/* Keyed by piece only: following a new version keeps the view and its notice. */}
       <InspectorView
@@ -1222,6 +990,22 @@ export function RoomPane({ c }: { c: ConversationState }) {
           onUnapprove={() => approval.mutate({ approve: false, slug, version: chosen.version })}
         />
       )}
+      {chosen && room.approved_version !== chosen.version && (
+        <DeleteCompositionVersion
+          key={`${slug}/${chosen.version}`}
+          slug={slug}
+          name={room.name}
+          version={chosen.version}
+          only={versions.length === 1}
+          onDeleted={() => {
+            queryClient.invalidateQueries({ queryKey: ["progress", c.threadId] });
+            queryClient.invalidateQueries({ queryKey: ["compositions"] });
+            // The pane shows the room's latest remaining version.
+            c.inspectRoom(slug);
+          }}
+        />
+      )}
+      {chosen && chosen.status === "succeeded" && <RoomVariants slug={slug} version={chosen.version} />}
       {shown.model && shown.surfaces ? (
         <RoomView
           key={shown.model}
