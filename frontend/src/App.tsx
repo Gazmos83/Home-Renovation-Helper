@@ -4,6 +4,9 @@ import { cn } from "@/lib/utils";
 import { api, onUnauthorized } from "./lib/api";
 import { Page } from "@/components/Page";
 import { Button } from "@/components/ui/button";
+import { Footer } from "@/components/Footer";
+import { HouseIcon } from "@/components/HouseIcon";
+import About from "./routes/About";
 import Help from "./routes/Help";
 import Login from "./routes/Login";
 import PieceInspector from "./routes/PieceInspector";
@@ -12,7 +15,10 @@ import Studio from "./routes/Studio";
 /** The home page: the Design Studio's Workspace, which opens the newest conversation (workspace-chat-above-layout). */
 const HOME = "/studio/workspace";
 
-const links = [["/help", "Help"]] as const;
+const links = [
+  ["/help", "Help"],
+  ["/about", "About"],
+] as const;
 
 const navItemClass = (active: boolean) =>
   cn(
@@ -57,7 +63,7 @@ function SignOut({ onSignedOut }: { onSignedOut: () => void }) {
     }
   }
   return (
-    <div className="ml-auto flex shrink-0 items-center gap-2">
+    <div className="ml-1 flex shrink-0 items-center gap-2">
       {refused && <span role="alert" className="text-sm text-destructive">{refused}</span>}
       <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void signOut()}>
         Sign out
@@ -100,12 +106,17 @@ export default function App() {
     <>
       {signedIn && (
         <header className="sticky top-0 z-40 h-[var(--header-h)] border-b bg-card">
-          <nav aria-label="Main" className="mx-auto flex h-full max-w-5xl items-center gap-1 overflow-x-auto px-4 sm:px-6">
-            <Link to={HOME} className="mr-4 shrink-0 font-semibold whitespace-nowrap">Home Renovation</Link>
-            {links.map(([to, label]) => (
-              <NavItem key={to} to={to} label={label} />
-            ))}
-            <SignOut onSignedOut={() => setSignedIn(false)} />
+          <nav aria-label="Main" className="flex h-full items-center gap-1 overflow-x-auto px-4 sm:px-6">
+            <Link to={HOME} className="mr-4 flex shrink-0 items-center gap-2 font-semibold whitespace-nowrap">
+              <HouseIcon />
+              Little Homey
+            </Link>
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              {links.map(([to, label]) => (
+                <NavItem key={to} to={to} label={label} />
+              ))}
+              <SignOut onSignedOut={() => setSignedIn(false)} />
+            </div>
           </nav>
         </header>
       )}
@@ -132,6 +143,7 @@ export default function App() {
           element={signedIn && dev ? <Navigate to="/admin/design-knowledge/guidelines" replace /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route path="/help" element={signedIn ? <Help /> : <Navigate to="/login" replace />} />
+        <Route path="/about" element={signedIn ? <About /> : <Navigate to="/login" replace />} />
         <Route
           path="/admin/agents"
           element={signedIn && dev ? <Studio dev fixedTab="agents" /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
@@ -194,6 +206,7 @@ export default function App() {
         />
         <Route path="*" element={<Navigate to={signedIn ? HOME : "/login"} replace />} />
       </Routes>
+      <Footer signedIn={Boolean(signedIn)} />
     </>
   );
 }

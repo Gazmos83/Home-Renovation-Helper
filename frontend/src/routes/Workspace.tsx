@@ -150,7 +150,7 @@ function ConversationWorkspace({ threadId }: { threadId: string }) {
   const chat = <Slot element={chatElement} />;
   const piece = <Slot element={pieceElement} />;
   const room = <Slot element={roomElement} />;
-  const height = { height: `max(28rem, calc(100dvh - ${top}px - 2rem))` };
+  const height = { height: `max(28rem, calc(100dvh - ${top}px - 2rem - var(--footer-h)))` };
 
   if (!wide) {
     return (

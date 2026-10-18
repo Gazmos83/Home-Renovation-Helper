@@ -78,7 +78,7 @@ export function TileGrid<T>({
       <ul
         ref={list}
         aria-label={label}
-        style={top === null ? undefined : { height: `calc(100dvh - ${Math.round(top + BELOW_PX)}px)` }}
+        style={top === null ? undefined : { height: `calc(100dvh - ${Math.round(top + BELOW_PX)}px - var(--footer-h))` }}
         className="grid min-h-[24rem] grid-cols-2 grid-rows-3 gap-3 lg:min-h-[32rem] lg:grid-cols-4 lg:grid-rows-4"
       >
         {shown.map((item) => (

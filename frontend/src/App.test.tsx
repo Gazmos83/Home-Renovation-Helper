@@ -43,6 +43,32 @@ test("the header stays at the top of the screen while the page scrolls", async (
   expect(header).toHaveClass("sticky", "top-0");
 });
 
+test("the name sits at the left and Help, About and Sign out at the right (Header layout)", async () => {
+  stubFetch((call) => {
+    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+    if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+    if (call === "GET /remnants") return { body: [] };
+  });
+  show("/remnants");
+  const nav = await screen.findByRole("navigation", { name: "Main" });
+  expect(nav).not.toHaveClass("max-w-5xl");
+  expect(nav.firstElementChild).toBe(within(nav).getByRole("link", { name: "Little Homey" }));
+  const right = within(nav).getByRole("link", { name: "Help" }).parentElement!;
+  expect(right).toHaveClass("ml-auto");
+  expect(within(right).getAllByRole("link").map((link) => link.textContent)).toEqual(["Help", "About"]);
+  expect(within(right).getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+});
+
+test("the footer stays at the bottom of the screen while the page scrolls (Footer frozen at the bottom)", async () => {
+  stubFetch((call) => {
+    if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
+    if (call === "GET /admin/models") return { status: 403, body: { detail: "no" } };
+    if (call === "GET /remnants") return { body: [] };
+  });
+  show("/remnants");
+  expect(await screen.findByRole("contentinfo")).toHaveClass("fixed", "bottom-0");
+});
+
 test("the homeowner nav has no Design Studio and no Conversations item, and the name links home (Nav without Conversations)", async () => {
   stubFetch((call) => {
     if (call === "GET /auth/me") return { body: { email: "owner@example.com" } };
@@ -53,7 +79,7 @@ test("the homeowner nav has no Design Studio and no Conversations item, and the 
   const nav = await screen.findByRole("navigation", { name: "Main" });
   expect(within(nav).queryByRole("link", { name: "Design Studio" })).not.toBeInTheDocument();
   expect(within(nav).queryByRole("link", { name: "Conversations" })).not.toBeInTheDocument();
-  expect(within(nav).getByRole("link", { name: "Home Renovation" })).toHaveAttribute("href", "/studio/workspace");
+  expect(within(nav).getByRole("link", { name: "Little Homey" })).toHaveAttribute("href", "/studio/workspace");
 });
 
 test("the nav has no Design Studio, Pieces, Measured Rooms or Model Library item (Navigation)", async () => {
@@ -64,7 +90,7 @@ test("the nav has no Design Studio, Pieces, Measured Rooms or Model Library item
   });
   show("/studio/models");
   const nav = await screen.findByRole("navigation", { name: "Main" });
-  expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Home Renovation", "Help"]);
+  expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Little Homey", "Help", "About"]);
   for (const old of ["Design Studio", "Pieces", "Measured Rooms", "Model Library", "Rooms"]) {
     expect(within(nav).queryByRole("link", { name: old })).not.toBeInTheDocument();
   }
@@ -246,7 +272,7 @@ test("the developer header has the name and Help only, with no developer entries
   show("/pieces");
   const nav = await screen.findByRole("navigation", { name: "Main" });
   expect(await screen.findByRole("tab", { name: "AI & Agent Settings" })).toHaveAttribute("href", "/admin/agents");
-  expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Home Renovation", "Help"]);
+  expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Little Homey", "Help", "About"]);
   expect(screen.getByRole("tab", { name: "Design Knowledge" })).toHaveAttribute("href", "/admin/design-knowledge");
 });
 
@@ -258,7 +284,7 @@ test("the homeowner header has no Guidelines entry", async () => {
   });
   show("/studio/pieces");
   const nav = await screen.findByRole("navigation", { name: "Main" });
-  expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Home Renovation", "Help"]);
+  expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Little Homey", "Help", "About"]);
 });
 
 test.each([

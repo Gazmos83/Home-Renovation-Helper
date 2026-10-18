@@ -25,6 +25,8 @@
   --ring: oklch(0.55 0.08 155);
   /* The Studio header's height; the rail and the inspector sit below it. */
   --header-h: 3.25rem;
+  /* The footer's height; it is fixed to the bottom of the screen, so full-height columns stop above it. */
+  --footer-h: 2.25rem;
 }
 
 .dark {
@@ -80,6 +82,7 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
+    padding-bottom: var(--footer-h);
   }
 }
 

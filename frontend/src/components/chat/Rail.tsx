@@ -56,7 +56,7 @@ export function useRailLabels(): [boolean, () => void] {
 /** The rail column pinned at the screen's left edge below the header. */
 export function railClass(expanded: boolean) {
   return cn(
-    "sticky top-[var(--header-h)] flex h-[calc(100vh-var(--header-h))] shrink-0 flex-col gap-2 self-start border-r bg-card p-1 pt-2",
+    "sticky top-[var(--header-h)] flex h-[calc(100vh-var(--header-h)-var(--footer-h))] shrink-0 flex-col gap-2 self-start border-r bg-card p-1 pt-2",
     expanded ? "w-36 items-stretch" : "w-12 items-center",
   );
 }
@@ -182,7 +182,7 @@ export function Rail({
             "z-30 w-[min(26rem,calc(100vw-5rem))] space-y-3 overflow-y-auto rounded-xl border bg-card p-4 shadow-lg focus:outline-none",
             variant === "row"
               ? "absolute top-14 left-2 max-h-[calc(100%-4rem)] max-w-[calc(100%-1rem)]"
-              : cn("fixed top-[calc(var(--header-h)+0.5rem)] max-h-[calc(100vh-var(--header-h)-1rem)]", expanded ? "left-[9.5rem]" : "left-14"),
+              : cn("fixed top-[calc(var(--header-h)+0.5rem)] max-h-[calc(100vh-var(--header-h)-var(--footer-h)-1rem)]", expanded ? "left-[9.5rem]" : "left-14"),
           )}
         >
           <div className="flex items-center justify-between">

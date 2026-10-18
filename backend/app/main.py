@@ -319,7 +319,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
 
     app = FastAPI(
-        title="Home Renovation Agents",
+        title="Little Homey",
         version="0.1.0",
         summary="Foundation — single-owner backend for custom-furniture design",
         lifespan=_lifespan,

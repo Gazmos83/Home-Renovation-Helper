@@ -45,7 +45,7 @@ export function SubMenu({
       aria-label={label}
       className={
         layout === "column"
-          ? "sticky top-[var(--header-h)] hidden h-[calc(100vh-var(--header-h))] w-44 shrink-0 flex-col gap-1 self-start overflow-y-auto border-r bg-card p-2 md:flex"
+          ? "sticky top-[var(--header-h)] hidden h-[calc(100vh-var(--header-h)-var(--footer-h))] w-44 shrink-0 flex-col gap-1 self-start overflow-y-auto border-r bg-card p-2 md:flex"
           : "-mx-1 flex gap-2 overflow-x-auto border-b px-1 pb-2 md:hidden"
       }
     >

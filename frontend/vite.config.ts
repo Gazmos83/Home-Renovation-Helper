@@ -2,6 +2,18 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+
+// The footer's version and build (little-homey-brand-about-footer): read once when Vite starts.
+const VERSION = JSON.parse(readFileSync(path.resolve(__dirname, "package.json"), "utf-8")).version as string;
+function commit(): string {
+  try {
+    return execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || "dev";
+  } catch {
+    return "dev";
+  }
+}
 
 const API = process.env.API_PROXY ?? "http://127.0.0.1:8000";
 
@@ -11,6 +23,10 @@ const page = { target: API, bypass: (req: { headers: { accept?: string } }) => (
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Fixed values under Vitest, so tests never depend on the checkout.
+  define: process.env.VITEST
+    ? { __APP_VERSION__: JSON.stringify("0.0.0"), __APP_BUILD__: JSON.stringify("test") }
+    : { __APP_VERSION__: JSON.stringify(VERSION), __APP_BUILD__: JSON.stringify(commit()) },
   resolve: { alias: { "@": path.resolve(__dirname, "src") } },
   server: {
     port: 5173,
