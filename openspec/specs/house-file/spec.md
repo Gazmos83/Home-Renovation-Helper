@@ -176,7 +176,7 @@ Lighting & materials SHALL be given the same render ratings. All of this SHALL b
 ### Requirement: Compositions are indexed and reach the turn
 The house file SHALL record one composition per scope, by scope type and name. It SHALL record one version record per composition version folder, carrying what changed, the version it was revised from, and when it was approved (or nothing). A version SHALL be recorded only by a confirmed `compose_room`. A new version SHALL start unapproved. At most one version of a composition SHALL be approved at a time; approving a version SHALL clear the approval of any other version of that composition. Only the owner's approval route SHALL set or clear approval.
 
-At the start of each turn, the Designer's and Builder's house note SHALL list the composition of the conversation's confirmed room, or of its confirmed apartment and of that apartment's rooms, with its scope, its latest version and build status, which version is approved (or that none is), and its items by name. Compositions of other rooms and apartments SHALL NOT be listed. Any placed piece version that is no longer approved SHALL be marked as such. Item names come from the owner, so they SHALL be neutralised like other owner text.
+At the start of each turn, the house note of the Foreman, Intake, the Designer and the Builder SHALL list the composition of the conversation's confirmed room, or of its confirmed apartment and of that apartment's rooms, with its scope, its latest version and build status, and which version is approved (or that none is). When a version is approved, the note SHALL list that version's items: each placed piece by package id and version, each library model by name and stated size, each stand-in by name, with where each one stands. When a later version than the approved one exists, its items SHALL be listed separately, labelled as a draft that is not approved. When no version is approved, the latest version's items SHALL be listed, labelled as not approved. A conversation with no confirmed room or apartment SHALL see no composition. Compositions of other rooms and apartments SHALL NOT be listed. Any placed piece version that is no longer approved SHALL be marked as such. Item names come from the owner, so they SHALL be neutralised like other owner text.
 
 #### Scenario: Recorded on yes
 - **WHEN** the owner confirms `Wohnen` v1
@@ -193,6 +193,18 @@ At the start of each turn, the Designer's and Builder's house note SHALL list th
 #### Scenario: Approving another version moves the approval
 - **WHEN** `Wohnen` version 2 is approved and the owner approves version 3
 - **THEN** version 3 is approved and version 2 is not
+
+#### Scenario: A new piece conversation sees the approved layout
+- **WHEN** `Wohnen` version 2 is approved and places the piece `lamellen-kommode` v3 and the library model "Sofa Lund" (2200 × 950 × 850 mm), and a new conversation confirms `Wohnen`
+- **THEN** Intake's first turn in that conversation carries both items with their places, labelled as approved version 2
+
+#### Scenario: A newer draft does not hide the approved layout
+- **WHEN** `Wohnen` version 2 is approved and version 3, not approved, removes the sofa
+- **THEN** the note lists version 2's items, sofa included, and lists version 3's items separately as a draft that is not approved
+
+#### Scenario: No room, no composition
+- **WHEN** a conversation has no confirmed room and `Wohnen` has an approved composition
+- **THEN** no agent's house note in that conversation lists `Wohnen`'s items
 
 ### Requirement: The owner attaches a piece to a room
 The owner SHALL be able to read the room names in the house file and set or clear a piece's room through owner-gated routes. Setting names a room in the house file; an unknown room or an unknown piece SHALL be refused naming it (404 for the piece, 422 for the room). Clearing makes the piece unassigned. The piece list SHALL name each piece's room, or none. Setting a piece's room SHALL NOT change any conversation's confirmed room.

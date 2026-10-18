@@ -1010,7 +1010,9 @@ def build_graph(
             )
             return Command(update={"messages": [AIMessage(fixed)], "specialist": ""}, goto=END)
         instruction = loaded["foreman"]
-        system = compose_agent_prompt(instruction.text, state.get("facts", ""), state.get("house_note", ""))
+        system = compose_agent_prompt(
+            instruction.text, state.get("facts", ""), state.get("house_note", ""), state.get("composition_note", "")
+        )
         try:
             prompt, counted = prompt_for(instruction.slot, system, state, [], config)
         except BudgetRefused as error:
@@ -1184,7 +1186,7 @@ def build_graph(
                 notes.append(state.get("piece_note", ""))
                 notes.append(DESIGNER_SIDE_FOLDS_NOTE)
                 notes.append(DESIGNER_SHELF_DEPTHS_NOTE)
-            if name in ("designer", "builder"):
+            if name in ("intake", "designer", "builder"):
                 notes.append(state.get("composition_note", ""))
             if name in ("designer", "lighting"):
                 notes.append(state.get("feedback_note", ""))

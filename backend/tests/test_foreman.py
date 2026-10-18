@@ -367,7 +367,56 @@ def test_the_designers_note_marks_a_placed_piece_no_longer_approved(tool_state) 
     _bind_piece(tool_state, harness, screenshot=False)
     harness.turn("what is in Wohnen?")
     prompt = models["designer"].last_prompt_text()
-    assert "- room Wohnen: v1, succeeded, approved: none; items: wall (piece: wall v2) no longer approved" in prompt
+    assert "- room Wohnen: v1, succeeded, approved: none" in prompt
+    assert "  v1 items (not approved): wall (piece: wall v2) no longer approved" in prompt
+
+
+def _approved_wohnen(tool_state) -> None:
+    """`Wohnen` v2 approved (lamellen-kommode v3 and Sofa Lund); v3, a draft without the sofa."""
+    from app.blender import storage
+
+    kommode = {"id": "kommode", "type": "piece", "package_id": "lamellen-kommode", "version": 3,
+               "placement": {"wall": 0, "offset_mm": 300}}
+    sofa = {"id": "sofa", "type": "model", "model_id": "m1", "name": "Sofa Lund",
+            "width_mm": 2200, "depth_mm": 950, "height_mm": 850, "placement": {"wall": 2, "offset_mm": 500}}
+    with ToolDeps(tool_state).session() as session:
+        house_file.record_piece(session, "lamellen-kommode", "Lamellen-Kommode")
+        house_file.record_version(session, "lamellen-kommode", 3)
+        house_file.approve_version(session, "lamellen-kommode", 3)
+        composition = house_file.record_composition(session, "room", "Wohnen")
+        for number, items in ((1, [kommode]), (2, [kommode, sofa]), (3, [kommode])):
+            house_file.record_composition_version(session, composition, number, number - 1 or None, [])
+            folder = storage.composition_version_dir(tool_state.settings.render_root, "wohnen", number)
+            folder.mkdir(parents=True)
+            (folder / storage.INPUT_FILE).write_text(json.dumps({
+                "kind": "room_composition", "scope": {"room": "Wohnen"}, "items": items,
+            }), encoding="utf-8")
+            storage.write_status(folder, status="succeeded")
+        house_file.approve_composition_version(session, tool_state.settings.render_root, "wohnen", 2)
+        session.commit()
+
+
+def test_a_new_piece_conversation_sees_the_approved_layout(tool_state) -> None:
+    _approved_wohnen(tool_state)
+    models = fake_models(foreman={"decisions": [decision("intake")]}, intake={"replies": ["A sofa and a Kommode."]})
+    make_harness(tool_state, models, room="Wohnen").turn("what is already in this room?")
+    foreman_prompt = "\n".join(str(m.content) for m in models["foreman"].decision_prompts[-1])
+    for prompt in (models["intake"].last_prompt_text(), foreman_prompt):
+        assert "- room Wohnen: v3, succeeded, approved: v2" in prompt
+        assert (
+            "  approved v2 items: kommode (piece: lamellen-kommode v3) on wall 1 (index 0) at offset 300 mm, "
+            "sofa (model: Sofa Lund) 2200 × 950 × 850 mm on wall 3 (index 2) at offset 500 mm"
+        ) in prompt
+        assert "  draft v3, not approved, items: kommode (piece: lamellen-kommode v3)" in prompt
+
+
+def test_no_room_no_composition(tool_state) -> None:
+    _approved_wohnen(tool_state)
+    models = fake_models(foreman={"decisions": [decision("intake")]}, intake={"replies": ["What would you like?"]})
+    make_harness(tool_state, models, room=None).turn("what is already in Wohnen?")
+    foreman_prompt = "\n".join(str(m.content) for m in models["foreman"].decision_prompts[-1])
+    for prompt in (models["intake"].last_prompt_text(), foreman_prompt):
+        assert "Sofa Lund" not in prompt and "room Wohnen:" not in prompt
 
 
 def test_a_compose_request_in_a_new_thread_reaches_the_designer_once_a_piece_is_approved(tool_state) -> None:

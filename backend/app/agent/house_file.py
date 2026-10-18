@@ -1053,33 +1053,48 @@ def placed_items(session: Session, document: dict[str, Any]) -> list[dict[str, A
         for key in ("room", "placement", "layer"):
             if key in item:
                 entry[key] = item[key]
+        if item.get("type") in ("model", "stand-in"):
+            for key in ("width_mm", "depth_mm", "height_mm"):
+                if key in item:
+                    entry[key] = item[key]
         listed.append(entry)
     return listed
 
 
+def _version_items(session: Session, folder: Path) -> list[dict[str, Any]]:
+    """The placed items of one composition version folder; none when its file is unreadable."""
+    try:
+        document = json.loads((folder / storage.INPUT_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        document = {}
+    return placed_items(session, document)
+
+
 def compositions(session: Session, root: Path) -> list[dict[str, Any]]:
-    """Every recorded composition with its latest version, build status and placed items."""
+    """Every recorded composition with its latest version, build status and placed items, and
+    the approved version's items (`approved_items`) when a version is approved."""
     listing = []
     for row in session.scalars(select(Composition).order_by(Composition.scope, Composition.name)):
         versions = composition_version_rows(session, row)
         latest = versions[-1].version if versions else None
+        approved = next((v.version for v in versions if v.approved_at is not None), None)
         status = None
         items: list[dict[str, Any]] = []
         if latest is not None:
             folder = storage.composition_version_dir(root, row.slug, latest)
             status = (storage.read_status(folder) or {}).get("status")
-            try:
-                document = json.loads((folder / storage.INPUT_FILE).read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                document = {}
-            items = placed_items(session, document)
-        listing.append(
-            {
-                "scope": row.scope, "name": row.name, "slug": row.slug, "latest_version": latest,
-                "status": status, "items": items, "versions": [v.version for v in versions],
-                "approved_version": next((v.version for v in versions if v.approved_at is not None), None),
-            }
-        )
+            items = _version_items(session, folder)
+        entry: dict[str, Any] = {
+            "scope": row.scope, "name": row.name, "slug": row.slug, "latest_version": latest,
+            "status": status, "items": items, "versions": [v.version for v in versions],
+            "approved_version": approved,
+        }
+        if approved is not None:
+            entry["approved_items"] = (
+                items if approved == latest
+                else _version_items(session, storage.composition_version_dir(root, row.slug, approved))
+            )
+        listing.append(entry)
     return listing
 
 

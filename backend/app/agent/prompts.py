@@ -385,8 +385,9 @@ def _item_place(item: Mapping[str, Any]) -> str:
 
 
 def composition_note(compositions: Sequence[Mapping[str, Any]], models: Sequence[Mapping[str, Any]] = ()) -> str:
-    """Each composition's scope, latest version, build status and items, and the library's
-    ready models (name, id and stated size) a composition can place; or an empty string."""
+    """Each composition's scope, latest version, build status and approval, the approved
+    version's items and a newer draft's apart, and the library's ready models (name, id and
+    stated size) a composition can place; or an empty string."""
     if not compositions and not models:
         return ""
     lines = [COMPOSITION_PREAMBLE]
@@ -405,19 +406,33 @@ def composition_note(compositions: Sequence[Mapping[str, Any]], models: Sequence
         version = f"v{latest}{state}" if latest else "no version yet"
         approved = composition.get("approved_version")
         approval = f", approved: v{approved}" if approved else ", approved: none"
-        items = []
-        for item in composition.get("items", []):
-            label = f"{neutralise(str(item.get('id')))} ({item.get('type')}: {neutralise(str(item.get('name')))})"
-            if item.get("no_longer_approved"):
-                label += " no longer approved"
-            if item.get("layer") in ("floor", "ceiling"):
-                label += f" ({item['layer']} layer)"
-            label += _item_place(item)
-            items.append(label)
-        lines.append(
-            f"- {composition['scope']} {neutralise(composition['name'])}: {version}{approval}; items: {', '.join(items) or 'none'}"
-        )
+        lines.append(f"- {composition['scope']} {neutralise(composition['name'])}: {version}{approval}")
+        # The approved layout first; a newer draft never hides it (room-items-in-piece-conversations).
+        if approved:
+            lines.append(f"  approved v{approved} items: {_item_labels(composition.get('approved_items', []))}")
+            if latest and latest > approved:
+                lines.append(f"  draft v{latest}, not approved, items: {_item_labels(composition.get('items', []))}")
+        elif latest:
+            lines.append(f"  v{latest} items (not approved): {_item_labels(composition.get('items', []))}")
     return "\n".join(lines)
+
+
+def _item_labels(items: Sequence[Mapping[str, Any]]) -> str:
+    """Each placed item's id, type, name, approval mark, layer, size and place; or `none`."""
+    labels = []
+    for item in items:
+        label = f"{neutralise(str(item.get('id')))} ({item.get('type')}: {neutralise(str(item.get('name')))})"
+        if item.get("no_longer_approved"):
+            label += " no longer approved"
+        if item.get("layer") in ("floor", "ceiling"):
+            label += f" ({item['layer']} layer)"
+        if item.get("type") in ("model", "stand-in") and all(
+            item.get(key) is not None for key in ("width_mm", "depth_mm", "height_mm")
+        ):
+            label += f" {item['width_mm']:g} × {item['depth_mm']:g} × {item['height_mm']:g} mm"
+        label += _item_place(item)
+        labels.append(label)
+    return ", ".join(labels) or "none"
 
 
 PIECE_PREAMBLE: Final = """\

@@ -379,6 +379,42 @@ def test_a_new_composition_version_stays_unapproved(isolated_house, render_root:
     assert listed["approved_version"] == 1 and listed["latest_version"] == 2
 
 
+def test_the_approved_versions_items_are_listed_beside_a_newer_drafts(isolated_house, render_root: Path) -> None:
+    db_session = isolated_house
+    composition = _wohnen(db_session, render_root, versions=(1,), items=[
+        {"id": "sofa", "type": "model", "model_id": "m1", "name": "Sofa Lund",
+         "width_mm": 2200, "depth_mm": 950, "height_mm": 850, "placement": {"wall": 1, "offset_mm": 400}},
+    ])
+    house_file.approve_composition_version(db_session, render_root, "wohnen", 1)
+    house_file.record_composition_version(db_session, composition, 2, 1, ["removed: sofa"])
+    _composition_folder(render_root, "wohnen", 2, [])
+    listed = house_file.compositions(db_session, render_root)[0]
+    assert listed["items"] == []
+    assert listed["approved_items"] == [{
+        "id": "sofa", "type": "model", "name": "Sofa Lund", "placement": {"wall": 1, "offset_mm": 400},
+        "width_mm": 2200, "depth_mm": 950, "height_mm": 850,
+    }]
+
+
+def test_no_approved_version_gives_no_approved_items(isolated_house, render_root: Path) -> None:
+    db_session = isolated_house
+    _wohnen(db_session, render_root, versions=(1, 2))
+    assert "approved_items" not in house_file.compositions(db_session, render_root)[0]
+
+
+def test_an_unreadable_approved_file_gives_no_items(isolated_house, render_root: Path) -> None:
+    from app.blender import storage
+
+    db_session = isolated_house
+    composition = _wohnen(db_session, render_root, versions=(1,))
+    house_file.approve_composition_version(db_session, render_root, "wohnen", 1)
+    house_file.record_composition_version(db_session, composition, 2, 1, [])
+    _composition_folder(render_root, "wohnen", 2, [{"id": "sofa", "type": "stand-in", "name": "Sofa"}])
+    (storage.composition_version_dir(render_root, "wohnen", 1) / storage.INPUT_FILE).write_text("{", encoding="utf-8")
+    listed = house_file.compositions(db_session, render_root)[0]
+    assert listed["approved_items"] == [] and len(listed["items"]) == 1
+
+
 def test_approving_a_composition_version_with_an_unapproved_piece_is_refused(
     isolated_house, render_root: Path
 ) -> None:
