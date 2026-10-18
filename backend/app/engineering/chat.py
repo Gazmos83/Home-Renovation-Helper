@@ -183,12 +183,22 @@ def request_history(
             for call in message.tool_calls
         ):
             legacy_source_turns.add(turn_start)
+    # A turn is an engineering exchange when any of its messages carries the marker: the
+    # owner's question belongs to it with its replies, so an answered question is left out
+    # of later requests, in stored conversations too (conversation-recent-inputs).
+    marked_turns: set[int] = set()
+    turn_start = 0
+    for index, message in enumerate(messages):
+        if isinstance(message, HumanMessage):
+            turn_start = index
+        if message.additional_kwargs.get("engineering"):
+            marked_turns.add(turn_start)
     turn_start = 0
     copied = []
     for index, message in enumerate(messages):
         if isinstance(message, HumanMessage):
-            marked_turn = bool(message.additional_kwargs.get("engineering"))
             turn_start = index
+            marked_turn = index in marked_turns
         marker = message.additional_kwargs.get("engineering")
         if engineering and index < latest_owner:
             continue

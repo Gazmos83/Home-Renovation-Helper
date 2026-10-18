@@ -359,3 +359,45 @@ def test_engineering_trace_exports_only_allowlisted_metrics_and_outcome(detach_t
         mask_personal_data(data={"state": {"engineering_turn": True}, "error": secret})
         == "[engineering content omitted]"
     )
+
+
+# --- an answered engineering question does not loop (conversation-recent-inputs) -------------------
+
+
+def _looping_thread() -> list:
+    """The murphy bed thread's shape, as stored: the question unmarked, its reply marked."""
+
+
+    return [
+        HumanMessage("Describe the dividers.", id="h1"),
+        AIMessage("bridge-dividers: 4 × 614 × 360 × 18 mm", id="a1"),
+        HumanMessage("Will the bridge be structurally stable if the dividers are removed?", id="h2"),
+        AIMessage(SHORT_STATUS, id="a2", additional_kwargs={"engineering": True}),
+        HumanMessage("Keep and shorten the dividers.", id="h3"),
+    ]
+
+
+@pytest.mark.parametrize("routing", [True, False])
+def test_an_answered_engineering_question_is_left_out_of_later_requests(routing: bool) -> None:
+
+
+    stored = _looping_thread()
+    sent = request_history(None, stored, engineering=False, enabled=False, routing=routing)
+    ids = [m.id for m in sent]
+    assert ids == ["h1", "a1", "h3"]  # the question and its status reply are both gone
+    assert all(SHORT_STATUS not in str(m.content) for m in sent)
+    assert [m.id for m in stored] == ["h1", "a1", "h2", "a2", "h3"]  # stored history unchanged
+    assert not stored[2].additional_kwargs  # nothing written onto the owner's message
+
+
+def test_the_current_engineering_question_is_still_sent() -> None:
+    stored = [*_looping_thread()[:3]]
+    sent = request_history(None, stored, engineering=True, enabled=False)
+    assert [m.id for m in sent] == ["h2"]
+
+
+def test_a_new_engineering_question_after_an_answered_one_is_still_one() -> None:
+    from app.engineering.chat import engineering_intent
+
+    assert engineering_intent("Can the shelf carry 30 kg?")
+    assert not engineering_intent("Keep and shorten the dividers.")

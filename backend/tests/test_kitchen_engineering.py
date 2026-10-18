@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.db.models import EngineeringChunk, KnowledgeSourceVersion
 from app.engineering.__main__ import seed_catalogue
@@ -116,6 +116,9 @@ def test_register_source_expands_dual_tags_and_refuses_self_approved_embedding(
 
 def test_seed_links_registers_kitchen_sources_without_chunks(db_session):
     catalogue = Path(__file__).resolve().parents[2] / "config" / "engineering_sources.yaml"
+    # App startup seeds the catalogue and commits, so an earlier API test leaves it registered.
+    # Start from no sources in this transaction; the fixture's rollback restores the table.
+    db_session.execute(text("TRUNCATE knowledge_sources CASCADE"))
     created = seed_catalogue(db_session, catalogue)
     assert created >= 10
     versions = list(db_session.scalars(select(KnowledgeSourceVersion)))

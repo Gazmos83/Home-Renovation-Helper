@@ -25,6 +25,7 @@ dependencies = [
     "sqlalchemy>=2.0.52",
     "torch>=2.14.0",
     "uvicorn[standard]>=0.54.0",
+    "cryptography>=3.1",
 ]
 
 # CPU-only PyTorch. This machine has no GPU, and the default PyPI torch wheel

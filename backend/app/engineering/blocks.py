@@ -1,11 +1,13 @@
 """Provenance-first extraction; ambiguous layouts require reviewed transcription.
 
 No parser promotes an extracted table/equation to a verified numerical fact.
-PDF layout is retained for review rather than treating spacing as a schema.
+PDF text is read in reading order and split into passages; table rows stay
+review-pending and carry only their own caption and column headers.
 """
 
 import io
 import re
+from collections import Counter
 from collections.abc import Iterable
 
 from bs4 import BeautifulSoup, Tag
@@ -17,6 +19,15 @@ from app.ingestion.extract import chunk_text
 _HEADING = re.compile(r"^(?:#{1,6}\s+|\d+(?:\.\d+)*\s+[A-ZÄÖÜ]|§\s*\d)")
 _SEPARATOR = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$")
 _EQUATION = re.compile(r"(?:\$\$|\\\[|[A-Za-z][\w_]*\s*=\s*[^=]|[∑∫√])")
+_CAPTION = re.compile(r"^(Table\s+[\w–\-.]*\w)\.\s")
+_CONTINUED = re.compile(r"(?:—|-)\s*con\.|\(continued\)", re.IGNORECASE)
+_NUMBER = re.compile(r"^[(\[]?[-–+]?\d[\d,.]*%?[)\],]?$|^[—–-]$")
+_FOOTNOTE = re.compile(r"^[a-z][A-Z]")
+_PAGE_NUMBER = re.compile(r"^(?:\d+(?:[–-]\d+)?|[ivxlc]+)$", re.IGNORECASE)
+_REPEATED_PAGES = 5
+_HEADER_LINES = 3
+_CONTEXT_LIMIT = 1000
+MAX_BLOCK_TEXT = 4000
 
 
 def block_text(block: EvidenceBlock) -> str:
@@ -144,6 +155,56 @@ def markdown_blocks(
     return result
 
 
+def _data_row(line: str) -> bool:
+    tokens = line.split()
+    numeric = sum(1 for token in tokens if _NUMBER.match(token))
+    return numeric >= 3 and numeric * 2 >= len(tokens)
+
+
+def _short_title(line: str, previous: str | None, following: str | None) -> bool:
+    # A heading ends the prior sentence and is followed by a new one, never a wrapped line.
+    return (
+        len(line) <= 60
+        and len(line.split()) <= 8
+        and line[:1].isupper()
+        and line[-1] not in ".,;:"
+        and "," not in line
+        and not any(character.isdigit() for character in line)
+        and (previous is None or previous[-1] in ".:")
+        and following is not None
+        and following[:1].isupper()
+    )
+
+
+def _bounded(block: EvidenceBlock) -> EvidenceBlock:
+    """Trim context, never content or caption, so one vector stays one passage."""
+    if len(block_text(block)) > MAX_BLOCK_TEXT:
+        block.footnotes = (
+            [] if not block.footnotes else ["\n".join(block.footnotes)[:_CONTEXT_LIMIT]]
+        )
+    if len(block_text(block)) > MAX_BLOCK_TEXT and len(block.headers) > 1:
+        rest = "\n".join(block.headers[1:])[:_CONTEXT_LIMIT]
+        block.headers = [block.headers[0], rest]
+    if len(block_text(block)) > MAX_BLOCK_TEXT:
+        raise ValueError(
+            f"{block.block_id}: evidence block exceeds {MAX_BLOCK_TEXT} characters"
+        )
+    return block
+
+
+class _Table:
+    def __init__(self, caption: str | None, number: str | None, page: int, label: str):
+        self.caption, self.number = caption, number
+        self.first_page, self.first_label = page, label
+        self.headers: list[str] = [caption] if caption else []
+        self.rows: list[str] = []
+        self.footnotes: list[str] = []
+
+
+def _page_lines(text: str) -> list[str]:
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
 def pdf_blocks(
     content: bytes, *, allowed_pages: Iterable[int] | None = None
 ) -> list[EvidenceBlock]:
@@ -152,17 +213,80 @@ def pdf_blocks(
     selected = set(allowed_pages) if allowed_pages is not None else None
     if selected is not None and any(page > len(reader.pages) for page in selected):
         raise ValueError("approved physical page is outside the PDF")
+    # Plain mode follows the content stream, which keeps columns in reading order.
+    texts = {
+        index: page.extract_text() or ""
+        for index, page in enumerate(reader.pages, 1)
+        if selected is None or index in selected
+    }
+    # Running headers and footers repeat among the first lines of many pages.
+    repeated = Counter(
+        line
+        for text in texts.values()
+        for line in set(_page_lines(text)[:_HEADER_LINES])
+    )
     result: list[EvidenceBlock] = []
     section: str | None = None
-    prior_table: EvidenceBlock | None = None
-    first_layout: tuple[int, str, str] | None = None
-    for index, page in enumerate(reader.pages, 1):
-        if selected is not None and index not in selected:
-            prior_table = None
-            first_layout = None
-            continue
-        text = page.extract_text(extraction_mode="layout") or ""
+    chapter: str | None = None
+    table: _Table | None = None
+    first_pages: dict[str, tuple[int, str]] = {}
+    previous_page = 0
+    previous: str | None = None
+
+    def emit_table(index: int, label: str) -> None:
+        if table is None or not table.rows:
+            return
+        pages = sorted({table.first_page, index})
+        printed = list(dict.fromkeys([table.first_label, label]))
+        for part in chunk_text("\n".join(table.rows), overlap=0):
+            result.append(
+                _bounded(
+                    EvidenceBlock(
+                        block_id=f"pdf-p{index}-{len(result)}",
+                        kind="table",
+                        content=part,
+                        headers=list(table.headers),
+                        footnotes=list(table.footnotes),
+                        pages=pages,
+                        printed_pages=printed,
+                        section=section,
+                        verification_status="needs_review",
+                    )
+                )
+            )
+        table.rows, table.footnotes = [], []
+
+    def flush(pending: list[str], index: int, label: str) -> None:
+        # Chunk first, so an equation keeps its neighbours without swallowing a page.
+        for part in chunk_text("\n".join(pending)):
+            result.extend(
+                _bounded(block)
+                for block in _prose(
+                    [part], section, f"pdf-p{index}", len(result), [index], [label]
+                )
+            )
+        pending.clear()
+
+    def end_run(run: list[str], pending: list[str], index: int, label: str) -> None:
+        # Three or more caption-less data rows form a table; fewer stay prose.
+        nonlocal table
+        if len(run) >= 3:
+            headers = pending[-2:]
+            flush(pending, index, label)
+            table = _Table(None, None, index, label)
+            table.headers, table.rows = headers, list(run)
+            emit_table(index, label)
+        else:
+            pending.extend(run)
+        run.clear()
+
+    for index, text in texts.items():
         label = labels[index - 1]
+        if index != previous_page + 1:
+            # A skipped page breaks every continuation; never cite past a denied page.
+            table, previous = None, None
+            first_pages.clear()
+        previous_page = index
         if not text.strip():
             result.append(
                 EvidenceBlock(
@@ -175,60 +299,65 @@ def pdf_blocks(
                     verification_status="needs_review",
                 )
             )
-            prior_table = None
-            first_layout = None
+            table, previous = None, None
             continue
-        # Multi-column layout cannot be interpreted reliably by pypdf. Preserve
-        # the full page plus preceding table context for explicit human review.
-        if any(re.search(r"\S(?: {2,}|\t)\S", line) for line in text.splitlines()):
-            block = EvidenceBlock(
-                block_id=f"pdf-p{index}-layout",
-                kind="table",
-                content=text,
-                pages=[index],
-                printed_pages=[label],
-                section=section,
-                verification_status="needs_review",
-            )
-            if prior_table is not None:
-                # Keep the first page and immediate predecessor whole, without
-                # recursively duplicating the entire book into every block.
-                # Intermediate pages remain separate review-pending blocks.
-                first_page, first_label, first_text = first_layout
-                block.headers = list(dict.fromkeys([first_text, prior_table.content]))
-                block.pages = sorted({first_page, index - 1, index})
-                block.printed_pages = list(
-                    dict.fromkeys([first_label, labels[index - 2], label])
-                )
-                block.conditions = [
-                    "Ambiguous continuation: verify the complete table across its source pages before numerical use."
-                ]
+        lines = _page_lines(text)
+        # Strip leading running headers, chapter lines and page numbers only.
+        for _ in range(_HEADER_LINES):
+            if not lines:
+                break
+            line = lines[0]
+            if repeated[line] >= _REPEATED_PAGES:
+                if line.upper().startswith("CHAPTER") and line != chapter:
+                    chapter = section = line
+            elif line != label and not _PAGE_NUMBER.match(line):
+                break
+            lines.pop(0)
+        # A table left open on the previous page continues only if this page opens with rows.
+        if table is not None and not (lines and _data_row(lines[0])):
+            table = None
+        pending: list[str] = []
+        run: list[str] = []
+        for position, line in enumerate(lines):
+            caption = _CAPTION.match(line)
+            if caption or (_HEADING.match(line) and len(line) <= 150):
+                end_run(run, pending, index, label)
+                emit_table(index, label)
+                flush(pending, index, label)
+                if caption:
+                    number = caption.group(1)
+                    if not (_CONTINUED.search(line) and number in first_pages):
+                        first_pages[number] = (index, label)
+                    table = _Table(line, number, *first_pages[number])
+                else:
+                    table, section = None, line
+                    pending.append(line)
+                previous = line
+                continue
+            if table is not None:
+                if _data_row(line):
+                    table.rows.append(line)
+                elif _FOOTNOTE.match(line) or table.footnotes:
+                    table.footnotes.append(line)
+                elif not table.rows:
+                    table.headers.append(line)
+                else:
+                    table.rows.append(line)  # row labels such as a species group
+                previous = line
+                continue
+            if _data_row(line):
+                run.append(line)
             else:
-                first_layout = (index, label, text)
-            result.append(block)
-            prior_table = block
-        else:
-            pending: list[str] = []
-            for line in text.splitlines():
-                if _HEADING.match(line.strip()) and len(line.strip()) <= 150:
-                    result.extend(
-                        _prose(
-                            pending,
-                            section,
-                            f"pdf-p{index}",
-                            len(result),
-                            [index],
-                            [label],
-                        )
-                    )
-                    pending = []
-                    section = line.strip()
+                end_run(run, pending, index, label)
+                following = lines[position + 1] if position + 1 < len(lines) else None
+                if _short_title(line, previous, following):
+                    flush(pending, index, label)
+                    section = line
                 pending.append(line)
-            result.extend(
-                _prose(pending, section, f"pdf-p{index}", len(result), [index], [label])
-            )
-            prior_table = None
-            first_layout = None
+            previous = line
+        end_run(run, pending, index, label)
+        flush(pending, index, label)
+        emit_table(index, label)
     return result
 
 

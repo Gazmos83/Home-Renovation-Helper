@@ -64,9 +64,15 @@ class KnowledgeFetcher(PacedFetcher):
                 if size > limit:
                     raise ValueError("remote response exceeds the configured limit")
                 body.append(piece)
+            # `iter_bytes` already decoded the body: a kept Content-Encoding would decode it twice.
+            headers = {
+                key: value
+                for key, value in response.headers.items()
+                if key.lower() not in ("content-encoding", "content-length")
+            }
             return httpx.Response(
                 200,
-                headers=response.headers,
+                headers=headers,
                 content=b"".join(body),
                 request=httpx.Request("GET", url),
             )

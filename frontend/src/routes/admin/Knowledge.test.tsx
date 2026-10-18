@@ -92,12 +92,16 @@ test("a preset fills grants only on selection and the draft note must be edited 
   expect((screen.getByLabelText("Supporting rights evidence") as HTMLTextAreaElement).value).toContain("https://example.org/a.pdf");
   await user.type(screen.getByLabelText("Rights reviewer"), "fixture author");
   expect(screen.getByRole("button", { name: "Record approval" })).toBeDisabled();
+  const hint = "Replace [STATE YOUR BASIS HERE] in the evidence with your basis for permission to record approval.";
+  expect(screen.getByRole("button", { name: "Record approval" })).toHaveAccessibleDescription(hint);
   await user.click(screen.getByLabelText("Local use: extraction, local_embedding, local_retrieval, retention"));
   expect((screen.getByLabelText("Operation grants (JSON)") as HTMLTextAreaElement).value).toContain("local_embedding");
   expect((screen.getByLabelText("Operation grants (JSON)") as HTMLTextAreaElement).value).not.toContain("remote_model_use");
   expect(screen.getByRole("button", { name: "Record approval" })).toBeDisabled();
   await user.clear(screen.getByLabelText("Supporting rights evidence"));
   await user.paste("Federal publication; no copyright notice on the title pages");
+  expect(screen.queryByText(hint)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Record approval" })).toBeEnabled();
   expect(calls.some(([method, url]) => method === "POST" && url.endsWith("/rights"))).toBe(false);
   await user.click(screen.getByRole("button", { name: "Record approval" }));
   const sent = calls.find(([method, url]) => method === "POST" && url.endsWith("/rights"));
