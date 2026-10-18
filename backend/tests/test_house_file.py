@@ -453,6 +453,32 @@ def test_the_composition_note_says_where_each_item_stands(isolated_house, render
     assert "sofa (stand-in: Sofa) free at x 2500, y 2000 mm, rotated 90°" in note
 
 
+def test_placed_items_carry_their_resolved_size_and_centre() -> None:
+    """room-change-goes-to-designer: "Placed sizes reach the Designer" (house-file side)."""
+    document = {
+        "items": [
+            {"id": "sofa", "type": "stand-in", "name": "Sofa", "placement": {"wall": 4, "offset_mm": 0}},
+            {"id": "lamp", "type": "stand-in", "name": "Lamp", "placement": {"wall": 0, "offset_mm": 0}},
+        ],
+        "resolved": {"items": [
+            {"id": "sofa", "size_mm": {"w": 2300.0, "d": 1400.0, "h": 850.0},
+             "centre_mm": [1734.6, 4793.6], "rotation_deg": -102.0},
+        ]},
+    }
+    sofa, lamp = house_file.placed_items(None, document)
+    assert sofa["size_mm"] == {"w": 2300.0, "d": 1400.0, "h": 850.0}
+    assert sofa["centre_mm"] == [1734.6, 4793.6] and sofa["rotation_deg"] == -102.0
+    assert "centre_mm" not in lamp and "size_mm" not in lamp
+
+
+def test_placed_items_without_a_resolved_section_are_listed_as_before() -> None:
+    """room-change-goes-to-designer: "Document without resolved placement"."""
+    item = {"id": "sofa", "type": "stand-in", "name": "Sofa", "placement": {"wall": 4, "offset_mm": 0}}
+    (entry,) = house_file.placed_items(None, {"items": [item]})
+    assert entry == {"id": "sofa", "type": "stand-in", "name": "Sofa", "placement": {"wall": 4, "offset_mm": 0}}
+
+
+
 def test_the_composition_note_marks_a_floor_layer_item(isolated_house, render_root: Path) -> None:
     from app.agent.prompts import composition_note
 

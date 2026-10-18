@@ -227,6 +227,9 @@ def test_the_map_follows_routing_plugins_and_markers(client: TestClient) -> None
     assert {"from": "intake", "to": "designer"} in body["handoffs"]
     assert "after_designer" not in nodes
     assert {"from": "designer", "to": "builder"} in body["handoffs"]
+    # The step after the other specialists hands a `compose_room` call on (room-change-goes-to-designer).
+    assert "after_specialist" not in nodes
+    assert {"from": "builder", "to": "designer"} in body["handoffs"]
     assert nodes["designer"]["model"] == client.app.state.routing.model_for("designer")
     tools = {tool["name"]: tool for node in body["nodes"] for tool in node["tools"]}
     assert tools["render_turntable"]["render_guard"] and not tools["render_turntable"]["enabled"]

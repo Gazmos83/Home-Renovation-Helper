@@ -28,6 +28,7 @@ from langchain_core.messages import (
     AIMessage,
     AnyMessage,
     HumanMessage,
+    RemoveMessage,
     ToolMessage,
 )
 from langchain_core.runnables import RunnableConfig
@@ -127,6 +128,18 @@ DESIGN_UPDATE_IN_CONVERSATION: Final = (
 DESIGN_UPDATE_HERE: Final = "To update that piece, name {package_id} here and attach the file again."
 # The turn's reply when a specialist answers empty twice (piece-versions-and-chat-delete).
 EMPTY_REPLY: Final = "{role} gave no answer. Please rephrase your message or ask again."
+# Every specialist is told who it is; the history does not say who wrote an earlier reply
+# (room-change-goes-to-designer).
+ROLE_NOTE: Final = (
+    "(You are {role} on this turn. Earlier assistant replies in this conversation may have been "
+    "written by other specialists; their limits are not yours. Never offer to pass a request to "
+    "another specialist and never say you cannot see another specialist's work.)"
+)
+# The Designer's note when another specialist's `compose_room` call was handed to it.
+COMPOSE_HANDOFF_NOTE: Final = (
+    "(The owner's latest messages ask to change this room. Restate the change list, or call "
+    "`compose_room` if the owner has already said the list is complete.)"
+)
 _TOOL_NAME: Final = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
@@ -197,6 +210,8 @@ class ChatState(TypedDict, total=False):
     # that confirms the room hands it to the Designer (pending-design-import).
     pending_design: dict[str, str] | None
     handoff_design: dict[str, str] | None
+    # room-change-goes-to-designer: another specialist's lone `compose_room` call goes on to the Designer.
+    handoff_compose: bool
     piece_named: bool
     room_confirmed: bool
     room_named: bool
@@ -854,6 +869,7 @@ def build_graph(
             "design_matches_piece": design_conflict,
             "pending_design": pending_design,
             "handoff_design": None,
+            "handoff_compose": False,
             "piece_named": bool(matches) and active is None and piece_taken is None,
             "room_confirmed": room_confirmed,
             "room_named": room_is_named,
@@ -1122,7 +1138,7 @@ def build_graph(
         # A room the conversation has confirmed may be composed whether or not the message names
         # it, when the model reads the request as composing a room (app-check-2026-10-09).
         room_wish = bool(getattr(decision, "composes_room", False)) and bool(state.get("room_confirmed"))
-        if room_wish and chosen == "intake":
+        if room_wish and chosen in ("intake", "builder"):
             chosen = "designer"
         composing = chosen == "designer" and (state.get("compose_ready") or room_wish)
         # A piece the owner or the last reply names can be revised, rebuilt or given an imported
@@ -1218,6 +1234,9 @@ def build_graph(
             # The templates only for a new piece: a revision sees only the active build's figures.
             elif name == "designer" and not state.get("package_id"):
                 notes.append(designer_note)
+            if name == "designer" and state.get("handoff_compose"):
+                notes.append(COMPOSE_HANDOFF_NOTE)
+            notes.append(ROLE_NOTE.format(role=SPECIALIST_LABELS.get(name, name)))
             notes.append(FORMATTING_NOTE)
             if state.get("engineering_turn"):
                 notes.append(engineering_chat.ANSWER_NOTE)
@@ -1272,7 +1291,7 @@ def build_graph(
                 update={"messages": [reply], "round_count": round_count + 1}, goto=goto
             )
 
-        def tools_node(state: ChatState, config: RunnableConfig) -> Command[Literal["agent"]]:
+        def tools_node(state: ChatState, config: RunnableConfig) -> Command[Literal["agent", "__end__"]]:
             configurable = config.get("configurable", {})
             ctx = ToolContext(
                 deps=deps,
@@ -1291,6 +1310,21 @@ def build_graph(
             )
             calls = _last_ai_tool_calls(state)
             bound_tools = bound_for(state)
+            # A lone `compose_room` call by another specialist runs nothing; its reply is dropped
+            # and the turn goes on to the Designer (room-change-goes-to-designer).
+            designer_tools = (state.get("bound_tools") or {}).get("designer")
+            if designer_tools is None:
+                designer_tools = list(loaded["designer"].tools)
+            if (
+                name != "designer"
+                and len(calls) == 1
+                and calls[0].get("name") == "compose_room"
+                and "compose_room" not in bound_tools
+                and "compose_room" in designer_tools
+                and not state.get("handoff_compose")
+            ):
+                last = next(m for m in reversed(state.get("messages", [])) if getattr(m, "type", None) == "ai")
+                return Command(update={"messages": [RemoveMessage(id=last.id)], "handoff_compose": True}, goto=END)
             # Each tool is reported as it starts, by its plugin's plain name only; a
             # gated tool starts with its preview, so a pause still names it.
             writer = get_stream_writer()
@@ -1403,15 +1437,23 @@ def build_graph(
         builder.add_node("agent", agent)
         builder.add_node("tools", tools_node)
         builder.add_edge(START, "agent")
-        builder.add_edge("tools", "agent")
         return builder.compile()
 
     # --- the whole graph -----------------------------------------------------------
+
+    def after_specialist(state: ChatState, config: RunnableConfig) -> Command[Literal["designer", "__end__"]]:
+        """A specialist other than the Designer that called `compose_room` hands the same turn
+        to the Designer (room-change-goes-to-designer). Decided here, never by a model."""
+        if not state.get("handoff_compose"):
+            return Command(goto=END)
+        return Command(update={"specialist": "designer", "round_count": 0}, goto="designer")
 
     def after_intake(state: ChatState, config: RunnableConfig) -> Command[Literal["designer", "__end__"]]:
         """Hand a design file attached before the room was confirmed to the Designer, on the
         Intake turn that confirmed the room, while the conversation has no piece
         (pending-design-import). Decided here, never by a model."""
+        if state.get("handoff_compose"):
+            return after_specialist(state, config)
         pending = state.get("pending_design")
         raw_thread = config.get("configurable", {}).get("chat_thread")
         if not pending or not raw_thread:
@@ -1459,7 +1501,8 @@ def build_graph(
     for name in SPECIALISTS:
         graph.add_node(name, specialist_graph(name))
         if name not in ("intake", "designer"):
-            graph.add_edge(name, END)
+            graph.add_edge(name, "after_specialist")
+    graph.add_node("after_specialist", after_specialist)
     graph.add_node("after_intake", after_intake)
     graph.add_edge("intake", "after_intake")
     graph.add_node("after_designer", after_designer)

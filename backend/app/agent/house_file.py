@@ -1037,7 +1037,12 @@ def placed_items(session: Session, document: dict[str, Any]) -> list[dict[str, A
     """The document's items as the owner reads them; a piece carries its current approval.
 
     A placed piece version that is no longer approved stays and is marked, never dropped.
+    An item the document's resolved placement covers also carries its `size_mm`, `centre_mm`
+    and `rotation_deg` (room-change-goes-to-designer).
     """
+    resolved_section = document.get("resolved")
+    resolved_items = resolved_section.get("items", []) if isinstance(resolved_section, dict) else []
+    resolved = {r.get("id"): r for r in resolved_items if isinstance(r, dict)}
     listed = []
     for item in document.get("items", []):
         entry: dict[str, Any] = {"id": item.get("id"), "type": item.get("type")}
@@ -1057,6 +1062,11 @@ def placed_items(session: Session, document: dict[str, Any]) -> list[dict[str, A
             for key in ("width_mm", "depth_mm", "height_mm"):
                 if key in item:
                     entry[key] = item[key]
+        placed = resolved.get(item.get("id"))
+        if placed is not None:
+            for key in ("size_mm", "centre_mm", "rotation_deg"):
+                if key in placed:
+                    entry[key] = placed[key]
         listed.append(entry)
     return listed
 

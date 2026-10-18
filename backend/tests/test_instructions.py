@@ -457,3 +457,24 @@ def test_the_designer_gives_one_door_its_own_material_without_splitting_the_pair
     assert "`leaf_materials`" in text
     assert "Never split a pair or row of doors into separate entries for this" in text
     assert "keep the front layout" in text
+
+
+def test_the_foreman_treats_a_change_to_a_composed_room_as_composing() -> None:
+    """room-change-goes-to-designer."""
+    text = load_instructions()["foreman"].text
+    assert "Moving, adding, removing or re-placing anything in a composed room is composing it" in text
+    assert "Only a request to render or look at the room is `builder`." in text
+
+
+def test_the_designer_takes_placed_sizes_from_the_note() -> None:
+    """room-change-goes-to-designer."""
+    text = load_instructions()["designer"].text
+    assert "Take every placed item's size and position from the composition note and never ask the owner for them" in text
+    assert "not a cut-list part's" in text
+
+
+def test_the_builder_does_not_relay_a_room_change() -> None:
+    """room-change-goes-to-designer."""
+    text = load_instructions()["builder"].text
+    assert "say in one sentence that the room has not been changed yet" in text
+    assert "never offer to pass them on" in text

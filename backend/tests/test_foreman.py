@@ -1134,3 +1134,69 @@ def test_a_side_call_turns_reasoning_off_so_a_short_note_is_not_left_empty(tool_
 
     assert text == "a note"
     assert models["foreman"].call_kwargs[-1]["extra_body"] == {"reasoning": {"enabled": False}}
+
+
+# --- room-change-goes-to-designer ---------------------------------------------------
+
+# The fixture's piece is named "Wall", so the message must not name a wall.
+MOVE_TABLE = "Please move the table 500 mm towards the window and 600 mm away from the sofa."
+
+
+def test_a_move_after_a_built_composition_reaches_the_designer(tool_state) -> None:
+    """"Move after a composition was built": the model picked the Builder and flagged composing."""
+    _built_composition(tool_state, approved=True)
+    models = fake_models(foreman={"decisions": [composing("builder", True)]}, designer={"replies": ["dining-table: move."]})
+    state = make_harness(tool_state, models, room="Wohnen").turn(MOVE_TABLE)
+    assert state["specialist"] == "designer"
+    assert models["builder"].calls == 0
+    assert "You are the Designer on this turn." in models["designer"].last_prompt_text()
+
+
+def test_a_render_of_a_built_composition_still_reaches_the_builder(tool_state) -> None:
+    """"Render still goes to the Builder"."""
+    _built_composition(tool_state, approved=True)
+    models = fake_models(foreman={"decisions": [composing("builder", False)]}, builder={"replies": ["Rendering."]})
+    state = make_harness(tool_state, models, room="Wohnen").turn("render the room")
+    assert state["specialist"] == "builder"
+    assert models["designer"].calls == 0
+    assert "You are the Builder on this turn." in models["builder"].last_prompt_text()
+
+
+def test_a_builder_compose_room_call_is_handed_to_the_designer(tool_state) -> None:
+    """"Builder calls compose_room": nothing runs, the Builder's words are dropped."""
+    _built_composition(tool_state, approved=True)
+    call = tool_call("compose_room", {"room": "Wohnen", "items": []})
+    models = fake_models(
+        foreman={"decisions": [composing("builder", False)]},
+        builder={"steps": [("I'll pass this change to the Designer.", [call])]},
+        designer={"replies": ["dining-table: move 500 mm from wall 1. Anything else?"]},
+    )
+    harness = make_harness(tool_state, models, room="Wohnen")
+    state = harness.turn("That's the only change. please continue")
+    assert state["specialist"] == "designer"
+    assert last_reply(state) == "dining-table: move 500 mm from wall 1. Anything else?"
+    assert models["designer"].calls == 1
+    assert "change this room" in models["designer"].last_prompt_text()
+    stored = " ".join(str(m.content) for m in state["messages"])
+    assert "pass this change" not in stored and "belongs to" not in stored
+    assert not harness.snapshot().interrupts
+    with ToolDeps(tool_state).session() as session:
+        assert house_file.composition_version_rows(
+            session, house_file.composition_by_scope(session, "room", "Wohnen")
+        )[-1].version == 1
+
+
+def test_compose_room_beside_other_calls_is_refused_as_before(tool_state) -> None:
+    """"compose_room beside other calls"."""
+    _built_composition(tool_state, approved=True)
+    calls = [tool_call("render_turntable", {"composition": "Wohnen", "tier": "nope"}),
+             tool_call("compose_room", {"room": "Wohnen", "items": []})]
+    models = fake_models(
+        foreman={"decisions": [composing("builder", False)]},
+        builder={"steps": [calls, "Nothing was changed."]},
+    )
+    state = make_harness(tool_state, models, room="Wohnen").turn("render it and move the table")
+    assert state["specialist"] == "builder"
+    assert models["designer"].calls == 0
+    refusals = [str(m.content) for m in state["messages"] if m.type == "tool"]
+    assert "`compose_room` belongs to the Designer, not to you. Nothing was done or saved." in refusals

@@ -247,3 +247,25 @@ def test_item_names_in_the_composition_note_are_neutralised() -> None:
     note = composition_note([_wohnen(latest_version=1, approved_version=1, items=[hostile],
                                      approved_items=[hostile])])
     assert SENTINEL not in note and NEUTRALISED in note
+
+
+def test_a_placed_piece_shows_its_resolved_size_and_centre() -> None:
+    """room-change-goes-to-designer: "Placed sizes reach the Designer"."""
+    wall = {
+        "id": "listening-wall", "type": "piece", "name": "listening-wall v18", "placement": {"wall": 0, "offset_mm": 497},
+        "size_mm": {"w": 2206.0, "d": 562.0, "h": 2238.0}, "centre_mm": [1600.0, 281.0], "rotation_deg": -0.0,
+    }
+    note = composition_note([_wohnen(latest_version=13, approved_version=None, items=[wall])])
+    assert (
+        "listening-wall (piece: listening-wall v18) 2206 × 562 × 2238 mm on wall 1 (index 0) at offset 497 mm, "
+        "centre (1600, 281) mm, rotated 0°"
+    ) in note
+    assert "never ask the owner for them" in note
+
+
+def test_a_free_item_keeps_one_point_and_a_model_one_size() -> None:
+    """room-change-goes-to-designer: no second size or centre where the note already states one."""
+    sofa = {**SOFA, "size_mm": {"w": 2200, "d": 950, "h": 850}, "centre_mm": [2500, 2000], "rotation_deg": 90}
+    note = composition_note([_wohnen(latest_version=1, approved_version=None, items=[sofa])])
+    assert "sofa (model: Sofa Lund) 2200 × 950 × 850 mm free at x 2500, y 2000 mm, rotated 90°" in note
+    assert note.count("2200 × 950 × 850") == 1 and "centre (" not in note
