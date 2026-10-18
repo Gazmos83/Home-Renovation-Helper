@@ -241,6 +241,8 @@ class Proposal:
     warnings: str
     changes: list[str] = field(default_factory=list)
     latest: int | None = None
+    # The calculations shown with the confirmation, one row per item (confirmation-summaries).
+    table: dict[str, Any] | None = None
 
 
 def _refuse_spec(error: SpecValidationError) -> CompositionRefused:
@@ -403,6 +405,10 @@ def propose(
     changes = _changes(previous, stored)
 
     sizes_by_id = {p["id"]: p["size_mm"] for p in stored["resolved"]["items"]}
+    resolved_by_id = {p["id"]: p for p in stored["resolved"]["items"]}
+    hangs = any("base_mm" in p for p in stored["resolved"]["items"])
+    columns = ["Item", "Kind", "Size (mm)", "Placement", "Centre (mm)", "Rotation"] + (["Hangs at (mm)"] if hangs else [])
+    rows: list[list[str]] = []
     count = f"{len(stored['items'])} item(s)" if stored["items"] else "the room only, no items"
     lines = [f"{'Room' if scope == 'room' else 'Apartment'} {canonical or name}: {count}"]
     for item in stored["items"]:
@@ -412,11 +418,28 @@ def propose(
             f"- {item['id']} ({item['type']}, {label}): {size['w']:g} × {size['d']:g} × {size['h']:g} mm, "
             f"{_where(item['placement'])}" + (f", in {item['room']}" if "room" in item else "")
         )
+        placed = resolved_by_id[item["id"]]
+        placement = item["placement"]
+        row = [
+            label,
+            item["type"],
+            f"{size['w']:g} × {size['d']:g} × {size['h']:g}",
+            f"wall {placement['wall']}, {placement['offset_mm']:g} mm" if "wall" in placement
+            else f"free, {placement['rotation_deg']:g}°",
+            f"{placed['centre_mm'][0]:g}, {placed['centre_mm'][1]:g}",
+            f"{placed['rotation_deg']:g}°",
+        ]
+        if hangs:
+            row.append(f"{placed['base_mm']:g}" if "base_mm" in placed else "")
+        rows.append(row)
     if warnings:
         lines.append(f"Design-rule warnings: {warnings}")
     if latest is not None:
         lines.append(f"Compared with version {latest}: " + ("; ".join(changes) or "no change"))
-    return Proposal(scope, canonical or name, stored, "\n".join(lines), warnings, changes, latest)
+    return Proposal(
+        scope, canonical or name, stored, "\n".join(lines), warnings, changes, latest,
+        table={"columns": columns, "rows": rows},
+    )
 
 
 def create_version(session, render_root: Path, proposal: Proposal, start) -> int:

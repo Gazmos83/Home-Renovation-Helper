@@ -113,6 +113,11 @@ class QuestionOut(BaseModel):
     choices: list[str]
 
 
+class TableOut(BaseModel):
+    columns: list[str]
+    rows: list[list[str]]
+
+
 class PendingOut(BaseModel):
     confirmation_id: str
     kind: Literal["confirmation", "questions"]
@@ -121,6 +126,9 @@ class PendingOut(BaseModel):
     proposal: dict[str, Any]
     questions: list[QuestionOut]
     layout: Literal["room"] | None = None
+    # The plain title for the card's heading and a confirmation's calculations (confirmation-summaries).
+    title: str = ""
+    table: TableOut | None = None
 
 
 class TurnOut(BaseModel):
@@ -168,6 +176,13 @@ class MessageOut(BaseModel):
     version: int | None = Field(default=None, exclude_if=lambda v: v is None)
     # A finished room render's links to its result (room-render-notices); left out when there are none.
     links: list[NoticeLinkOut] | None = Field(default=None, exclude_if=lambda v: v is None)
+    # An answered confirmation's parts (confirmation-summaries); all left out for the other roles.
+    subject: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    title: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    summary: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    answer: Literal["yes", "no"] | None = Field(default=None, exclude_if=lambda v: v is None)
+    reason: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    table: TableOut | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class ThreadDetailOut(ThreadOut):
@@ -268,6 +283,8 @@ def _pending_out(pending: chat.Pending | None) -> PendingOut | None:
             for q in pending.questions
         ],
         layout="room" if pending.layout == "room" else None,
+        title="" if pending.kind == "questions" else pending.title,
+        table=TableOut(**pending.table) if pending.table is not None else None,
     )
 
 

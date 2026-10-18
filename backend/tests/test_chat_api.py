@@ -580,7 +580,11 @@ def test_an_answered_confirmation_is_one_line_before_the_reply_that_followed(cli
     messages = client.get(f"/chat/threads/{thread}").json()["messages"]
     assert without_ids(messages) == [
         {"role": "owner", "text": "a hall bench"},
-        {"role": "confirmation", "text": f"brief: {pending['summary']} — no (make it 4 shelves)"},
+        {
+            "role": "confirmation", "text": f"brief: {pending['summary']} — no (make it 4 shelves)",
+            "subject": "brief", "title": "Confirming the brief", "summary": pending["summary"],
+            "answer": "no", "reason": "make it 4 shelves",
+        },
         {"role": "assistant", "text": "Four shelves, then? Tell me the change."},
     ]
 

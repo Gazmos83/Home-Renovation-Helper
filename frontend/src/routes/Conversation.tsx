@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { Check, Circle, Pencil } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Circle, Pencil } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   api,
   type ChatMessage,
+  type ConfirmationTable,
   type Pending,
   type Progress,
   type ResumeBody,
@@ -95,7 +96,9 @@ function ConfirmationCard({ pending, disabled, onAnswer }: {
   const answer = (value: "yes" | "no") => onAnswer(reason.trim() ? { answer: value, reason: reason.trim() } : { answer: value });
   return (
     <section className={`${cardClass} mx-auto w-full max-w-xl`} aria-label="Confirmation needed">
-      <h3>Confirm: {pending.subject}</h3>
+      {/* The plain title, never the internal subject (confirmation-summaries). */}
+      <h3>Confirm: {pending.title || "Confirmation"}</h3>
+      {pending.table && <CalculationsTable table={pending.table} />}
       <pre className="whitespace-pre-wrap font-chat">{pending.summary}</pre>
       <Input aria-label="Reason (optional)" placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} />
       <div className="flex gap-2">
@@ -103,6 +106,75 @@ function ConfirmationCard({ pending, disabled, onAnswer }: {
         <Button type="button" variant="outline" disabled={disabled} onClick={() => answer("no")}>No</Button>
       </div>
     </section>
+  );
+}
+
+/** A confirmation's calculations, one row per item; the cells come formatted from the service. */
+function CalculationsTable({ table }: { table: ConfirmationTable }) {
+  return (
+    <div className="overflow-x-auto">
+      <Table aria-label="Calculations">
+        <TableHeader>
+          <TableRow>
+            {table.columns.map((column) => (
+              <TableHead key={column}>{column}</TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {table.rows.map((row, index) => (
+            <TableRow key={index}>
+              {row.map((cell, column) => (
+                <TableCell key={column}>{cell}</TableCell>
+              ))}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+/**
+ * An answered confirmation, collapsed to its title and answer ("Composing room · Yes"); its dropdown
+ * shows the summary the owner was shown and any calculations. Starts collapsed, also after a reload.
+ */
+function AnsweredConfirmation({ m }: { m: ChatMessage }) {
+  const [open, setOpen] = useState(false);
+  // An entry without a title (an older service) keeps its one line.
+  if (!m.title) {
+    return (
+      <p className="mx-auto w-fit rounded-md border px-3 py-2 text-sm text-muted-foreground" data-role="confirmation">
+        Answered: {m.text}
+      </p>
+    );
+  }
+  const Chevron = open ? ChevronDown : ChevronRight;
+  return (
+    <div className="mx-auto w-fit max-w-full space-y-2 rounded-md border px-3 py-2 text-sm text-muted-foreground" data-role="confirmation">
+      <div className="flex flex-wrap items-center gap-2">
+        <span>
+          {m.title} · {m.answer === "yes" ? "Yes" : "No"}
+          {m.reason ? ` — ${m.reason}` : ""}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-expanded={open}
+          aria-label={`Show details of ${m.title}`}
+          onClick={() => setOpen(!open)}
+        >
+          <Chevron aria-hidden size={16} />
+        </Button>
+      </div>
+      {open && (
+        <div className="space-y-2 text-foreground">
+          {m.table && <CalculationsTable table={m.table} />}
+          <pre className="whitespace-pre-wrap font-chat">{m.summary}</pre>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -668,13 +740,7 @@ export function ChatPane({ c }: { c: ConversationState }) {
       >
         {messages.length === 0 && !showOptimistic && <p className="text-muted-foreground">Nothing said yet. Describe the piece you want.</p>}
         {messages.map((m, index) => {
-          if (m.role === "confirmation") {
-            return (
-              <p key={index} className="mx-auto w-fit rounded-md border px-3 py-2 text-sm text-muted-foreground" data-role="confirmation">
-                Answered: {m.text}
-              </p>
-            );
-          }
+          if (m.role === "confirmation") return <AnsweredConfirmation key={index} m={m} />;
           if (m.role === "notice") return <Notice key={index} m={m} onReview={c.review} />;
           if (m.kind === "answers") {
             return (

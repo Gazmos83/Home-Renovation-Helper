@@ -18,7 +18,13 @@ export type Pending = {
   questions?: Question[];
   /** "room": the placement questions offer the Room layout (view-piece-in-room). */
   layout?: "room" | null;
+  /** The plain title for "Confirm: <title>" and a confirmation's calculations (confirmation-summaries). */
+  title?: string;
+  table?: ConfirmationTable | null;
 };
+
+/** A confirmation's calculations: display strings, formatted by the service. */
+export type ConfirmationTable = { columns: string[]; rows: string[][] };
 
 export type AnswerRow = { question: string; answer: string };
 
@@ -38,6 +44,12 @@ export type ChatMessage = {
   version?: number;
   /** A finished room render's links to its viewer or still (room-render-notices). */
   links?: NoticeLink[];
+  /** An answered confirmation's plain title, summary, answer, reason and calculations (confirmation-summaries). */
+  title?: string;
+  summary?: string;
+  answer?: "yes" | "no";
+  reason?: string;
+  table?: ConfirmationTable;
 };
 
 export type NoticeLink = { label: string; href: string };

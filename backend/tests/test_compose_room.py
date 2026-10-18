@@ -161,10 +161,26 @@ def test_it_does_not_run_without_the_owners_yes(make_ctx, tool_state, room) -> N
 # --- an empty room (rooms-page) ------------------------------------------------------------
 
 
+def test_two_placed_items_are_listed_in_the_confirmations_table(make_ctx, room) -> None:
+    """confirmation-summaries: one row per item from the placement checks; the summary is unchanged."""
+    bench = {"id": "bench", "type": "stand-in", "name": "Bench", "width_mm": 1200, "depth_mm": 400, "height_mm": 450,
+             "colour": "#8a6a48", "placement": {"wall": 2, "offset_mm": 400}}
+    shown = preview({"room": "Wohnen", "items": [bench, SOFA]}, make_ctx())
+    assert isinstance(shown, Confirmation)
+    assert shown.table is not None
+    assert shown.table["columns"] == ["Item", "Kind", "Size (mm)", "Placement", "Centre (mm)", "Rotation"]
+    first, second = shown.table["rows"]
+    assert first[:4] == ["Bench", "stand-in", "1200 × 400 × 450", "wall 2, 400 mm"]
+    assert second == ["Sofa", "stand-in", "2200 × 950 × 800", "free, 180°", "2500, 2600", "180°"]
+    assert shown.summary.splitlines()[0] == "Room Wohnen: 2 item(s)"
+    assert "- sofa (stand-in, Sofa): 2200 × 950 × 800 mm, at (2500, 2600) mm turned 180°" in shown.summary
+
+
 def test_an_empty_room_is_confirmed_as_version_one_and_built(make_ctx, tool_deps, tool_state, room) -> None:
     shown = preview({"room": "Wohnen", "items": []}, make_ctx())
     assert isinstance(shown, Confirmation)
     assert shown.summary.startswith("Room Wohnen: the room only, no items")
+    assert shown.table is not None and shown.table["rows"] == []
     output = run({"room": "Wohnen", "items": []}, replace(make_ctx(), approved=True))
     assert "Created Wohnen version 1; its build has started" in output.text
     wait_for_status(storage.composition_version_dir(tool_state.settings.render_root, "wohnen", 1))

@@ -80,6 +80,7 @@ def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:
             "scope": proposal.scope, "name": proposal.name, "items": len(proposal.document["items"]),
             "revised_from": proposal.latest, "changes": proposal.changes,
         },
+        table=proposal.table,
     )
 
 

@@ -229,7 +229,6 @@ A confirmed composition SHALL be stored as a new version folder for its scope, h
 - **WHEN** a library model measured at 0.9 × 0.8 × 1.0 m is placed with a stated size of 800 × 700 × 900 mm
 - **THEN** it is stretched to exactly 800 × 700 × 900 mm, its lowest point rests on the floor, and the build report states its per-axis scale factors
 
-
 #### Scenario: Ceiling-layer model hangs from the ceiling
 - **WHEN** `Wohnen`, with a 2500 mm ceiling, is built with the ceiling-layer library model `pendant` stated at 500 × 500 × 1100 mm
 - **THEN** the pendant is stretched to exactly 500 × 500 × 1100 mm, its highest point is at 2500 mm, and the build report states its lowest point at 1400 mm
@@ -302,3 +301,14 @@ When a room has a composition version with a stored room plan, `room_fit` and `c
 #### Scenario: No composition keeps house-file openings
 - **WHEN** the room has no composition and the house-file room has a door on wall 0 under the piece
 - **THEN** `room_fit` refuses naming that door as today
+
+### Requirement: A composition proposal lists its calculations as a table
+A proposed composition version SHALL carry, beside its summary, a table with one row per item, in the document's order. Each row SHALL give the item's name (a piece as its name and version, a model or stand-in as its name), its kind (piece, model or stand-in), its size W × D × H in millimetres, its placement in plain words (the wall and offset, or "free" with the rotation), its resolved centre x and y in millimetres, and, for a ceiling-layer item, how high its lowest point hangs. The values SHALL be the ones the placement checks computed, not recomputed for display. A composition with no items SHALL carry an empty table. The table SHALL be shown wherever the confirmation is shown, and SHALL NOT be sent to any model.
+
+#### Scenario: Two items placed
+- **WHEN** the Designer proposes `Wohnen` with `sofa` against wall 2 at 400 mm and `lamp` free at (1800, 2100) mm turned 0°
+- **THEN** the confirmation's table has two rows, the sofa's giving "wall 2, 400 mm" with its resolved centre, and the lamp's giving "free, 0°" with centre 1800, 2100
+
+#### Scenario: Room only
+- **WHEN** the Designer proposes `Wohnen` with no items
+- **THEN** the confirmation carries an empty table and its summary says the room only

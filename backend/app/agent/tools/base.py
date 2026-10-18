@@ -180,11 +180,14 @@ class ToolContext:
 
 @dataclass(frozen=True)
 class Confirmation:
-    """A pause for the owner. `proposal` is the structured form of `summary`."""
+    """A pause for the owner. `proposal` is the structured form of `summary`; `table` is an
+    optional `{"columns": [str], "rows": [[str]]}` of display strings shown with it
+    (confirmation-summaries). Neither the title nor the table reaches a model."""
 
     subject: str
     summary: str
     proposal: dict[str, Any]
+    table: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

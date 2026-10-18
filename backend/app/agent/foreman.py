@@ -541,6 +541,7 @@ def _confirmation_payload(confirmation: Confirmation, tool: str) -> dict[str, An
         "subject": confirmation.subject,
         "summary": confirmation.summary,
         "proposal": confirmation.proposal,
+        **({"table": confirmation.table} if confirmation.table is not None else {}),
     }
 
 
@@ -1380,6 +1381,8 @@ def build_graph(
                     "answer": "yes" if approved else "no",
                     "reason": reason,
                 }
+                if outcome.table is not None:
+                    answered["table"] = outcome.table
                 for message in messages:
                     if message.tool_call_id == (first_gated.get("id") or ""):
                         message.additional_kwargs["confirmation"] = answered

@@ -140,7 +140,7 @@ A message's formatting, links, attachments, "Edit", "Add to decisions" and the s
 - **THEN** the owner's messages are on the right again with "You" above them, and the half-typed message in the composer is kept
 
 ### Requirement: A pending confirmation is answered in the view
-When a reply carries a pending confirmation the view SHALL show it as a card with its subject, summary and proposal, a **Yes** and a **No** button and an optional reason, and SHALL hide the composer until it is answered. Answering SHALL send the owner's answer on the thread and show the reply that follows. Reopening a conversation with a confirmation still pending SHALL show the card again.
+When a reply carries a pending confirmation, the view SHALL show it as a card headed "Confirm: <title>", where the title is the confirmation's plain title and never its internal subject. The card SHALL show the summary and proposal, the table of calculations when the confirmation has one, a **Yes** and a **No** button and an optional reason, and SHALL hide the composer until it is answered. Answering SHALL send the owner's answer on the thread and show the reply that follows. Reopening a conversation with a confirmation still pending SHALL show the card again.
 
 #### Scenario: Yes
 - **WHEN** the Designer proposes a revision and the owner clicks Yes
@@ -153,6 +153,10 @@ When a reply carries a pending confirmation the view SHALL show it as a card wit
 #### Scenario: Reopened while pending
 - **WHEN** the owner reloads a conversation that has a pending brief confirmation
 - **THEN** the card is shown and the composer is hidden
+
+#### Scenario: Plain heading for a room change
+- **WHEN** the Designer proposes a room change in `Wohnen`
+- **THEN** the card is headed "Confirm: Composing room", shows one table row per placed item, and the text `compose_room` appears nowhere in the view
 
 ### Requirement: Plans and photos are attached from the view
 The conversation view SHALL let the owner add PNG or JPEG images and text notes to the conversation and attach them to the next message; attached images SHALL be shown as thumbnails and notes as their file name, on the composer and in the sent message, and a refused upload (type, size, count) SHALL be reported in the service's words. Each attachment on the composer SHALL have a remove control that takes it off the next message before sending.
@@ -1510,3 +1514,22 @@ No conversation page SHALL show model names, token counts or costs. Delete of a 
 #### Scenario: Delete with confirmation
 - **WHEN** the owner chooses delete on the open conversation "Listening wall" and confirms
 - **THEN** the conversation is gone, and when the owner cancels instead, nothing changes
+
+### Requirement: An answered confirmation is shown collapsed
+The conversation view SHALL show each answered confirmation in the history in its place, framed and aligned like a confirmation, as one compact row: its plain title and the owner's answer ("Yes" or "No"), followed by the reason when one was given. The row SHALL hold a dropdown button. Pressing it SHALL show the summary the owner was shown and, when the confirmation has one, its table of calculations, and pressing it again SHALL hide them. The row SHALL start collapsed, including after a reload, and opening it SHALL NOT send anything or start a turn. The row SHALL NOT show the confirmation's internal subject, a model name, prompt, token count or cost. The view SHALL pass a recorded browser check before it counts as done.
+
+#### Scenario: Room change collapsed
+- **WHEN** the owner confirmed a room change in `Wohnen` with Yes
+- **THEN** the conversation shows "Composing room · Yes" with a dropdown, and no item rows are visible
+
+#### Scenario: Calculations opened
+- **WHEN** the owner opens the dropdown of "Composing room · Yes"
+- **THEN** a table lists each placed item with its kind, size, placement, centre and rotation, and the summary's comparison with the previous version is shown below it
+
+#### Scenario: Declined revision with a reason
+- **WHEN** the owner answered a revision No with "make it 4 shelves"
+- **THEN** the row reads "Revising piece · No — make it 4 shelves" and the dropdown shows the summary with no table
+
+#### Scenario: Collapsed after a reload
+- **WHEN** the owner opens a dropdown and reloads the conversation
+- **THEN** every answered confirmation is collapsed again

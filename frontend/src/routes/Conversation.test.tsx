@@ -26,6 +26,11 @@ type Msg = {
   upload_ids?: string[];
   kind?: "text" | "answers" | "render" | "build" | "revision";
   rows?: { question: string; answer: string }[];
+  title?: string;
+  summary?: string;
+  answer?: "yes" | "no";
+  reason?: string;
+  table?: { columns: string[]; rows: string[][] };
 };
 type Reply = { status?: number; body?: unknown };
 type Event = { event: string; data: unknown };
@@ -226,7 +231,7 @@ function show(path = "/studio/workspace/t1") {
   );
 }
 
-const card = { confirmation_id: "c1", subject: "revise", summary: "cabinet: 2 shelves → 3", proposal: {} };
+const card = { confirmation_id: "c1", subject: "revise", title: "Revising piece", summary: "cabinet: 2 shelves → 3", proposal: {} };
 const owner = (text: string) => ({ role: "owner" as const, text });
 const reply = (text: string) => ({ role: "assistant" as const, text });
 
@@ -513,17 +518,78 @@ test("a file that is not a design is refused in plain words", async () => {
   expect(screen.queryByLabelText("Design file list.json")).not.toBeInTheDocument();
 });
 
-test("an answered confirmation stays in the history as one muted line", async () => {
+const ROOM_TABLE = {
+  columns: ["Item", "Kind", "Size (mm)", "Placement", "Centre (mm)", "Rotation"],
+  rows: [
+    ["Sofa", "stand-in", "2200 × 950 × 800", "wall 2, 400 mm", "1500, 475", "0°"],
+    ["Lamp", "model", "400 × 400 × 1600", "free, 0°", "1800, 2100", "0°"],
+  ],
+};
+const roomAnswered = {
+  role: "confirmation" as const,
+  text: "compose_room: Room Wohnen: 2 item(s) — yes",
+  title: "Composing room", summary: "Room Wohnen: 2 item(s)\nCompared with version 2: moved: sofa", answer: "yes" as const,
+  table: ROOM_TABLE,
+};
+
+test("an answered room change is collapsed to its title and answer, and its dropdown shows the calculations (Room change collapsed, Calculations opened)", async () => {
+  const user = userEvent.setup();
+  messages = [owner("compose Wohnen"), roomAnswered, reply("Created Wohnen version 3.")];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  const row = (await list.findByText("Composing room · Yes")).closest("[data-role=confirmation]") as HTMLElement;
+  expect(within(row).queryByRole("table")).not.toBeInTheDocument();
+  expect(list.queryByText(/compose_room/)).not.toBeInTheDocument();
+  const toggle = within(row).getByRole("button", { name: "Show details of Composing room" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await user.click(toggle);
+  const table = within(row).getByRole("table", { name: "Calculations" });
+  expect(within(table).getAllByRole("row")).toHaveLength(3);
+  expect(within(table).getByText("wall 2, 400 mm")).toBeInTheDocument();
+  expect(within(row).getByText(/Compared with version 2: moved: sofa/)).toBeInTheDocument();
+  await user.click(toggle);
+  expect(within(row).queryByRole("table")).not.toBeInTheDocument();
+  expect(calls.some(([m]) => m === "POST")).toBe(false);
+});
+
+test("a declined revision reads its title, No and the reason, and its dropdown has no table (Declined revision with a reason)", async () => {
+  const user = userEvent.setup();
   messages = [
     owner("a hall bench"),
-    { role: "confirmation", text: "brief: Room Hall: 1200 × 3000 mm — no (make it 4 shelves)" },
+    { role: "confirmation", text: "revise: cabinet: 2 shelves → 3 — no (make it 4 shelves)", title: "Revising piece",
+      summary: "cabinet: 2 shelves → 3", answer: "no", reason: "make it 4 shelves" },
     reply("Four shelves, then?"),
   ];
   show();
   const list = within(await screen.findByRole("region", { name: "Messages" }));
-  const line = list.getByText("Answered: brief: Room Hall: 1200 × 3000 mm — no (make it 4 shelves)");
-  expect(line).toHaveAttribute("data-role", "confirmation");
-  expect(list.getByText("Four shelves, then?")).toBeInTheDocument();
+  const row = (await list.findByText("Revising piece · No — make it 4 shelves")).closest("[data-role=confirmation]") as HTMLElement;
+  await user.click(within(row).getByRole("button", { name: "Show details of Revising piece" }));
+  expect(within(row).getByText("cabinet: 2 shelves → 3")).toBeInTheDocument();
+  expect(within(row).queryByRole("table")).not.toBeInTheDocument();
+});
+
+test("every answered confirmation starts collapsed again after a reload (Collapsed after a reload)", async () => {
+  const user = userEvent.setup();
+  messages = [owner("compose Wohnen"), roomAnswered];
+  show();
+  await user.click(await screen.findByRole("button", { name: "Show details of Composing room" }));
+  expect(screen.getByRole("table", { name: "Calculations" })).toBeInTheDocument();
+  cleanup();
+  show();
+  expect(await screen.findByRole("button", { name: "Show details of Composing room" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("table", { name: "Calculations" })).not.toBeInTheDocument();
+});
+
+test("a pending room change is headed with its plain title and shows its table (Plain heading for a room change)", async () => {
+  pending = {
+    confirmation_id: "c2", subject: "compose_room", title: "Composing room",
+    summary: "Room Wohnen: 2 item(s)", proposal: {}, table: ROOM_TABLE,
+  };
+  show();
+  const confirm = within(await screen.findByRole("region", { name: "Confirmation needed" }));
+  expect(confirm.getByRole("heading", { name: "Confirm: Composing room" })).toBeInTheDocument();
+  expect(within(confirm.getByRole("table", { name: "Calculations" })).getAllByRole("row")).toHaveLength(3);
+  expect(screen.queryByText(/compose_room/)).not.toBeInTheDocument();
 });
 
 // --- studio-chat-polish -------------------------------------------------------------

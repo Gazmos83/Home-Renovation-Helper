@@ -42,6 +42,12 @@ class Pending:
     questions: list[dict[str, Any]] = field(default_factory=list)
     # A question set's Workspace layout button: "room" for the placement questions (view-piece-in-room).
     layout: str | None = None
+    # A confirmation's calculations, `{"columns", "rows"}` (confirmation-summaries).
+    table: dict[str, Any] | None = None
+
+    @property
+    def title(self) -> str:
+        return confirmation_title(self.subject)
 
 
 @dataclass(frozen=True)
@@ -139,7 +145,18 @@ def _pending_of(interrupt_obj: Any) -> Pending:
         kind=str(value.get("kind") or "confirmation"),
         questions=[dict(q) for q in value.get("questions") or []],
         layout=value.get("layout") if value.get("layout") == "room" else None,
+        table=_table(value.get("table")),
     )
+
+
+def _table(value: Any) -> dict[str, Any] | None:
+    """A confirmation's table as stored, or `None` when it has none or is malformed."""
+    if not isinstance(value, dict) or not isinstance(value.get("columns"), list) or not isinstance(value.get("rows"), list):
+        return None
+    return {
+        "columns": [str(c) for c in value["columns"]],
+        "rows": [[str(cell) for cell in row] for row in value["rows"] if isinstance(row, list)],
+    }
 
 
 def _text(content: Any) -> str:
@@ -520,6 +537,53 @@ def write_brief(graph: Any, *, thread_id: UUID, owner_id: UUID, brief: dict[str,
     graph.update_state(_config(thread_id, owner_id), {"brief": brief})
 
 
+# The owner's plain title for each confirmation subject; composed by code, never by a model,
+# so no internal tool name reaches the owner (confirmation-summaries).
+CONFIRMATION_TITLES: dict[str, str] = {
+    "compose_room": "Composing room",
+    "revise": "Revising piece",
+    "rebuild": "Rebuilding piece",
+    "create_piece": "Creating piece",
+    "import_design": "Importing design",
+    "import_version": "Importing version",
+    "brief": "Confirming the brief",
+    "plan": "Reading the plan",
+    "room": "Confirming the room",
+    "decisions": "Changing decisions",
+    "final_render": "Final render",
+    "detail_pass": "Detail pass",
+    "detail_render": "Detail render",
+    "remnant": "Recording a remnant",
+    "version_verdict": "Rating the version",
+    "render_feedback": "Rating the render",
+    "assessment_inputs": "Engineering inputs",
+}
+
+
+def confirmation_title(subject: str) -> str:
+    """The plain title of a confirmation subject; "Confirmation" for one with none."""
+    return CONFIRMATION_TITLES.get(subject, "Confirmation")
+
+
+def _confirmation_entry(answered: dict[str, Any]) -> dict[str, Any]:
+    """One answered confirmation's history entry: the old one-line `text` plus its parts."""
+    subject = str(answered.get("subject", ""))
+    entry: dict[str, Any] = {
+        "role": "confirmation",
+        "text": _confirmation_line(answered),
+        "subject": subject,
+        "title": confirmation_title(subject),
+        "summary": str(answered.get("summary", "")),
+        "answer": "yes" if answered.get("answer") == "yes" else "no",
+    }
+    if answered.get("reason"):
+        entry["reason"] = str(answered["reason"])
+    table = _table(answered.get("table"))
+    if table is not None:
+        entry["table"] = table
+    return entry
+
+
 def _confirmation_line(answered: dict[str, Any]) -> str:
     """One answered confirmation as the owner saw it: subject, summary and answer."""
     line = f"{answered.get('subject', '')}: {answered.get('summary', '')} — {answered.get('answer', '')}"
@@ -577,7 +641,7 @@ def history(
         elif isinstance(message, AIMessage) and _text(message.content).strip():
             shown.append({"role": "assistant", "text": _text(message.content)})
         elif isinstance(message, ToolMessage) and isinstance(message.additional_kwargs.get("confirmation"), dict):
-            shown.append({"role": "confirmation", "text": _confirmation_line(message.additional_kwargs["confirmation"])})
+            shown.append(_confirmation_entry(message.additional_kwargs["confirmation"]))
         elif isinstance(message, ToolMessage) and isinstance(message.additional_kwargs.get("answers"), dict):
             answered = message.additional_kwargs["answers"]
             if answered.get("declined"):
