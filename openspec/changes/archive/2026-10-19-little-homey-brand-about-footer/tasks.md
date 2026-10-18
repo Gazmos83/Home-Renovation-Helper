@@ -1,7 +1,8 @@
 ## 0. Owner review
 
-- [ ] 0.1 The owner approves or edits the About and README draft texts in `design.md` before apply. Record the decision here.
-  - 2026-10-18: the owner chose "apply with drafts, review later". The drafts are built as written; the owner reviews and edits the wording in the browser pass (5.2). Still open.
+- [x] 0.1 The owner approves or edits the About and README draft texts in `design.md` before apply. Record the decision here.
+  - 2026-10-18: the owner chose "apply with drafts, review later". The drafts are built as written; the owner reviews and edits the wording in the browser pass (5.2).
+  - 2026-10-19: the owner approved the wording as written.
 
 ## 1. Name and icon
 
