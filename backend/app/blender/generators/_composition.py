@@ -11,6 +11,13 @@ composition document from its `resolved` block:
 
 A ceiling-layer stand-in or model hangs instead: its lowest point is at the resolved
 item's `base_mm`, which puts its top at its room's ceiling (composition-ceiling-layer).
+A hidden item is not placed; the report lists it with `hidden: true`, and every placed
+item's report entry names it and lists its meshes (hidden-room-items).
+An LED strip is an emissive bar on its wall with one rectangular area light, and a lamp's
+light is `LGT_Lamp_<id>` (room-lamp-lights, room-led-strips).
+A floor finish gives every floor a procedural tile material from the Brick Texture node;
+`flat_floor` swaps in a plain tile colour while the screenshot and `model.glb` are made
+(room-floor-finish).
 
 Importable only inside Blender. Nothing here renders; `render_composition.py` does,
 behind the render guard. The only importers called are the two that the checked-in
@@ -20,6 +27,7 @@ generators use, on files that passed the model-library checks (CLAUDE.md §8).
 from __future__ import annotations
 
 import math
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -58,6 +66,8 @@ class CompositionScene:
     report: list[dict[str, Any]] = field(default_factory=list)
     # Every placed item's meshes, for the surface map's `items`.
     item_meshes: list[Any] = field(default_factory=list)
+    # The floors that carry the document's tile finish, if it has one (room-floor-finish).
+    floors: list[Any] = field(default_factory=list)
 
 
 def _shim(room: dict[str, Any]) -> SimpleNamespace:
@@ -69,6 +79,8 @@ def _shim(room: dict[str, Any]) -> SimpleNamespace:
         name=geometry.name, corners=geometry.corners, walls=geometry.walls, openings=geometry.openings,
         height_mm=geometry.height_mm, wall_thickness_mm=geometry.wall_thickness_mm,
         centroid=interior_point(geometry.corners),
+        # Below 1 when the room has lamp lights; a document from before them has none (room-lamp-lights).
+        rig_factor=float(room.get("rig_factor", 1.0)),
     )
 
 
@@ -91,7 +103,7 @@ def _build_shells(scene: CompositionScene, state: SimpleNamespace) -> None:
         room_gen._build_room_shell(state, room_gen._collection("Room"))
     for room in scene.rooms:
         state.context = room
-        room_gen._build_lights(state)
+        room_gen._build_lights(state, room.rig_factor)
 
 
 def _wrap(name: str, objects: list[bpy.types.Object], collection: bpy.types.Collection) -> bpy.types.Object:
@@ -231,8 +243,17 @@ def build_scene(document: dict[str, Any], *, pieces_root: Path, models_root: Pat
     by_id = {item["id"]: item for item in document["items"]}
     for placed in resolved["items"]:
         item = by_id[placed["id"]]
+        if placed.get("hidden"):
+            scene.report.append({"id": item["id"], "type": item["type"], "hidden": True})
+            continue
         entry: dict[str, Any] = {"id": item["id"], "type": item["type"], "stated_mm": placed["size_mm"]}
-        if item["type"] == "piece":
+        entry["name"] = f"{item['package_id']} v{item['version']}" if item["type"] == "piece" else item["name"]
+        if item["type"] == "led-strip":
+            meshes = _place_led_strip(placed, items)
+            entry["strip"] = {key: placed["strip"][key] for key in (
+                "length_mm", "lumens_per_m", "kelvin", "watts", "wall", "offset_mm", "mount_height_mm", "facing",
+            )}
+        elif item["type"] == "piece":
             meshes = _place_piece(placed, item, pieces_root, items)
         elif item["type"] == "model":
             meshes, scale = _place_model(placed, {**item, **placed.get("source", {})}, models_root, items)
@@ -240,9 +261,179 @@ def build_scene(document: dict[str, Any], *, pieces_root: Path, models_root: Pat
         else:
             meshes = _place_stand_in(placed, item["colour"], items)
         entry["final_mm"], entry["lowest_mm"] = _final(meshes, placed["rotation_deg"])
+        entry["meshes"] = sorted(obj.name for obj in meshes)
+        if "light" in placed:
+            entry["light"] = _add_lamp_light(item["id"], placed["light"], meshes, items)
         scene.report.append(entry)
         scene.item_meshes.extend(meshes)
+    if document.get("floor"):
+        _apply_floor_finish(scene, document["floor"])
     return scene
+
+
+# A spot lamp's fixed cone (room-lamp-lights).
+SPOT_CONE_DEG = 70.0
+SPOT_BLEND = 0.3
+POINT_RADIUS_MM = 50.0
+
+
+def _add_lamp_light(item_id: str, light: dict[str, Any], meshes: list[bpy.types.Object], collection) -> dict[str, Any]:
+    """`LGT_Lamp_<id>` at the position the contract resolved, in the light's kelvin colour and
+    power; the lamp's own meshes cast no shadow, so the light leaves its shade or box."""
+    kind = "SPOT" if light["type"] == "spot" else "POINT"
+    data = bpy.data.lights.new(f"LGT_Lamp_{item_id}", kind)
+    data.energy = float(light["watts"])
+    data.color = tuple(light["rgb"])
+    data.shadow_soft_size = m(POINT_RADIUS_MM)
+    if kind == "SPOT":
+        # A spot light shines along its local -Z, which is straight down unrotated.
+        data.spot_size = math.radians(SPOT_CONE_DEG)
+        data.spot_blend = SPOT_BLEND
+    lamp = bpy.data.objects.new(f"LGT_Lamp_{item_id}", data)
+    collection.objects.link(lamp)
+    x, y, z = light["at_mm"]
+    lamp.location = (m(x), m(y), m(z))
+    for obj in meshes:
+        obj.visible_shadow = False
+    return {key: light[key] for key in ("type", "lumens", "kelvin", "watts", "at_mm")}
+
+
+STRIP_LIGHT_GAP_MM = 2.0
+STRIP_GLOW = 5.0
+
+
+def _place_led_strip(placed: dict[str, Any], collection) -> list[bpy.types.Object]:
+    """The strip's bar along its wall at its height, glowing in its kelvin colour, and the area
+    light `LGT_Strip_<id>` of its length, 2 mm off the face it shines from (room-led-strips)."""
+    strip = placed["strip"]
+    size = placed["size_mm"]
+    mesh = bpy.data.meshes.new(f"STRIP_{placed['id']}")
+    w, d, h = m(size["w"]), m(size["d"]), m(size["h"])
+    verts = [(x, y, z) for z in (0, h) for y in (-d / 2, d / 2) for x in (-w / 2, w / 2)]
+    faces = [(0, 2, 3, 1), (4, 5, 7, 6), (0, 1, 5, 4), (2, 6, 7, 3), (0, 4, 6, 2), (1, 3, 7, 5)]
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    bar = bpy.data.objects.new(f"STRIP_{placed['id']}", mesh)
+    collection.objects.link(bar)
+    material = bpy.data.materials.new(f"Strip_{placed['id']}")
+    material.use_nodes = True
+    shader = next(n for n in material.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    shader.inputs["Base Color"].default_value = (1, 1, 1, 1)
+    shader.inputs["Emission Color"].default_value = (*strip["rgb"], 1)
+    shader.inputs["Emission Strength"].default_value = STRIP_GLOW
+    material.diffuse_color = (*strip["rgb"], 1)
+    bar.data.materials.append(material)
+    cx, cy = placed["centre_mm"]
+    base = placed["base_mm"]
+    bar.location = (m(cx), m(cy), m(base))
+    bar.rotation_euler[2] = math.radians(placed["rotation_deg"])
+    bar.visible_shadow = False
+
+    data = bpy.data.lights.new(f"LGT_Strip_{placed['id']}", "AREA")
+    data.shape = "RECTANGLE"
+    data.size = w
+    data.size_y = d
+    data.energy = float(strip["watts"])
+    data.color = tuple(strip["rgb"])
+    light = bpy.data.objects.new(f"LGT_Strip_{placed['id']}", data)
+    collection.objects.link(light)
+    along = Vector((math.cos(math.radians(placed["rotation_deg"])), math.sin(math.radians(placed["rotation_deg"])), 0))
+    inward = Vector((*strip["inward"], 0))
+    gap = m(STRIP_LIGHT_GAP_MM)
+    centre = Vector((m(cx), m(cy), m(base) + h / 2))
+    # An area light shines along its local -Z: its Z axis is the opposite of where it faces.
+    if strip["facing"] == "down":
+        shine, at = Vector((0, 0, -1)), centre - Vector((0, 0, h / 2 + gap))
+    elif strip["facing"] == "up":
+        shine, at = Vector((0, 0, 1)), centre + Vector((0, 0, h / 2 + gap))
+    else:
+        shine, at = inward, centre + inward * (d / 2 + gap)
+    z_axis = -shine
+    y_axis = z_axis.cross(along)
+    basis = Matrix((along, y_axis, z_axis)).transposed()
+    light.matrix_world = Matrix.Translation(at) @ basis.to_4x4()
+    return [bar]
+
+
+def rig_factors(scene: CompositionScene) -> dict[str, float]:
+    """Each room's rig factor, for the build report."""
+    return {room.name: room.rig_factor for room in scene.rooms}
+
+
+def _rgb(colour: str) -> tuple[float, float, float]:
+    return tuple(_linear(int(colour[i:i + 2], 16) / 255) for i in (1, 3, 5))
+
+
+def _floor_objects(scene: CompositionScene) -> list[bpy.types.Object]:
+    """The floor meshes of the scope, from the surface map (`floor`, or `<room>: floor`)."""
+    return [
+        bpy.data.objects[name]
+        for label, names in surfaces(scene).items() if label == "floor" or label.endswith(": floor")
+        for name in names
+    ]
+
+
+def _apply_floor_finish(scene: CompositionScene, finish: dict[str, Any]) -> None:
+    """Every floor gets one tile material: a Brick Texture in object space, so its units are
+    metres from the plan's origin and the joints follow any outline the floor has."""
+    material = bpy.data.materials.new("Floor_Tiles")
+    material.use_nodes = True
+    nodes, links = material.node_tree.nodes, material.node_tree.links
+    shader = next(n for n in nodes if n.type == "BSDF_PRINCIPLED")
+    coords = nodes.new("ShaderNodeTexCoord")
+    brick = nodes.new("ShaderNodeTexBrick")
+    grout = m(finish["grout_width_mm"])
+    tile = _rgb(finish["tile_colour"])
+    brick.inputs["Scale"].default_value = 1.0
+    brick.inputs["Mortar Size"].default_value = grout
+    brick.inputs["Mortar Smooth"].default_value = 0.0
+    brick.inputs["Bias"].default_value = 0.0
+    # A tile's visible face is its stated size: the joint is added to each brick.
+    brick.inputs["Brick Width"].default_value = m(finish["tile_width_mm"]) + grout
+    brick.inputs["Row Height"].default_value = m(finish["tile_length_mm"]) + grout
+    brick.inputs["Color1"].default_value = (*tile, 1)
+    brick.inputs["Color2"].default_value = (*tile, 1)
+    brick.inputs["Mortar"].default_value = (*_rgb(finish["grout_colour"]), 1)
+    brick.offset = 0.5 if finish["pattern"] == "staggered" else 0.0
+    brick.offset_frequency = 2
+    brick.squash = 1.0
+    brick.squash_frequency = 2
+    links.new(coords.outputs["Object"], brick.inputs["Vector"])
+    links.new(brick.outputs["Color"], shader.inputs["Base Color"])
+    shader.inputs["Roughness"].default_value = 0.35
+    material.diffuse_color = (*tile, 1)
+    scene.floors = _floor_objects(scene)
+    for obj in scene.floors:
+        obj.data.materials.clear()
+        obj.data.materials.append(material)
+
+
+@contextmanager
+def flat_floor(scene: CompositionScene):
+    """While the screenshot and `model.glb` are made, the tiled floors show the plain tile colour
+    (a procedural texture does not export as a colour); the tile material is back afterwards."""
+    finish = scene.document.get("floor")
+    if not finish or not scene.floors:
+        yield
+        return
+    flat = bpy.data.materials.new("Floor_Tiles_Flat")
+    flat.use_nodes = True
+    shader = next(n for n in flat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    tile = _rgb(finish["tile_colour"])
+    shader.inputs["Base Color"].default_value = (*tile, 1)
+    flat.diffuse_color = (*tile, 1)
+    kept = {obj.name: list(obj.data.materials) for obj in scene.floors}
+    for obj in scene.floors:
+        obj.data.materials.clear()
+        obj.data.materials.append(flat)
+    try:
+        yield
+    finally:
+        for obj in scene.floors:
+            obj.data.materials.clear()
+            for material in kept[obj.name]:
+                obj.data.materials.append(material)
+        bpy.data.materials.remove(flat)
 
 
 def surfaces(scene: CompositionScene) -> dict[str, list[str]]:

@@ -127,6 +127,15 @@ def verify_composition(directory: Path) -> None:
     twice = sorted({name for name in listed if listed.count(name) > 1})
     if twice:
         raise VerificationError(f"the surface map lists {twice[0]!r} more than once")
+    # Each placed item's meshes are items in the surface map, each listed for one item (hidden-room-items).
+    item_lists = [entry.get("meshes") or [] for entry in report.get("items") or [] if isinstance(entry, dict)]
+    owned = [name for names in item_lists for name in names]
+    shared = sorted({name for name in owned if owned.count(name) > 1})
+    if shared:
+        raise VerificationError(f"the report lists the mesh {shared[0]!r} for two items")
+    stray = sorted(set(owned) - set(surfaces.get("items") or []))
+    if stray:
+        raise VerificationError(f"the report's item mesh {stray[0]!r} is not under the surface map's items")
     meshes = set(glb_mesh_nodes(directory / "model.glb"))
     if meshes != set(listed):
         raise VerificationError(

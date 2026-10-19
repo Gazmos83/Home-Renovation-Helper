@@ -48,3 +48,32 @@ def test_a_composition_without_a_model_fails(tmp_path: Path) -> None:
     (out / "model.glb").unlink()
     with pytest.raises(VerificationError, match="missing \\['model.glb'\\]"):
         verify_composition(out)
+
+
+def _with_items(out: Path, items: list[dict]) -> None:
+    report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    (out / "report.json").write_text(json.dumps({**report, "items": items}), encoding="utf-8")
+
+
+def test_an_item_mesh_must_be_under_the_items_surface(tmp_path: Path) -> None:
+    """hidden-room-items: each built item's meshes are items in the surface map."""
+    out = tmp_path / "out"
+    write_composition_files(out)
+    _with_items(out, [{"id": "sofa", "meshes": ["Floor"]}])
+    with pytest.raises(VerificationError, match="item mesh 'Floor' is not under"):
+        verify_composition(out)
+
+
+def test_an_item_mesh_listed_for_two_items_fails(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    write_composition_files(out)
+    _with_items(out, [{"id": "sofa", "meshes": ["Floor"]}, {"id": "chair", "meshes": ["Floor"]}])
+    with pytest.raises(VerificationError, match="for two items"):
+        verify_composition(out)
+
+
+def test_a_hidden_item_lists_no_meshes_and_passes(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    write_composition_files(out)
+    _with_items(out, [{"id": "sofa", "type": "stand-in", "hidden": True}])
+    verify_composition(out)

@@ -144,11 +144,12 @@ def _area_light(
     return obj
 
 
-def _build_lights(state: RoomBuildState) -> None:
+def _build_lights(state: RoomBuildState, factor: float = 1.0) -> None:
     """Three area lights scaled to the room's own floor area and ceiling
     height, so a 14 m² fixture and a 32 m² one are both readably lit without
     per-fixture tuning (the original mock-up's fixed three-light rig
-    only has to work for one object size, so it hardcodes its energies)."""
+    only has to work for one object size, so it hardcodes its energies).
+    `factor` dims all three in a composed room that has lamp lights (room-lamp-lights)."""
 
     ctx = state.context
     n = len(ctx.corners)
@@ -166,7 +167,7 @@ def _build_lights(state: RoomBuildState) -> None:
     # size close to nearby furniture previously blew every near surface out
     # to flat white even though far walls looked correctly exposed.
     size = max(2.0, math.sqrt(area_m2) * 0.9)
-    energy = max(150.0, area_m2 * 18)
+    energy = max(150.0, area_m2 * 18) * factor
 
     ceiling_light = _area_light("LGT_Ceiling", (m(cx), m(cy), m(ceiling - 100)), energy, size)
     _aim(ceiling_light, (m(cx), m(cy), 0.0))
@@ -336,7 +337,9 @@ def _place_package(state: RoomBuildState, imported: list[bpy.types.Object], coll
     target_y = m((back_left[1] + back_right[1]) / 2)
 
     empty.rotation_euler[2] = theta
-    empty.location = (target_x - rotated_x, target_y - rotated_y, -floor_z)
+    # A hung piece's underside sits at its mount height (conversation-continuity).
+    lift = m(state.context.placement.get("mount_height_mm", 0.0))
+    empty.location = (target_x - rotated_x, target_y - rotated_y, lift - floor_z)
     state.package_empty = empty
     return empty
 
@@ -376,14 +379,15 @@ def _still_camera(state: RoomBuildState) -> dict[str, Any]:
         direction = Vector((0, -1))
     position_xy = (corner[0] + direction.x * CAMERA_PULL_IN_MM, corner[1] + direction.y * CAMERA_PULL_IN_MM)
     location = (m(position_xy[0]), m(position_xy[1]), m(CAMERA_EYE_HEIGHT_MM))
-    target = (m(target_xy[0]), m(target_xy[1]), m(state.package_overall["h"] / 2))
+    lift = ctx.placement.get("mount_height_mm", 0.0)
+    target = (m(target_xy[0]), m(target_xy[1]), m(lift + state.package_overall["h"] / 2))
 
     camera = _add_camera("CAM_Still", location)
     _aim(camera, target)
     bpy.context.scene.camera = camera
     return {
         "location_mm": [position_xy[0], position_xy[1], CAMERA_EYE_HEIGHT_MM],
-        "target_mm": [target_xy[0], target_xy[1], state.package_overall["h"] / 2],
+        "target_mm": [target_xy[0], target_xy[1], lift + state.package_overall["h"] / 2],
     }
 
 
@@ -508,6 +512,18 @@ def _render_turntable(state: RoomBuildState, output_dir: Path, frame_count: int)
 # --- scene.json, verification and staged publication -----------------------------------
 
 
+def _package_lowest_mm(state: RoomBuildState) -> float | None:
+    """The placed piece's lowest point in mm, measured: the floor, or a hung piece's mount height."""
+    if state.package_empty is None:
+        return None
+    bpy.context.view_layer.update()
+    meshes = [obj for obj in state.package_empty.children_recursive if obj.type == "MESH"]
+    if not meshes:
+        return None
+    lowest = min((obj.matrix_world @ Vector(corner)).z for obj in meshes for corner in obj.bound_box)
+    return round(lowest * 1000, 1)
+
+
 def _write_scene_data(state: RoomBuildState, output_render: dict[str, Any], output_dir: Path) -> None:
     ctx = state.context
     scene = {
@@ -532,9 +548,14 @@ def _write_scene_data(state: RoomBuildState, output_render: dict[str, Any], outp
                 "wall": ctx.placement["wall"],
                 "offset_mm": ctx.placement["offset_mm"],
                 "center_mm": list(ctx.placement["center"]),
+                **(
+                    {"mount_height_mm": ctx.placement["mount_height_mm"]}
+                    if "mount_height_mm" in ctx.placement else {}
+                ),
             },
             "centroid_mm": list(ctx.centroid),
             "package_overall_mm": state.package_overall,
+            "package_lowest_mm": _package_lowest_mm(state),
         },
         "output": {
             **output_render,

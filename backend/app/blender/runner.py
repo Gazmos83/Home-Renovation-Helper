@@ -281,7 +281,8 @@ def composition_unbuilt_pieces(root: Path, folder: Path) -> list[str]:
         return []
     unbuilt = []
     for item in document.get("items", []):
-        if item.get("type") != "piece":
+        # A hidden piece is not built into the room, so its own build is not needed (hidden-room-items).
+        if item.get("type") != "piece" or item.get("hidden"):
             continue
         try:
             piece_folder = storage.version_dir(root, item["package_id"], item["version"])

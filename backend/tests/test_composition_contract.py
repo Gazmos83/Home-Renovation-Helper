@@ -418,3 +418,314 @@ def test_a_mesh_no_surface_takes_is_refused_by_name() -> None:
 
     with pytest.raises(SpecValidationError, match="no surface takes the mesh 'Lamp'"):
         surface_map(["Floor", "Lamp"], [])
+
+
+# --- hidden items (hidden-room-items) -------------------------------------------------------
+
+
+def test_a_hidden_sofa_is_accepted_and_keeps_the_flag() -> None:
+    stored, _ = place(document({**sofa(), "hidden": True}))
+    assert stored["items"][0]["hidden"] is True
+    assert stored["resolved"]["items"][0]["hidden"] is True
+
+
+def test_a_hidden_piece_is_accepted() -> None:
+    stored, _ = place(document({**piece(), "hidden": True}))
+    assert stored["items"][0]["hidden"] is True
+
+
+def test_hidden_false_is_stored_as_no_flag() -> None:
+    stored, _ = place(document({**armchair(), "hidden": False}))
+    assert "hidden" not in stored["items"][0]
+    assert "hidden" not in stored["resolved"]["items"][0]
+
+
+def test_hidden_must_be_true_or_false() -> None:
+    message = refusal(document({**sofa(), "hidden": "yes"}))
+    assert "sofa" in message and "hidden" in message
+
+
+def test_a_hidden_sofa_may_overlap_the_armchair_either_way() -> None:
+    over = {"x_mm": 2500, "y_mm": 2000, "rotation_deg": 0}
+    place(document({**sofa(), "hidden": True}, armchair(**over)))
+    place(document(armchair(**over), {**sofa(), "hidden": True}))
+
+
+def test_a_hidden_item_in_front_of_a_door_is_accepted_and_takes_no_placement_rule(tmp_path) -> None:
+    from app.compositions import rule_outcome
+    from tests.test_design_rules import swing
+
+    blocker = {**sofa(wall=0, offset_mm=3600), "width_mm": 1200, "hidden": True}
+    _stored, subjects = place(document(blocker))
+    assert subjects == []
+    assert rule_outcome(_rules(tmp_path, swing(severity="refuse")), subjects) == (None, "")
+
+
+def test_a_hidden_item_still_stays_inside_the_room() -> None:
+    message = refusal(document({**sofa(x_mm=4800, y_mm=2000, rotation_deg=0), "hidden": True}))
+    assert "sofa leaves the room Wohnen" in message
+
+
+def test_a_hidden_item_still_takes_the_wall_and_ceiling_checks() -> None:
+    assert "runs past the end of wall 1" in refusal(document({**sofa(wall=1, offset_mm=3000), "hidden": True}))
+    assert "taller than the ceiling" in refusal(document({**sofa(), "height_mm": 2700, "hidden": True}))
+
+
+# --- the floor finish (room-floor-finish) ---------------------------------------------------
+
+TILES = {"tile_width_mm": 600, "tile_length_mm": 600, "tile_colour": "#E8E4DC", "grout_colour": "#9a958c",
+         "grout_width_mm": 3}
+
+
+def floored(finish) -> dict:
+    return {**document(sofa()), "floor": finish}
+
+
+def test_a_tiled_floor_is_accepted_with_the_grid_pattern() -> None:
+    stored, _ = place(floored(TILES))
+    assert stored["floor"] == {**TILES, "tile_colour": "#e8e4dc", "grout_width_mm": 3.0, "pattern": "grid"}
+
+
+def test_a_staggered_plank_floor_with_no_grout_is_accepted() -> None:
+    stored, _ = place(floored({**TILES, "tile_width_mm": 200, "tile_length_mm": 1200, "grout_width_mm": 0,
+                               "pattern": "staggered"}))
+    assert stored["floor"]["pattern"] == "staggered" and stored["floor"]["grout_width_mm"] == 0
+
+
+def test_an_unknown_floor_field_is_refused_by_name() -> None:
+    assert "texture" in refusal(floored({**TILES, "texture": "marble.png"}))
+
+
+def test_a_tile_too_small_is_refused_naming_the_field_and_range() -> None:
+    message = refusal(floored({**TILES, "tile_width_mm": 5}))
+    assert "floor.tile_width_mm" in message and "20 to 2500" in message
+
+
+def test_an_unknown_pattern_is_refused_naming_the_values() -> None:
+    message = refusal(floored({**TILES, "pattern": "herringbone"}))
+    assert "floor.pattern" in message and "grid" in message and "staggered" in message
+
+
+def test_a_document_without_a_floor_keeps_none() -> None:
+    stored, _ = place(document(sofa()))
+    assert "floor" not in stored
+
+
+# --- lamp lights (room-lamp-lights) ---------------------------------------------------------
+
+ESSEN = {**WOHNEN, "height_mm": 2500}
+WARM = {"type": "point", "lumens": 800, "kelvin": 2700}
+
+
+def lit_pendant(**light):
+    return {"id": "pendant", "type": "model", "model_id": "p1", "name": "Pendant", "width_mm": 500, "depth_mm": 500,
+            "height_mm": 1100, "layer": "ceiling", "light": light or WARM,
+            "placement": {"x_mm": 2500, "y_mm": 2000, "rotation_deg": 0}}
+
+
+def test_a_pendant_with_a_warm_light_is_placed_50_mm_above_its_lowest_point() -> None:
+    stored, _ = place(document(lit_pendant()), rooms={"Wohnen": ESSEN})
+    assert stored["items"][0]["light"] == WARM
+    light = stored["resolved"]["items"][0]["light"]
+    assert light["at_mm"] == [2500, 2000, 1450] and light["watts"] == 40.0
+    assert light["rgb"][0] == 1.0 and light["rgb"][2] < 0.2
+    assert stored["resolved"]["rooms"][0]["rig_factor"] == 0.5
+
+
+def test_a_standing_floor_lamp_lights_50_mm_below_its_top() -> None:
+    lamp = {"id": "floor-lamp", "type": "stand-in", "name": "Floor lamp", "width_mm": 400, "depth_mm": 400,
+            "height_mm": 1600, "colour": "#202020", "light": {"type": "spot", "lumens": 600, "kelvin": 3000},
+            "placement": {"x_mm": 600, "y_mm": 600, "rotation_deg": 0}}
+    stored, _ = place(document(lamp))
+    assert stored["resolved"]["items"][0]["light"]["at_mm"][2] == 1550
+
+
+def test_a_light_on_a_piece_is_refused_as_an_unknown_field() -> None:
+    assert "light" in refusal(document({**piece(), "light": WARM}))
+
+
+def test_a_light_on_a_rug_is_refused_naming_both() -> None:
+    message = refusal(document({**rug(), "light": WARM}))
+    assert "rug" in message and "light" in message
+
+
+def test_an_unknown_light_type_or_brightness_is_refused() -> None:
+    assert "type" in refusal(document(lit_pendant(type="area", lumens=800, kelvin=2700)), rooms={"Wohnen": ESSEN})
+    assert "lumens" in refusal(document(lit_pendant(type="point", lumens=20000, kelvin=2700)), rooms={"Wohnen": ESSEN})
+    assert "watts" in refusal(document(lit_pendant(type="point", lumens=800, kelvin=2700, watts=40)), rooms={"Wohnen": ESSEN})
+
+
+def test_more_lights_than_the_limit_are_refused() -> None:
+    lamps = [
+        {"id": f"spot-{n}", "type": "stand-in", "name": "Spot", "width_mm": 100, "depth_mm": 100, "height_mm": 100,
+         "colour": "#202020", "layer": "ceiling", "light": WARM,
+         "placement": {"x_mm": 300 + (n % 9) * 450, "y_mm": 400 + (n // 9) * 1500, "rotation_deg": 0}}
+        for n in range(17)
+    ]
+    assert "at most 16 lights, not 17" in refusal(document(*lamps))
+
+
+def test_a_room_without_lamp_lights_keeps_its_rig() -> None:
+    stored, _ = place(document(sofa()))
+    assert stored["resolved"]["rooms"][0]["rig_factor"] == 1.0
+
+
+def test_an_apartment_dims_only_the_lit_room() -> None:
+    bad = {"corners_mm": [[5000, 0], [7000, 0], [7000, 2000], [5000, 2000]], "height_mm": 2400,
+           "wall_thickness_mm": 100, "openings": []}
+    lamp = {**lit_pendant(), "room": "Wohnen"}
+    towel = {**sofa(), "id": "cabinet", "width_mm": 600, "depth_mm": 400, "room": "Bad",
+             "placement": {"x_mm": 6000, "y_mm": 1000, "rotation_deg": 0}}
+    stored, _ = place(document(lamp, towel, scope={"apartment": "Wohnung"}),
+                      rooms={"Wohnen": ESSEN, "Bad": bad}, scope_room=None)
+    factors = {room["name"]: room["rig_factor"] for room in stored["resolved"]["rooms"]}
+    assert factors == {"Wohnen": 0.5, "Bad": 1.0}
+
+
+# --- LED strips (room-led-strips) -----------------------------------------------------------
+
+KUECHE = {"corners_mm": [[0, 0], [3000, 0], [3000, 3200], [0, 3200]], "height_mm": 2500, "wall_thickness_mm": 100,
+          "openings": [{"wall": 1, "type": "window", "offset_mm": 1000, "width_mm": 1000, "height_mm": 1200, "sill_mm": 900}]}
+
+
+def strip(item_id="under-cabinets", **fields):
+    return {"id": item_id, "type": "led-strip", "name": "Under-cabinet strip", "length_mm": 2400, "lumens_per_m": 500,
+            "kelvin": 3000, "mount_height_mm": 1450, "placement": {"wall": 2, "offset_mm": 400}, **fields}
+
+
+def kueche(*items):
+    return place(document(*items), rooms={"Wohnen": KUECHE})
+
+
+def test_a_strip_under_the_wall_cabinets_is_accepted_beside_a_piece_on_that_wall() -> None:
+    counter = {**sofa(wall=2, offset_mm=400), "id": "counter", "width_mm": 2400, "depth_mm": 600, "height_mm": 900}
+    stored, subjects = kueche(counter, strip())
+    resolved = stored["resolved"]["items"][1]
+    assert stored["items"][1]["facing"] == "down"
+    assert resolved["size_mm"] == {"w": 2400.0, "d": 15.0, "h": 10.0} and resolved["base_mm"] == 1450
+    assert resolved["strip"]["watts"] == 60.0 and resolved["strip"]["facing"] == "down"
+    assert [item_id for item_id, _ in subjects] == ["counter"]
+    assert stored["resolved"]["rooms"][0]["rig_factor"] == 0.5
+
+
+def test_a_strip_past_the_wall_end_is_refused() -> None:
+    assert "runs past the end of wall 2" in refusal(document(strip(placement={"wall": 2, "offset_mm": 1000})),
+                                                    rooms={"Wohnen": KUECHE})
+
+
+def test_a_strip_across_a_window_at_its_height_is_refused_and_one_below_it_is_accepted() -> None:
+    across = strip(mount_height_mm=1200, placement={"wall": 1, "offset_mm": 500})
+    message = refusal(document(across), rooms={"Wohnen": KUECHE})
+    assert "under-cabinets crosses the window on wall 1" in message
+    kueche(strip(mount_height_mm=300, placement={"wall": 1, "offset_mm": 500}))
+
+
+def test_two_strips_overlapping_on_a_wall_are_refused_naming_both() -> None:
+    message = refusal(document(strip("a", placement={"wall": 0, "offset_mm": 0}),
+                               strip("b", placement={"wall": 0, "offset_mm": 300})), rooms={"Wohnen": KUECHE})
+    assert "LED strips a and b overlap on wall 0" in message
+    kueche(strip("a", placement={"wall": 0, "offset_mm": 0}), strip("b", mount_height_mm=300, placement={"wall": 0, "offset_mm": 300}))
+
+
+def test_a_strip_reaching_the_ceiling_is_refused() -> None:
+    assert "reaches the ceiling" in refusal(document(strip(mount_height_mm=2495)), rooms={"Wohnen": KUECHE})
+
+
+def test_a_free_standing_strip_is_refused() -> None:
+    message = refusal(document(strip(placement={"x_mm": 1000, "y_mm": 1000, "rotation_deg": 0})), rooms={"Wohnen": KUECHE})
+    assert "under-cabinets" in message and "fixed to a wall" in message
+
+
+@pytest.mark.parametrize("field", ["height_mm", "colour", "layer", "light"])
+def test_a_size_colour_layer_or_light_on_a_strip_is_refused_as_unknown(field) -> None:
+    assert field in refusal(document(strip(**{field: 10})), rooms={"Wohnen": KUECHE})
+
+
+@pytest.mark.parametrize(("field", "value"), [("length_mm", 50), ("lumens_per_m", 5000), ("kelvin", 9000), ("facing", "sideways")])
+def test_strip_values_out_of_range_are_refused(field, value) -> None:
+    assert field in refusal(document(strip(**{field: value})), rooms={"Wohnen": KUECHE})
+
+
+def test_a_strip_counts_towards_the_light_limit() -> None:
+    lamps = [{**lit_pendant(), "id": f"spot-{n}", "width_mm": 100, "depth_mm": 100, "height_mm": 100,
+              "placement": {"x_mm": 300 + (n % 6) * 450, "y_mm": 400 + (n // 6) * 1000, "rotation_deg": 0}}
+             for n in range(16)]
+    message = refusal(document(*lamps, strip()), rooms={"Wohnen": KUECHE})
+    assert "at most 16 lights, not 17" in message
+
+
+# --- a wall-hung piece holds its height above the floor (conversation-continuity) -----------
+
+HUNG_SIZES = {**PIECE_SIZE, "sideboard": (1350.0, 450.0, 800.0), "shelf": (1000.0, 300.0, 400.0)}
+
+
+def hung(item_id="sideboard", **placement):
+    return {"id": item_id, "type": "piece", "package_id": item_id, "version": 2, "placement": placement}
+
+
+def kommode(**placement):
+    return {"id": "kommode", "type": "stand-in", "name": "Kommode", "width_mm": 1350, "depth_mm": 450,
+            "height_mm": 914, "colour": "#a08060", "placement": placement or {"wall": 1, "offset_mm": 0}}
+
+
+def place_hung(doc):
+    parsed = parse_composition(doc, max_items=30)
+    geometry = {"Wohnen": room_geometry("Wohnen", WOHNEN)}
+    return place_items(parsed, rooms=geometry, piece_sizes=HUNG_SIZES, scope_room="Wohnen")
+
+
+def hung_refusal(doc) -> str:
+    with pytest.raises(SpecValidationError) as caught:
+        place_hung(doc)
+    return str(caught.value)
+
+
+def test_a_piece_hung_above_a_kommode_is_accepted_at_its_height() -> None:
+    stored, _subjects = place_hung(document(kommode(), hung(wall=1, offset_mm=0, mount_height_mm=1700)))
+    assert stored["items"][1]["placement"]["mount_height_mm"] == 1700
+    resolved = {i["id"]: i for i in stored["resolved"]["items"]}
+    assert resolved["sideboard"]["base_mm"] == 1700
+    assert "base_mm" not in resolved["kommode"]
+
+
+def test_a_saved_height_stored_as_a_float_is_accepted_flush_to_the_ceiling() -> None:
+    # The saved place stores the height as computed (2600 - 800 = 1800.0), not as a whole number.
+    stored, _subjects = place_hung(document(hung(wall=1, offset_mm=0, mount_height_mm=1800.0)))
+    resolved = stored["resolved"]["items"][0]
+    assert resolved["base_mm"] == 1800
+
+
+def test_a_piece_without_a_height_stands_on_the_floor() -> None:
+    message = hung_refusal(document(kommode(), hung(wall=1, offset_mm=0)))
+    assert "kommode" in message and "sideboard" in message and "overlap" in message
+
+
+def test_a_hung_piece_clashes_with_a_tall_item_below() -> None:
+    tall = {**kommode(), "height_mm": 1500}
+    message = hung_refusal(document(tall, hung(wall=1, offset_mm=0, mount_height_mm=1200)))
+    assert "kommode" in message and "sideboard" in message and "overlap" in message
+
+
+def test_a_hung_piece_above_the_ceiling_is_refused() -> None:
+    message = hung_refusal(document(hung(wall=1, offset_mm=0, mount_height_mm=1900)))
+    assert "item sideboard" in message and "2700 mm" in message and "2600 mm" in message
+
+
+def test_a_hung_piece_above_a_door_clears_it() -> None:
+    place_hung(document(hung("shelf", wall=0, offset_mm=3700, mount_height_mm=2150)))
+    message = hung_refusal(document(hung("shelf", wall=0, offset_mm=3700, mount_height_mm=1500)))
+    assert "blocks the door" in message
+
+
+def test_a_hung_piece_above_a_window_clears_it() -> None:
+    place_hung(document(hung("shelf", wall=2, offset_mm=1200, mount_height_mm=2150)))
+
+
+def test_a_height_on_a_stand_in_is_refused() -> None:
+    message = hung_refusal(document(kommode(wall=1, offset_mm=0, mount_height_mm=500)))
+    assert "item kommode" in message and "mount_height_mm" in message
+
+
+def test_a_height_on_a_free_placement_is_refused() -> None:
+    message = hung_refusal(document(hung(x_mm=2000, y_mm=2000, rotation_deg=0, mount_height_mm=500)))
+    assert "mount_height_mm" in message

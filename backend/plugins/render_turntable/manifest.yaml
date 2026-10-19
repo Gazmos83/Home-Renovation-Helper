@@ -1,5 +1,5 @@
 name: render_turntable
-description: Render a still or a turntable of a built piece, only through the render guard.
+description: Render a still or a turntable of a composed room or an apartment shell, only through the render guard.
 kind: builtin
 role: builder
 tools: [render_turntable]

@@ -123,3 +123,24 @@ def test_a_room_style_changes_the_shell_and_stand_in_but_not_the_piece_or_the_mo
     assert untouched, "the piece and the library model are placed items"
     for name in untouched:
         assert before[name] == after[name], name
+
+
+def test_a_room_style_keeps_a_tiled_floor(scene, blender_bin: Path, tmp_path: Path) -> None:  # noqa: F811
+    """room-floor-finish: the style changes walls, ceiling and light; the tiles stay."""
+    root, models, folder, _out, _overall = scene
+    document = json.loads((folder / "input.json").read_text(encoding="utf-8"))
+    document["floor"] = {"tile_width_mm": 600, "tile_length_mm": 600, "tile_colour": "#e8e4dc",
+                         "grout_colour": "#9a958c", "grout_width_mm": 3.0, "pattern": "grid"}
+    spec = tmp_path / "input.json"
+    spec.write_text(json.dumps(document), encoding="utf-8")
+    [plan] = room_variants(["japandi"], PRESETS)
+    result = subprocess.run(
+        [str(blender_bin), "--background", "--python", str(BACKEND / "tests/blender_inspect_restyle.py")],
+        capture_output=True, text=True, timeout=300, check=False,
+        env={**os.environ, "RESTYLE_SPEC": str(spec), "RESTYLE_PIECES": str(root),
+             "RESTYLE_MODELS": str(models), "RESTYLE_STYLE": json.dumps(plan.payload)},
+    )
+    line = next(entry for entry in result.stdout.splitlines() if entry.startswith("INSPECT "))
+    data = json.loads(line[len("INSPECT "):])
+    assert data["materials"]["Floor"] == "Floor_Tiles"
+    assert data["before"]["Ceiling"] != data["after"]["Ceiling"]

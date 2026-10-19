@@ -26,6 +26,12 @@ from dataclasses import dataclass
 from numbers import Real
 from typing import Any, Final
 
+from app.blender.lighting import (
+    DEFAULT_LIGHTING,
+    Lighting,
+    kelvin_to_rgb,
+    lumens_to_watts,
+)
 from app.blender.room_contract import (
     Point,
     Wall,
@@ -42,7 +48,8 @@ from app.blender.spec_contract import SpecValidationError
 KIND: Final = "room_composition"
 SCHEMA_VERSION: Final = 1
 UNITS: Final = "mm"
-ITEM_TYPES: Final = ("piece", "stand-in", "model")
+LED_STRIP: Final = "led-strip"
+ITEM_TYPES: Final = ("piece", "stand-in", "model", LED_STRIP)
 MAX_SIZE_MM: Final = 10_000
 FLOOR_LAYER: Final = "floor"
 FLOOR_LAYER_MAX_MM: Final = 30
@@ -60,8 +67,25 @@ _ITEM_FIELDS: Final = {
     "piece": frozenset({"package_id", "version"}),
     "stand-in": frozenset({"name", "width_mm", "depth_mm", "height_mm", "colour"}),
     "model": frozenset({"model_id", "name", "width_mm", "depth_mm", "height_mm"}),
+    LED_STRIP: frozenset({"name", "length_mm", "lumens_per_m", "kelvin", "mount_height_mm"}),
 }
+# An LED strip's bar, 15 mm deep off the wall and 10 mm thick (room-led-strips).
+STRIP_DEPTH_MM: Final = 15.0
+STRIP_THICKNESS_MM: Final = 10.0
+STRIP_FACINGS: Final = ("down", "up", "out")
+# A floor finish over the whole outline (room-floor-finish).
+_FLOOR_REQUIRED: Final = frozenset({"tile_width_mm", "tile_length_mm", "tile_colour", "grout_colour", "grout_width_mm"})
+FLOOR_PATTERNS: Final = ("grid", "staggered")
+_TILE_MM: Final = (20, 2500)
+_GROUT_MM: Final = (0, 20)
+# An item's light (room-lamp-lights).
+_LIGHT_KEYS: Final = frozenset({"type", "lumens", "kelvin"})
+LIGHT_TYPES: Final = ("point", "spot")
+_LIGHT_ABOVE_BASE_MM: Final = 50.0
+_LIGHT_BELOW_TOP_MM: Final = 50.0
 _WALL_PLACEMENT: Final = frozenset({"wall", "offset_mm"})
+# A piece hung on its wall: the height of its underside above the floor (conversation-continuity).
+MOUNT_HEIGHT: Final = "mount_height_mm"
 _FREE_PLACEMENT: Final = frozenset({"x_mm", "y_mm", "rotation_deg"})
 
 
@@ -95,11 +119,18 @@ def _parse_placement(raw: Any, label: str) -> dict[str, Any]:
         _fail(f"{label} must be an object")
     keys = set(raw)
     if "wall" in keys or "offset_mm" in keys:
-        _require_keys(raw, _WALL_PLACEMENT, frozenset(), label)
-        return {
+        _require_keys(raw, _WALL_PLACEMENT, frozenset({MOUNT_HEIGHT}), label)
+        placement = {
             "wall": _whole(raw["wall"], f"{label}.wall", low=0, high=63),
             "offset_mm": _number(raw["offset_mm"], f"{label}.offset_mm", low=0, high=_MAX_POSITION_MM),
         }
+        if MOUNT_HEIGHT in raw:
+            # The upper bound is the room's ceiling, checked when the piece is placed. A number, not
+            # a whole one: the saved place stores it as computed, such as 1700.0.
+            placement[MOUNT_HEIGHT] = _number(raw[MOUNT_HEIGHT], f"{label}.{MOUNT_HEIGHT}", low=0, high=MAX_SIZE_MM)
+        return placement
+    if MOUNT_HEIGHT in keys:
+        _fail(f"{label}: {MOUNT_HEIGHT} needs a wall placement")
     _require_keys(raw, _FREE_PLACEMENT, frozenset(), label)
     return {
         "x_mm": _number(raw["x_mm"], f"{label}.x_mm", low=0, high=_MAX_POSITION_MM),
@@ -118,8 +149,15 @@ def _parse_item(raw: Any, index: int, apartment: bool) -> dict[str, Any]:
     if apartment and "room" not in raw:
         _fail(f"item {raw.get('id')!r} names no room; in an apartment every item names its room")
     room_key = frozenset({"room"}) if apartment else frozenset()
-    layer_key = frozenset() if kind == "piece" else frozenset({"layer"})
-    _require_keys(raw, _ITEM_COMMON | _ITEM_FIELDS[kind] | room_key, layer_key, label)
+    # Any item may be hidden: kept in the layout, left out of the build (hidden-room-items).
+    if kind == "piece":
+        extra = frozenset()
+    elif kind == LED_STRIP:
+        extra = frozenset({"facing"})
+    else:
+        extra = frozenset({"layer", "light"})
+    optional = frozenset({"hidden"}) | extra
+    _require_keys(raw, _ITEM_COMMON | _ITEM_FIELDS[kind] | room_key, optional, label)
     item_id = raw["id"]
     if not isinstance(item_id, str) or not _ID.match(item_id):
         _fail(f"{label}.id must be a short slug (lowercase letters, digits and hyphens)")
@@ -129,6 +167,17 @@ def _parse_item(raw: Any, index: int, apartment: bool) -> dict[str, Any]:
     if kind == "piece":
         item["package_id"] = _text(raw["package_id"], f"{label}.package_id", 64)
         item["version"] = _whole(raw["version"], f"{label}.version", low=1, high=100_000)
+    elif kind == LED_STRIP:
+        item["name"] = _text(raw["name"], f"{label}.name")
+        item["length_mm"] = _whole(raw["length_mm"], f"item {item_id}: length_mm", low=100, high=10_000)
+        item["lumens_per_m"] = _whole(raw["lumens_per_m"], f"item {item_id}: lumens_per_m", low=50, high=3000)
+        item["kelvin"] = _whole(raw["kelvin"], f"item {item_id}: kelvin", low=1800, high=6500)
+        # The upper bound is the room's ceiling, checked when the strip is placed.
+        item["mount_height_mm"] = _whole(raw["mount_height_mm"], f"item {item_id}: mount_height_mm", low=0, high=MAX_SIZE_MM)
+        facing = raw.get("facing", "down")
+        if facing not in STRIP_FACINGS:
+            _fail(f"item {item_id}: facing must be one of {list(STRIP_FACINGS)}")
+        item["facing"] = facing
     else:
         item["name"] = _text(raw["name"], f"{label}.name")
         for axis in ("width_mm", "depth_mm", "height_mm"):
@@ -148,15 +197,73 @@ def _parse_item(raw: Any, index: int, apartment: bool) -> dict[str, Any]:
             if raw["layer"] == FLOOR_LAYER and item["height_mm"] > FLOOR_LAYER_MAX_MM:
                 _fail(f"item {item_id} is on the floor layer and may be at most {FLOOR_LAYER_MAX_MM} mm tall, not {item['height_mm']} mm")
             item["layer"] = raw["layer"]
+        if "light" in raw:
+            # A lamp gives light (room-lamp-lights); a rug lying on the floor does not.
+            if item.get("layer") == FLOOR_LAYER:
+                _fail(f"item {item_id} is on the floor layer and cannot carry light")
+            item["light"] = _parse_light(raw["light"], item_id)
+    if "hidden" in raw:
+        if not isinstance(raw["hidden"], bool):
+            _fail(f"item {item_id}: hidden must be true or false")
+        # Only `true` is kept, so `hidden: false` is stored as if the field were absent.
+        if raw["hidden"]:
+            item["hidden"] = True
     item["placement"] = _parse_placement(raw["placement"], f"{label}.placement")
+    if MOUNT_HEIGHT in item["placement"] and kind != "piece":
+        _fail(f"item {item_id}: {MOUNT_HEIGHT} is only for a piece placed on a wall")
+    if kind == LED_STRIP and "wall" not in item["placement"]:
+        _fail(f"item {item_id}: an LED strip is fixed to a wall; place it with wall and offset_mm")
     return item
+
+
+def _parse_light(raw: Any, item_id: str) -> dict[str, Any]:
+    if not isinstance(raw, Mapping):
+        _fail(f"item {item_id}: light must be an object")
+    _require_keys(raw, _LIGHT_KEYS, frozenset(), f"item {item_id} light")
+    if raw["type"] not in LIGHT_TYPES:
+        _fail(f"item {item_id}: light type must be one of {list(LIGHT_TYPES)}")
+    return {
+        "type": raw["type"],
+        "lumens": _whole(raw["lumens"], f"item {item_id}: light lumens", low=10, high=10_000),
+        "kelvin": _whole(raw["kelvin"], f"item {item_id}: light kelvin", low=1800, high=6500),
+    }
+
+
+def _parse_floor(raw: Any) -> dict[str, Any]:
+    """A floor finish, normalised with its pattern filled in (room-floor-finish)."""
+    if not isinstance(raw, Mapping):
+        _fail("floor must be an object")
+    _require_keys(raw, _FLOOR_REQUIRED, frozenset({"pattern"}), "floor")
+    finish: dict[str, Any] = {
+        axis: _whole(raw[axis], f"floor.{axis}", low=_TILE_MM[0], high=_TILE_MM[1])
+        for axis in ("tile_width_mm", "tile_length_mm")
+    }
+    for key in ("tile_colour", "grout_colour"):
+        colour = raw[key]
+        if not isinstance(colour, str) or not _COLOUR.match(colour):
+            _fail(f"floor.{key} must be #rrggbb")
+        finish[key] = colour.lower()
+    finish["grout_width_mm"] = _number(raw["grout_width_mm"], "floor.grout_width_mm", low=_GROUT_MM[0], high=_GROUT_MM[1])
+    pattern = raw.get("pattern", "grid")
+    if pattern not in FLOOR_PATTERNS:
+        _fail(f"floor.pattern must be one of {list(FLOOR_PATTERNS)}")
+    finish["pattern"] = pattern
+    return finish
+
+
+def floor_summary(finish: Mapping[str, Any]) -> str:
+    """A floor finish in one line, for the confirmation, the change list and the composition note."""
+    return (
+        f"{finish['tile_width_mm']:g} × {finish['tile_length_mm']:g} mm tiles, {finish['pattern']}, "
+        f"tile {finish['tile_colour']}, grout {finish['grout_width_mm']:g} mm {finish['grout_colour']}"
+    )
 
 
 def parse_composition(document: Any, *, max_items: int) -> dict[str, Any]:
     """The document's normalised shape: scope and items, before any room is consulted."""
     if not isinstance(document, Mapping):
         _fail("the composition must be a JSON object")
-    _require_keys(document, _TOP_REQUIRED, frozenset(), "composition")
+    _require_keys(document, _TOP_REQUIRED, frozenset({"floor"}), "composition")
     if document["kind"] != KIND:
         _fail(f"kind must be {KIND!r}")
     if document["schema_version"] != SCHEMA_VERSION:
@@ -188,6 +295,7 @@ def parse_composition(document: Any, *, max_items: int) -> dict[str, Any]:
     return {
         "kind": KIND, "schema_version": SCHEMA_VERSION, "units": UNITS,
         "scope": {scope_type: scope_name}, "items": parsed,
+        **({"floor": _parse_floor(document["floor"])} if "floor" in document else {}),
     }
 
 
@@ -269,13 +377,15 @@ def _opening_zone(wall: Wall, opening: Mapping[str, Any], depth: float) -> tuple
 
 def _blocked_opening(
     item_id: str, room: RoomGeometry, footprint, placement: Mapping[str, Any], size: tuple[float, float, float],
-    base: float = 0.0,
+    base: float = 0.0, top: float | None = None,
 ) -> None:
-    """`base` is the height of the item's lowest point: above 0 only for a ceiling-layer item,
-    which clears every opening whose top it hangs above."""
+    """`base` is the height of the item's lowest point: above 0 only for a ceiling-layer item or a
+    hung piece, which clears every opening whose top it hangs above. `top` is a hung piece's top,
+    which a window's sill must reach for the piece to clear it; otherwise the item's height."""
     width, depth, height = size
+    reach = height if top is None else top
     for index, opening in enumerate(room.openings):
-        if opening["type"] == "window" and opening["sill_mm"] >= height:
+        if opening["type"] == "window" and opening["sill_mm"] >= reach:
             continue
         if base >= opening["sill_mm"] + opening["height_mm"] - _TOL:
             continue
@@ -328,6 +438,7 @@ def place_items(
     rooms: Mapping[str, RoomGeometry],
     piece_sizes: Mapping[str, tuple[float, float, float]],
     scope_room: str | None = None,
+    lighting: Lighting = DEFAULT_LIGHTING,
 ) -> tuple[dict[str, Any], list[tuple[str, ItemSubject]]]:
     """Check every item against its room; the stored document and each item's rule subject.
 
@@ -338,12 +449,17 @@ def place_items(
     placed: list[dict[str, Any]] = []
     subjects: list[tuple[str, ItemSubject]] = []
     footprints: list[tuple[str, str, tuple[Point, ...], str, str | None, float, float]] = []
+    strips: list[tuple[str, str, int, float, float, float]] = []
     for item in parsed["items"]:
         item_id = item["id"]
         room_name = item.get("room") or scope_room
         room = rooms.get(room_name or "")
         if room is None:
             _fail(f"item {item_id}: the room {room_name!r} is not part of this composition's scope")
+        if item["type"] == LED_STRIP:
+            # A strip lies on its wall: it is checked against openings and other strips only.
+            placed.append(_place_strip(item, room, strips, lighting))
+            continue
         if item["type"] == "piece":
             size = piece_sizes[item_id]
         else:
@@ -363,12 +479,31 @@ def place_items(
         # only where their heights meet, blocks only an opening it hangs below the top of, and
         # takes no placement rule.
         layer = item.get("layer")
-        base = room.height_mm - size[2] if layer == CEILING_LAYER else 0.0
+        hung = MOUNT_HEIGHT in placement
+        base = room.height_mm - size[2] if layer == CEILING_LAYER else float(placement.get(MOUNT_HEIGHT, 0))
         top = base + size[2]
+        if hung and top > room.height_mm + _TOL:
+            _fail(
+                f"item {item_id} would hang with its top at {top:.0f} mm, above the ceiling of "
+                f"{room.name} ({room.height_mm:.0f} mm)"
+            )
+        if item.get("hidden"):
+            # A hidden item keeps its shape checks above but blocks nothing: no opening check,
+            # no overlap either way and no placement rule (hidden-room-items).
+            placed.append({
+                "id": item_id, "room": room.name,
+                "size_mm": {"w": size[0], "d": size[1], "h": size[2]},
+                "centre_mm": [round(centre[0], 3), round(centre[1], 3)],
+                "rotation_deg": round(rotation, 6),
+                **({"base_mm": round(base, 3)} if layer == CEILING_LAYER or hung else {}),
+                "hidden": True,
+            })
+            continue
         if layer != FLOOR_LAYER:
-            _blocked_opening(item_id, room, footprint, placement, size, base)
+            _blocked_opening(item_id, room, footprint, placement, size, base, top if hung else None)
         for other_id, other_room, other, other_where, other_layer, other_base, other_top in footprints:
-            if CEILING_LAYER in (layer, other_layer):
+            # A ceiling-layer item or a hung piece clashes only where the heights meet.
+            if CEILING_LAYER in (layer, other_layer) or base > 0 or other_base > 0:
                 clash = base < other_top - _TOL and other_base < top - _TOL
             else:
                 clash = other_layer == layer
@@ -382,16 +517,23 @@ def place_items(
                 placement={"footprint": tuple(footprint), "outward_normal": outward,
                            **({"wall": placement["wall"], "offset_mm": placement["offset_mm"]} if "wall" in placement else {})},
             )))
-        placed.append({
+        resolved_item = {
             "id": item_id, "room": room.name,
             "size_mm": {"w": size[0], "d": size[1], "h": size[2]},
             "centre_mm": [round(centre[0], 3), round(centre[1], 3)],
             "rotation_deg": round(rotation, 6),
-            **({"base_mm": round(base, 3)} if layer == CEILING_LAYER else {}),
-        })
+            **({"base_mm": round(base, 3)} if layer == CEILING_LAYER or hung else {}),
+        }
+        if "light" in item:
+            resolved_item["light"] = _resolved_light(item["light"], centre, base, size[2], layer, lighting)
+        placed.append(resolved_item)
+    lit_rooms = {p["room"] for p in placed if "light" in p or "strip" in p}
+    lights = sum(1 for p in placed if "light" in p or "strip" in p)
+    if lights > lighting.max_lights:
+        _fail(f"a composition holds at most {lighting.max_lights} lights, not {lights}")
     used = {p["room"] for p in placed}
     stored = {
-        **{key: parsed[key] for key in ("kind", "schema_version", "units", "scope", "items")},
+        **{key: parsed[key] for key in ("kind", "schema_version", "units", "scope", "items", "floor") if key in parsed},
         "resolved": {
             "rooms": [
                 {
@@ -400,6 +542,8 @@ def place_items(
                     "height_mm": room.height_mm,
                     "wall_thickness_mm": room.wall_thickness_mm,
                     "openings": [dict(o) for o in room.openings],
+                    # The room's rig lights are dimmed when it has lamp lights (room-lamp-lights).
+                    "rig_factor": lighting.rig_factor_with_lamps if room.name in lit_rooms else 1.0,
                 }
                 for name, room in rooms.items() if name in used or scope_room == name
             ],
@@ -407,6 +551,77 @@ def place_items(
         },
     }
     return stored, subjects
+
+
+def _place_strip(
+    item: Mapping[str, Any], room: RoomGeometry, strips: list[tuple[str, str, int, float, float, float]],
+    lighting: Lighting,
+) -> dict[str, Any]:
+    """An LED strip on its wall (room-led-strips): its bar's derived size, and its light."""
+    item_id = item["id"]
+    placement = item["placement"]
+    wall, offset = placement["wall"], placement["offset_mm"]
+    length, low = float(item["length_mm"]), float(item["mount_height_mm"])
+    high = low + STRIP_THICKNESS_MM
+    if high > room.height_mm - _TOL:
+        _fail(f"item {item_id} reaches the ceiling of {room.name} (strip at {low:.0f} mm, ceiling {room.height_mm:.0f} mm)")
+    size = (length, STRIP_DEPTH_MM, STRIP_THICKNESS_MM)
+    footprint, centre, rotation, outward = _wall_pose(item_id, room, wall, offset, size)
+    if not _footprint_inside(footprint, room.corners):
+        _fail(f"item {item_id} leaves the room {room.name}")
+    resolved: dict[str, Any] = {
+        "id": item_id, "room": room.name,
+        "size_mm": {"w": size[0], "d": size[1], "h": size[2]},
+        "centre_mm": [round(centre[0], 3), round(centre[1], 3)],
+        "rotation_deg": round(rotation, 6),
+        "base_mm": round(low, 3),
+    }
+    if item.get("hidden"):
+        return {**resolved, "hidden": True}
+    end = offset + length
+    for index, opening in enumerate(room.openings):
+        if opening["wall"] != wall:
+            continue
+        o_start, o_end = opening["offset_mm"], opening["offset_mm"] + opening["width_mm"]
+        o_low, o_high = opening["sill_mm"], opening["sill_mm"] + opening["height_mm"]
+        if o_start < end - _TOL and offset < o_end - _TOL and o_low < high - _TOL and low < o_high - _TOL:
+            _fail(
+                f"item {item_id} crosses the {opening['type']} on wall {wall} of {room.name} "
+                f"(opening {index}, {o_start:g} to {o_end:g} mm along the wall, {o_low:g} to {o_high:g} mm high)"
+            )
+    for other_id, other_room, other_wall, other_start, other_end, other_low in strips:
+        if (other_room == room.name and other_wall == wall
+                and other_start < end - _TOL and offset < other_end - _TOL
+                and other_low < high - _TOL and low < other_low + STRIP_THICKNESS_MM - _TOL):
+            _fail(f"LED strips {other_id} and {item_id} overlap on wall {wall} of {room.name}")
+    strips.append((item_id, room.name, wall, offset, end, low))
+    resolved["strip"] = {
+        "length_mm": item["length_mm"], "lumens_per_m": item["lumens_per_m"], "kelvin": item["kelvin"],
+        "watts": lumens_to_watts(length / 1000 * item["lumens_per_m"], lighting),
+        "rgb": kelvin_to_rgb(item["kelvin"]),
+        "facing": item["facing"], "wall": wall, "offset_mm": offset, "mount_height_mm": item["mount_height_mm"],
+        # Into the room, away from the wall.
+        "inward": [round(-outward[0], 6), round(-outward[1], 6)],
+    }
+    return resolved
+
+
+def _resolved_light(
+    light: Mapping[str, Any], centre: Point, base: float, height: float, layer: str | None, lighting: Lighting,
+) -> dict[str, Any]:
+    """Where the build puts an item's light and how strong and warm it is: centred on the
+    footprint, 50 mm above a hanging item's lowest point or 50 mm below a standing item's top
+    (at least half its height)."""
+    if layer == CEILING_LAYER:
+        z = base + _LIGHT_ABOVE_BASE_MM
+    else:
+        z = max(height - _LIGHT_BELOW_TOP_MM, height / 2)
+    return {
+        **light,
+        "watts": lumens_to_watts(light["lumens"], lighting),
+        "rgb": kelvin_to_rgb(light["kelvin"]),
+        "at_mm": [round(centre[0], 3), round(centre[1], 3), round(z, 3)],
+    }
 
 
 # --- the surface map (app-check-2026-10-09) --------------------------------------------------

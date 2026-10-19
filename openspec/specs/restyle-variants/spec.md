@@ -17,25 +17,6 @@ The service SHALL read look presets (for pieces) and style presets (for rooms) f
 - **WHEN** a look preset has the colour `walnut`
 - **THEN** startup fails naming the preset and `colour`
 
-### Requirement: A look applies per slot and never changes the spec
-A piece restyle request SHALL name, for each variant, a look preset for each material slot it changes, keyed by the slot names of that version's stored spec. A slot name the spec does not hold SHALL be refused naming the slot and listing the slots that exist. Slots the request omits SHALL keep their own appearance, except that slots whose spec names the same material are one material and SHALL be named together with the same look, and are refused by name otherwise. The version's `spec.json`, `materials`, cut list, prices, `model.blend` and own render files SHALL be byte-identical after any restyle.
-
-#### Scenario: Two slots restyled
-- **WHEN** a restyle of `hall-bench` v2 gives `carcass` the look `walnut` and `fronts` the look `sage-green`
-- **THEN** the variant shows those colours on those slots, and `v2/spec.json` and `v2/model.blend` are unchanged
-
-#### Scenario: Unknown slot
-- **WHEN** a restyle names the slot `legs` and the spec holds only `carcass` and `fronts`
-- **THEN** it is refused naming `legs` and listing `carcass` and `fronts`, and nothing is rendered
-
-#### Scenario: Unknown field refused
-- **WHEN** a restyle document carries the field `thickness_mm`
-- **THEN** it is refused naming `thickness_mm` and nothing is rendered
-
-#### Scenario: Slots sharing a material
-- **WHEN** the slots `carcass` and `shelves` name the same material and a variant gives them different looks, or names only one of them
-- **THEN** it is refused naming both slots, and nothing is rendered
-
 ### Requirement: A style applies to a composition's surfaces
 A room restyle request SHALL name a style preset and a composition version, which is rebuilt in memory from its stored document. The style SHALL change the walls, ceiling and floor, the world light, and the colour of each stand-in (by the colour map, else the fallback tint) as listed in that version's surface map. Placed pieces and library models SHALL keep their own appearance. The composition's items, sizes and placements SHALL NOT change.
 
@@ -81,17 +62,6 @@ Each variant SHALL be published atomically in `variants/<variant-id>/` of its ve
 - **WHEN** a version already holds 12 variants and another is requested
 - **THEN** the oldest is replaced and the reply says which
 
-### Requirement: Keeping a look goes through the normal revision
-Choosing a variant SHALL NOT change any spec or approved version. Keeping a piece look SHALL hand the owner's request to the Designer in the conversation, asking which real material to use and whether it is priced before anything changes; the Designer's ordinary revision then pauses for the owner's confirmation, and a slot whose material is unpriced is marked pricing-incomplete, never guessed. A room style SHALL NOT be kept by this change: a composition carries no style field, so a room variant is a picture to look at, and saving a style on a composition is a separate change.
-
-#### Scenario: Keep walnut
-- **WHEN** the owner keeps the `walnut` variant of `hall-bench` v2
-- **THEN** a request naming the slot and the look goes to the conversation, and no new version exists until the Designer's revision confirmation is answered `yes`
-
-#### Scenario: Room variant
-- **WHEN** a room variant is shown
-- **THEN** it offers no "keep" action
-
 ### Requirement: The model supplies only validated data
 Preset ids and slot mappings from a model SHALL be validated before the render script sees them. A look or style composed from free text SHALL be limited to the preset fields and refused by field name otherwise. The restyle render SHALL be a checked-in headless script, not a live script. The homeowner view of a variant SHALL show the picture, the preset names and the appearance note, and no model, prompt, token or cost.
 
@@ -102,14 +72,3 @@ Preset ids and slot mappings from a model SHALL be validated before the render s
 #### Scenario: Extra field
 - **WHEN** a composed look carries `texture_path`
 - **THEN** it is refused naming `texture_path`
-
-### Requirement: A piece variant is a rateable render
-Each published restyle variant of a piece version SHALL be a render of that version that the owner can rate up or down with a comment, like the version's own renders. A variant of a composition SHALL be viewable but SHALL NOT be rateable. Rating a variant SHALL NOT change the spec, its materials, the cut list or prices.
-
-#### Scenario: Variant listed with rating controls
-- **WHEN** `hall-bench` v2 holds a published `walnut` variant
-- **THEN** the version's renders include the variant with its label, tier `draft` and rating controls
-
-#### Scenario: Rating changes nothing in the design
-- **WHEN** the owner rates the `walnut` variant up
-- **THEN** `spec.json`, the cut list and the version's materials are unchanged

@@ -1,9 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { expect, test, vi } from "vitest";
+import { expect, test } from "vitest";
 import { stubFetch } from "../test/fetchStub";
-import { PieceVariants, RoomVariants, Variants, keepLookRequest } from "./Variants";
+import { RoomVariants, Variants } from "./Variants";
 import type { Variant } from "../lib/api";
 
 const walnut: Variant = {
@@ -39,31 +38,6 @@ test("no developer fields reach the page", () => {
   expect(screen.queryByText(/model|prompt|token|cost/i)).not.toBeInTheDocument();
 });
 
-test("a piece variant offers Use this look, which hands over the request; a room variant does not", async () => {
-  const onUse = vi.fn();
-  render(<Variants items={[walnut]} onUse={onUse} />);
-  await userEvent.click(screen.getByRole("button", { name: "Use this look" }));
-  expect(onUse).toHaveBeenCalledWith(walnut);
-  const room: Variant = { ...walnut, id: "japandi-draft", label: "Japandi", looks: null, style: "japandi" };
-  render(<Variants items={[room]} onUse={onUse} />);
-  expect(screen.getAllByRole("button", { name: "Use this look" })).toHaveLength(1);
-});
-
-test("the request names the slot and look and asks about the real material before changing anything", () => {
-  const text = keepLookRequest("bench", 1, walnut);
-  expect(text).toContain("carcass as walnut");
-  expect(text).toContain("bench version 1");
-  expect(text).toContain("which real material");
-});
-
-test("a piece's variants are fetched from its version", async () => {
-  stubFetch((call) => {
-    if (call === "GET /packages/bench/versions/1/variants") return { body: [walnut] };
-  });
-  wrap(<PieceVariants packageId="bench" version={1} />);
-  expect(await screen.findByRole("img", { name: "Walnut restyle" })).toBeInTheDocument();
-});
-
 test("a room's variants are fetched from its composition version", async () => {
   const room: Variant = { ...walnut, id: "japandi-draft", label: "Japandi", looks: null, style: "japandi" };
   stubFetch((call) => {
@@ -71,5 +45,5 @@ test("a room's variants are fetched from its composition version", async () => {
   });
   wrap(<RoomVariants slug="wohnen" version={2} />);
   expect(await screen.findByRole("img", { name: "Japandi restyle" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Use this look" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
 });

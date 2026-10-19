@@ -1,0 +1,7 @@
+# Lamp lights in room compositions (room-lamp-lights). Read at startup; a bad file stops it by name.
+# Blender watts per lumen of an item light: 800 lm becomes 40 W. TODO(user): calibrate from the first draft.
+watts_per_lumen: 0.05
+# A room's three rig lights are multiplied by this when the room holds at least one item light.
+rig_factor_with_lamps: 0.5
+# The most item lights (lamps, and LED strips) one composition may hold.
+max_lights: 16

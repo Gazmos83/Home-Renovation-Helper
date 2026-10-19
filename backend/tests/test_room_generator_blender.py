@@ -49,6 +49,20 @@ def test_a_draft_room_still_is_800_square(blender_bin: Path, package: Path, tmp_
     assert scene["input"]["output"] == {"kind": "still"}
 
 
+def test_a_hung_piece_renders_at_its_height_in_a_draft_still(blender_bin: Path, package: Path, tmp_path: Path) -> None:
+    """conversation-continuity: the piece's underside sits at mount_height_mm."""
+    document = json.loads(RECTANGLE.read_text(encoding="utf-8"))
+    document["placement"]["mount_height_mm"] = 300
+    document["output"] = {"kind": "still"}
+    scene_path = tmp_path / "scene.json"
+    scene_path.write_text(json.dumps(document), encoding="utf-8")
+    result, out = _room(blender_bin, package, tmp_path, scene_path)
+    assert result.returncode == 0, result.stderr[-800:]
+    scene = json.loads((out / "scene.json").read_text(encoding="utf-8"))
+    assert scene["input"]["placement"]["mount_height_mm"] == 300
+    assert scene["resolved"]["package_lowest_mm"] == pytest.approx(300, abs=1)
+
+
 def test_a_draft_room_turntable_is_twelve_frames_with_walls_hidden_per_frame(
     blender_bin: Path, package: Path, tmp_path: Path
 ) -> None:

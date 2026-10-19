@@ -84,12 +84,17 @@ def build(document: dict, pieces: Path, models: Path, output_dir: Path) -> None:
             "items": scene.report,
             "surfaces": surfaces,
             "extent_mm": composition.extent_mm(scene),
+            "rig_factors": composition.rig_factors(scene),
+            **({"floor": document["floor"]} if document.get("floor") else {}),
         }
         (output_dir / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        shell_gen._write_screenshot(output_dir / "screenshot.png")
+        # A tiled floor shows its plain colour in the screenshot and the 3D view; `model.blend`
+        # is saved with the tile material back on (room-floor-finish).
+        with composition.flat_floor(scene):
+            shell_gen._write_screenshot(output_dir / "screenshot.png")
+            # Every mesh, ceilings included: the 3D view switches each surface itself.
+            export_glb({name for names in surfaces.values() for name in names}, output_dir / "model.glb", hide_helpers=False)
         bpy.ops.wm.save_as_mainfile(filepath=str(output_dir / "model.blend"), check_existing=False)
-        # Every mesh, ceilings included: the 3D view switches each surface itself.
-        export_glb({name for names in surfaces.values() for name in names}, output_dir / "model.glb", hide_helpers=False)
     except GeneratorError:
         raise
     except Exception as error:

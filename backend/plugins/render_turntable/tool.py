@@ -3,26 +3,23 @@
 The tier is required and decides frames, resolution and engine; a raw value for
 any of them is refused by name. `draft` starts straight away and the reply
 carries the estimate; `final` pauses for the owner's yes (the guard's own
-approval) and runs only on it. A draft of a piece on its own is a turntable
-(two-tier-renders); a draft still stays for a piece in its room, a shell and a
-composition. The render is enqueued on the app loop, never waited for.
+approval) and runs only on it. Renders are made of composed rooms and apartment shells
+only (rooms-only-renders): a piece, on its own or placed in a room, is refused in plain
+words. The render is enqueued on the app loop, never waited for.
 """
 
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agent import house_file, notices
 from app.agent.tools.base import AgentTool, Confirmation, ToolContext, parse_args
-from app.agent.tools.shared import builds_unavailable, version_folder
+from app.agent.tools.shared import builds_unavailable
 from app.blender import runner, storage
 from app.feedback import runs as feedback_runs
-from app.packages import service
-from app.packages.placements import read_placement
 from app.render import benchmark_store
 from app.render.calibration import calibrate_after_render
 from app.render.guard import RenderRefused, RenderTicket, authorise, quote
@@ -38,7 +35,8 @@ class RenderArgs(BaseModel):
     # Extra fields are accepted here only so the guard can refuse them by name.
     model_config = ConfigDict(extra="allow")
 
-    package_id: str | None = Field(default=None, description="the piece's package id")
+    # Kept so an old call gets the plain refusal, not a schema error (rooms-only-renders).
+    package_id: str | None = Field(default=None, description="not rendered: renders are made of rooms")
     shell: str | None = Field(
         default=None, description="an apartment's name, to render its shell instead of a piece"
     )
@@ -48,10 +46,7 @@ class RenderArgs(BaseModel):
     version: int | None = Field(default=None, description="a version number; the latest when left out")
     kind: str = Field(default="turntable", description="'turntable' or 'still'")
     tier: str | None = Field(default=None, description="required: draft or final")
-    in_room: bool = Field(
-        default=False,
-        description="true to render the piece where it was placed in the conversation's room",
-    )
+    in_room: bool = Field(default=False, description="not rendered: renders are made of rooms")
 
 
 def _price_args(
@@ -69,12 +64,20 @@ def _price_args(
     }
 
 
+# The one sentence the Builder passes on for a piece (rooms-only-renders).
+PIECE_REFUSED = (
+    "renders are made of rooms, not pieces; offer to compose the room with this piece and render the room "
+    "(a piece is looked at in its inspector)"
+)
+
+
 def _target(args: RenderArgs, ctx: ToolContext):
     """`(record, id, folder, version)` of what to render, or a refusal string."""
+    if args.package_id or (args.in_room and not args.composition and not args.shell):
+        return PIECE_REFUSED
     if sum(bool(target) for target in (args.package_id, args.shell, args.composition)) != 1:
         return (
-            "name exactly one target: a package_id (a piece), a shell (an apartment) or a composition "
-            "(a composed room)"
+            "name exactly one target: a shell (an apartment) or a composition (a composed room)"
         )
     if args.composition:
         if args.in_room:
@@ -117,10 +120,7 @@ def _target(args: RenderArgs, ctx: ToolContext):
         if not folder.is_dir():
             return f"the shell of {args.shell!r} has no version {number}"
         return "shell", slug, folder, number
-    folder, number, problem = version_folder(ctx.deps, args.package_id, args.version)
-    if folder is None or number is None:
-        return problem
-    return "piece", args.package_id, folder, number
+    return PIECE_REFUSED
 
 
 def _checked(arguments: dict[str, Any], ctx: ToolContext):
@@ -128,11 +128,6 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext):
     args, problem = parse_args(RenderArgs, arguments)
     if args is None:
         return problem
-    if "room" in (args.model_extra or {}):
-        return (
-            "a piece is shown in the room with in_room true; its saved place in the conversation's "
-            "room is used, and the Designer asks the owner for one when there is none"
-        )
     target = _target(args, ctx)
     if isinstance(target, str):
         return target
@@ -149,8 +144,6 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext):
         priced = quote(**price_args)
     except RenderRefused as error:
         return error.reason
-    if record == "piece" and not args.in_room and priced.tier.name == "draft" and priced.kind == "still":
-        return "a draft of a piece is a turntable; ask for a draft turntable, or a final still"
     state = storage.read_status(folder) or {}
     if state.get("status") != "succeeded" or not (folder / "model.blend").is_file():
         return (
@@ -158,36 +151,7 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext):
             "build it first"
         )
     scene_document = None
-    if args.in_room:
-        scene = _placed_scene(ctx, target_id, folder, number)
-        if isinstance(scene, str):
-            return scene
-        try:
-            scene_document = service.room_scene_document(folder, args.kind, scene)
-        except service.RoomDocumentRefused:
-            return "the piece's saved place in the room no longer fits; the Designer will ask where it goes"
     return args, folder, number, price_args, scene_document, priced
-
-
-def _placed_scene(ctx: ToolContext, package_id: str, folder: Path, number: int) -> dict[str, Any] | str:
-    """The room scene of the version's saved place in the conversation's room, checked again
-    (the room may have been measured again since), or a plain refusal."""
-    from plugins.room_fit.tool import fit
-
-    room = None
-    if ctx.thread_id is not None:
-        with ctx.deps.session() as session:
-            confirmed, _apartment = house_file.thread_scope(session, ctx.thread_id)
-            room = confirmed.name if confirmed is not None else None
-    if room is None:
-        return "this conversation has no room yet; the owner can name one"
-    stored = read_placement(folder, room)
-    if stored is None:
-        return f"this piece has no place in {room} yet; the Designer will ask where it goes"
-    checked = fit(ctx, room, package_id, number, int(stored["wall"]), float(stored["offset_mm"]), store=False)
-    if isinstance(checked, str):
-        return f"the piece's saved place in {room} no longer fits ({checked}); the Designer will ask where it goes"
-    return checked.scene
 
 
 def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str | None:
@@ -253,11 +217,8 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
         deps.loop,
     )
     what = "still" if priced.kind == "still" else "turntable"
-    label = (
-        f"the {args.shell} shell" if args.shell else args.composition if args.composition else args.package_id
-    )
-    # A piece version gets a Review button when it ends; a shell or composition a notice only.
-    arrives = "a Review button appears" if priced.record == "piece" else "a notice appears"
+    label = f"the {args.shell} shell" if args.shell else args.composition
+    arrives = "a notice appears"
     note = ""
     if priced.record == "room":
         from app import compositions
@@ -276,11 +237,10 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
 render_turntable = AgentTool(
     name="render_turntable",
     description=(
-        "Render a still or a turntable of a built piece (package_id), of an apartment's shell "
-        "(shell) or of a composed room (composition). A tier is required (draft or final) and decides "
-        "frames, resolution and engine; never pass those. A draft of a piece on its own is a "
-        "turntable. Pass in_room true to render a piece where it was placed in the conversation's room "
-        "(a draft still). "
+        "Render a still or a turntable of a composed room (composition) or of an apartment's shell "
+        "(shell). Pieces are not rendered: a piece is looked at in its inspector, and shown in a room by "
+        "composing that room. A tier is required (draft or final) and decides "
+        "frames, resolution and engine; never pass those. "
         "A draft starts now; final waits for the owner's yes."
     ),
     schema=RenderArgs,

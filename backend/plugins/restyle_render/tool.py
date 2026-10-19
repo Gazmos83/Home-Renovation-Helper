@@ -1,11 +1,10 @@
-"""`restyle_render` (Builder): draft turntables of a built version in other looks or styles.
+"""`restyle_render` (Builder): draft turntables of a composed room in other styles.
 
-Appearance only (restyle-variants): a piece is shown with other colours and finishes on its
-own material slots, a composed room in other styles. The spec, cut list and prices never
-change, and a variant is never a final. The tier is required and only `draft` is accepted;
-one estimate covers the whole batch, then one draft turntable per variant is rendered on
-the app loop, never waited for (two-tier-renders). Each variant of a piece is recorded as a
-render run, so the owner can rate it like any render.
+Appearance only (restyle-variants): the composition, its items and prices never change, and
+a variant is never a final. Renders are made of rooms only (rooms-only-renders): a piece is
+not restyled, and a piece target is refused with the render tool's plain sentence. The tier
+is required and only `draft` is accepted; one estimate covers the whole batch, then one draft
+turntable per variant is rendered on the app loop, never waited for (two-tier-renders).
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agent import notices
 from app.agent.tools.base import AgentTool, ToolContext, parse_args
-from app.agent.tools.shared import builds_unavailable, read_input
+from app.agent.tools.shared import builds_unavailable
 from app.blender import restyle_runner, storage
 from app.feedback import runs as feedback_runs
 from app.render import benchmark_store
@@ -34,11 +33,9 @@ from app.restyle.presets import APPEARANCE_NOTE, Presets, load_presets
 from app.restyle.request import (
     RestyleRefused,
     VariantPlan,
-    expand_looks,
-    piece_variants,
     room_variants,
 )
-from plugins.render_turntable.tool import RenderArgs
+from plugins.render_turntable.tool import PIECE_REFUSED, RenderArgs
 from plugins.render_turntable.tool import _target as render_target
 
 _PRESETS: Presets | None = None
@@ -56,17 +53,14 @@ class RestyleArgs(BaseModel):
     # Extra fields are accepted here only so they can be refused by name.
     model_config = ConfigDict(extra="allow")
 
-    package_id: str | None = Field(default=None, description="the piece's package id")
+    # Kept so an old call gets the plain refusal, not a schema error (rooms-only-renders).
+    package_id: str | None = Field(default=None, description="not restyled: renders are made of rooms")
     composition: str | None = Field(default=None, description="a composed room's name")
     version: int | None = Field(default=None, description="a version number; the latest when left out")
     tier: str | None = Field(default=None, description="required: draft")
-    looks: list[Any] | None = Field(
-        default=None, description="piece: look preset ids (or 'all'); each becomes one variant on `slots`"
-    )
-    slots: list[str] | None = Field(default=None, description="piece: the material slots `looks` apply to")
-    variants: list[dict[str, Any]] | None = Field(
-        default=None, description="piece: explicit variants, each a mapping of slot name to look id"
-    )
+    looks: list[Any] | None = Field(default=None, description="not used: pieces are not restyled")
+    slots: list[str] | None = Field(default=None, description="not used: pieces are not restyled")
+    variants: list[dict[str, Any]] | None = Field(default=None, description="not used: pieces are not restyled")
     styles: list[Any] | None = Field(
         default=None, description="composition: style preset ids (or 'all'), one variant each"
     )
@@ -87,8 +81,10 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext):
     unknown = _unknown_fields(args)
     if unknown:
         return unknown
-    if bool(args.package_id) == bool(args.composition):
-        return "name exactly one target: a package_id (a piece) or a composition (a composed room)"
+    if args.package_id:
+        return PIECE_REFUSED
+    if not args.composition:
+        return "name the composed room to restyle (composition)"
     target = render_target(
         RenderArgs(package_id=args.package_id, composition=args.composition, version=args.version), ctx
     )
@@ -100,20 +96,9 @@ def _checked(arguments: dict[str, Any], ctx: ToolContext):
         return f"{target_id} version {number} is not built yet, so it cannot be restyled; build it first"
     looks = presets()
     try:
-        if record == "piece":
-            if args.styles:
-                return "a piece takes looks, not styles; styles are for a composed room"
-            spec = read_input(folder)
-            if spec is None:
-                return f"{target_id} version {number} has no readable spec to take its slots from"
-            variants = list(args.variants or [])
-            if args.looks:
-                variants += expand_looks(args.looks, args.slots or [], looks)
-            plans = piece_variants(spec, variants, looks)
-        else:
-            if args.looks or args.variants or args.slots:
-                return "a composed room takes styles, not looks"
-            plans = room_variants(args.styles or [], looks)
+        if args.looks or args.variants or args.slots:
+            return "a composed room takes styles, not looks"
+        plans = room_variants(args.styles or [], looks)
     except RestyleRefused as refusal:
         return refusal.reason
     ids = store.allocate_ids(folder, [plan.base_id for plan in plans], str(args.tier))
@@ -197,11 +182,10 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
 restyle_render = AgentTool(
     name="restyle_render",
     description=(
-        "Show a built piece in other colours and finishes, or a composed room in other styles, as "
-        "draft turntables. Appearance only: the design, materials, cut list and prices never change. "
-        "A piece (package_id): pass `slots` (its material slot names) with `looks` (preset ids or "
-        "'all'), or explicit `variants`. A composed room (composition): pass `styles` (preset ids or "
-        "'all'). A tier is required and is draft; never pass frame counts, resolutions or "
+        "Show a composed room (composition) in other styles, as draft turntables: pass `styles` "
+        "(preset ids or 'all'). Appearance only: the room, its items and prices never change. Pieces "
+        "are not restyled; a piece's colours and finishes change through a revision with the Designer. "
+        "A tier is required and is draft; never pass frame counts, resolutions or "
         "engines. One estimate covers the whole batch."
     ),
     schema=RestyleArgs,

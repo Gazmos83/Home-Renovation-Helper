@@ -136,7 +136,8 @@ def apply_room(scene: composition.CompositionScene, style: dict[str, Any]) -> No
     """Restyle walls, floor, ceiling, world and stand-ins of a rebuilt composition.
 
     Pieces and library models are not touched. Each surface kind gets its own new material,
-    so no shared material leaks one surface's colour onto another.
+    so no shared material leaks one surface's colour onto another. A tiled floor keeps its
+    finish (room-floor-finish).
     """
     made: dict[str, bpy.types.Material] = {}
     for kind in ("wall", "floor", "ceiling"):
@@ -146,7 +147,7 @@ def apply_room(scene: composition.CompositionScene, style: dict[str, Any]) -> No
         made[kind] = material
     for label, names in composition.surfaces(scene).items():
         kind = _surface_kind(label)
-        if kind is None:
+        if kind is None or (kind == "floor" and scene.document.get("floor")):
             continue
         for name in names:
             obj = bpy.data.objects[name]

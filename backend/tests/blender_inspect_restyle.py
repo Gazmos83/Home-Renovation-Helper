@@ -32,4 +32,6 @@ scene = composition.build_scene(
 )
 before = colours()
 render_restyle.apply_room(scene, json.loads(os.environ["RESTYLE_STYLE"])["style"])
-print("INSPECT " + json.dumps({"before": before, "after": colours(), "items": [o.name for o in scene.item_meshes]}))
+materials = {obj.name: obj.data.materials[0].name for obj in bpy.data.objects if obj.type == "MESH" and obj.data.materials}
+print("INSPECT " + json.dumps({"before": before, "after": colours(), "items": [o.name for o in scene.item_meshes],
+                               "materials": materials}))
