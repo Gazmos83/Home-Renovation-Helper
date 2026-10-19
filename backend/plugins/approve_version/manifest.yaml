@@ -1,0 +1,7 @@
+name: approve_version
+description: Approve the conversation's built piece version after the owner confirms, so a room can hold it.
+kind: builtin
+role: designer
+tools: [approve_version]
+enabled_by_default: true
+toggleable: false

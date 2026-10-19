@@ -10,7 +10,6 @@ run by `app.blender.runner` behind the render guard.
 from __future__ import annotations
 
 import json
-import logging
 import re
 import tempfile
 import zipfile
@@ -24,11 +23,9 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agent import decisions_note, house_file
-from app.agent.tools.shared import read_input
+from app.agent import house_file
 from app.api.gate import require_owner
 from app.blender import runner, storage
-from app.blender.custom_build.derive import overall
 from app.blender.launch import subprocess_launch
 from app.blender.schemas import CustomBuildSpec, describe_validation_error
 from app.blender.spec_contract import SpecValidationError
@@ -36,10 +33,9 @@ from app.db import scope as account_scope
 from app.db.models import Piece, PieceVersion
 from app.design_import import export_document
 from app.guidelines.hardware_inputs import freeze_inputs
-from app.packages import duplicate, service
+from app.packages import approval, duplicate, service
+from app.render.estimate import describe
 from app.restyle import store as restyle_store
-
-logger = logging.getLogger("app")
 
 router = APIRouter(
     prefix="/packages", tags=["packages"], dependencies=[Depends(require_owner)]
@@ -147,6 +143,7 @@ def describe_version(
     version: int,
     approved_at: str | None = None,
     revised_from: int | None = None,
+    size_warnings: list[str] | None = None,
 ) -> dict[str, Any]:
     folder = storage.version_dir(root, package_id, version)
     state = storage.read_status(folder) or {}
@@ -171,7 +168,19 @@ def describe_version(
             "detail_turntable_frames": _frame_count(storage.detail_dir(folder)),
         },
         "jobs": state.get("renders") or {},
+        "size_warnings": size_warnings or [],
     }
+
+
+def _render_job(jobs: dict[str, Any]) -> dict[str, Any]:
+    """`render_job`: a queued or running render's tier, status and estimate in words, so the
+    inspector can follow it (render-now-blueprints-verdict-note); left out when none runs."""
+    for job in jobs.values():
+        if isinstance(job, dict) and job.get("status") in ("queued", "running"):
+            seconds = job.get("estimate_seconds")
+            estimate = describe(float(seconds)) if isinstance(seconds, (int, float)) else None
+            return {"render_job": {"tier": job.get("tier"), "status": job["status"], "estimate": estimate}}
+    return {}
 
 
 def _approvals(request: Request, package_id: str) -> dict[int, str]:
@@ -317,11 +326,15 @@ def read_package(package_id: str, request: Request):
 def read_version(package_id: str, version: int, request: Request):
     existing_version(request, package_id, version)
     approved_at = _approvals(request, package_id).get(version)
+    # Too big for the piece's room: a warning only (piece-size-room-warning).
+    with Session(request.app.state.engine) as session:
+        warnings = house_file.version_size_warnings(session, render_root(request), package_id, version)
     return describe_version(
         render_root(request),
         package_id,
         version,
         approved_at,
+        size_warnings=warnings,
         revised_from=_revised_from(request, package_id).get(version),
     )
 
@@ -329,39 +342,11 @@ def read_version(package_id: str, version: int, request: Request):
 @router.put("/{package_id}/versions/{version}/approval")
 def approve_version(package_id: str, version: int, request: Request):
     folder = existing_version(request, package_id, version)
-    if (storage.read_status(folder) or {}).get("status") != "succeeded":
-        raise refused(
-            409, "not_built", f"version {version} must be built before it can be approved"
-        )
     with Session(request.app.state.engine) as session:
-        if house_file.version_row(session, package_id, version) is None:
-            raise refused(
-                409,
-                "not_recorded",
-                f"version {version} of {package_id!r} is not in the house file; "
-                "only versions made in a conversation can be approved",
-            )
-        newly = house_file.version_row(session, package_id, version).approved_at is None
-        row = house_file.approve_version(session, package_id, version)
-        if newly:
-            try:
-                with session.begin_nested():
-                    decisions_note.drop_superseded_version_rows(session, package_id, version)
-            except Exception:
-                logger.exception("dropping superseded version rows failed for %s", package_id)
-            try:
-                with session.begin_nested():
-                    document = read_input(folder)
-                    if document is not None:
-                        house_file.raise_brief_height_limit(
-                            session, package_id, version, overall(document)["h"]
-                        )
-                    piece = session.get(Piece, package_id)
-                    limit = (piece.brief or {}).get("max_piece_height_mm") if piece else None
-                    if isinstance(limit, int | float) and not isinstance(limit, bool):
-                        house_file.dismiss_outdated_height_items(session, package_id, version, limit)
-            except Exception:
-                logger.exception("raising the brief's height limit failed for %s", package_id)
+        try:
+            row = approval.approve_built_version(session, folder, package_id, version)
+        except approval.ApprovalRefused as error:
+            raise refused(409, error.code, str(error)) from None
         session.commit()
         approved_at = row.approved_at.isoformat()
         revised_from = row.revised_from

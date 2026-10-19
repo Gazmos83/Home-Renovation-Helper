@@ -7,6 +7,7 @@ from dataclasses import replace
 
 import pytest
 from langchain_core.messages import HumanMessage
+from langgraph.types import Command
 
 from app.agent import house_file
 from app.agent.foreman import MAX_TOOL_ROUNDS, _designer_note, last_reply
@@ -91,7 +92,7 @@ def test_a_room_less_brief_is_offered_a_room_before_the_designer(tool_state) -> 
     harness = make_harness(tool_state, models, room=None)
     assert last_reply(harness.turn("a listening wall, light oak, 900 EUR")) == "Would you like to view this piece in a room?"
     assert last_reply(harness.turn("yes")) == "Which room is this for?"
-    harness.turn("no room yet: 2200 mm wide, 2200 mm tall, light oak, 900 EUR")
+    harness.turn("the piece first: 2200 mm wide, 2200 mm tall, light oak, 900 EUR")
     harness.answer("yes")
     state = harness.turn("design it")
     assert state["brief"] == PIECE_ONLY
@@ -114,6 +115,42 @@ def test_a_room_less_brief_in_a_declined_conversation_routes_design_it_to_the_de
     state = harness.turn("design it")
     assert state["specialist"] == "designer"
     assert last_reply(state) == "Here is a first design."
+
+
+def test_a_no_to_the_room_question_declines_the_room(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [decision("intake"), decision("intake"), decision("intake"), decision("designer")]},
+        intake={"tool_call_scripts": [[tool_call("record_brief", PIECE_ONLY)]], "replies": ["Saved."]},
+        designer={"replies": ["Here is a first design."]},
+    )
+    harness = make_harness(tool_state, models, room=None)
+    harness.turn("a listening wall, light oak, 900 EUR")
+    assert last_reply(harness.turn("yes")) == "Which room is this for?"
+    harness.turn("No room for now, design it without one: 2200 mm wide, 2200 mm tall, light oak, 900 EUR")
+    harness.answer("yes")
+    with ToolDeps(tool_state).session() as session:
+        assert house_file.get_thread(session, harness.thread).room_declined
+    state = harness.turn("Yes, go on with the design.")
+    assert state["specialist"] == "designer"
+    assert last_reply(state) == "Here is a first design."
+
+
+def test_a_room_named_after_the_room_question_declines_nothing(tool_state) -> None:
+    from tests.graph_helpers import confirm_room
+
+    models = fake_models(foreman={"decisions": [decision("intake"), decision("intake")]}, intake={"replies": ["Noted."]})
+    harness = make_harness(tool_state, models, room=None)
+    confirm_room(harness, "Wohnen")
+    with ToolDeps(tool_state).session() as session:
+        thread = house_file.get_thread(session, harness.thread)
+        thread.room_id = None
+        session.commit()
+    harness.turn("a sideboard")
+    assert last_reply(harness.turn("yes")) == "Which room is this for?"
+    state = harness.turn("Wohnen")
+    assert not state["room_declined"]
+    with ToolDeps(tool_state).session() as session:
+        assert not house_file.get_thread(session, harness.thread).room_declined
 
 
 def test_the_designer_note_offers_the_custom_build_starter_first() -> None:
@@ -314,6 +351,49 @@ def test_an_answered_confirmation_is_kept_on_the_stored_tool_message(tool_state,
     assert stored[-1].additional_kwargs["confirmation"] == {
         "subject": "revise", "summary": summary, "answer": "no", "reason": "make it 4 shelves",
     }
+
+
+def test_an_answered_form_is_kept_as_the_owners_words(tool_state) -> None:
+    from langchain_core.messages import ToolMessage
+
+    from app.agent.measurements import owner_texts_since_version
+
+    question = {"questions": [{"text": "How wide should the sideboard be?", "unit": "mm"}]}
+    models = fake_models(
+        foreman={"decisions": [decision("designer")]},
+        designer={"tool_call_scripts": [[tool_call("ask_owner", question)]], "replies": ["1350 mm, then."]},
+    )
+    harness = make_harness(tool_state, models)
+    _bind_piece(tool_state, harness, screenshot=False)
+    harness.turn("match the kommode's width")
+    harness.graph.invoke(Command(resume={"answers": ["1350"]}), config=harness.config)
+
+    history = harness.snapshot().values["messages"]
+    stored = [m for m in history if isinstance(m, ToolMessage)]
+    assert stored[-1].additional_kwargs["answers"]["rows"] == [
+        {"question": "How wide should the sideboard be?", "answer": "1350 mm"}
+    ]
+    assert owner_texts_since_version(history, "hall-bench") == ["match the kommode's width", "1350 mm"]
+
+
+def test_the_saved_place_is_in_the_designers_and_builders_notes(tool_state) -> None:
+    from app.blender import storage
+    from app.packages.placements import write_placement
+
+    models = fake_models(
+        foreman={"decisions": [decision("builder"), decision("designer")]},
+        builder={"replies": ["Building it."]},
+        designer={"replies": ["Noted."]},
+    )
+    harness = make_harness(tool_state, models)
+    _bind_piece(tool_state, harness, screenshot=True)
+    folder = storage.version_dir(tool_state.settings.render_root, "hall-bench", 1)
+    write_placement(folder, "Hall", {"room": "Hall", "wall": 1, "offset_mm": 0, "left_mm": 0, "mount_height_mm": 1700})
+    harness.turn("Build it and show it in the room")
+    harness.turn("make it a little darker")
+    line = "Saved place of this piece in Hall: wall 2 (index 1), 0 mm from its left end, hung with its underside at 1700 mm"
+    assert line in models["builder"].prompts[-1][0].content
+    assert line in models["designer"].prompts[-1][0].content
 
 
 def _built_composition(tool_state, *, approved: bool) -> None:
@@ -568,8 +648,8 @@ def test_the_prompt_carries_the_guard_once_and_binds_only_the_headers_tools(tool
     assert system.endswith(UNTRUSTED_CONTENT_PREAMBLE)
     assert set(models["designer"].bound_tools) == {
         "create_piece", "duplicate_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit",
-        "compose_room", "read_room_version_dimensions", "edit_decisions", "record_version_verdict", "search_guidelines",
-        "ask_owner", "ask_placement",
+        "compose_room", "read_room_version_dimensions", "measure_gaps", "edit_decisions", "record_version_verdict",
+        "search_guidelines", "ask_owner", "ask_placement", "approve_version",
     }
     assert models["intake"].bound_tools == ["record_brief", "record_plan", "confirm_room", "ask_owner", "read_help"]
     # The Foreman's own prompt is guarded and binds nothing.
@@ -706,12 +786,12 @@ def test_a_price_question_goes_to_the_researcher_even_without_a_brief_or_piece(t
     assert last_reply(state) == "I can look that up."
 
 
-def test_the_researcher_binds_exactly_its_six_tools(tool_state) -> None:
+def test_the_researcher_binds_exactly_its_eight_tools(tool_state) -> None:
     models = fake_models(foreman={"decisions": [decision("researcher")]}, researcher={"replies": ["Ok."]})
     make_harness(tool_state, models).turn("price it")
     assert set(models["researcher"].bound_tools) == {
         "search_catalog_knowledge", "check_live_listing", "compare_products", "price_cut_list", "manage_remnants",
-        "search_guidelines", "read_room_version_dimensions",
+        "search_guidelines", "read_room_version_dimensions", "measure_gaps",
     }
 
 
@@ -872,7 +952,7 @@ def test_two_empty_answers_end_the_turn_with_the_fixed_reply(tool_state, caplog)
     # Every model call reaches the usage recorder (here unrecorded: the harness has no owner
     # row): the Foreman's decision and both of Intake's answers.
     assert [r.getMessage() for r in caplog.records].count("usage.unrecorded") == 3
-    assert last_reply(state) == "Intake gave no answer. Please rephrase your message or ask again."
+    assert last_reply(state) == "Lil' Worm gave no answer. Please rephrase your message or ask again."
 
 
 def test_the_fixed_reply_names_the_designer_by_role(tool_state, make_ctx) -> None:
@@ -881,7 +961,20 @@ def test_the_fixed_reply_names_the_designer_by_role(tool_state, make_ctx) -> Non
     harness = make_harness(tool_state, models)
     harness.start(package_id="bench")
     state = harness.turn("Revise it")
-    assert last_reply(state) == "The Designer gave no answer. Please rephrase your message or ask again."
+    assert last_reply(state) == "Lil' Glitty gave no answer. Please rephrase your message or ask again."
+
+
+def test_a_reply_records_its_writer_and_the_prompt_keeps_role_names(tool_state) -> None:
+    """meet-the-crew: persona names are for the owner's screen only."""
+    from app.agent.budget import PERSONA_NAMES
+
+    models = fake_models(foreman={"decisions": [decision("designer")]}, designer={"replies": ["A bench, then."]})
+    state = make_harness(tool_state, models).turn("a hall bench")
+    reply = [m for m in state["messages"] if m.type == "ai"][-1]
+    assert reply.additional_kwargs["speaker"] == "designer"
+    prompt = models["designer"].last_prompt_text()
+    assert "You are the Designer on this turn." in prompt
+    assert not any(persona in prompt for persona in PERSONA_NAMES.values())
 
 
 def test_a_followed_turn_reports_the_designer_then_its_tool_then_the_pause(tool_state, make_ctx) -> None:

@@ -81,7 +81,10 @@ def test_a_measurement_left_out_is_refused_as_not_covered() -> None:
     entry = Requested("80 cm wide", "cabinet", "width", 800)
     refusals = check([entry], ["80 cm wide and 40 cm deep"], CURRENT, revised(width=800, depth=400))
     assert refusals == [
-        "the owner's '40 cm' is not covered: add it to `requested` (target `none` when it is not about the piece)"
+        (
+            "the owner's '40 cm' is not covered: add it to `requested` (target `none` when it is not about the piece)"
+            "; the owner wrote: '80 cm wide and 40 cm deep'"
+        )
     ]
 
 
@@ -146,6 +149,47 @@ def test_a_composition_result_does_not_start_a_window() -> None:
         *_created("c", "Created bench version 3; its build has started.", "compose_room"),
     ]
     assert owner_texts_since_version(history, "bench") == ["80 cm wide"]
+
+
+def _form(call_id: str, rows: list[tuple[str, str]], declined: str | None = None) -> list:
+    """An answered `ask_owner` form as the tool node stores it."""
+    message = ToolMessage("The owner answered: …", tool_call_id=call_id)
+    message.additional_kwargs["answers"] = {
+        "rows": [{"question": q, "answer": a} for q, a in rows], "declined": declined,
+    }
+    return [AIMessage("", tool_calls=[{"id": call_id, "name": "ask_owner", "args": {}}]), message]
+
+
+def test_a_form_answer_counts_as_the_owners_words() -> None:
+    history = [
+        *_created("a", "Created sideboard version 1; the build has started.", "create_piece"),
+        HumanMessage("Can you match the width of the kommode?"),
+        *_form("f", [("How wide is the lamellen-kommode, so the sideboard can match it?", "1350 mm")]),
+    ]
+    said = owner_texts_since_version(history, "sideboard")
+    assert said == ["Can you match the width of the kommode?", "1350 mm"]
+    entry = Requested("1350 mm", "cabinet", "width", 1350)
+    assert check([entry], said, CURRENT, revised(width=1350)) == []
+
+
+def test_a_figure_in_a_question_is_not_the_owners() -> None:
+    history = [*_form("f", [("Should it stay 450 mm deep?", "Yes")])]
+    said = owner_texts_since_version(history, "sideboard")
+    assert said == ["Yes"]
+    [refusal] = check([Requested("450 mm", "none", "", 0)], said, CURRENT, CURRENT)
+    assert "not in the owner's messages" in refusal
+
+
+def test_text_written_instead_of_answering_counts() -> None:
+    history = [*_form("f", [], declined="I would like it 1350 mm wide")]
+    assert owner_texts_since_version(history, "sideboard") == ["I would like it 1350 mm wide"]
+
+
+def test_a_quote_not_found_names_the_owners_sentence() -> None:
+    entry = Requested("hang 20 mm below the ceiling", "none", "", 0)
+    said = ["Can you raise it. Hang it on the wall 20 mm from the ceiling"]
+    refusals = check([entry], said, CURRENT, CURRENT)
+    assert "the owner wrote: 'Hang it on the wall 20 mm from the ceiling'" in refusals[0]
 
 
 # --- shelf spacing and divider positions (shelf-spacing-and-dividers) ------------------------

@@ -414,3 +414,26 @@ def test_the_interior_point_is_inside_even_when_the_centroid_is_not() -> None:
     for shape in (U_SHAPE, L_SHAPE, [[0, 0], [4000, 0], [4000, 3500], [0, 3500]]):
         corners = [tuple(map(float, corner)) for corner in shape]
         assert _point_in_polygon(interior_point(corners), corners)
+
+
+# --- a wall-hung piece (conversation-continuity) --------------------------------------------
+
+
+def test_a_hung_placement_keeps_its_height(rectangle_doc: dict) -> None:
+    rectangle_doc["placement"]["mount_height_mm"] = 1000
+    ctx = normalise_room_scene(rectangle_doc, package_overall=LISTENING_WALL_OVERALL)
+    assert ctx.placement["mount_height_mm"] == 1000
+    assert ctx.input_document()["placement"]["mount_height_mm"] == 1000
+
+
+def test_a_placement_without_a_height_stays_on_the_floor(rectangle_doc: dict) -> None:
+    ctx = normalise_room_scene(rectangle_doc, package_overall=LISTENING_WALL_OVERALL)
+    assert "mount_height_mm" not in ctx.placement
+    assert "mount_height_mm" not in ctx.input_document()["placement"]
+
+
+def test_a_hung_placement_above_the_ceiling_is_refused(rectangle_doc: dict) -> None:
+    rectangle_doc["placement"]["mount_height_mm"] = 1200
+    with pytest.raises(SpecValidationError) as caught:
+        normalise_room_scene(rectangle_doc, package_overall=LISTENING_WALL_OVERALL)
+    assert "2708 mm" in str(caught.value) and "2600 mm" in str(caught.value)

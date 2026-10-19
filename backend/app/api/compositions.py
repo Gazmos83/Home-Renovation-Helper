@@ -9,9 +9,19 @@ unapproved or deleted (room-version-approval).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -19,8 +29,17 @@ from app import compositions
 from app.agent import house_file, progress
 from app.agent.house_file import HouseFileError, VersionMissing
 from app.api.gate import require_owner
-from app.api.packages import _file_for, describe_variants, refused
+from app.api.packages import (
+    _file_for,
+    _frame_count,
+    _render_job,
+    describe_variants,
+    refused,
+    require_generation,
+)
+from app.api.renders import _price_args, _refusal, _start, _with_target
 from app.blender import storage
+from app.render.guard import FORBIDDEN_FIELDS, RenderRefused, authorise, quote
 
 router = APIRouter(prefix="/compositions", tags=["compositions"], dependencies=[Depends(require_owner)])
 
@@ -170,3 +189,103 @@ def read_composition_file(slug: str, version: int, name: str, request: Request) 
     if not resolved.is_file():
         raise _not_found()
     return FileResponse(resolved, media_type=media_type, headers={"X-Content-Type-Options": "nosniff"})
+
+
+# --- the room inspector's Renders tab (render-now-blueprints-verdict-note) --------------------
+
+_ROOM_RENDERS = (
+    # (key, label, preview file, frames folder)
+    ("turntable", "Turntable", "frames/0", "frames"),
+    ("still", "Still", "still.png", None),
+)
+
+
+def _room_built(folder) -> None:
+    state = storage.read_status(folder) or {}
+    if state.get("status") != "succeeded" or not (folder / "model.blend").is_file():
+        raise refused(
+            status.HTTP_409_CONFLICT, "not_built",
+            "this room version has not been built successfully yet, so it cannot be rendered",
+        )
+
+
+@router.get("/{slug}/versions/{version}/renders")
+def list_room_renders(slug: str, version: int, request: Request) -> dict[str, Any]:
+    """A room version's published still and turntable, newest first, and the render that is
+    queued or running (`render_job`), so the Renders tab can follow it."""
+    folder = _existing_version(request.app.state.settings.render_root, slug, version)
+    jobs = (storage.read_status(folder) or {}).get("renders") or {}
+    base = f"/compositions/{slug}/versions/{version}/files/"
+    renders = []
+    for key, label, preview, frames_folder in _ROOM_RENDERS:
+        frames = _frame_count(folder) if frames_folder else 0
+        if (frames_folder and frames == 0) or (not frames_folder and not (folder / preview).is_file()):
+            continue
+        job = jobs.get(key) or {}
+        renders.append({
+            "render": key, "label": label, "tier": job.get("tier"), "finished_at": job.get("finished_at"),
+            "frames": frames, "preview": base + preview,
+            "viewer": base + "viewer.html" if frames_folder and (folder / "viewer.html").is_file() else None,
+        })
+    renders.sort(key=lambda item: item["finished_at"] or "", reverse=True)
+    return {"renders": renders, "render_job": _render_job(jobs).get("render_job")}
+
+
+def _room_price(request: Request, slug: str, version: int, kind: str, tier: Any, raw_fields: list[str]):
+    args = _price_args(
+        request, package_id=slug, version=version, kind=kind, tier=tier, room=False, raw_fields=raw_fields,
+        record="room",
+    )
+    try:
+        args = _with_target(request, args)
+        return args, quote(**args)
+    except RenderRefused as error:
+        raise _refusal(error) from None
+
+
+@router.get("/{slug}/versions/{version}/render-estimate")
+def room_render_estimate(
+    slug: str, version: int, request: Request,
+    kind: Annotated[str, Query()] = "turntable", tier: Annotated[str | None, Query()] = None,
+) -> dict[str, Any]:
+    """The guard's estimate in human terms for a built room version; starts, queues,
+    approves and records nothing. Refused exactly as a render request is (render-guard)."""
+    folder = _existing_version(request.app.state.settings.render_root, slug, version)
+    raw_fields = list(request.query_params)
+    unknown = sorted(set(raw_fields) - {"kind", "tier"} - set(FORBIDDEN_FIELDS))
+    if unknown:
+        raise refused(422, "refused", f"unknown field {unknown[0]!r}; an estimate takes kind and tier")
+    _args, priced = _room_price(request, slug, version, kind, tier, raw_fields)
+    _room_built(folder)
+    return {
+        "tier": priced.tier.name, "kind": priced.kind, "estimate": priced.estimate_text,
+        "estimate_seconds": round(priced.estimate_seconds, 1), "warning": priced.warning,
+    }
+
+
+@router.post("/{slug}/versions/{version}/renders", status_code=status.HTTP_202_ACCEPTED)
+def start_room_render(
+    slug: str, version: int, request: Request, background: BackgroundTasks,
+    body: Annotated[dict[str, Any], Body()],
+) -> dict[str, Any]:
+    """"Render version N now": a draft of a built room version through the guard. A final is
+    asked for in a conversation, where the owner approves it."""
+    settings = request.app.state.settings
+    folder = _existing_version(settings.render_root, slug, version)
+    require_generation(request)
+    raw_fields = list(body)
+    unknown = sorted(set(raw_fields) - {"kind", "tier"} - set(FORBIDDEN_FIELDS))
+    if unknown:
+        raise refused(422, "refused", f"unknown field {unknown[0]!r}; a render takes kind and tier")
+    args, priced = _room_price(request, slug, version, str(body.get("kind")), body.get("tier"), raw_fields)
+    if priced.tier.name != "draft":
+        raise refused(
+            status.HTTP_409_CONFLICT, "final_in_conversation",
+            "a final render of a room is asked for in a conversation, where you approve it",
+        )
+    _room_built(folder)
+    try:
+        ticket = authorise(**args)
+    except RenderRefused as error:
+        raise _refusal(error) from None
+    return _start(request, background, folder, ticket, None, models_root=settings.upload_root / "models")

@@ -199,6 +199,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="run tests that call the real OpenRouter gateway (spends money)",
     )
     parser.addoption(
+        "--benchmark",
+        action="store_true",
+        default=False,
+        help="replay core owner sentences through the real routed models (spends money)",
+    )
+    parser.addoption(
         "--blender",
         action="store_true",
         default=False,
@@ -234,7 +240,10 @@ def pytest_collection_modifyitems(
     """
     live = config.getoption("--live")
     blender = config.getoption("--blender")
+    benchmark = config.getoption("--benchmark")
     for item in items:
+        if "benchmark" in item.keywords and not benchmark:
+            item.add_marker(pytest.mark.skip(reason="needs --benchmark and an OpenRouter key"))
         if "blender" in item.keywords and not blender:
             item.add_marker(pytest.mark.skip(reason="needs --blender and Blender 5.2.1 LTS"))
         if "live" in item.keywords and not live:

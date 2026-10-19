@@ -51,6 +51,7 @@ dev = [
 [tool.pytest.ini_options]
 markers = [
     "live: runs the real OpenRouter gateway (spends money); needs --live",
+    "benchmark: replays a core owner sentence through the real routed models (spends money); needs --benchmark",
     "blender: invokes the pinned Blender 5.2.1 LTS binary; needs --blender",
     "slow: loads the real embedding model (minutes on a cold cache); deselect with -m \"not slow\"",
 ]

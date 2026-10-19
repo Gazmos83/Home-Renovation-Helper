@@ -34,7 +34,7 @@
 ## 6. Checks
 
 - [x] 6.1 Run `uv run ruff check .` and `uv run pytest -m "not slow"` in `backend/`, skipping the RunPod/offload test files and using a throwaway `TEST_DATABASE_URL` if needed. Run `pnpm lint`, `pnpm test` and `pnpm build` in `frontend/`. All must pass.
-- [ ] 6.2 Browser pass in the `lamellen-kommode` conversation:
+- [x] 6.2 Superseded 2026-10-19 by `place-piece-from-owner-words` (owner's decision): the in-room draft still below is refused since `rooms-only-renders`; that change's browser pass covers this flow. Browser pass in the `lamellen-kommode` conversation:
   - "I would like to view this in the room" shows the two questions and the Room layout button;
   - answering wall 2 and 300 mm starts a **draft** still in `Wohnen` (through the render guard) with no internal names in any reply;
   - asking again renders with no questions.

@@ -27,7 +27,6 @@ const still = {
   render: "still", label: "Still", tier: "draft", finished_at: null, frames: 0, can_rate: true, rating: null, comment: null,
   preview: "/packages/bench/versions/2/files/still.png", viewer: null,
 };
-const legacy = { ...still, can_rate: false };
 const variant = {
   render: "variant:walnut-draft", label: "Walnut", tier: "draft", finished_at: null, frames: 12, can_rate: true,
   rating: null, comment: null, preview: "/packages/bench/versions/2/files/variants/walnut-draft/frames/0", viewer: null,
@@ -90,84 +89,20 @@ function serve(
   });
 }
 
-test("a still shows its preview and tier, and turntable and variant cards are omitted", async () => {
+test("a version shows no renders, ratings or restyle looks (rooms-only-renders)", async () => {
   serve([turntable, still, variant]);
   show();
-  expect(await screen.findByRole("img", { name: "Still of bench version 2" })).toHaveAttribute("src", still.preview);
-  expect(screen.getByText("draft")).toBeInTheDocument();
-  expect(screen.queryByRole("img", { name: /Turntable/ })).not.toBeInTheDocument();
-  expect(screen.queryByRole("region", { name: "Walnut" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("link", { name: /viewer/ })).not.toBeInTheDocument();
-});
-
-test("a version with only a turntable shows no render card", async () => {
-  serve([turntable]);
-  show();
   expect(await screen.findByRole("link", { name: "Inspect version 2" })).toBeInTheDocument();
-  expect(screen.queryByRole("img", { name: /Turntable/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: /Still|Turntable|Walnut/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Thumbs/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Use this look" })).not.toBeInTheDocument();
   expect(screen.queryByText("No renders of this version yet.")).not.toBeInTheDocument();
-});
-
-test("rating down with a comment is sent, shown and survives a reload of the list", async () => {
-  const user = userEvent.setup();
-  let stored: unknown = null;
-  const calls = serve([still], (call) => {
-    if (call === "PUT /packages/bench/versions/2/renders/still/feedback") {
-      stored = { ...still, rating: "down", comment: "too dark" };
-      return { body: stored };
-    }
-    if (call === "GET /packages/bench/versions/2/renders" && stored) return { body: [stored] };
-  });
-  show();
-  await user.type(await screen.findByLabelText("Comment on Still"), "too dark");
-  await user.click(screen.getByRole("button", { name: "Thumbs down Still" }));
-  expect(await screen.findByRole("button", { name: "Thumbs down Still", pressed: true })).toBeInTheDocument();
-  expect(calls.find(([m]) => m === "PUT")![2]).toEqual({ rating: "down", comment: "too dark" });
-  expect(screen.getByLabelText("Comment on Still")).toHaveValue("too dark");
-});
-
-test("clearing a rating calls the API and unpresses the thumbs", async () => {
-  const user = userEvent.setup();
-  let cleared = false;
-  const rated = { ...still, rating: "up", comment: "nice" };
-  const calls = serve([rated], (call) => {
-    if (call === "DELETE /packages/bench/versions/2/renders/still/feedback") {
-      cleared = true;
-      return { body: still };
-    }
-    if (call === "GET /packages/bench/versions/2/renders" && cleared) return { body: [still] };
-  });
-  show();
-  await user.click(await screen.findByRole("button", { name: "Clear rating of Still" }));
-  expect(await screen.findByRole("button", { name: "Thumbs up Still", pressed: false })).toBeInTheDocument();
-  expect(calls.some(([m]) => m === "DELETE")).toBe(true);
-});
-
-test("a refusal is shown beside the render it names and the optimistic rating is rolled back", async () => {
-  const user = userEvent.setup();
-  serve([still], (call) => {
-    if (call.startsWith("PUT")) {
-      return { status: 409, body: { detail: { failure_class: "no_render", reason: "the render does not exist yet, so it cannot be rated" } } };
-    }
-  });
-  show();
-  await user.click(await screen.findByRole("button", { name: "Thumbs up Still" }));
-  const message = await screen.findByText("the render does not exist yet, so it cannot be rated");
-  expect(message.closest("section")).toHaveAccessibleName("Still");
-  expect(screen.getByRole("button", { name: "Thumbs up Still", pressed: false })).toBeInTheDocument();
-});
-
-test("a render made before ratings existed says so and offers no thumbs", async () => {
-  serve([legacy]);
-  show();
-  expect(await screen.findByText("Rendered before ratings existed — render it again to rate it.")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Thumbs/ })).toBeNull();
 });
 
 test("no model, prompt, token or cost text appears on the page", async () => {
   serve([still]);
   show();
-  await screen.findByRole("img", { name: "Still of bench version 2" });
+  await screen.findByRole("link", { name: "Inspect version 2" });
   const text = document.body.textContent ?? "";
   for (const word of [/deepseek/i, /prompt/i, /token/i, /\bmodel\b/i, /€|eur\b/i, /\bcost/i]) {
     expect(text).not.toMatch(word);
@@ -181,17 +116,6 @@ test("a packages refusal is shown instead of loading forever", async () => {
   show();
   expect(await screen.findByRole("alert")).toHaveTextContent("the packages list failed");
   expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
-});
-
-test("another version loads its own renders", async () => {
-  const user = userEvent.setup();
-  serve([still], (call) => {
-    if (call === "GET /packages/bench/versions/1/renders") return { body: [] };
-  });
-  show();
-  await screen.findByRole("img", { name: "Still of bench version 2" });
-  await user.selectOptions(screen.getByRole("combobox", { name: "Versions of bench" }), "1");
-  expect(await screen.findByText("No renders of this version yet.")).toBeInTheDocument();
 });
 
 test("the versions are a dropdown, newest first, each with its state", async () => {
@@ -577,7 +501,7 @@ test("a confirmed delete drops the version from the piece and shows another", as
   await user.click(await screen.findByRole("button", { name: "Delete version 2" }));
   expect(calls.some(([m, u]) => m === "DELETE" && u === "/packages/bench/versions/2")).toBe(false);
   await user.click(screen.getByRole("button", { name: "Yes, delete version 2" }));
-  expect(await screen.findByText("No renders of this version yet.")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Versions of bench" })).toHaveValue("1"));
   const versions = screen.getByRole("combobox", { name: "Versions of bench" });
   expect(versions).not.toHaveTextContent("Version 2");
   expect(versions).toHaveValue("1");
@@ -739,7 +663,7 @@ test("the card shows the newest screenshot, keeps it when another version is cho
   expect(picture).toHaveAttribute("src", "/packages/bench/versions/2/files/screenshot.png");
   expect(picture.closest("figure")).toHaveTextContent("Version 2");
   await user.selectOptions(screen.getByRole("combobox", { name: "Versions of bench" }), "1");
-  expect(await screen.findByText("No renders of this version yet.")).toBeInTheDocument();
+  await screen.findByRole("button", { name: "Approve version 1" });
   expect(screen.getByRole("img", { name: "bench version 2" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Approve version 1" }));
   const approved = await screen.findByRole("img", { name: "bench version 1" });
@@ -808,7 +732,6 @@ test("choosing a tile opens its dialog at its own address, keeping the page (Ope
   expect(within(dialog).getByRole("button", { name: "Start conversation" })).toBeInTheDocument();
   expect(within(dialog).getByRole("combobox", { name: "Versions of bench" })).toBeInTheDocument();
   expect(within(dialog).getByRole("combobox", { name: "Room of bench" })).toBeInTheDocument();
-  expect(await within(dialog).findByRole("img", { name: "Still of bench version 2" })).toBeInTheDocument();
 });
 
 test("closing a dialog opened from the grid goes back to the grid's address (Back closes)", async () => {

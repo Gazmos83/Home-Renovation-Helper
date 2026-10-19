@@ -287,22 +287,22 @@ A change to an extra part's placements SHALL place, move or unplace that part; a
 - **THEN** `room_fit` for `Wohnen` is refused naming `Wohnen`, saying no rooms are recorded yet and that Intake records a room
 
 ### Requirement: The Builder builds and renders only through the guard
-`blender_build` SHALL build a version that has not succeeded yet, wait for it within the Blender timeout, and report the outcome with the screenshot route; a version already built SHALL be reported as such without rebuilding. `render_turntable` SHALL require a tier, `draft` or `final`, and SHALL refuse raw frame, resolution or engine values by name. It SHALL render a still or a turntable of a version alone or placed with a `room_fit` placement, except that a `draft` of a piece version alone SHALL be a turntable: a `draft` still of a piece version alone SHALL be refused, saying a draft of a piece is a turntable. For `draft` it SHALL start the run and report the estimate; for `final` it SHALL pause with the estimate and run only on `yes`. When a render starts, the reply SHALL give the estimate and SHALL NOT give a viewer route: for a piece version it SHALL say that a Review button appears in this chat when the render finishes, and for a shell or composition that a notice appears in this chat. The Builder SHALL never write or run Blender Python.
+`blender_build` SHALL build a version that has not succeeded yet, wait for it within the Blender timeout, and report the outcome with the screenshot route; a version already built SHALL be reported as such without rebuilding. `render_turntable` SHALL require a tier, `draft` or `final`, and SHALL refuse raw frame, resolution or engine values by name. It SHALL render a still or a turntable of a composed room or an apartment shell only. A piece version, on its own or placed in a room, SHALL NOT be rendered: such a call SHALL be refused in plain words, saying renders are made of rooms and offering to compose the room with the piece and render the room. For `draft` it SHALL start the run and report the estimate; for `final` it SHALL pause with the estimate and run only on `yes`. When a render starts, the reply SHALL give the estimate and SHALL NOT give a viewer route, and SHALL say that a notice appears in this chat when it finishes. The Builder SHALL never write or run Blender Python.
 
 #### Scenario: Draft turntable
-- **WHEN** the owner asks for a draft turntable of a built piece
-- **THEN** the run is started at tier `draft` and the reply gives the estimate in plain terms and says a Review button appears in this chat when it finishes, with no viewer route
+- **WHEN** the owner asks for a draft turntable of the composed room `Wohnen`
+- **THEN** the run is started at tier `draft` and the reply gives the estimate in plain terms and says a notice appears in this chat when it finishes, with no viewer route
 
 #### Scenario: Draft still of a piece refused
-- **WHEN** the Builder's call asks for a `draft` still of a built piece on its own
-- **THEN** it is refused saying a draft of a piece is a turntable, and no process starts
+- **WHEN** the Builder's call asks for a render of a built piece on its own
+- **THEN** it is refused saying renders are made of rooms, and no process starts
 
 #### Scenario: Draft still of a placed piece
-- **WHEN** the Builder's call asks for a `draft` still of a built piece placed with a `room_fit` placement
-- **THEN** the run is started at tier `draft` and the reply gives the estimate
+- **WHEN** the Builder's call asks for a still of a built piece placed in the conversation's room
+- **THEN** it is refused saying renders are made of rooms and offering to compose and render the room, and no process starts
 
 #### Scenario: Final paused
-- **WHEN** the owner asks for a final render
+- **WHEN** the owner asks for a final render of a composed room
 - **THEN** the reply carries a pending confirmation with the estimate and nothing has started
 
 #### Scenario: Raw frames refused
@@ -635,12 +635,14 @@ The Designer's context SHALL carry the custom-build templates only while the con
 - the field;
 - the target value in millimetres.
 
+The owner's words since the last created revision of the piece SHALL be the owner's messages plus the owner's answers to question forms (`ask_owner`) in that span: each answer given to a question, or the text the owner wrote instead of answering. The text of a question SHALL NOT count as the owner's words.
+
 The application SHALL check each entry before any confirmation is raised:
-- the quote appears in the owner's messages since the last created revision of the piece;
+- the quote appears in the owner's words since the last created revision of the piece;
 - the quote's length and unit (mm, cm, m) give the target, either as an absolute value, or as a relative value ("wider", "narrower", "taller", "shorter", "deeper", "more", "less", "by") added to or subtracted from the field's value in the latest version;
 - the changes set that field to the target.
 
-Every length with a unit in those messages SHALL be covered by an entry. An entry MAY mark its quote as not about the piece (target `none`, for example a room's size); it is accepted when its quote is present, and it covers that length. A failed check SHALL be refused to the Designer naming the quote, the expected value and what the changes set, or naming the uncovered length. No confirmation is raised and no version is created. A request whose figure cannot be tied to one module and field is not checked, and is shown to the owner on the card as usual.
+Every length with a unit in those words SHALL be covered by an entry. An entry MAY mark its quote as not about the piece (target `none`, for example a room's size or a piece's height on a wall); it is accepted when its quote is present, and it covers that length. A failed check SHALL be refused to the Designer naming the quote, the expected value and what the changes set, or naming the uncovered length. A refusal for an uncovered length or a quote not found SHALL also quote the owner's sentence that holds the length, so the Designer can quote it exactly. No confirmation is raised and no version is created. A request whose figure cannot be tied to one module and field is not checked, and is shown to the owner on the card as usual.
 
 #### Scenario: Absolute width honoured
 - **WHEN** the owner wrote "make the cabinet 80 cm wide" and the call's entry quotes it with `cabinet`, `width`, 800, and the changes set `cabinet` width to 800
@@ -656,15 +658,23 @@ Every length with a unit in those messages SHALL be covered by an entry. An entr
 
 #### Scenario: Measurement left out
 - **WHEN** the owner wrote "80 cm wide and 40 cm deep" and the call covers only the width
-- **THEN** the call is refused naming "40 cm" as not covered
+- **THEN** the call is refused naming "40 cm" as not covered and quoting "80 cm wide and 40 cm deep"
 
 #### Scenario: Quote not from the owner
-- **WHEN** an entry quotes "90 cm" and no owner message since the last revision contains it
+- **WHEN** an entry quotes "90 cm" and no owner message or form answer since the last revision contains it
 - **THEN** the call is refused naming the quote
 
 #### Scenario: Length not about the piece
 - **WHEN** the owner wrote "the room is 4 m wide, make the cabinet 80 cm wide" and the call has the width entry and an entry quoting "4 m wide" with target `none`
 - **THEN** the check passes and the confirmation is raised
+
+#### Scenario: Width given in a question form
+- **WHEN** the Designer asked "How wide is the lamellen-kommode, so the sideboard can match it?", the owner answered "1350 mm", and the call's entry quotes "1350 mm" with `cabinet`, `width`, 1350 and the changes set it
+- **THEN** the check passes and the confirmation is raised
+
+#### Scenario: A figure in the question text is not the owner's
+- **WHEN** a form question reads "Should it stay 450 mm deep?" and the owner answered "Yes", and an entry quotes "450 mm"
+- **THEN** the call is refused naming "450 mm" as not in the owner's words
 
 ### Requirement: Requested shelf and divider measurements are checked
 The requested-measurement check SHALL accept as a field of a module:
@@ -907,6 +917,56 @@ On an open-question turn the Designer SHALL answer in plain words and SHALL have
 - **WHEN** a conversation has no confirmed room and the owner asks "how do I download the design template?"
 - **THEN** Intake answers it as a help question
 
+### Requirement: Hardware words alone do not make a revision an engineering turn
+A message that asks to change the bound piece SHALL NOT become an engineering turn only because it names hardware or a cabinet kind: hanger, hinge, drawer, runner, wall cabinet, base cabinet, kitchen cabinet, worktop, countertop, their German forms, or a kitchen hardware intent. It SHALL become an engineering turn when it also holds a load, capacity, safety, stability, anchorage, deflection or span term, or a weight to hold. Any other message SHALL be classified as before.
+
+The code's engineering terms SHALL include shelf span and sag wording: "allowable … span", "shelf span", "sag" and "sagging" (and "durchhängen").
+
+#### Scenario: Adding a wall hanger
+- **WHEN** the conversation has a bound piece and the owner writes "Yes, please add a wall hanger to the sideboard"
+- **THEN** the turn is not an engineering turn and the Designer restates the change as usual
+
+#### Scenario: Hanger with a load
+- **WHEN** the owner writes "add a wall hanger that holds 30 kg"
+- **THEN** the turn is an engineering turn
+
+#### Scenario: Shelf span question
+- **WHEN** the owner writes "What's the allowable shelf span for particle boards?"
+- **THEN** the code marks it an engineering turn, whatever the routing model flagged
+
+### Requirement: A model-only engineering flag never replaces an ordinary answer
+When a turn is an engineering turn only because the routing model flagged it, and the owner's message holds no engineering term by code, a specialist answer that the engineering format rejects SHALL NOT stand as the whole reply. The same specialist SHALL answer that turn once more as an ordinary turn, with the ordinary tools and notes and no engineering answer note, and its answer SHALL be the reply. A turn with an engineering term by code keeps the fixed status sentence on a rejected answer.
+
+#### Scenario: Space question flagged by the model
+- **WHEN** the routing model flags "How much space is there between the murphy bed and wall 1?" as engineering and the specialist's engineering answer is rejected
+- **THEN** the owner gets an ordinary answer about the space, not only "Not verified: no engineering check is available …"
+
+#### Scenario: Load question keeps the status
+- **WHEN** the owner asks "Is the shelf safe for 40 kg?" and the engineering answer is rejected
+- **THEN** the reply is only the fixed status sentence
+
+### Requirement: A no to the room question is a decline
+When the last reply before the owner's message was "Which room is this for?", the message names no room or apartment of the house file and carries no plan or photo, and its first word is a no-word ("no", "none", "without", "nein", "kein", "keinen"), the application SHALL save the conversation's room as declined, as for a "no" to "Would you like to view this piece in a room?". Neither room question SHALL be asked again in that conversation; the owner can still name a room later.
+
+#### Scenario: No room for now
+- **WHEN** the reply was "Which room is this for?" and the owner writes "No room for now, design it without one."
+- **THEN** the room is saved as declined, and the next turn "Yes, go on with the design." is routed without either room question
+
+#### Scenario: A room named after the question
+- **WHEN** the reply was "Which room is this for?" and the owner writes "Wohnen"
+- **THEN** nothing is declined and the room is confirmed as before
+
+### Requirement: The saved placement is in the Designer's and the Builder's context
+When the bound piece's latest version has a saved placement in the conversation's confirmed room, the Designer's and the Builder's notes SHALL state it on every turn: the room, the wall as the owner numbers it, the distance from the wall's left end, and the height of the piece's underside above the floor when it is hung. The note SHALL also name the wall at each end of the piece, as the owner numbers walls, with the code-computed clear gap from that end to that wall in whole millimetres. A specialist SHALL NOT ask the owner for a placement figure the note states.
+
+#### Scenario: Hung sideboard placement remembered
+- **WHEN** sideboard-1200 version 2 is saved on wall 2 of Wohnen, 0 mm from the left end, hung at 1700 mm, and the owner later writes "Build it and show it in the room"
+- **THEN** the Builder's note states wall 2, 0 mm and 1700 mm, and no specialist asks for the height again
+
+#### Scenario: End walls named
+- **WHEN** a 1000 mm wide Murphy bed is saved on wall 2 of the five-wall Wohnen (3000 mm long, left end at wall 3), 700 mm from the left end
+- **THEN** the note says its left end is 700 mm from wall 3 and its right end 1300 mm from wall 1
+
 ### Requirement: A specialist knows its role and does not relay
 Each specialist's prompt SHALL carry a fixed note, composed by code, naming the specialist it is on this turn. The note SHALL say that earlier assistant replies in the conversation may have been written by other specialists and that their limits are not its own. No specialist SHALL offer to pass a request to another specialist or say that it cannot see another specialist's work. A specialist other than the Designer that is asked to change a room SHALL say in one sentence that the room has not been changed, and SHALL NOT gather or confirm the room's change list.
 
@@ -945,3 +1005,49 @@ The tool works in any conversation, including one bound to another piece. The so
 #### Scenario: Unknown source
 - **WHEN** the Designer names a source piece that does not exist
 - **THEN** the tool refuses naming the id, and no preview is shown
+
+### Requirement: A piece is viewed in its room after the owner places it
+When the owner asks to see the bound piece in the conversation's confirmed room, its latest version has a successful build, and that version has no stored placement in that room, the Foreman SHALL give the turn to the Designer. The Designer SHALL call `ask_placement`. Its questions SHALL be written by the application, never by the model:
+1. "Where would you like to place the piece? Check out the Room layout." The choices are the room's walls in order, each "Wall N (L mm)" with its length, at most eight. A room with more walls takes the wall number as a free answer.
+2. "How far from the left end of that wall should the piece start? (seen facing the wall)", with the unit mm.
+
+The set SHALL pause the turn like any question set. With the answers, the application SHALL run the room fit itself, as `room_fit` does, for that wall and that distance, converting the distance into the wall's offset; the model passes no wall or offset.
+- When it fits, the placement SHALL be stored for that piece version and room. In the same turn the application SHALL hand the turn to the Builder, which SHALL start a `draft` still of the piece in the room through the render guard, and the reply gives the estimate.
+- When it does not fit, the Designer SHALL say why in plain words (the wall, how much too wide, or what is in the way) and SHALL call `ask_placement` again.
+
+When the version already has a stored placement in that room, the request SHALL go to the Builder, which renders with it. `render_turntable` SHALL take `in_room` (true or false) instead of a room document, and SHALL read the stored placement of the version for the conversation's confirmed room. Without one it SHALL refuse, saying the piece has no place in that room yet, and start nothing. A new version has no placement until one is chosen for it.
+
+#### Scenario: First view in the room
+- **WHEN** `lamellen-kommode` v1 is built, the conversation's room is `Wohnen` with five walls, no placement is stored, and the owner writes "I would like to view this in the room"
+- **THEN** the Designer's question set asks "Where would you like to place the piece? Check out the Room layout." with the choices "Wall 1 (6200 mm)" to "Wall 5 (…)", and nothing renders yet
+
+#### Scenario: Placed and shown
+- **WHEN** the owner answers "Wall 2 (5700 mm)" and "300"
+- **THEN** the room fit runs for wall 2 at the matching offset, the placement is stored for `lamellen-kommode` v1 in `Wohnen`, and in the same turn a `draft` still in the room starts and the reply gives the estimate
+
+#### Scenario: Does not fit
+- **WHEN** the owner answers a wall and a distance that leave the piece 150 mm past the wall's end
+- **THEN** the reply says the piece is 150 mm too wide there and the placement questions are asked again; nothing is stored or rendered
+
+#### Scenario: Shown again
+- **WHEN** `lamellen-kommode` v1 has a stored placement in `Wohnen` and the owner asks to see it in the room again
+- **THEN** the Builder starts a `draft` still in the room with no questions
+
+#### Scenario: No placement, Builder call refused
+- **WHEN** the Builder calls `render_turntable` with `in_room` true for a version with no stored placement in the conversation's room
+- **THEN** the call is refused saying the piece has no place in that room yet, and nothing starts
+
+#### Scenario: Room declined
+- **WHEN** the conversation declined a room and the owner asks to see the piece in a room
+- **THEN** the reply is "Which room is this for?"
+
+### Requirement: Gap figures come from code
+When the owner asks for a distance between a piece or model and a wall, another item, or the ceiling, the Designer and the Researcher SHALL take the figure from `measure_gaps` for a named composition version, or from the saved-place note for the bound piece. They SHALL NOT work out a gap themselves. `measure_gaps` SHALL be read-only, take only a version number and an item, and use the conversation's confirmed room. Naming a different room SHALL be refused.
+
+#### Scenario: Gap in a room version
+- **WHEN** the owner asks "How much space is between the Murphy bed and wall 3 in Wohnen v12?" in a conversation whose room is Wohnen
+- **THEN** `measure_gaps` is called with version 12 and the bed, and the reply states its figure for wall 3 in one sentence
+
+#### Scenario: Other room refused
+- **WHEN** the conversation's room is Wohnen and the model asks `measure_gaps` for a version of Bad
+- **THEN** the tool refuses and nothing is measured

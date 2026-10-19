@@ -46,6 +46,8 @@ _ROOM_OPTIONAL: Final = frozenset({"wall_thickness_mm"})
 _OPENING_REQUIRED: Final = frozenset({"wall", "type", "offset_mm", "width_mm", "height_mm"})
 _OPENING_OPTIONAL: Final = frozenset({"sill_mm"})
 _PLACEMENT_KEYS: Final = frozenset({"wall", "offset_mm"})
+# A piece hung on its wall: the height of its underside above the floor (conversation-continuity).
+_PLACEMENT_OPTIONAL: Final = frozenset({"mount_height_mm"})
 _FURNISHING_REQUIRED: Final = frozenset(
     {"name", "width_mm", "depth_mm", "height_mm", "x_mm", "y_mm", "rotation_deg"}
 )
@@ -191,6 +193,39 @@ def sight_clear(a: Point, b: Point, corners: Sequence[Point]) -> bool:
     return _point_in_polygon(midpoint, corners)
 
 
+def _point_segment_distance(point: Point, a: Point, b: Point) -> float:
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length2 = dx * dx + dy * dy
+    t = 0.0 if length2 == 0 else max(0.0, min(1.0, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / length2))
+    return math.hypot(point[0] - (a[0] + t * dx), point[1] - (a[1] + t * dy))
+
+
+def segment_distance(a: Point, b: Point, c: Point, d: Point) -> float:
+    """The shortest distance between segments a-b and c-d; 0 when they cross or touch."""
+    if _segments_cross_properly(a, b, c, d):
+        return 0.0
+    return min(
+        _point_segment_distance(a, c, d), _point_segment_distance(b, c, d),
+        _point_segment_distance(c, a, b), _point_segment_distance(d, a, b),
+    )
+
+
+def _edges(shape: Sequence[Point]) -> list[tuple[Point, Point]]:
+    if len(shape) == 2:
+        return [(shape[0], shape[1])]
+    return [(shape[i], shape[(i + 1) % len(shape)]) for i in range(len(shape))]
+
+
+def polygon_distance(p: Sequence[Point], q: Sequence[Point]) -> float:
+    """The shortest plan distance between two convex shapes, each a polygon or a two-point
+    segment (a wall); 0 when they touch, cross or one holds a corner of the other."""
+    if len(p) > 2 and any(_point_in_polygon(corner, p) for corner in q):
+        return 0.0
+    if len(q) > 2 and any(_point_in_polygon(corner, q) for corner in p):
+        return 0.0
+    return min(segment_distance(a, b, c, d) for a, b in _edges(p) for c, d in _edges(q))
+
+
 def interior_point(corners: Sequence[Point]) -> Point:
     """A point inside the polygon: the centroid when it is inside, else the
     midpoint of the longest horizontal chord through the polygon's vertical middle."""
@@ -322,7 +357,14 @@ class RoomBuildContext:
             "units": UNITS,
             "room": room,
             "openings": openings,
-            "placement": {"wall": self.placement["wall"], "offset_mm": self.placement["offset_mm"]},
+            "placement": {
+                "wall": self.placement["wall"],
+                "offset_mm": self.placement["offset_mm"],
+                **(
+                    {"mount_height_mm": self.placement["mount_height_mm"]}
+                    if "mount_height_mm" in self.placement else {}
+                ),
+            },
             "furnishings": furnishings,
             "output": output,
         }
@@ -438,7 +480,7 @@ def _normalise_openings(raw: Any, walls: Sequence[Wall], ceiling_mm: float) -> t
 def _normalise_placement(
     raw: Any, walls: Sequence[Wall], corners: Sequence[Point], ceiling_mm: float, package_overall: Mapping[str, float]
 ) -> dict[str, Any]:
-    _require_keys(raw, _PLACEMENT_KEYS, frozenset(), "placement")
+    _require_keys(raw, _PLACEMENT_KEYS, _PLACEMENT_OPTIONAL, "placement")
     wall_index = raw["wall"]
     if not isinstance(wall_index, int) or isinstance(wall_index, bool) or not (0 <= wall_index < len(walls)):
         _fail(f"placement.wall must be a valid wall index (0..{len(walls) - 1})")
@@ -455,6 +497,14 @@ def _normalise_placement(
         )
     if package_h > ceiling_mm + _TOL:
         _fail("the package is taller than the ceiling")
+    mount = None
+    if "mount_height_mm" in raw:
+        mount = _number(raw["mount_height_mm"], "placement.mount_height_mm", allow_zero=True)
+        if mount + package_h > ceiling_mm + _TOL:
+            _fail(
+                f"the package would hang with its top at {mount + package_h:.0f} mm, "
+                f"above the ceiling ({ceiling_mm:.0f} mm)"
+            )
 
     ax, ay = wall.start
     ux, uy = wall.direction
@@ -474,6 +524,7 @@ def _normalise_placement(
     return {
         "wall": wall_index,
         "offset_mm": offset,
+        **({"mount_height_mm": mount} if mount is not None else {}),
         "footprint": footprint,
         "center": center,
         "outward_normal": wall.outward_normal,

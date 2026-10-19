@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.agent.foreman import last_reply
-from app.engineering.chat import SHORT_STATUS, placement_request
+from app.engineering.chat import SHORT_STATUS, hang_request, placement_request
 from tests.graph_helpers import fake_models, make_harness
 
 REPORTED = "Can you please put v18 to the right of the door of wall 1, 30 cm away from wall 2?"
@@ -18,6 +18,7 @@ REPORTED = "Can you please put v18 to the right of the door of wall 1, 30 cm awa
         "Stell v18 30 cm von Wand 2",
         "Move the bench into the corner",
         "Place it under the window",
+        "Please hang this sideboard along wall 2 0 mm from wall three and 0 mm from the ceiling",
     ],
 )
 def test_a_placement_matches(text: str) -> None:
@@ -67,3 +68,16 @@ def test_a_safety_question_still_reaches_the_engineering_path(tool_state) -> Non
     state = harness.turn("Can this shelf hold 30 kg?")
     assert state["engineering_turn"] and state["specialist"] == "researcher"
     assert last_reply(state) == SHORT_STATUS
+
+
+@pytest.mark.parametrize(
+    ("text", "hangs"),
+    [
+        ("Can you hang it now?", True),
+        ("Bitte an die Wand hängen", True),
+        ("Can I hang the wall cabinet safely?", False),
+        ("Make it wider", False),
+    ],
+)
+def test_a_hang_request_is_a_placement_unless_it_asks_engineering(text: str, hangs: bool) -> None:
+    assert hang_request(text) is hangs

@@ -190,3 +190,77 @@ def test_an_approved_plan_door_still_blocks(make_ctx, tool_deps, tool_state) -> 
     door = {"wall": 0, "type": "door", "offset_mm": 600, "width_mm": 900, "height_mm": 2100}
     _composition_plan(tool_deps, tool_state, openings=[door])
     assert "would block the door on wall 0" in fit(make_ctx)
+
+
+# --- a wall-hung piece (conversation-continuity) --------------------------------------------
+
+
+def _said(make_ctx, text: str):
+    from langchain_core.messages import HumanMessage
+
+    return make_ctx(history=(HumanMessage(text),))
+
+
+def _desk_height() -> float:
+    from app.blender.custom_build import derive as custom_derive
+
+    return float(custom_derive.overall(desk())["h"])
+
+
+def test_a_hung_piece_stores_its_height(make_ctx, tool_deps, tool_state) -> None:
+    from app.blender import storage
+    from app.packages.placements import read_placement
+
+    setup(tool_deps, tool_state)
+    result = run(
+        {"room_name": "Living room", "package_id": "bench", "wall": 0, "offset_mm": 500, "mount_height_mm": 1000},
+        _said(make_ctx, "hang it on the wall, 1000 mm above the floor"),
+    )
+    assert "hung with its underside at 1000 mm" in result
+    stored = read_placement(storage.version_dir(tool_state.settings.render_root, "bench", 1), "Living room")
+    assert stored["mount_height_mm"] == 1000
+    assert stored["placement"]["mount_height_mm"] == 1000
+    assert stored["scene"]["placement"]["mount_height_mm"] == 1000
+
+
+def test_a_gap_below_the_ceiling_is_turned_into_the_underside_height(make_ctx, tool_deps, tool_state) -> None:
+    setup(tool_deps, tool_state)
+    result = run(
+        {"room_name": "Living room", "package_id": "bench", "wall": 0, "offset_mm": 500, "ceiling_gap_mm": 20},
+        _said(make_ctx, "hang it 20 mm from the ceiling"),
+    )
+    assert f"hung with its underside at {2600 - _desk_height() - 20:g} mm" in result
+
+
+def test_a_height_the_owner_did_not_write_is_refused(make_ctx, tool_deps, tool_state) -> None:
+    from app.blender import storage
+    from app.packages.placements import read_placement
+
+    setup(tool_deps, tool_state)
+    result = run(
+        {"room_name": "Living room", "package_id": "bench", "wall": 0, "offset_mm": 500, "mount_height_mm": 1700},
+        _said(make_ctx, "hang it close to the ceiling"),
+    )
+    assert "1700 mm is not a length the owner wrote" in result
+    assert read_placement(storage.version_dir(tool_state.settings.render_root, "bench", 1), "Living room") is None
+
+
+def test_a_hung_piece_above_the_ceiling_is_refused(make_ctx, tool_deps, tool_state) -> None:
+    setup(tool_deps, tool_state)
+    result = run(
+        {"room_name": "Living room", "package_id": "bench", "wall": 0, "offset_mm": 500, "mount_height_mm": 2500},
+        _said(make_ctx, "hang it 2500 mm up"),
+    )
+    assert "above the ceiling" in result
+
+
+def test_a_piece_hung_above_a_door_clears_it(make_ctx, tool_deps, tool_state) -> None:
+    door = {"wall": 0, "type": "door", "offset_mm": 600, "width_mm": 900, "height_mm": 2100}
+    setup(tool_deps, tool_state, openings=[door])
+    with tool_deps.session() as session:
+        house_file.upsert_room(session, "Living room", LIVING, 2200 + _desk_height(), openings=[door])
+        session.commit()
+    args = {"room_name": "Living room", "package_id": "bench", "wall": 0, "offset_mm": 500}
+    said = _said(make_ctx, "hang it 2150 mm or 1500 mm up")
+    assert "fits in Living room" in run({**args, "mount_height_mm": 2150}, said)
+    assert "would block the door on wall 0" in run({**args, "mount_height_mm": 1500}, said)

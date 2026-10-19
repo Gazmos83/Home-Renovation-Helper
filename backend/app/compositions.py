@@ -24,15 +24,20 @@ from app.blender.composition_contract import (
     SCHEMA_VERSION,
     UNITS,
     ItemSubject,
+    _wall_pose,
     apartment_wall_labels,
+    floor_summary,
     parse_composition,
     place_items,
     room_geometry,
 )
 from app.blender.custom_build import derive as custom_derive
+from app.blender.lighting import DEFAULT_LIGHTING, Lighting
+from app.blender.room_contract import Point, _rotated_footprint, polygon_distance
 from app.blender.shell_contract import normalise_shell
 from app.blender.spec_contract import SpecValidationError
 from app.guidelines.rules import Rule, evaluate, partition, refusal_text
+from app.packages.placements import read_placement
 
 
 def read_document(folder: Path) -> dict[str, Any] | None:
@@ -143,6 +148,113 @@ def dimensions_of_scope(
         "walls": found["walls"],
         "ceilings": found["ceilings"],
     }
+
+
+class GapRefused(ValueError):
+    """An item's gaps cannot be measured; the message says why in plain words."""
+
+
+def _mm(value: float) -> int:
+    return math.floor(value + 0.5)
+
+
+def _key(text: Any) -> str:
+    return re.sub(r"[\s_-]+", " ", str(text or "")).strip().casefold()
+
+
+def _find_item(document: dict[str, Any], placed: list[dict[str, Any]], item: str) -> dict[str, Any]:
+    """The placed item named by its id, its name or its package id (case and spacing ignored)."""
+    names = {raw.get("id"): (raw.get("name"), raw.get("package_id")) for raw in document.get("items") or []}
+    wanted = _key(item)
+    matches = [p for p in placed if wanted in {_key(p["id"]), *(_key(n) for n in names.get(p["id"], ()) if n)}]
+    if not matches:
+        raise GapRefused(f"there is no item {item!r} in this room version")
+    if len(matches) > 1:
+        raise GapRefused(f"{item!r} names more than one item ({', '.join(p['id'] for p in matches)}); name one by its id")
+    return matches[0]
+
+
+def _shape(placed: dict[str, Any]) -> tuple[tuple[Point, ...], float, float]:
+    """An item's plan footprint and its height range (underside, top)."""
+    size = placed["size_mm"]
+    footprint = _rotated_footprint(
+        float(placed["centre_mm"][0]), float(placed["centre_mm"][1]),
+        float(size["w"]), float(size["d"]), float(placed["rotation_deg"]),
+    )
+    base = float(placed.get("base_mm", 0.0))
+    return footprint, base, base + float(size["h"])
+
+
+def gaps_of(document: dict[str, Any], item: str) -> dict[str, Any]:
+    """Clear distances in whole mm for one item of a room version, from its stored document
+    only (measure-gaps): to every wall, to every other item and to the ceiling."""
+    if "apartment" in (document.get("scope") or {}):
+        raise GapRefused("gaps can be measured in a single room's version, not yet in an apartment's")
+    resolved = document.get("resolved") or {}
+    room = next((r for r in resolved.get("rooms") or [] if r.get("name") == scope_name(document)), None)
+    if room is None:
+        raise GapRefused("this room version has no room plan to measure against")
+    placed = [p for p in resolved.get("items") or [] if "size_mm" in p and "strip" not in p]
+    target = _find_item(document, placed, item)
+    footprint, base, top = _shape(target)
+    corners = [(float(x), float(y)) for x, y in room["corners"]]
+    walls = [
+        {"label": f"wall {i + 1}", "gap_mm": _mm(polygon_distance(footprint, (a, corners[(i + 1) % len(corners)])))}
+        for i, a in enumerate(corners)
+    ]
+    names = {raw.get("id"): raw.get("name") or raw.get("package_id") for raw in document.get("items") or []}
+    others = []
+    for other in placed:
+        if other is target or other.get("hidden") or other.get("room") != target.get("room"):
+            continue
+        other_footprint, other_base, other_top = _shape(other)
+        plan = polygon_distance(footprint, other_footprint)
+        vertical = plan == 0 and (other_base >= top or base >= other_top)
+        gap = max(other_base - top, base - other_top) if vertical else plan
+        others.append({"id": other["id"], "name": names.get(other["id"]) or other["id"], "gap_mm": _mm(gap), "vertical": vertical})
+    return {
+        "item": target["id"],
+        "name": names.get(target["id"]) or target["id"],
+        "walls": walls,
+        "items": others,
+        "ceiling_mm": _mm(float(room["height_mm"]) - top),
+        "underside_mm": _mm(base) if base > 0 else None,
+    }
+
+
+def end_wall_gaps(room: Any, placement: dict[str, Any], size: tuple[float, float, float]) -> tuple[int, int, int, int] | None:
+    """For a piece saved on a wall of a house-file room: (the wall at its left end, its gap,
+    the wall at its right end, its gap), walls numbered from 1; `None` when it cannot be read.
+    Corners run counter-clockwise, so wall i's left end, seen facing it, meets wall i+1."""
+    try:
+        geometry = room_geometry("room", {
+            "corners_mm": room.corners_mm, "height_mm": room.height_mm, "wall_thickness_mm": room.wall_thickness_mm,
+        })
+        index = int(placement["wall"])
+        _footprint, centre, rotation, _outward = _wall_pose("piece", geometry, index, float(placement["offset_mm"]), size)
+    except (KeyError, TypeError, ValueError, SpecValidationError):
+        return None
+    document = {
+        "scope": {"room": "room"}, "items": [{"id": "piece"}],
+        "resolved": {
+            "rooms": [{"name": "room", "corners": [list(c) for c in geometry.corners], "height_mm": geometry.height_mm}],
+            "items": [{"id": "piece", "room": "room", "size_mm": {"w": size[0], "d": size[1], "h": size[2]},
+                       "centre_mm": list(centre), "rotation_deg": rotation}],
+        },
+    }
+    walls = gaps_of(document, "piece")["walls"]
+    left, right = (index + 1) % len(walls), (index - 1) % len(walls)
+    return left + 1, walls[left]["gap_mm"], right + 1, walls[right]["gap_mm"]
+
+
+def gaps_of_scope(
+    session: Session, root: Path, *, name: str, version: int, item: str
+) -> dict[str, Any]:
+    """`gaps_of` for a room's composition version, or `GapRefused` when it cannot be read."""
+    loaded = _scope_document(session, root, scope="room", name=name, version=version)
+    if loaded is None:
+        raise GapRefused(f"{name} has no room version {version}")
+    return {"version": loaded[1], **gaps_of(loaded[0], item)}
 
 
 def placement_room(
@@ -327,30 +439,82 @@ def _model(session, item: dict[str, Any]):
     return model
 
 
-def _where(placement: dict[str, Any]) -> str:
+def _on_wall(placement: dict[str, Any], walls: tuple[Any, ...], width: float) -> str:
+    """A wall placement as the owner gives it: walls numbered from 1 as the room view labels them,
+    and the distance from the wall's left end seen facing it (place-piece-from-owner-words)."""
+    left = walls[placement["wall"]].length_mm - placement["offset_mm"] - width
+    return f"wall {placement['wall'] + 1}, {round(left, 1):g} mm from the left end"
+
+
+def _where(placement: dict[str, Any], walls: tuple[Any, ...], width: float) -> str:
     if "wall" in placement:
-        return f"against wall {placement['wall']} at {placement['offset_mm']:g} mm"
+        hung = f", hung at {placement['mount_height_mm']:g} mm" if "mount_height_mm" in placement else ""
+        return f"against {_on_wall(placement, walls, width)}{hung}"
     return f"at ({placement['x_mm']:g}, {placement['y_mm']:g}) mm turned {placement['rotation_deg']:g}°"
 
 
 def _changes(previous: dict[str, Any] | None, document: dict[str, Any]) -> list[str]:
     if previous is None:
-        return [f"placed: {item['id']}" for item in document["items"]]
+        placed = [f"placed: {item['id']}" for item in document["items"]]
+        return placed + ([f"floor: {floor_summary(document['floor'])}"] if document.get("floor") else [])
     before = {item["id"]: item for item in previous.get("items", [])}
     after = {item["id"]: item for item in document["items"]}
     lines = [f"added: {i}" for i in after if i not in before]
     lines += [f"removed: {i}" for i in before if i not in after]
     lines += [f"moved: {i}" for i in after if i in before and before[i].get("placement") != after[i]["placement"]]
-    lines += [
-        f"changed: {i}" for i in after
-        if i in before and before[i].get("placement") == after[i]["placement"] and before[i] != after[i]
+    same_place = [i for i in after if i in before and before[i].get("placement") == after[i]["placement"]]
+
+    def without_flag(item: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in item.items() if key != "hidden"}
+
+    # Only the hidden flag changed: say which way (hidden-room-items).
+    flag_only = [
+        i for i in same_place
+        if bool(before[i].get("hidden")) != bool(after[i].get("hidden")) and without_flag(before[i]) == without_flag(after[i])
     ]
+    lines += [f"{'hidden' if after[i].get('hidden') else 'shown'}: {i}" for i in flag_only]
+    lines += [f"changed: {i}" for i in same_place if i not in flag_only and before[i] != after[i]]
+    # The floor finish is part of the version (room-floor-finish).
+    if document.get("floor") and document.get("floor") != previous.get("floor"):
+        lines.append(f"floor: {floor_summary(document['floor'])}")
+    elif previous.get("floor") and not document.get("floor"):
+        lines.append("floor finish removed")
     return lines
+
+
+def with_saved_place(
+    session, root: Path, room_name: str, package_id: str, version: int
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """The items and floor of the room's latest composition, with the piece version added at its
+    stored placement, or moved there when the piece is already in the room
+    (place-piece-from-owner-words). The model copies no item list on this path."""
+    stored = read_placement(storage.version_dir(root, package_id, version), room_name)
+    if stored is None:
+        raise CompositionRefused(
+            f"the piece has no place in {room_name} yet; ask the owner where it goes with ask_placement"
+        )
+    document = None
+    composition = house_file.composition_by_scope(session, "room", room_name)
+    if composition is not None:
+        rows = house_file.composition_version_rows(session, composition)
+        if rows:
+            document = read_document(storage.composition_version_dir(root, composition.slug, rows[-1].version))
+    kept = list((document or {}).get("items") or [])
+    previous = next((i for i in kept if i.get("type") == "piece" and i.get("package_id") == package_id), None)
+    items = [i for i in kept if i is not previous]
+    placement = {"wall": stored["wall"], "offset_mm": stored["offset_mm"]}
+    if stored.get("mount_height_mm") is not None:
+        placement["mount_height_mm"] = stored["mount_height_mm"]
+    items.append({
+        "id": previous["id"] if previous else package_id, "type": "piece",
+        "package_id": package_id, "version": version, "placement": placement,
+    })
+    return items, (document or {}).get("floor")
 
 
 def propose(
     session, *, render_root: Path, room: str | None, apartment: str | None, items: list[dict[str, Any]],
-    max_items: int, rules,
+    max_items: int, rules, floor: dict[str, Any] | None = None, lighting: Lighting = DEFAULT_LIGHTING,
 ) -> Proposal:
     """Validate a composition against the house file, the library and the rules; nothing is written."""
     if bool(room) == bool(apartment):
@@ -366,6 +530,8 @@ def propose(
             item.setdefault("name", model.name)
         filled.append(item)
     document = {"kind": KIND, "schema_version": SCHEMA_VERSION, "units": UNITS, "scope": {scope: name}, "items": filled}
+    if floor is not None:
+        document["floor"] = floor
     try:
         parsed = parse_composition(document, max_items=max_items)
     except SpecValidationError as error:
@@ -382,7 +548,9 @@ def propose(
             sources[item["id"]] = {"kind": model.kind, "entry": model.entry}
     try:
         geometry = {room_name: room_geometry(room_name, data) for room_name, data in rooms.items()}
-        stored, subjects = place_items(parsed, rooms=geometry, piece_sizes=sizes, scope_room=canonical)
+        stored, subjects = place_items(
+            parsed, rooms=geometry, piece_sizes=sizes, scope_room=canonical, lighting=lighting,
+        )
     except SpecValidationError as error:
         raise _refuse_spec(error) from None
     refusal, warnings = rule_outcome(rules, subjects)
@@ -413,10 +581,12 @@ def propose(
     lines = [f"{'Room' if scope == 'room' else 'Apartment'} {canonical or name}: {count}"]
     for item in stored["items"]:
         size = sizes_by_id[item["id"]]
+        walls = geometry[item.get("room") or canonical].walls
         label = f"{item['package_id']} v{item['version']}" if item["type"] == "piece" else item["name"]
         lines.append(
             f"- {item['id']} ({item['type']}, {label}): {size['w']:g} × {size['d']:g} × {size['h']:g} mm, "
-            f"{_where(item['placement'])}" + (f", in {item['room']}" if "room" in item else "")
+            f"{_where(item['placement'], walls, size['w'])}" + (f", in {item['room']}" if "room" in item else "")
+            + (", hidden" if item.get("hidden") else "")
         )
         placed = resolved_by_id[item["id"]]
         placement = item["placement"]
@@ -424,7 +594,7 @@ def propose(
             label,
             item["type"],
             f"{size['w']:g} × {size['d']:g} × {size['h']:g}",
-            f"wall {placement['wall']}, {placement['offset_mm']:g} mm" if "wall" in placement
+            _on_wall(placement, walls, size["w"]) if "wall" in placement
             else f"free, {placement['rotation_deg']:g}°",
             f"{placed['centre_mm'][0]:g}, {placed['centre_mm'][1]:g}",
             f"{placed['rotation_deg']:g}°",
@@ -432,6 +602,8 @@ def propose(
         if hangs:
             row.append(f"{placed['base_mm']:g}" if "base_mm" in placed else "")
         rows.append(row)
+    if stored.get("floor"):
+        lines.append(f"Floor: {floor_summary(stored['floor'])}")
     if warnings:
         lines.append(f"Design-rule warnings: {warnings}")
     if latest is not None:

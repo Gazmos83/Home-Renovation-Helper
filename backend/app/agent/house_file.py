@@ -25,6 +25,7 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.blender import storage
+from app.blender.custom_build.derive import overall as overall_size
 from app.blender.room_contract import normalise_room_shell
 from app.blender.shell_contract import ShellContext, normalise_shell
 from app.blender.spec_contract import SpecValidationError
@@ -138,6 +139,43 @@ def room_by_name(session: Session, name: str) -> Room | None:
 
 def rooms(session: Session) -> list[Room]:
     return list(session.scalars(select(Room).order_by(Room.name)))
+
+
+# A size within this of the room's figure still fits (as room_contract's tolerance).
+_SIZE_TOLERANCE_MM = 1.0
+
+
+def size_warnings(room: Room, overall: dict[str, Any]) -> list[str]:
+    """Plain sentences when a piece of `overall` size (`w`, `h`) is taller than the room's ceiling or
+    wider than its longest wall (piece-size-room-warning). A warning only: nothing is refused."""
+    corners = room.corners_mm or []
+    edges = [
+        ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
+        for (x0, y0), (x1, y1) in zip(corners, corners[1:] + corners[:1], strict=True)
+    ]
+    longest = round(max(edges)) if edges else None
+    found: list[str] = []
+    if room.height_mm and overall.get("h", 0) > room.height_mm + _SIZE_TOLERANCE_MM:
+        found.append(f"Too big for {room.name}: {overall['h']:g} mm tall, the ceiling is {room.height_mm:g} mm.")
+    if longest is not None and overall.get("w", 0) > longest + _SIZE_TOLERANCE_MM:
+        found.append(f"Too big for {room.name}: {overall['w']:g} mm wide, the longest wall is {longest:g} mm.")
+    return found
+
+
+def version_size_warnings(session: Session, root: Path, package_id: str, version: int) -> list[str]:
+    """The size warnings of one piece version against the piece's room; none without a room or a
+    readable design."""
+    piece = session.get(Piece, package_id)
+    room = session.get(Room, piece.room_id) if piece is not None and piece.room_id is not None else None
+    if room is None:
+        return []
+    try:
+        folder = storage.version_dir(root, package_id, version)
+        document = json.loads((folder / storage.INPUT_FILE).read_text(encoding="utf-8"))
+        size = overall_size(document)
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    return size_warnings(room, size)
 
 
 def describe_room(room: Room) -> dict[str, Any]:
@@ -1091,11 +1129,15 @@ def placed_items(session: Session, document: dict[str, Any]) -> list[dict[str, A
             )
         else:
             entry["name"] = item.get("name")
-        for key in ("room", "placement", "layer"):
+        for key in ("room", "placement", "layer", "hidden", "light"):
             if key in item:
                 entry[key] = item[key]
         if item.get("type") in ("model", "stand-in"):
             for key in ("width_mm", "depth_mm", "height_mm"):
+                if key in item:
+                    entry[key] = item[key]
+        if item.get("type") == "led-strip":
+            for key in ("length_mm", "lumens_per_m", "kelvin", "mount_height_mm", "facing"):
                 if key in item:
                     entry[key] = item[key]
         placed = resolved.get(item.get("id"))
@@ -1116,6 +1158,15 @@ def _version_items(session: Session, folder: Path) -> list[dict[str, Any]]:
     return placed_items(session, document)
 
 
+def _version_floor(folder: Path) -> dict[str, Any] | None:
+    """A composition version's floor finish (room-floor-finish), or `None`."""
+    try:
+        floor = json.loads((folder / storage.INPUT_FILE).read_text(encoding="utf-8")).get("floor")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return floor if isinstance(floor, dict) else None
+
+
 def compositions(session: Session, root: Path) -> list[dict[str, Any]]:
     """Every recorded composition with its latest version, build status and placed items, and
     the approved version's items (`approved_items`) when a version is approved."""
@@ -1126,15 +1177,19 @@ def compositions(session: Session, root: Path) -> list[dict[str, Any]]:
         approved = next((v.version for v in versions if v.approved_at is not None), None)
         status = None
         items: list[dict[str, Any]] = []
+        floor = None
         if latest is not None:
             folder = storage.composition_version_dir(root, row.slug, latest)
             status = (storage.read_status(folder) or {}).get("status")
             items = _version_items(session, folder)
+            floor = _version_floor(folder)
         entry: dict[str, Any] = {
             "scope": row.scope, "name": row.name, "slug": row.slug, "latest_version": latest,
             "status": status, "items": items, "versions": [v.version for v in versions],
             "approved_version": approved,
         }
+        if floor is not None:
+            entry["floor"] = floor
         if approved is not None:
             entry["approved_items"] = (
                 items if approved == latest

@@ -42,7 +42,13 @@ from sqlalchemy.orm import Session
 
 from app import compositions as composition_docs
 from app.agent import house_file, progress, summaries, uploads
-from app.agent.budget import BudgetRefused, RequestBudget, prepare, refusal_message
+from app.agent.budget import (
+    PERSONA_NAMES,
+    BudgetRefused,
+    RequestBudget,
+    prepare,
+    refusal_message,
+)
 from app.agent.instructions import AgentInstruction, load_instructions
 from app.agent.memory_settings import read_memory_settings
 from app.agent.models.budgets import Budgets
@@ -75,6 +81,7 @@ from app.agent.tools.base import (
 from app.agent.tools.shared import read_input
 from app.assets import models as model_library
 from app.blender import storage
+from app.blender.custom_build import derive as custom_derive
 from app.config import Settings
 from app.design_import import unwrap
 from app.engineering import chat as engineering_chat
@@ -109,6 +116,8 @@ ROOM_QUESTION: Final = "Which room is this for?"
 # Asked first; "Which room is this for?" follows only a yes (optional-room-question).
 ROOM_OFFER: Final = "Would you like to view this piece in a room?"
 ROOM_YES_WORDS: Final = frozenset({"yes", "ja", "yeah", "sure", "ok", "okay"})
+# The first words that decline after "Which room is this for?" (conversation-continuity).
+ROOM_NO_WORDS: Final = frozenset({"no", "none", "without", "nein", "kein", "keinen"})
 # Kept so older threads that asked this still recognise the reply as the Foreman's.
 WHICH_PIECE: Final = "Which piece do you mean: {names}?"
 WHICH_PIECE_PREFIX: Final = "Which piece do you mean"
@@ -146,6 +155,33 @@ COMPOSE_HANDOFF_NOTE: Final = (
 _TOOL_NAME: Final = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
+def placement_note(saved: dict[str, Any], ends: tuple[int, int, int, int] | None = None) -> str:
+    """The bound version's saved place as one line, walls numbered from 1 as the owner sees them;
+    a specialist never asks for a figure this line states (conversation-continuity). `ends` are
+    the code-measured gaps at the piece's two ends (measure-gaps), left out when unknown."""
+    wall = int(saved.get("wall", 0))
+    room = neutralise(str(saved.get("room", "")))
+    left = saved.get("left_mm")
+    where = (
+        f"{left:g} mm from its left end" if isinstance(left, (int, float))
+        else f"offset {float(saved.get('offset_mm', 0)):g} mm from its start"
+    )
+    mount = saved.get("mount_height_mm")
+    height = (
+        f", hung with its underside at {float(mount):g} mm above the floor" if isinstance(mount, (int, float))
+        else ", standing on the floor"
+    )
+    measured = (
+        f" Its left end is {ends[1]} mm from wall {ends[0]} and its right end {ends[3]} mm from wall {ends[2]} "
+        "(clear gaps measured by the application; quote them, do not recompute)."
+        if ends else ""
+    )
+    return (
+        f"(Saved place of this piece in {room}: wall {wall + 1} (index {wall}), {where}{height}.{measured} "
+        "Do not ask the owner for these figures again.)"
+    )
+
+
 def tool_refusal(tool: str, specialist: str, owners: dict[str, list[str]]) -> str:
     """The fixed text for a call to a tool `specialist` has not bound; nothing ran."""
     named = owners.get(tool, [])
@@ -162,6 +198,7 @@ DECLINED: Final[dict[str, str]] = {
     "plan": "The plan was not saved.",
     "create_piece": "The piece was not created.",
     "duplicate_piece": "The piece was not duplicated.",
+    "approve_version": "The version was not approved.",
     "import_design": "The design was not imported.",
     "compose_room": "No room version was created.",
     "revise": "No revision was created.",
@@ -227,16 +264,23 @@ class ChatState(TypedDict, total=False):
     room_answer: str | None
     room_declined: bool
     build_room_ok: bool
-    # view-piece-in-room: the latest version has a saved place in the confirmed room; the turn
-    # asks to see the piece in it; `ask_placement` saved a place during this turn.
+    # view-piece-in-room: the latest version has a saved place in the confirmed room (also set
+    # when `ask_placement` saves one during the turn); the turn asks to see the piece in it.
     placement_ready: bool
+    # The bound version's saved place in the confirmed room, for the Designer and the Builder
+    # (conversation-continuity).
+    placement_note: str
     views_in_room: bool
-    placement_saved: bool
     ambiguous_pieces: list[str]
     piece_has_conversation: str | None
     brief: dict[str, Any]
     bound_tools: dict[str, list[str]]
     engineering_turn: bool
+    # Whether code (not only the routing model) found engineering wording in the owner's
+    # message, and whether a rejected engineering answer was asked for once more as an
+    # ordinary one (conversation-continuity).
+    engineering_by_code: bool
+    engineering_retried: bool
     # An open question asked before any room is settled; the Designer answers it with only
     # its guideline search (open-question-first-turn).
     open_question_turn: bool
@@ -263,7 +307,7 @@ class Decision(BaseModel):
     )
     views_in_room: bool = Field(
         default=False,
-        description="true when the owner wants to see the conversation's piece in its room (placed there, or a picture of it there)",
+        description="true when the owner wants to see the conversation's piece in its room, or says where in the room it goes",
     )
     open_question: bool = Field(
         default=False,
@@ -526,14 +570,19 @@ def room_named(
 def room_answer(messages: list[AnyMessage], *, names_room: bool) -> str | None:
     """How the owner's latest message answers ROOM_OFFER, read by code: "room" when it names
     a room (or carries a plan or photo, `names_room`), "yes" when its first word is a yes,
-    else "no"; `None` when the last reply was not ROOM_OFFER."""
+    else "no". After ROOM_QUESTION, "no" when it names no room and starts with a no-word.
+    `None` otherwise."""
     owner, reply = _latest_texts(messages)
+    words = owner.split()
+    first = re.sub(r"[^\w]", "", words[0]).casefold() if words else ""
+    # A no to ROOM_QUESTION that names no room declines too; any other answer is read as
+    # before (conversation-continuity).
+    if reply.strip() == ROOM_QUESTION:
+        return "no" if not names_room and first in ROOM_NO_WORDS else None
     if reply.strip() != ROOM_OFFER:
         return None
     if names_room:
         return "room"
-    words = owner.split()
-    first = re.sub(r"[^\w]", "", words[0]).casefold() if words else ""
     return "yes" if first in ROOM_YES_WORDS else "no"
 
 
@@ -750,6 +799,7 @@ def build_graph(
             settings.render_root, package_id, bound["latest_version"] if bound else None
         )
         piece_text = ""
+        document = None
         if bound and bound["latest_version"]:
             try:
                 document = read_input(storage.version_dir(settings.render_root, package_id, bound["latest_version"]))
@@ -761,12 +811,24 @@ def build_graph(
                 report_statuses = active_report_statuses(session, settings.render_root, package_id)
             if report_statuses:
                 piece_text += "\nEngineering report IDs/status (fetch complete current evidence; visual approval does not verify engineering): " + json.dumps(report_statuses)
-        placement_ready = bool(
-            bound
-            and bound["latest_version"]
-            and scope_room_name is not None
-            and read_placement(storage.version_dir(settings.render_root, package_id, bound["latest_version"]), scope_room_name)
+        saved_place = (
+            read_placement(storage.version_dir(settings.render_root, package_id, bound["latest_version"]), scope_room_name)
+            if bound and bound["latest_version"] and scope_room_name is not None
+            else None
         )
+        placement_ready = bool(saved_place)
+        saved_ends = None
+        if saved_place and document is not None:
+            with Session(engine) as session:
+                saved_room = house_file.room_by_name(session, scope_room_name)
+                try:
+                    overall = custom_derive.overall(document)
+                except (KeyError, TypeError, ValueError):
+                    overall = None  # an unreadable size keeps the line as it was
+                if saved_room is not None and overall is not None:
+                    saved_ends = composition_docs.end_wall_gaps(
+                        saved_room, saved_place, (float(overall["w"]), float(overall["d"]), float(overall["h"]))
+                    )
         open_review = []
         recent_feedback: list[dict[str, Any]] = []
         open_verdicts: list[dict[str, Any]] = []
@@ -877,6 +939,13 @@ def build_graph(
                     )
                     if room_dims is not None:
                         described_rooms[index] = {**room, "dimensions": room_dims}
+        # A request to revise the bound piece is engineering only with a load, capacity or safety
+        # term, never for hardware words alone (conversation-continuity).
+        owner_text = _last_human_text(state)
+        if package_id and engineering_chat.revision_intent(owner_text):
+            by_code = engineering_chat.revision_engineering(owner_text)
+        else:
+            by_code = engineering_chat.engineering_intent(owner_text)
         return {
             "house_note": house_note(
                 described_rooms,
@@ -919,14 +988,16 @@ def build_graph(
             or room_declined
             or (bound_room is not None and bound_room in scope_room_names),
             "placement_ready": placement_ready,
+            "placement_note": placement_note(saved_place, saved_ends) if saved_place else "",
             "views_in_room": False,
-            "placement_saved": False,
             "ambiguous_pieces": ambiguous,
             "piece_has_conversation": piece_taken,
             "round_count": 0,
             "specialist": "",
             "bound_tools": tools_this_turn,
-            "engineering_turn": engineering_chat.engineering_intent(_last_human_text(state)),
+            "engineering_turn": by_code,
+            "engineering_by_code": by_code,
+            "engineering_retried": False,
             "open_question_turn": False,
             "engineering_evidence_ids": [],
             "engineering_metadata_ids": [],
@@ -1109,8 +1180,9 @@ def build_graph(
                 update={"messages": [AIMessage(engineering_chat.HEIGHT_REPLY)], "specialist": ""}, goto=END
             )
         # A placement in the room is not engineering on the model's flag alone (short-engineering-reply).
-        flagged = bool(getattr(decision, "engineering_question", False)) and not engineering_chat.placement_request(
-            _last_human_text(state)
+        flagged = bool(getattr(decision, "engineering_question", False)) and not (
+            engineering_chat.placement_request(_last_human_text(state))
+            or engineering_chat.hang_request(_last_human_text(state))
         )
         engineering = bool(state.get("engineering_turn")) or flagged
         if engineering:
@@ -1118,11 +1190,13 @@ def build_graph(
             chosen = "designer" if changing else "researcher"
 
         # A question about how to use the app is Intake's, with or without a room, before the
-        # room question; a turn with a plan, photo or design file is never one (help-center).
+        # room question; a turn with a plan, photo or design file is never one (help-center),
+        # nor is asking to hang the piece (place-piece-from-owner-words).
         if (
             chosen != "researcher"
             and not engineering
             and getattr(decision, "asks_help", False) is True
+            and not engineering_chat.hang_request(_last_human_text(state))
             and not (state.get("image_attached") or state.get("design_attached"))
         ):
             return Command(update={"specialist": "intake", "reason": reason, "engineering_turn": False}, goto="intake")
@@ -1203,14 +1277,17 @@ def build_graph(
             and not naming
         ):
             chosen = "intake"
-        # Seeing the built piece in the confirmed room: the Builder renders it where it was placed,
-        # and without a place the Designer asks for one first (view-piece-in-room). A conversation
-        # that declined a room is asked which room.
-        views = bool(getattr(decision, "views_in_room", False)) and bool(state.get("detail_ready")) and not engineering
+        # Seeing the built piece in the confirmed room is the Designer's: it asks for a place when
+        # there is none and proposes the room with the piece at its place; nothing renders
+        # (place-piece-from-owner-words). A conversation that declined a room is asked which room.
+        # Hanging the piece is a placement whatever the model flagged ("Can you hang it now?").
+        views = (
+            bool(getattr(decision, "views_in_room", False)) or engineering_chat.hang_request(_last_human_text(state))
+        ) and bool(state.get("detail_ready")) and not engineering
         if views and not state.get("room_confirmed"):
             return Command(update={"messages": [AIMessage(ROOM_QUESTION)], "specialist": ""}, goto=END)
         if views:
-            chosen = "builder" if state.get("placement_ready") else "designer"
+            chosen = "designer"
         # Only Intake reads plans and photos, so an image turn the model gave the Designer goes to Intake.
         if chosen == "designer" and state.get("image_attached"):
             chosen = "intake"
@@ -1226,7 +1303,7 @@ def build_graph(
                 "specialist": chosen,
                 "reason": reason,
                 "engineering_turn": engineering,
-                "views_in_room": views and chosen in ("designer", "builder"),
+                "views_in_room": views and chosen == "designer",
             },
             goto=chosen,
         )
@@ -1245,7 +1322,7 @@ def build_graph(
                 names = [tool for tool in names if tool == "search_guidelines"]
             return {tool: tools_by_name[tool] for tool in names if tool in tools_by_name and (tool not in {"search_engineering_knowledge", "record_assessment_inputs", "calculate_engineering", "get_engineering_report"} or state.get("engineering_turn")) and (not state.get("engineering_turn") or tool not in {"search_catalog_knowledge", "check_live_listing", "compare_products"})}
 
-        def agent(state: ChatState, config: RunnableConfig) -> Command[Literal["tools", "__end__"]]:
+        def agent(state: ChatState, config: RunnableConfig) -> Command[Literal["agent", "tools", "__end__"]]:
             round_count = state.get("round_count", 0)
             notes = [state.get("facts", "")]
             if name in ("intake", "designer"):
@@ -1256,6 +1333,8 @@ def build_graph(
                 notes.append(DESIGNER_SHELF_DEPTHS_NOTE)
             if name in ("intake", "designer", "builder"):
                 notes.append(state.get("composition_note", ""))
+            if name in ("designer", "builder"):
+                notes.append(state.get("placement_note", ""))
             if name in ("designer", "lighting"):
                 notes.append(state.get("feedback_note", ""))
             handoff = state.get("handoff_design") if name == "designer" else None
@@ -1280,14 +1359,12 @@ def build_graph(
                 )
             if state.get("views_in_room") and name == "designer":
                 notes.append(
-                    "(The owner wants to see the piece in this conversation's room and it has no place "
-                    "there yet. Call ask_placement now; do not explain what is missing.)"
-                )
-            if state.get("views_in_room") and name == "builder":
-                notes.append(
-                    "(The owner wants to see the piece in this conversation's room, and its place there is "
-                    'saved. Start a draft still now: call render_turntable with the piece\'s package_id, kind "still", '
-                    'tier "draft" and in_room true.)'
+                    "(The owner wants to see the piece in this conversation's room. Its place there is saved: "
+                    "call compose_room with with_saved_place true now. Do not mention renders.)"
+                    if state.get("placement_ready")
+                    else "(The owner wants to see the piece in this conversation's room and it has no place "
+                    "there yet. Call ask_placement now, passing the wall, distance_mm and from_wall the owner's "
+                    "message already states; do not explain what is missing and do not mention renders.)"
                 )
             if state.get("open_question_turn") and name == "designer":
                 notes.append(OPEN_QUESTION_NOTE)
@@ -1328,11 +1405,10 @@ def build_graph(
                 if is_empty_answer(reply):
                     reply = answer([EMPTY_ANSWER_NOTE])
                     if is_empty_answer(reply):
-                        role = SPECIALIST_LABELS.get(name, name)
-                        reply = AIMessage(EMPTY_REPLY.format(role=role[:1].upper() + role[1:]))
+                        reply = AIMessage(EMPTY_REPLY.format(role=PERSONA_NAMES.get(name, name)))
             except BudgetRefused as error:
                 return Command(
-                    update={"messages": [AIMessage(refusal_message(name, error))]},
+                    update={"messages": [AIMessage(refusal_message(name, error), additional_kwargs={"speaker": name})]},
                     goto=END,
                 )
             goto: Literal["tools", "__end__"] = "tools" if getattr(reply, "tool_calls", None) else END
@@ -1340,6 +1416,21 @@ def build_graph(
                 if goto == END:
                     with Session(engine) as session:
                         rendered = engineering_chat.render_answer(_text_of(reply.content), session, state.get("engineering_evidence_ids", []), _last_human_text(state), enabled="search_engineering_knowledge" in bound_tools, metadata_ids=state.get("engineering_metadata_ids", []), report_ids=state.get("engineering_report_ids", []), calculators_enabled="calculate_engineering" in bound_tools, render_root=settings.render_root)
+                    # Only the routing model called this engineering and the answer was rejected:
+                    # the turn is asked for once more as an ordinary one (conversation-continuity).
+                    if (
+                        rendered == engineering_chat.SHORT_STATUS
+                        and not state.get("engineering_by_code")
+                        and not state.get("engineering_retried")
+                    ):
+                        return Command(
+                            update={
+                                "engineering_turn": False,
+                                "engineering_retried": True,
+                                "round_count": round_count + 1,
+                            },
+                            goto="agent",
+                        )
                     reply = reply.model_copy(update={"content": rendered})
                 else:
                     # Early prose beside tool calls is not a validated claim.
@@ -1347,6 +1438,8 @@ def build_graph(
                 reply.additional_kwargs["engineering"] = True
                 reply.additional_kwargs["engineering_evidence_ids"] = list(state.get("engineering_evidence_ids", []))
                 reply.additional_kwargs["engineering_report_ids"] = list(state.get("engineering_report_ids", []))
+            # The thread's history signs each reply with its writer (meet-the-crew).
+            reply.additional_kwargs["speaker"] = name
             return Command(
                 update={"messages": [reply], "round_count": round_count + 1}, goto=goto
             )
@@ -1548,17 +1641,6 @@ def build_graph(
             goto="designer",
         )
 
-    def after_designer(state: ChatState, config: RunnableConfig) -> Command[Literal["builder", "__end__"]]:
-        """When the owner asked to see the piece in the room and `ask_placement` saved its place
-        this turn, the same turn goes on to the Builder for a draft still in the room
-        (view-piece-in-room). Decided here, never by a model."""
-        if not (state.get("views_in_room") and state.get("placement_saved")):
-            return Command(goto=END)
-        return Command(
-            update={"specialist": "builder", "round_count": 0, "placement_saved": False, "placement_ready": True},
-            goto="builder",
-        )
-
     graph = StateGraph(ChatState)
     graph.add_node("load_house", load_house)
     graph.add_node("foreman", foreman)
@@ -1569,8 +1651,7 @@ def build_graph(
     graph.add_node("after_specialist", after_specialist)
     graph.add_node("after_intake", after_intake)
     graph.add_edge("intake", "after_intake")
-    graph.add_node("after_designer", after_designer)
-    graph.add_edge("designer", "after_designer")
+    graph.add_edge("designer", END)
     graph.add_edge(START, "load_house")
     graph.add_edge("load_house", "foreman")
     compiled = graph.compile(checkpointer=checkpointer)

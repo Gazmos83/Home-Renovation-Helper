@@ -18,6 +18,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from app.agent.prompts import neutralise
 from app.blender.custom_build.derive import DeriveError, overall
 
 UNIT_MM = {"mm": 1.0, "cm": 10.0, "m": 1000.0}
@@ -167,6 +168,7 @@ def check(
         if not quote or _norm(quote) not in said:
             refusals.append(
                 f"{quote!r} is not in the owner's messages since the piece's last version; quote the owner's own words"
+                + _owner_sentence(lengths(quote), owner_texts)
             )
             continue
         found = lengths(quote)
@@ -231,8 +233,26 @@ def check(
             refusals.append(
                 f"the owner's {length.text!r} is not covered: add it to `requested` "
                 "(target `none` when it is not about the piece)"
+                + _owner_sentence([length], owner_texts)
             )
     return refusals
+
+
+SENTENCE_CHARS = 200
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def _owner_sentence(found: Sequence[Length], owner_texts: Sequence[str]) -> str:
+    """The owner's sentence holding one of `found`, as a refusal's tail (conversation-continuity),
+    so the Designer can quote it exactly; empty when none does."""
+    keys = {length.key for length in found}
+    for text in owner_texts:
+        for sentence in _SENTENCE_END.split(text):
+            sentence = sentence.strip()
+            if sentence and any(length.key in keys for length in lengths(sentence)):
+                shown = sentence if len(sentence) <= SENTENCE_CHARS else sentence[:SENTENCE_CHARS] + "…"
+                return f"; the owner wrote: {neutralise(shown)!r}"
+    return ""
 
 
 def _names_fold(quote: str) -> bool:
@@ -281,7 +301,8 @@ def _text(content: Any) -> str:
 
 
 def owner_texts_since_version(messages: Iterable[Any], package_id: str) -> list[str]:
-    """The owner's message texts after the last result that created a version of `package_id`.
+    """The owner's message texts and question-form answers after the last result that created a
+    version of `package_id`.
 
     The whole thread when no version of it was created here.
     """
@@ -300,4 +321,28 @@ def owner_texts_since_version(messages: Iterable[Any], package_id: str) -> list[
             and _text(message.content).startswith(f"Created {package_id} version ")
         ):
             start = index + 1
-    return [_text(m.content) for m in history[start:] if isinstance(m, HumanMessage)]
+    return owner_texts(history[start:])
+
+
+def owner_texts(messages: Iterable[Any]) -> list[str]:
+    """The owner's message texts and question-form answers in `messages`, in order."""
+    texts = []
+    for message in messages:
+        if isinstance(message, HumanMessage):
+            texts.append(_text(message.content))
+        elif isinstance(message, ToolMessage):
+            texts.extend(_form_answers(message))
+    return texts
+
+
+def _form_answers(message: ToolMessage) -> list[str]:
+    """The owner's answers to a question form, as the tool node recorded them by code: each
+    answer given, or the text written instead; never a question's text (conversation-continuity)."""
+    answered = message.additional_kwargs.get("answers")
+    if not isinstance(answered, Mapping):
+        return []
+    declined = answered.get("declined")
+    if isinstance(declined, str) and declined.strip():
+        return [declined.strip()]
+    rows = answered.get("rows") or []
+    return [str(row["answer"]) for row in rows if isinstance(row, Mapping) and str(row.get("answer") or "").strip()]

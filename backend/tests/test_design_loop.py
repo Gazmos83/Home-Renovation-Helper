@@ -119,20 +119,15 @@ def test_the_full_loop(tool_state, owner) -> None:
     assert wait_for_status(storage.version_dir(root, "hall-desk", 1))["status"] == "succeeded"
     assert (storage.version_dir(root, "hall-desk", 1) / "screenshot.png").is_file()
 
-    # 4. a draft turntable: no pause, tier draft, 12 frames at 600 px
+    # 4. a piece is not rendered: renders are made of rooms (rooms-only-renders)
+    from plugins.render_turntable.tool import PIECE_REFUSED
+
     rendered = chat.answer(harness.graph, thread_id=thread, owner_id=who, message="a draft turntable please")
     assert rendered.specialist == "builder" and rendered.pending is None
-    import time
-
-    deadline = time.monotonic() + 10
+    assert PIECE_REFUSED in models["builder"].last_prompt_text()
     folder1 = storage.version_dir(root, "hall-desk", 1)
-    while time.monotonic() < deadline:
-        job = (storage.read_status(folder1) or {}).get("renders", {}).get("turntable") or {}
-        if job.get("status") == "succeeded":
-            break
-        time.sleep(0.05)
-    assert job["tier"] == "draft"
-    assert len(list((folder1 / "frames").glob("frame_*.png"))) == 12
+    assert not (storage.read_status(folder1) or {}).get("renders")
+    assert not (folder1 / "frames").exists()
 
     # 5. "three shelves" → revise_package → yes → version 2, version 1 untouched
     v1_input = (folder1 / "input.json").read_text(encoding="utf-8")

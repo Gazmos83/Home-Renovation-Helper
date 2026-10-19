@@ -478,7 +478,6 @@ def test_placed_items_without_a_resolved_section_are_listed_as_before() -> None:
     assert entry == {"id": "sofa", "type": "stand-in", "name": "Sofa", "placement": {"wall": 4, "offset_mm": 0}}
 
 
-
 def test_the_composition_note_marks_a_floor_layer_item(isolated_house, render_root: Path) -> None:
     from app.agent.prompts import composition_note
 

@@ -2,9 +2,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { Armchair, Info } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { PieceVariants } from "../components/Variants";
-import { RenderRating } from "@/components/RenderRating";
-import { api, downloads, versionFile, type PieceSummary, type Pricing, type RenderItem, type VersionInfo } from "../lib/api";
+import { api, downloads, versionFile, type PieceSummary, type Pricing, type VersionInfo } from "../lib/api";
 import { VersionFiles } from "@/components/studio/VersionFiles";
 import { pictureVersion } from "../lib/pieces";
 import { downloadAssemblyPdf } from "../lib/assemblyPdf";
@@ -13,7 +11,6 @@ import { FieldError } from "../lib/form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
-import { cardClass } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DeletePiece } from "@/components/DeletePiece";
 import { DuplicatePiece } from "@/components/DuplicatePiece";
@@ -24,19 +21,6 @@ import { useStudioDialog } from "@/components/studio/useStudioDialog";
 
 function message(error: unknown): string | null {
   return error instanceof Error ? error.message : null;
-}
-
-function RenderCard({ packageId, version, item }: { packageId: string; version: number; item: RenderItem }) {
-  return (
-    <section className={cardClass} aria-label={item.label}>
-      <div className="flex items-center gap-2">
-        <h3>{item.label}</h3>
-        {item.tier && <Badge variant="secondary">{item.tier}</Badge>}
-      </div>
-      <img src={item.preview} alt={`${item.label} of ${packageId} version ${version}`} className="max-h-72 rounded-md border" />
-      <RenderRating packageId={packageId} version={version} item={item} />
-    </section>
-  );
 }
 
 /** A built version's actions: approve or unapprove, and open it in the inspector. */
@@ -283,44 +267,14 @@ function Downloads({ packageId, version }: { packageId: string; version: number 
   );
 }
 
-/**
- * Turntables and restyle variants are watched and rated on the inspector's Renders tab
- * (two-tier-renders); Pieces keeps the stills for rating.
- */
-function isTurntableRender(render: string): boolean {
-  return render === "turntable" || render.endsWith("-turntable") || render.startsWith("variant:");
-}
-
+/** A version's actions, files, pricing and assembly; a piece has no renders (rooms-only-renders). */
 function Version({ packageId, version }: { packageId: string; version: number }) {
-  const renders = useQuery({
-    queryKey: ["renders", packageId, version],
-    queryFn: () => api.renders(packageId, version),
-  });
-  let shown;
-  if (renders.error) shown = <FieldError message={message(renders.error)} />;
-  else if (!renders.data) shown = <p>Loading…</p>;
-  else {
-    const cards = renders.data.filter((item) => !isTurntableRender(item.render));
-    if (cards.length === 0) {
-      shown = renders.data.length === 0 ? <p>No renders of this version yet.</p> : null;
-    } else {
-      shown = (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {cards.map((item) => (
-            <RenderCard key={item.render} packageId={packageId} version={version} item={item} />
-          ))}
-        </div>
-      );
-    }
-  }
   return (
     <div className="grid gap-4">
       <VersionActions packageId={packageId} version={version} />
       <Downloads packageId={packageId} version={version} />
       <PricingPanel packageId={packageId} version={version} />
       <AssemblyPanel packageId={packageId} version={version} />
-      {shown}
-      <PieceVariants packageId={packageId} version={version} />
     </div>
   );
 }
@@ -532,7 +486,6 @@ function PiecesHelp() {
 
 /** A piece's tile: the picture the card chose, its caption, and "Approved" when a version is. */
 function PieceTile({ piece, onOpen }: { piece: PieceSummary; onOpen: () => void }) {
-  const queryClient = useQueryClient();
   const infos = useQueries({
     queries: piece.versions.map((n) => ({
       queryKey: ["version", piece.package_id, n],
@@ -541,7 +494,6 @@ function PieceTile({ piece, onOpen }: { piece: PieceSummary; onOpen: () => void 
   });
   const picture = pictureVersion(infos.map((q) => q.data));
   const approved = infos.some((q) => q.data?.approved_at);
-  const newest = piece.versions[0];
   return (
     <Tile
       name={piece.package_id}
@@ -550,14 +502,6 @@ function PieceTile({ piece, onOpen }: { piece: PieceSummary; onOpen: () => void 
       placeholder={Armchair}
       badge={approved ? <Badge>Approved</Badge> : undefined}
       onOpen={onOpen}
-      // The dialog opens on the newest version's renders; start loading them now.
-      onPrefetch={() =>
-        newest !== undefined &&
-        queryClient.prefetchQuery({
-          queryKey: ["renders", piece.package_id, newest],
-          queryFn: () => api.renders(piece.package_id, newest),
-        })
-      }
     />
   );
 }

@@ -1,7 +1,9 @@
-"""view-piece-in-room: placement questions, the hand-off to the Builder and the routing."""
+"""view-piece-in-room and place-piece-from-owner-words: placement questions, the room proposal
+that follows a saved place, and the routing (never the Builder)."""
 
 from __future__ import annotations
 
+import pytest
 from langgraph.types import Command
 
 from app.agent import house_file
@@ -65,23 +67,56 @@ def test_a_first_view_asks_where_to_place_it_and_renders_nothing(tool_state) -> 
     assert "Call ask_placement now" in prompt
 
 
-def test_answering_the_placement_stores_it_and_hands_the_turn_to_the_builder(tool_state) -> None:
+def _approve_bench(tool_state) -> None:
+    with ToolDeps(tool_state).session() as session:
+        house_file.approve_version(session, "bench", 1)
+        session.commit()
+
+
+def test_answering_the_placement_stores_it_and_proposes_the_room(tool_state) -> None:
     models = fake_models(
         foreman={"decisions": [viewing()]},
-        designer={"tool_call_scripts": [[tool_call("ask_placement", {})]], "replies": ["Placed on wall 1."]},
-        builder={"replies": ["A draft still in Wohnen is on its way."]},
+        designer={"tool_call_scripts": [
+            [tool_call("ask_placement", {})], [tool_call("compose_room", {"with_saved_place": True})],
+        ]},
+    )
+    harness = _harness(tool_state, models)
+    _approve_bench(tool_state)
+    harness.turn(WANTS)
+    state = harness.graph.invoke(Command(resume={"answers": ["Wall 1 (6000 mm)", "300"]}), config=harness.config)
+    assert _stored(tool_state)["left_mm"] == 300
+    asked = state["__interrupt__"][0].value
+    assert asked["kind"] == "confirmation" and asked["subject"] == "compose_room"
+    assert "bench (piece, bench v1)" in asked["summary"]
+    assert state["specialist"] == "designer"
+    assert models["builder"].calls == 0
+    prompt = "\n".join(str(m.content) for m in models["designer"].prompts[1])
+    assert "call compose_room with with_saved_place true" in prompt
+
+
+def test_an_unapproved_version_is_offered_for_approval_before_the_room(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [viewing()]},
+        designer={"tool_call_scripts": [
+            [tool_call("ask_placement", {})],
+            [tool_call("compose_room", {"with_saved_place": True})],
+            [tool_call("approve_version", {})],
+            [tool_call("compose_room", {"with_saved_place": True})],
+        ]},
     )
     harness = _harness(tool_state, models)
     harness.turn(WANTS)
     state = harness.graph.invoke(Command(resume={"answers": ["Wall 1 (6000 mm)", "300"]}), config=harness.config)
-    assert _stored(tool_state)["left_mm"] == 300
-    assert state["specialist"] == "builder"
-    assert last_reply(state) == "A draft still in Wohnen is on its way."
-    prompt = "\n".join(str(m.content) for m in models["builder"].prompts[0])
-    assert 'tier "draft" and in_room true' in prompt
+    asked = state["__interrupt__"][0].value
+    assert asked["subject"] == "approve_version" and asked["summary"] == "Approve version 1 of Bench?"
+    state = harness.graph.invoke(Command(resume={"answer": "yes"}), config=harness.config)
+    assert state["__interrupt__"][0].value["subject"] == "compose_room"
+    with ToolDeps(tool_state).session() as session:
+        assert house_file.approved_version_of(session, "bench") == 1
+    assert models["builder"].calls == 0
 
 
-def test_a_place_that_does_not_fit_is_not_handed_to_the_builder(tool_state) -> None:
+def test_a_place_that_does_not_fit_proposes_nothing(tool_state) -> None:
     models = fake_models(
         foreman={"decisions": [viewing()]},
         designer={"tool_call_scripts": [[tool_call("ask_placement", {})]], "replies": ["That is too wide there."]},
@@ -91,23 +126,29 @@ def test_a_place_that_does_not_fit_is_not_handed_to_the_builder(tool_state) -> N
     state = harness.graph.invoke(Command(resume={"answers": ["Wall 2 (3000 mm)", "2900"]}), config=harness.config)
     assert _stored(tool_state) is None
     assert state["specialist"] == "designer"
+    assert "__interrupt__" not in state
     assert models["builder"].calls == 0
 
 
-def test_a_saved_place_goes_straight_to_the_builder(tool_state) -> None:
+def test_a_saved_place_goes_to_the_designer_for_the_room_and_never_to_the_builder(tool_state) -> None:
     models = fake_models(
-        foreman={"decisions": [viewing(), viewing()]},
-        designer={"tool_call_scripts": [[tool_call("ask_placement", {})]], "replies": ["Placed."]},
-        builder={"replies": ["Started.", "Started again."]},
+        foreman={"decisions": [viewing(), viewing("builder")]},
+        designer={"steps": [
+            [tool_call("ask_placement", {})], [tool_call("compose_room", {"with_saved_place": True})],
+            "No room version was made.", [tool_call("compose_room", {"with_saved_place": True})],
+        ]},
     )
     harness = _harness(tool_state, models)
+    _approve_bench(tool_state)
     harness.turn(WANTS)
     harness.graph.invoke(Command(resume={"answers": ["Wall 1 (6000 mm)", "300"]}), config=harness.config)
-    designer_calls = models["designer"].calls
-    state = harness.turn("show it in the room again")
-    assert state["specialist"] == "builder"
-    assert "__interrupt__" not in state
-    assert models["designer"].calls == designer_calls
+    harness.graph.invoke(Command(resume={"answer": "no"}), config=harness.config)
+    state = harness.turn("This needs to go into the inspector view!")
+    assert state["specialist"] == "designer"
+    assert state["__interrupt__"][0].value["subject"] == "compose_room"
+    assert models["builder"].calls == 0
+    prompt = "\n".join(str(m.content) for m in models["designer"].prompts[-1])
+    assert "Its place there is saved" in prompt and "Do not mention renders" in prompt
 
 
 def test_a_conversation_that_declined_a_room_is_asked_which_room(tool_state) -> None:
@@ -119,3 +160,25 @@ def test_a_conversation_that_declined_a_room_is_asked_which_room(tool_state) -> 
     state = harness.turn(WANTS)
     assert last_reply(state) == ROOM_QUESTION
     assert models["designer"].calls == 0 and models["builder"].calls == 0
+
+
+@pytest.mark.parametrize("flags", [{}, {"asks_help": True}, {"engineering_question": True}])
+def test_asking_to_hang_it_goes_to_the_designer_whatever_the_model_chose(tool_state, flags) -> None:
+    # The reported turn "Can you hang it now?": the model chose Intake, flagged no view, and
+    # on the second report read it as a help question; an engineering flag is ignored too.
+    models = fake_models(
+        foreman={"decisions": [viewing(), {"specialist": "intake", "reason": "test", **flags}]},
+        designer={"steps": [
+            [tool_call("ask_placement", {})], [tool_call("compose_room", {"with_saved_place": True})],
+            "No room version was made.", [tool_call("compose_room", {"with_saved_place": True})],
+        ]},
+    )
+    harness = _harness(tool_state, models)
+    _approve_bench(tool_state)
+    harness.turn(WANTS)
+    harness.graph.invoke(Command(resume={"answers": ["Wall 1 (6000 mm)", "300"]}), config=harness.config)
+    harness.graph.invoke(Command(resume={"answer": "no"}), config=harness.config)
+    state = harness.turn("Can you hang it now?")
+    assert state["specialist"] == "designer"
+    assert state["__interrupt__"][0].value["subject"] == "compose_room"
+    assert models["intake"].calls == 0

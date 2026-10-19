@@ -1,8 +1,8 @@
 name: room_version_dimensions
-description: Read a room composition version's wall lengths and ceiling heights (inspector dimensions).
+description: Read a room composition version's wall lengths and ceiling heights (inspector dimensions), and measure an item's clear gaps to walls, items and the ceiling.
 kind: builtin
 role: designer
 also_for: [researcher]
-tools: [read_room_version_dimensions]
+tools: [read_room_version_dimensions, measure_gaps]
 enabled_by_default: true
 toggleable: true

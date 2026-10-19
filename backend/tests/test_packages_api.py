@@ -884,6 +884,23 @@ def test_a_failure_dismissing_items_still_approves(client: TestClient, record, m
     assert client.get("/packages/hall-bench/versions/1").json()["approved_at"] is not None
 
 
+def test_a_version_taller_than_its_room_carries_a_size_warning(client: TestClient, record) -> None:
+    """piece-size-room-warning: the inspector's version read warns; nothing is refused."""
+    from sqlalchemy.orm import Session
+
+    from app.agent import house_file
+
+    assert create(client).status_code == 202
+    record("hall-bench", (1,))
+    assert client.get("/packages/hall-bench/versions/1").json()["size_warnings"] == []
+    with Session(client.app.state.engine) as session:
+        low = house_file.upsert_room(session, "Attic", [[0, 0], [3000, 0], [3000, 2000], [0, 2000]], 500)
+        house_file.set_piece_room(session, "hall-bench", low)
+        session.commit()
+    [warning] = client.get("/packages/hall-bench/versions/1").json()["size_warnings"]
+    assert warning.startswith("Too big for Attic: ") and warning.endswith("the ceiling is 500 mm.")
+
+
 # --- duplicate (duplicate-piece) ------------------------------------------------------------
 
 

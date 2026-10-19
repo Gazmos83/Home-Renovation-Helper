@@ -303,3 +303,76 @@ def test_deleting_the_last_composition_version_drops_the_composition(
     assert client.delete("/compositions/wohnen/versions/1").status_code == 204
     assert client.get("/compositions").json() == []
     assert not (render_root / "rooms" / "wohnen").exists()
+
+
+# --- the room inspector's Renders tab (render-now-blueprints-verdict-note) --------------------
+
+
+@pytest.fixture
+def built_room(client: TestClient, render_root: Path) -> Path:
+    from app.render import benchmark_store
+
+    sign_in(client)
+    benchmark_store.write_benchmark(client.app.state.engine, 2.5, blender_version="5.2.1 LTS")
+    folder = seed(client, render_root, approved=True)
+    (folder / "model.blend").write_bytes(b"BLENDER-fake")
+    return folder
+
+
+ROOM = "/compositions/wohnen/versions/1"
+
+
+def test_a_room_drafts_estimate_is_read_and_nothing_is_queued(client: TestClient, built_room: Path) -> None:
+    response = client.get(f"{ROOM}/render-estimate", params={"kind": "turntable", "tier": "draft"})
+    assert response.status_code == 200
+    assert response.json()["tier"] == "draft" and response.json()["estimate"] == "about 19 seconds"
+    assert not (storage.read_status(built_room) or {}).get("renders")
+    assert client.get(f"{ROOM}/renders").json() == {"renders": [], "render_job": None}
+
+
+def test_a_room_estimate_without_a_benchmark_or_with_frames_is_refused(client: TestClient, built_room: Path) -> None:
+    from sqlalchemy import text
+
+    assert client.get(f"{ROOM}/render-estimate", params={"kind": "turntable", "frames": 12}).json()["detail"]["field"] == "frames"
+    with Session(client.app.state.engine) as session:
+        session.execute(text("DELETE FROM operator_settings WHERE key = 'render:benchmark'"))
+        session.commit()
+    response = client.get(f"{ROOM}/render-estimate", params={"kind": "turntable", "tier": "draft"})
+    assert response.status_code == 409 and response.json()["detail"]["failure_class"] == "benchmark_missing"
+
+
+def test_an_unbuilt_room_version_cannot_be_estimated_or_rendered(client: TestClient, built_room: Path) -> None:
+    (built_room / "model.blend").unlink()
+    assert client.get(f"{ROOM}/render-estimate", params={"kind": "turntable", "tier": "draft"}).status_code == 409
+    response = client.post(f"{ROOM}/renders", json={"kind": "turntable", "tier": "draft"})
+    assert response.status_code == 409 and response.json()["detail"]["failure_class"] == "not_built"
+
+
+def test_a_final_room_render_is_left_to_the_conversation(client: TestClient, built_room: Path) -> None:
+    response = client.post(f"{ROOM}/renders", json={"kind": "turntable", "tier": "final"})
+    assert response.status_code == 409 and response.json()["detail"]["failure_class"] == "final_in_conversation"
+    assert not (storage.read_status(built_room) or {}).get("renders")
+
+
+def test_a_room_draft_turntable_starts_through_the_guard(client: TestClient, built_room: Path) -> None:
+    response = client.post(f"{ROOM}/renders", json={"kind": "turntable", "tier": "draft"})
+    assert response.status_code == 202
+    assert response.json()["tier"] == "draft" and response.json()["estimate"] == "about 19 seconds"
+    assert (storage.read_status(built_room) or {})["renders"]["turntable"]["tier"] == "draft"
+
+
+def test_a_queued_room_render_and_a_published_turntable_are_listed(client: TestClient, built_room: Path) -> None:
+    storage.write_render_status(
+        built_room, "still", status="queued", tier="draft", estimate_seconds=1.6,
+        actual_seconds=None, started_at=None, finished_at=None, error=None,
+    )
+    frames = built_room / "frames"
+    frames.mkdir()
+    for index in range(12):
+        (frames / f"frame_{index:03d}.png").write_bytes(png_bytes(8, 8))
+    storage.write_render_status(built_room, "turntable", status="succeeded", tier="draft", finished_at="2026-10-18T10:00:00+00:00")
+    listed = client.get(f"{ROOM}/renders").json()
+    assert listed["render_job"] == {"tier": "draft", "status": "queued", "estimate": "about 2 seconds"}
+    [turntable] = listed["renders"]
+    assert turntable["frames"] == 12 and turntable["preview"] == f"{ROOM}/files/frames/0"
+    assert client.get(turntable["preview"]).status_code == 200
