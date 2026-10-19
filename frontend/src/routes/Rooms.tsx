@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DeleteCompositionVersion } from "@/components/DeleteCompositionVersion";
+import { DuplicateRoom } from "@/components/DuplicateRoom";
 import { RoomVariants } from "@/components/Variants";
 import { RoomView, VersionSelect } from "@/components/inspector/RoomView";
 import { isOpen, roomEntries } from "../lib/rooms";
@@ -130,6 +131,7 @@ function CompositionCard({ composition, inRoom = false }: { composition: Composi
           <li key={item.id}>
             <strong>{item.name}</strong> <span className="text-muted-foreground">({item.type})</span>
             {item.no_longer_approved && <Badge variant="destructive" className="ml-2">no longer approved</Badge>}
+            {item.hidden && <Badge variant="secondary" className="ml-2">hidden</Badge>}
           </li>
         ))}
       </ul>
@@ -262,6 +264,12 @@ function MeasuredRoom({
       for (const key of ["rooms", "compositions", "pieces"]) queryClient.invalidateQueries({ queryKey: [key] });
     },
   });
+  // Only a room of an apartment can have blueprints (a confirmed plan's images).
+  const blueprints = useQuery({
+    queryKey: ["blueprints", room.name],
+    queryFn: () => api.roomBlueprints(room.name),
+    enabled: Boolean(room.apartment),
+  });
   const effects = [
     room.pieces.length > 0 &&
       `${room.pieces.map((p) => p.name).join(", ")} will have no room`,
@@ -277,6 +285,17 @@ function MeasuredRoom({
         {room.apartment && <Badge variant="secondary">{room.apartment}</Badge>}
       </DialogHeader>
       <RoomBrief room={room} />
+      {(blueprints.data ?? []).length > 0 && (
+        <ul className="grid gap-1 text-sm">
+          {(blueprints.data ?? []).map((blueprint) => (
+            <li key={blueprint.id}>
+              <a href={blueprint.href} download={blueprint.original_name} className="underline">
+                Download blueprint {blueprint.original_name}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
       {room.apartment ? (
         <p className="text-sm text-muted-foreground">
           {room.name} belongs to the apartment {room.apartment}; it cannot be deleted on its own yet.
@@ -312,13 +331,14 @@ function MeasuredRoom({
         </div>
       )}
       <FieldError message={message(remove.error)} />
+      <DuplicateRoom room={room.name} versions={room.composition?.versions ?? []} />
       {composition ? (
         <CompositionCard composition={composition} inRoom />
       ) : (
         loaded &&
         !room.composition && (
           <p className="text-sm text-muted-foreground">
-            No composition yet. Ask the Designer in a conversation to compose {room.name}.
+            No composition yet. Ask Lil&apos; Glitty in a conversation to compose {room.name}.
           </p>
         )
       )}
@@ -358,7 +378,7 @@ export default function Rooms() {
     <>
       <p>
         Your measured rooms, each with its composition: your approved pieces placed in the room with the rest of the
-        furniture. Ask the Designer in a conversation to compose a room.
+        furniture. Ask Lil&apos; Glitty in a conversation to compose a room.
       </p>
       {rooms.error && <FieldError message={message(rooms.error)} />}
       {compositions.error && <FieldError message={message(compositions.error)} />}

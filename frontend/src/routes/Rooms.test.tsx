@@ -120,7 +120,7 @@ test("a room without a composition says so and how to get one", async () => {
   serveRooms([{ ...hall, composition: null }]);
   show("/studio/rooms/Hall");
   const card = within(await screen.findByRole("dialog", { name: "Hall" }));
-  expect(await card.findByText("No composition yet. Ask the Designer in a conversation to compose Hall.")).toBeInTheDocument();
+  expect(await card.findByText("No composition yet. Ask Lil' Glitty in a conversation to compose Hall.")).toBeInTheDocument();
 });
 
 test("a room's composition is shown inside its dialog, not on a tile of its own", async () => {
@@ -351,22 +351,6 @@ test("a room without items shows no Furniture section (Room without items)", asy
   expect(card.queryByRole("group", { name: "Furniture" })).not.toBeInTheDocument();
   expect(card.queryByText("Furniture")).not.toBeInTheDocument();
 });
-
-function serveItems(report: unknown) {
-  return stubFetch((call) => {
-    if (call === "GET /compositions") return { body: [modelled] };
-    if (call === "GET /compositions/wohnen/versions/2/files/report.json") return { body: report };
-  });
-}
-
-async function openItems() {
-  const user = userEvent.setup();
-  show("/studio/rooms/compositions/wohnen");
-  const card = within(await screen.findByRole("dialog", { name: "Wohnen" }));
-  await user.click(card.getByRole("button", { name: "Open the 3D view of Wohnen" }));
-  await card.findByRole("group", { name: "Surfaces" });
-  return { user, card, switches: within(card.getByRole("group", { name: "Furniture" })) };
-}
 
 test("an older composition without a model shows its picture and says how to get the 3D view", async () => {
   stubFetch((call) => {
@@ -651,4 +635,105 @@ test("an approval refusal is shown next to the version it names", async () => {
   expect(refusal).toHaveTextContent("listening-wall v4");
   expect(refusal.closest("[role=group]")).toHaveAccessibleName("Approval of Wohnen version 2");
   expect(card.getByRole("button", { name: "Approve version 2" })).toBeEnabled();
+});
+
+// --- blueprints (render-now-blueprints-verdict-note) --------------------------------------------
+
+test("a room of an apartment offers its blueprints for download, newest first (Blueprint downloaded)", async () => {
+  serveRooms([kueche], (call) =>
+    call === "GET /rooms/K%C3%BCche/blueprints"
+      ? {
+          body: [
+            { id: "b2", original_name: "grundriss-v2.png", kind: "png", created_at: "2026-10-18T10:00:00+00:00", href: "/blueprints/b2" },
+            { id: "b1", original_name: "grundriss.png", kind: "png", created_at: "2026-10-17T10:00:00+00:00", href: "/blueprints/b1" },
+          ],
+        }
+      : undefined,
+  );
+  show("/studio/rooms/K%C3%BCche");
+  const card = within(await screen.findByRole("dialog", { name: "Küche" }));
+  const links = await card.findAllByRole("link", { name: /^Download blueprint/ });
+  expect(links.map((link) => link.textContent)).toEqual(["Download blueprint grundriss-v2.png", "Download blueprint grundriss.png"]);
+  expect(links[1]).toHaveAttribute("href", "/blueprints/b1");
+  expect(links[1]).toHaveAttribute("download", "grundriss.png");
+});
+
+test("a room measured by hand shows no blueprint line and asks for none (Room measured by hand)", async () => {
+  const calls = serveRooms([hall]);
+  show("/studio/rooms/Hall");
+  const card = within(await screen.findByRole("dialog", { name: "Hall" }));
+  await card.findByRole("button", { name: "Room brief" });
+  expect(card.queryByRole("link", { name: /Download blueprint/ })).not.toBeInTheDocument();
+  expect(calls.some(([, url]) => url.includes("/blueprints"))).toBe(false);
+});
+
+// --- per-item switches and hidden items (hidden-room-items) -------------------------------------
+
+const ITEM_SURFACES = { ...SURFACES, items: ["STAND_sofa", "Armchair_mesh"] };
+const ITEM_REPORT = {
+  surfaces: ITEM_SURFACES,
+  extent_mm: { min: [0, 0, 0], max: [5000, 4000, 2600] },
+  items: [
+    { id: "sofa", type: "stand-in", name: "Sofa", meshes: ["STAND_sofa"] },
+    { id: "armchair", type: "model", name: "Armchair", meshes: ["Armchair_mesh"] },
+    { id: "lamp", type: "stand-in", hidden: true },
+  ],
+};
+
+function serveItems(report: unknown) {
+  return stubFetch((call) => {
+    if (call === "GET /compositions") return { body: [modelled] };
+    if (call === "GET /compositions/wohnen/versions/2/files/report.json") return { body: report };
+  });
+}
+
+async function openItems() {
+  const user = userEvent.setup();
+  show("/studio/rooms/compositions/wohnen");
+  const card = within(await screen.findByRole("dialog", { name: "Wohnen" }));
+  await user.click(card.getByRole("button", { name: "Open the 3D view of Wohnen" }));
+  await card.findByRole("group", { name: "Surfaces" });
+  return { user, card, switches: within(card.getByRole("group", { name: "Furniture" })) };
+}
+
+test("each built item has its own switch, and switching the sofa off hides only the sofa (One item switched off)", async () => {
+  const calls = serveItems(ITEM_REPORT);
+  const { user, card, switches } = await openItems();
+  const room = within(card.getByRole("group", { name: "Surfaces" }));
+  expect(room.getAllByRole("button").map((b) => b.textContent)).toEqual(["All walls", "wall 1", "wall 2", "wall 3", "wall 4", "floor", "ceiling"]);
+  expect(switches.getAllByRole("button").map((b) => b.textContent)).toEqual(["All items", "Sofa", "Armchair"]);
+  const props = await canvasProps();
+  expect(Object.keys((props.spec as { layers: object }).layers).slice(0, 2)).toEqual(["item:sofa", "item:armchair"]);
+  await user.click(switches.getByRole("button", { name: "Sofa" }));
+  expect((await canvasProps()).layers).toEqual({ ceiling: false, "item:sofa": false, dimensions: false });
+  expect(switches.getByRole("button", { name: "Armchair" })).toHaveAttribute("aria-pressed", "true");
+  expect(calls.some(([method]) => method !== "GET")).toBe(false);
+});
+
+test("All items switches every item and leaves the walls (All items)", async () => {
+  serveItems(ITEM_REPORT);
+  const { user, switches } = await openItems();
+  await user.click(switches.getByRole("button", { name: "All items" }));
+  expect((await canvasProps()).layers).toEqual({
+    ceiling: false, "item:sofa": false, "item:armchair": false, dimensions: false,
+  });
+});
+
+test("an older report keeps the single items switch (Older report keeps one items switch)", async () => {
+  serveItems({ surfaces: SURFACES, extent_mm: { min: [0, 0, 0], max: [5000, 4000, 2600] }, items: [{ id: "sofa", type: "stand-in" }] });
+  const { switches } = await openItems();
+  expect(switches.getByRole("button", { name: "items" })).toBeInTheDocument();
+  expect(switches.queryByRole("button", { name: "All items" })).not.toBeInTheDocument();
+});
+
+test("a hidden item is listed as hidden and has no switch (Hidden item listed, not switched)", async () => {
+  stubFetch((call) => {
+    if (call === "GET /compositions")
+      return { body: [{ ...modelled, items: [...modelled.items, { id: "lamp", type: "stand-in", name: "Lamp", hidden: true }] }] };
+    if (call === "GET /compositions/wohnen/versions/2/files/report.json") return { body: ITEM_REPORT };
+  });
+  const { switches } = await openItems();
+  const card = within(screen.getByRole("dialog", { name: "Wohnen" }));
+  expect(card.getByText("Lamp").closest("li")).toHaveTextContent("hidden");
+  expect(switches.queryByRole("button", { name: "Lamp" })).not.toBeInTheDocument();
 });
