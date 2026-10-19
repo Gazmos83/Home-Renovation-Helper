@@ -55,7 +55,7 @@ const memoryDefaults = {
 const memory = { settings: memoryDefaults, defaults: memoryDefaults, fixed_rules: ["Generator-extension requests are always saved."] };
 
 const AGENT_LABELS = [
-  "Agent Memory", "Agent Workflow", "Agent Calls", "Render Offload", "Agent Score", "Token Usage", "Plugins", "Models and Routing",
+  "Agent Memory", "Agent Workflow", "Agent Calls", "Render Offload", "Agent Score", "Token Usage", "Plugins", "Models and Routing", "Accounts",
 ];
 
 test("the page opens on the Workspace tab, with its title for screen readers only (No page title)", async () => {

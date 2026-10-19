@@ -6,6 +6,7 @@ import Models from "./Models";
 import Offload from "./Offload";
 import Plugins from "./Plugins";
 import Usage from "./Usage";
+import Users from "./Users";
 import Workflow from "./Workflow";
 
 /** The AI & Agent Settings tab's views, in the sub-menu's order (studio-pricing-and-agent-settings-tabs). */
@@ -18,6 +19,7 @@ export const AGENT_VIEWS = [
   { id: "usage", label: "Token Usage", body: <Usage /> },
   { id: "plugins", label: "Plugins", body: <Plugins /> },
   { id: "models", label: "Models and Routing", body: <Models /> },
+  { id: "users", label: "Accounts", body: <Users /> },
 ] as const;
 
 /**

@@ -56,7 +56,7 @@ test("the tab opens on Agent Memory with the views in the owner's order", async 
   stubAll();
   show("/admin/agents");
   expect(AGENT_VIEWS.map((v) => v.label)).toEqual([
-    "Agent Memory", "Agent Workflow", "Agent Calls", "Render Offload", "Agent Score", "Token Usage", "Plugins", "Models and Routing",
+    "Agent Memory", "Agent Workflow", "Agent Calls", "Render Offload", "Agent Score", "Token Usage", "Plugins", "Models and Routing", "Accounts",
   ]);
   expect(await screen.findByText("Generator-extension requests are always saved.")).toBeInTheDocument();
 });

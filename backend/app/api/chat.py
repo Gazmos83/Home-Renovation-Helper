@@ -10,6 +10,7 @@ model, a prompt, a token count, a cost or a file-system path (CLAUDE.md §1).
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import queue
@@ -454,7 +455,8 @@ def _stream(request: Request, thread: Any, owner: UUID, message: str, make_event
             events.put(_sse("done", {}))
             events.put(None)
 
-    threading.Thread(target=work, name=f"turn-{thread.id}", daemon=True).start()
+    # A copy of this request's context, so the turn sees the same account's house file.
+    threading.Thread(target=contextvars.copy_context().run, args=(work,), name=f"turn-{thread.id}", daemon=True).start()
 
     def body() -> Iterator[str]:
         while True:

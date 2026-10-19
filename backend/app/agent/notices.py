@@ -15,6 +15,7 @@ from uuid import UUID
 
 from app.agent import chat, house_file
 from app.blender import storage
+from app.db import scope as account_scope
 from app.feedback import runs as feedback_runs
 from app.render.guard import RenderQuote
 
@@ -152,12 +153,15 @@ def follow_build(deps: Any, thread_id: UUID | None, future: Any, package_id: str
     from the version's status. Nothing for a build with no thread or no future."""
     if thread_id is None or future is None:
         return
+    # The callback runs on the event loop's thread; the notice goes to this account's conversation.
+    member = account_scope.current()
 
     def done(_future: Any) -> None:
         try:
             state = storage.read_status(storage.version_dir(deps.render_root, package_id, version)) or {}
         except ValueError:
             state = {}
-        post_build(deps, thread_id, package_id, version, str(state.get("status")))
+        with account_scope.scoped(member):
+            post_build(deps, thread_id, package_id, version, str(state.get("status")))
 
     future.add_done_callback(done)

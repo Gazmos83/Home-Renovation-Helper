@@ -310,7 +310,11 @@ class Room(Base):
     __tablename__ = "rooms"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    # The member account the row belongs to; NULL for the owner's own rows (app/db/scope.py).
+    owner_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
     corners_mm: Mapped[list] = mapped_column(JSONB, nullable=False)
     height_mm: Mapped[int] = mapped_column(Integer, nullable=False)
     wall_thickness_mm: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -329,6 +333,7 @@ class Room(Base):
 
     __table_args__ = (
         CheckConstraint("btrim(name) <> ''", name="ck_rooms_name_not_blank"),
+        UniqueConstraint("owner_id", "name", name="uq_rooms_owner_name", postgresql_nulls_not_distinct=True),
     )
 
 
@@ -337,10 +342,19 @@ class Preference(Base):
 
     __tablename__ = "preferences"
 
-    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    # The member account the row belongs to; NULL for the owner's own rows (app/db/scope.py).
+    owner_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
     value: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("owner_id", "key", name="uq_preferences_owner_key", postgresql_nulls_not_distinct=True),
     )
 
 
@@ -350,6 +364,10 @@ class Piece(Base):
     __tablename__ = "pieces"
 
     package_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # The member account the row belongs to; NULL for the owner's own rows (app/db/scope.py).
+    owner_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     room_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("rooms.id", ondelete="SET NULL"), nullable=True
@@ -399,6 +417,10 @@ class ModelAsset(Base):
     __tablename__ = "model_assets"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    # The member account the row belongs to; NULL for the owner's own rows (app/db/scope.py).
+    owner_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     kind: Mapped[str] = mapped_column(String(8), nullable=False)
     entry: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -430,6 +452,10 @@ class Composition(Base):
     __tablename__ = "compositions"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    # The member account the row belongs to; NULL for the owner's own rows (app/db/scope.py).
+    owner_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     scope: Mapped[str] = mapped_column(String(16), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
@@ -439,7 +465,9 @@ class Composition(Base):
 
     __table_args__ = (
         CheckConstraint("scope IN ('room', 'apartment')", name="ck_compositions_scope"),
-        UniqueConstraint("scope", "name", name="uq_compositions_scope_name"),
+        UniqueConstraint(
+            "owner_id", "scope", "name", name="uq_compositions_owner_scope_name", postgresql_nulls_not_distinct=True
+        ),
     )
 
 
@@ -477,6 +505,10 @@ class GeneratorExtensionRequest(Base):
     __tablename__ = "generator_extension_requests"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    # The member account the row belongs to; NULL for the owner's own rows (app/db/scope.py).
+    owner_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     package_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     field: Mapped[str] = mapped_column(String(200), nullable=False)
     request: Mapped[str] = mapped_column(Text, nullable=False)
@@ -502,6 +534,10 @@ class Thread(Base):
     __tablename__ = "threads"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    # The member account the row belongs to; NULL for the owner's own rows (app/db/scope.py).
+    owner_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     package_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -626,7 +662,11 @@ class Apartment(Base):
     __tablename__ = "apartments"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    # The member account the row belongs to; NULL for the owner's own rows (app/db/scope.py).
+    owner_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
     ceiling_height_mm: Mapped[int] = mapped_column(Integer, nullable=False)
     wall_thickness_mm: Mapped[int] = mapped_column(Integer, nullable=False)
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -639,6 +679,7 @@ class Apartment(Base):
 
     __table_args__ = (
         CheckConstraint("btrim(name) <> ''", name="ck_apartments_name_not_blank"),
+        UniqueConstraint("owner_id", "name", name="uq_apartments_owner_name", postgresql_nulls_not_distinct=True),
     )
 
 
@@ -1249,6 +1290,10 @@ class RemnantSheet(Base):
     __tablename__ = "remnant_sheets"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    # The member account the row belongs to; NULL for the owner's own rows (app/db/scope.py).
+    owner_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     material_key: Mapped[str] = mapped_column(String(128), nullable=False)
     length_mm: Mapped[int] = mapped_column(Integer, nullable=False)
     width_mm: Mapped[int] = mapped_column(Integer, nullable=False)

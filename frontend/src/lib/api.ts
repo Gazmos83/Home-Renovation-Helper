@@ -198,6 +198,8 @@ export type MemorySettings = {
 
 export type MemoryPayload = { settings: MemorySettings; defaults: MemorySettings; fixed_rules: string[] };
 
+export type Account = { id: string; email: string; created_at: string; is_owner: boolean };
+
 export type Upload = { upload_id: string; kind: string; size_bytes: number; original_name: string };
 
 /** The conversation's brief settings (split-project-panel). */
@@ -1257,6 +1259,10 @@ export const api = {
   compressConversation: (threadId: string) =>
     request<ConversationNote>(`/chat/threads/${threadId}/note/compress`, { method: "POST" }),
   memorySettings: () => request<MemoryPayload>("/admin/memory"),
+  adminUsers: () => request<Account[]>("/admin/users"),
+  addMember: (body: { email: string; password: string }) =>
+    request<Account>("/admin/users", { method: "POST", body: JSON.stringify(body) }),
+  removeMember: (userId: string) => request<void>(`/admin/users/${userId}`, { method: "DELETE" }),
   saveMemorySettings: (changes: Partial<MemorySettings>) =>
     request<MemoryPayload>("/admin/memory", { method: "PUT", body: JSON.stringify(changes) }),
   resetMemorySetting: (field: keyof MemorySettings) =>

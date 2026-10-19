@@ -38,6 +38,7 @@ from app.api.admin_render import router as admin_render_router
 from app.api.admin_rules import router as admin_rules_router
 from app.api.admin_threads import router as admin_threads_router
 from app.api.admin_usage import router as admin_usage_router
+from app.api.admin_users import router as admin_users_router
 from app.api.admin_workflow import router as admin_workflow_router
 from app.api.apartments import router as apartments_router
 from app.api.auth import router as auth_router
@@ -49,6 +50,7 @@ from app.api.engineering import router as engineering_router
 from app.api.feedback import admin_router as admin_feedback_router
 from app.api.feedback import router as feedback_router
 from app.api.feedback import verdict_router
+from app.api.gate import AccountScope
 from app.api.guideline_notes import router as guideline_notes_router
 from app.api.hardware_data import router as hardware_data_router
 from app.api.health import router as health_router
@@ -400,11 +402,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(engineering_methods_router)
     app.include_router(admin_rules_router)
     app.include_router(admin_memory_router)
+    app.include_router(admin_users_router)
     app.include_router(admin_threads_router)
     app.include_router(admin_feedback_router)
     app.include_router(admin_offload_router)
 
     app_logging.install(app)
+    app.add_middleware(AccountScope)
     # Added last so it sits outermost: preflight and error responses both need
     # the CORS headers, and credentials require explicit origins (never "*").
     app.add_middleware(

@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.auth.accounts import get_owner
 from app.db.models import AuthSession, User
 
 TOKEN_BYTES: Final = 32
@@ -33,13 +34,20 @@ def hash_token(token: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AuthSessionRecord:
-    """A live login. `token` is present only on the call that created it."""
+    """A live login. `token` is present only on the call that created it.
+    `is_owner` is true for the owner account (the earliest one); a member's is false."""
 
     id: UUID
     user_id: UUID
     email: str
     expires_at: datetime
     token: str | None = None
+    is_owner: bool = False
+
+
+def _is_owner(session: Session, user_id: UUID) -> bool:
+    owner = get_owner(session)
+    return owner is not None and owner.id == user_id
 
 
 def create_auth_session(
@@ -64,6 +72,7 @@ def create_auth_session(
         email=user.email,
         expires_at=row.expires_at,
         token=token,
+        is_owner=_is_owner(session, user_id),
     )
 
 
@@ -100,6 +109,7 @@ def find_auth_session(
         user_id=row.user_id,
         email=user.email,
         expires_at=row.expires_at,
+        is_owner=_is_owner(session, row.user_id),
     )
 
 

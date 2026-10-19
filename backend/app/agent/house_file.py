@@ -28,6 +28,7 @@ from app.blender import storage
 from app.blender.room_contract import normalise_room_shell
 from app.blender.shell_contract import ShellContext, normalise_shell
 from app.blender.spec_contract import SpecValidationError
+from app.db import scope as account_scope
 from app.db.models import (
     Apartment,
     Composition,
@@ -322,6 +323,7 @@ def upsert_apartment(
         ]
     context = validate_apartment(name, ceiling_height_mm, wall_thickness_mm, [*kept, *rooms])
     if apartment is None:
+        _refuse_folder_in_use(session, Apartment, storage.apartment_slug(name), name)
         apartment = Apartment(name=name)
         session.add(apartment)
     apartment.ceiling_height_mm = _whole(context.ceiling_height_mm)
@@ -382,7 +384,7 @@ def set_preference(session: Session, key: str, value: str) -> None:
     key = (key or "").strip()
     if not key or len(key) > 64:
         raise HouseFileError("a preference key is 1 to 64 characters")
-    row = session.get(Preference, key)
+    row = session.scalars(select(Preference).where(Preference.key == key)).one_or_none()
     if row is None:
         session.add(Preference(key=key, value=str(value), updated_at=_now()))
     else:
@@ -540,13 +542,25 @@ def unapprove_version(
     return row
 
 
+def visible_packages(session: Session, folders: list[tuple[str, list[int]]]) -> list[tuple[str, list[int]]]:
+    """The package folders this account may see: its own recorded pieces, and for the
+    owner also folders no account has recorded (a member never sees those)."""
+    seen = set(session.scalars(select(Piece.package_id)))
+    if account_scope.current() is None:
+        every_account = {account_scope.ALL_ACCOUNTS: True}
+        recorded_anywhere = set(session.scalars(select(Piece.package_id).execution_options(**every_account)))
+        return [(p, v) for p, v in folders if p in seen or p not in recorded_anywhere]
+    return [(p, v) for p, v in folders if p in seen]
+
+
 def pieces(session: Session, root: Path) -> list[dict[str, Any]]:
-    """Every piece: the recorded ones, then packages found only as folders."""
+    """Every piece of this account: the recorded ones, then packages found only as folders."""
     recorded = {piece.package_id: piece for piece in session.scalars(select(Piece))}
     records: dict[str, list[PieceVersion]] = {}
     for row in session.scalars(select(PieceVersion).order_by(PieceVersion.version)):
-        records.setdefault(row.package_id, []).append(row)
-    folders = dict(storage.list_packages(root))
+        if row.package_id in recorded:
+            records.setdefault(row.package_id, []).append(row)
+    folders = dict(visible_packages(session, list(storage.list_packages(root))))
 
     listing = []
     for package_id in sorted(set(recorded) | set(folders)):
@@ -1001,12 +1015,29 @@ def delete_composition_version(session: Session, root: Path, slug: str, version:
     return last
 
 
+def _refuse_folder_in_use(session: Session, model: type[Apartment | Composition], slug: str, name: str) -> None:
+    """Folders on disk are named from the name and shared by every account, so a name
+    whose folder another account already uses is refused rather than mixed with it."""
+    every_account = {account_scope.ALL_ACCOUNTS: True}
+    others = model.owner_id.is_distinct_from(account_scope.current())
+    if model is Composition:
+        slugs = session.scalars(select(Composition.slug).where(others).execution_options(**every_account))
+        used = slug in set(slugs)
+    else:
+        names = session.scalars(select(Apartment.name).where(others).execution_options(**every_account))
+        used = any(storage.apartment_slug(other) == slug for other in names)
+    if used:
+        raise HouseFileError(f"the name {name!r} is already used by another account; choose another name")
+
+
 def record_composition(session: Session, scope: str, name: str) -> Composition:
     """The composition for a scope, created on first use. Flushes; the caller commits."""
     found = composition_by_scope(session, scope, name)
     if found is not None:
         return found
-    row = Composition(scope=scope, name=name, slug=storage.composition_slug(scope, name))
+    slug = storage.composition_slug(scope, name)
+    _refuse_folder_in_use(session, Composition, slug, name)
+    row = Composition(scope=scope, name=name, slug=slug)
     session.add(row)
     session.flush()
     return row

@@ -1,8 +1,10 @@
-"""The single owner account: ensure it exists, and find it (owner-auth).
+"""The owner account and its members: ensure the owner exists, find it, and let
+the owner add or remove members (owner-auth).
 
-There is no registration and no role model (CLAUDE.md §1). The owner is created
-from configuration on first start and never overwritten afterwards, so a
-password changed later survives restarts. Every function takes a SQLAlchemy
+There is no registration and no role column. The owner is the earliest account,
+created from configuration on first start and never overwritten afterwards, so a
+password changed later survives restarts. Every later account is a member: it
+uses the Studio with its own house file, never the developer panel. Every function takes a SQLAlchemy
 session and plain values; nothing here reads a request, a cookie or a model
 argument.
 """
@@ -13,11 +15,19 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.auth.passwords import hash_password
 from app.db.models import User
+
+
+class AccountExists(ValueError):
+    """An account with this email already exists."""
+
+
+class OwnerAccount(ValueError):
+    """The owner account cannot be removed."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,3 +81,35 @@ def ensure_owner(session: Session, email: str, password: str) -> UserRecord:
     session.add(row)
     session.flush()
     return _record(row)
+
+
+def list_accounts(session: Session) -> list[UserRecord]:
+    """Every account, the owner first."""
+    rows = session.execute(select(User).order_by(User.created_at)).scalars()
+    return [_record(row) for row in rows]
+
+
+def create_member(session: Session, email: str, password: str) -> UserRecord:
+    """Add a member account. Raises `AccountExists` for a known email and
+    `WeakPassword` for a short password; the owner must already exist, so a
+    member can never become the owner."""
+    if get_owner(session) is None:
+        raise RuntimeError("the owner account does not exist yet")
+    if find_by_email(session, email) is not None:
+        raise AccountExists(f"an account for {normalise_email(email)} already exists")
+    digest = hash_password(password)
+    row = User(id=uuid4(), email=normalise_email(email), password_hash=digest)
+    session.add(row)
+    session.flush()
+    return _record(row)
+
+
+def delete_member(session: Session, user_id: UUID) -> bool:
+    """Remove a member and its sign-ins. False when no such account exists;
+    raises `OwnerAccount` for the owner."""
+    owner = get_owner(session)
+    if owner is not None and owner.id == user_id:
+        raise OwnerAccount("the owner account cannot be removed")
+    removed = session.execute(delete(User).where(User.id == user_id)).rowcount
+    session.flush()
+    return bool(removed)

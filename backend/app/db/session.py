@@ -24,6 +24,10 @@ def to_sqlalchemy_url(dsn: PostgresDsn | str) -> str:
 
 
 def make_engine(dsn: PostgresDsn | str, **kwargs: object) -> Engine:
+    # Registers the per-account filter on every ORM session (imported here, not at
+    # module top, because the models import nothing from this module's callers).
+    import app.db.scope  # noqa: F401
+
     return create_engine(to_sqlalchemy_url(dsn), pool_pre_ping=True, **kwargs)  # type: ignore[arg-type]
 
 

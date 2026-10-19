@@ -32,6 +32,7 @@ from app.blender.custom_build.derive import overall
 from app.blender.launch import subprocess_launch
 from app.blender.schemas import CustomBuildSpec, describe_validation_error
 from app.blender.spec_contract import SpecValidationError
+from app.db import scope as account_scope
 from app.db.models import Piece, PieceVersion
 from app.design_import import export_document
 from app.guidelines.hardware_inputs import freeze_inputs
@@ -236,13 +237,19 @@ def create_package(body: PackageIn, request: Request, background: BackgroundTask
             f"package {package_id!r} already exists; edit its spec to make a new version",
         )
     require_generation(request)
-    return _create_version(request, background, package_id, spec)
+    created = _create_version(request, background, package_id, spec)
+    if account_scope.current() is not None:
+        # A member sees only recorded pieces, so its package is recorded at once.
+        with Session(request.app.state.engine) as session:
+            house_file.record_piece(session, package_id, str(spec.get("name") or package_id))
+            session.commit()
+    return created
 
 
 @router.get("")
 def list_packages(request: Request):
-    packages = list(storage.list_packages(render_root(request)))
     with Session(request.app.state.engine) as session:
+        packages = house_file.visible_packages(session, list(storage.list_packages(render_root(request))))
         rooms = house_file.piece_room_names(session)
         threads = house_file.thread_ids_for_pieces(session, [package_id for package_id, _ in packages])
     return [
