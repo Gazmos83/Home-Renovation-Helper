@@ -45,9 +45,9 @@ def test_each_agent_names_exactly_its_tools() -> None:
     assert loaded["intake"].tools == ("record_brief", "record_plan", "confirm_room", "ask_owner", "read_help")
     assert set(loaded["designer"].tools) == {
         "create_piece", "duplicate_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit", "compose_room",
-        "read_room_version_dimensions", "edit_decisions", "record_version_verdict", "search_guidelines",
+        "read_room_version_dimensions", "measure_gaps", "edit_decisions", "record_version_verdict", "search_guidelines",
         "ask_owner", "ask_placement", "search_engineering_knowledge", "record_assessment_inputs", "calculate_engineering",
-        "get_engineering_report",
+        "get_engineering_report", "approve_version",
     }
     assert set(loaded["builder"].tools) == {
         "blender_build", "build_shell", "render_turntable", "restyle_render", "record_render_feedback",
@@ -55,7 +55,7 @@ def test_each_agent_names_exactly_its_tools() -> None:
     assert loaded["reviewer"].tools == ("revision_review",)
     assert set(loaded["researcher"].tools) == {
         "search_catalog_knowledge", "check_live_listing", "compare_products", "price_cut_list", "manage_remnants",
-        "search_guidelines", "read_room_version_dimensions", "search_engineering_knowledge",
+        "search_guidelines", "read_room_version_dimensions", "measure_gaps", "search_engineering_knowledge",
         "record_assessment_inputs", "calculate_engineering", "get_engineering_report",
     }
 
@@ -158,7 +158,7 @@ def _break(tmp_path: Path, name: str, edit) -> str:
 
 def test_an_unknown_tool_fails_naming_the_file(tmp_path: Path) -> None:
     message = _break(
-        tmp_path, "designer", lambda text: text.replace("ask_placement]", "ask_placement, run_bpy]", 1)
+        tmp_path, "designer", lambda text: text.replace("approve_version]", "approve_version, run_bpy]", 1)
     )
     assert message.startswith("designer.md:")
     assert "run_bpy" in message
@@ -336,6 +336,15 @@ def test_intake_reuses_a_stored_room_only_through_a_confirmation() -> None:
     assert "use none of its figures before the owner's yes" in text
 
 
+def test_intake_does_not_require_the_height_limit() -> None:
+    """piece-size-room-warning "No limit given": the rough size and height are asked, the limit never."""
+    text = load_instructions()["intake"].text
+    assert "the piece's purpose, its rough size and height, the style and the budget" in text
+    assert "The highest the piece may be is optional: record it only when the owner gives one, and never ask for it." in text
+    assert "When you have the purpose, the piece's rough size and height, the style and the budget, call `record_brief`" in text
+    assert "the heights" not in text
+
+
 def test_intake_takes_the_room_path_for_a_room_only_wish() -> None:
     text = load_instructions()["intake"].text
     assert "When the owner wants a room designed or furnished rather than a piece, take the room path." in text
@@ -447,8 +456,17 @@ def test_missing_information_is_asked_for_not_explained() -> None:
         assert "Never name a tool, a document, a field or a JSON key to the owner." in text
     assert "call `ask_placement`" in loaded["designer"].text
     builder = loaded["builder"].text
-    assert "`in_room` true" in builder
     assert "room document" not in builder and "room_fit" not in builder
+
+
+def test_the_builder_renders_rooms_not_pieces() -> None:
+    """rooms-only-renders: a piece is built and inspected; renders and restyles are of rooms."""
+    loaded = load_instructions()
+    builder = loaded["builder"].text
+    assert "Renders are made of rooms, not pieces." in builder
+    assert "offer to have the Designer compose a room with the piece, then render the room" in builder
+    assert "`in_room`" not in builder and "`slots`" not in builder and "`looks`" not in builder
+    assert "a request to render a piece also goes to `builder`" in loaded["foreman"].text
 
 
 def test_the_designer_gives_one_door_its_own_material_without_splitting_the_pair() -> None:
@@ -457,6 +475,14 @@ def test_the_designer_gives_one_door_its_own_material_without_splitting_the_pair
     assert "`leaf_materials`" in text
     assert "Never split a pair or row of doors into separate entries for this" in text
     assert "keep the front layout" in text
+
+
+def test_the_researcher_shows_the_priced_table_and_names_the_inspector_for_approval() -> None:
+    """pricing-completion: the table is copied, not composed; Approve sits in the version's inspector."""
+    text = load_instructions()["researcher"].text
+    assert "Put that table in your reply exactly as given" in text
+    assert "Approve control in the version's inspector (the Piece icon in the Workspace) or on the Pieces page" in text
+    assert "project panel" not in text
 
 
 def test_the_foreman_treats_a_change_to_a_composed_room_as_composing() -> None:
@@ -478,3 +504,28 @@ def test_the_builder_does_not_relay_a_room_change() -> None:
     text = load_instructions()["builder"].text
     assert "say in one sentence that the room has not been changed yet" in text
     assert "never offer to pass them on" in text
+
+
+def test_the_designer_quotes_form_answers_never_questions() -> None:
+    text = load_instructions()["designer"].text
+    assert "answers in a question form count as their words" in text
+    assert "never the question" in text
+
+
+def test_a_hung_piece_keeps_its_height_in_its_place() -> None:
+    designer = load_instructions()["designer"].text
+    assert "`ask_placement` with `hung: true`" in designer
+    assert "`mount_height_mm`" in designer and "`ceiling_gap_mm`" in designer
+    assert "never work a height out yourself" in designer
+    assert "never ask the owner for its wall, distance or height again" in designer
+    builder = load_instructions()["builder"].text
+    assert "never ask the owner for those figures again" in builder
+
+
+def test_a_placement_ends_in_the_room_proposal_without_a_render() -> None:
+    """place-piece-from-owner-words: stated values are passed, the room is proposed, renders are not offered."""
+    designer = load_instructions()["designer"].text
+    assert '"0 mm from wall 3" is `distance_mm` 0 and `from_wall` 3' in designer
+    assert "call `compose_room` with `with_saved_place: true` and nothing else" in designer
+    assert "When it says the version is not approved, call `approve_version`" in designer
+    assert "never starts or offers a render" in designer

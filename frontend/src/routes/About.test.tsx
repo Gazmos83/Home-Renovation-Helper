@@ -40,15 +40,60 @@ test("About opens from the header and explains the app in plain words (About fro
   expect(page.textContent).not.toMatch(/\b(model name|prompt|token|frame|resolution|Eevee|Cycles)\b/i);
 });
 
-test("the last section says pictures keep the piece's measurements (Measurements stay put)", async () => {
+test("a section says pictures keep the piece's measurements (Measurements stay put)", async () => {
+  signedIn();
+  show("/about");
+  const heading = await screen.findByRole("heading", { level: 1, name: "About Little Homey" });
+  const page = heading.closest("article") as HTMLElement;
+  expect(within(page).getByRole("heading", { level: 2, name: "Your measurements stay put" })).toBeInTheDocument();
+  expect(page).toHaveTextContent("Every piece is built from its exact measurements");
+  expect(page).toHaveTextContent("A change happens only when you ask for it");
+});
+
+test("the last section says pricing uses real prices and never guesses (Stick to your budget)", async () => {
   signedIn();
   show("/about");
   const heading = await screen.findByRole("heading", { level: 1, name: "About Little Homey" });
   const page = heading.closest("article") as HTMLElement;
   const sections = within(page).getAllByRole("heading", { level: 2 });
-  expect(sections.at(-1)).toHaveTextContent("Your measurements stay put");
-  expect(page).toHaveTextContent("Every piece is built from its exact measurements");
-  expect(page).toHaveTextContent("A change happens only when you ask for it");
+  expect(sections.at(-1)).toHaveTextContent("Stick to your budget");
+  expect(page).toHaveTextContent("it prices it from your DIY store's real prices");
+  expect(page).toHaveTextContent("If a price is missing, it tells you which one instead of making it up");
+});
+
+test("a section says advice names its source and its limits (Advice you can check)", async () => {
+  signedIn();
+  show("/about");
+  const heading = await screen.findByRole("heading", { level: 1, name: "About Little Homey" });
+  const page = heading.closest("article") as HTMLElement;
+  expect(within(page).getByRole("heading", { level: 2, name: "Advice you can check" })).toBeInTheDocument();
+  expect(page).toHaveTextContent("it tells you which rule, what it measured and where the rule comes from");
+  expect(page).toHaveTextContent("Little Homey says it can't be sure and asks for what's missing");
+  expect(page).toHaveTextContent("what still needs a qualified person's check");
+  expect(page.textContent).not.toMatch(/\b(certified|safe to build)\b/i);
+});
+
+test("each section is a centred box with a coloured trim, shading and its icon, in a grid of up to three per row", async () => {
+  signedIn();
+  show("/about");
+  const heading = await screen.findByRole("heading", { level: 1, name: "About Little Homey" });
+  const page = heading.closest("article") as HTMLElement;
+  const boxes = within(page).getAllByRole("region");
+  expect(boxes.map((box) => box.getAttribute("aria-label"))).toEqual([
+    "Design on a low-powered computer",
+    "The magic is in the revision",
+    "Take your furniture anywhere",
+    "Your measurements stay put",
+    "Advice you can check",
+    "Stick to your budget",
+  ]);
+  for (const box of boxes) {
+    expect(box.className).toContain("border-t-primary");
+    expect(box.className).toContain("shadow-lg");
+    expect(box.querySelector("svg")).not.toBeNull();
+  }
+  expect(boxes[0].parentElement?.className).toContain("lg:grid-cols-3");
+  expect(page.className).toContain("text-center");
 });
 
 test("About no longer lists the crew; the crew has its own page (Crew moved to its own page)", async () => {

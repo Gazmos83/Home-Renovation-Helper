@@ -27,6 +27,7 @@ from app.agent.revise import (
     describe_rails,
 )
 from app.blender import storage
+from app.blender.composition_contract import floor_summary
 from app.blender.custom_build.derive import (
     GAP_MM,
     DeriveError,
@@ -381,7 +382,11 @@ def _item_place(item: Mapping[str, Any]) -> str:
     room = f" in {neutralise(str(item['room']))}" if item.get("room") else ""
     if "wall" in placement:
         wall = placement["wall"]
-        return f"{room} on wall {wall + 1} (index {wall}) at offset {placement['offset_mm']:g} mm"
+        hung = (
+            f", hung with its underside at {placement['mount_height_mm']:g} mm"
+            if "mount_height_mm" in placement else ""
+        )
+        return f"{room} on wall {wall + 1} (index {wall}) at offset {placement['offset_mm']:g} mm{hung}"
     return (
         f"{room} free at x {placement.get('x_mm', 0):g}, y {placement.get('y_mm', 0):g} mm, "
         f"rotated {placement.get('rotation_deg', 0):g}°"
@@ -418,6 +423,9 @@ def composition_note(compositions: Sequence[Mapping[str, Any]], models: Sequence
                 lines.append(f"  draft v{latest}, not approved, items: {_item_labels(composition.get('items', []))}")
         elif latest:
             lines.append(f"  v{latest} items (not approved): {_item_labels(composition.get('items', []))}")
+        if composition.get("floor"):
+            # Restated on every composition of the room, or the finish is removed (room-floor-finish).
+            lines.append(f"  v{latest} floor: {neutralise(floor_summary(composition['floor']))}")
     return "\n".join(lines)
 
 
@@ -430,6 +438,11 @@ def _item_labels(items: Sequence[Mapping[str, Any]]) -> str:
             label += " no longer approved"
         if item.get("layer") in ("floor", "ceiling"):
             label += f" ({item['layer']} layer)"
+        if item.get("hidden"):
+            label += " (hidden)"
+        light = item.get("light")
+        if isinstance(light, Mapping):
+            label += f" (light {light.get('lumens')} lm, {light.get('kelvin')} K)"
         stated = item.get("type") in ("model", "stand-in") and all(
             item.get(key) is not None for key in ("width_mm", "depth_mm", "height_mm")
         )
@@ -439,7 +452,14 @@ def _item_labels(items: Sequence[Mapping[str, Any]]) -> str:
         if not stated and isinstance(size, Mapping) and all(size.get(key) is not None for key in ("w", "d", "h")):
             # A piece's size as placed, from the resolved document (room-change-goes-to-designer).
             label += f" {size['w']:g} × {size['d']:g} × {size['h']:g} mm"
-        label += _item_place(item)
+        if item.get("type") == "led-strip" and item.get("length_mm") is not None:
+            # "led-strip: 2400 mm on wall 3 (index 2) at offset 400 mm at 1450 mm, facing down" (room-led-strips).
+            label += (
+                f" {item['length_mm']:g} mm{_item_place(item)} at {item.get('mount_height_mm', 0):g} mm, "
+                f"facing {item.get('facing', 'down')}, {item.get('lumens_per_m')} lm/m, {item.get('kelvin')} K"
+            )
+        else:
+            label += _item_place(item)
         placement = item.get("placement")
         centre = item.get("centre_mm")
         # A free placement already states its point and rotation.

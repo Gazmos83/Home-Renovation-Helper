@@ -33,6 +33,8 @@ export type ChatMessage = {
   text: string;
   /** `answers` is an answered question set, shown as its rows; a notice is a `render` or a `build` notice. */
   kind?: "text" | "answers" | "render" | "build" | "revision";
+  /** A reply's writer by role key (`engineering` for an engineering answer, `foreman` for the app's own). */
+  speaker?: string;
   rows?: AnswerRow[];
   upload_ids?: string[];
   /** An owner's message's id: the latest one can be edited. */
@@ -416,8 +418,10 @@ export type RoomSummary = {
 
 export type CompositionItem = {
   id: string;
-  type: "piece" | "stand-in" | "model";
+  type: "piece" | "stand-in" | "model" | "led-strip";
   name: string;
+  /** Kept in the layout, left out of the build and renders (hidden-room-items). */
+  hidden?: boolean;
   version?: number;
   approved?: boolean;
   no_longer_approved?: boolean;
@@ -476,6 +480,8 @@ export type CompositionReport = {
   surfaces: Record<string, string[]>;
   /** The rooms' plan bounds and the highest ceiling, in mm (x, y, z up). */
   extent_mm: { min: [number, number, number]; max: [number, number, number] };
+  /** Each item; a built one with its name and meshes on newer builds, a hidden one marked (hidden-room-items). */
+  items?: { id: string; type: string; name?: string; meshes?: string[]; hidden?: boolean }[];
 };
 
 /** A stored pricing of an approved version (cut-list-pricing); money in euro cents. */
@@ -535,7 +541,29 @@ export type VersionInfo = {
   revised_from?: number | null;
   /** The version's files present by name (front.png and friends only on newer builds). */
   files?: string[];
+  /** Too big for the piece's room, in plain sentences; a warning only (piece-size-room-warning). */
+  size_warnings?: string[];
 };
+
+/** A confirmed plan's image, kept with its apartment; `href` downloads it. */
+export type Blueprint = { id: string; original_name: string; kind: string; created_at: string; href: string };
+
+/** A queued or running render, with its estimate in words (render-now-blueprints-verdict-note). */
+export type RenderJob = { tier: string; status: string; estimate: string | null };
+
+/** A room version's published still or turntable, for the room inspector's Renders tab. */
+export type RoomRender = {
+  render: string;
+  label: string;
+  tier: string | null;
+  finished_at: string | null;
+  frames: number;
+  preview: string;
+  viewer: string | null;
+};
+
+/** The render guard's estimate, read without starting anything. */
+export type RenderEstimate = { tier: string; kind: string; estimate: string; estimate_seconds: number; warning: string };
 
 /** One cut-list row of a built version's `spec.json`. */
 export type SpecPart = {
@@ -599,21 +627,6 @@ export type PieceSpec = {
   drilling?: DrillingList;
   /** The validated input the version was built from: where the model's centre is. */
   input?: { envelope?: unknown; wall_shelves?: { x: number; y: number }[] };
-};
-
-export type RenderItem = {
-  render: string;
-  label: string;
-  tier: string | null;
-  /** When the render last finished, for the newest-first order of the Renders tab. */
-  finished_at: string | null;
-  /** A turntable's frame count; 0 for a still. */
-  frames: number;
-  preview: string;
-  viewer: string | null;
-  can_rate: boolean;
-  rating: "up" | "down" | null;
-  comment: string | null;
 };
 
 /** One restyle picture of a version (restyle-variants): appearance only, never a render of the design. */
@@ -1095,6 +1108,14 @@ export const api = {
   pieces: () => request<PieceSummary[]>("/packages"),
   rooms: () => request<RoomSummary[]>("/rooms"),
   deleteRoom: (name: string) => request<void>(`/rooms/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  /** Copy a room under a new name, with one layout version or none (duplicate-room). */
+  duplicateRoom: (name: string, body: { name: string; version: number | null }) =>
+    request<{ room: string; composition: { slug: string; version: number } | null }>(
+      `/rooms/${encodeURIComponent(name)}/duplicate`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** The blueprints of a room's apartment, newest first (render-now-blueprints-verdict-note). */
+  roomBlueprints: (name: string) => request<Blueprint[]>(`/rooms/${encodeURIComponent(name)}/blueprints`),
   setPieceRoom: (packageId: string, room: string | null) =>
     request<{ package_id: string; room: string | null }>(`/packages/${encodeURIComponent(packageId)}/room`, {
       method: "PUT",
@@ -1160,20 +1181,22 @@ export const api = {
   /** Delete one version with its renders, reviews and pricings; the last one deletes the piece. */
   deleteVersion: (packageId: string, version: number) =>
     request<void>(`/packages/${encodeURIComponent(packageId)}/versions/${version}`, { method: "DELETE" }),
-  variants: (packageId: string, version: number) =>
-    request<Variant[]>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/variants`),
   compositionVariants: (slug: string, version: number) =>
     request<Variant[]>(`/compositions/${encodeURIComponent(slug)}/versions/${version}/variants`),
-  renders: (packageId: string, version: number) =>
-    request<RenderItem[]>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/renders`),
-  rateRender: (packageId: string, version: number, render: string, rating: "up" | "down", comment: string | null) =>
-    request<RenderItem>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/renders/${encodeURIComponent(render)}/feedback`, {
-      method: "PUT",
-      body: JSON.stringify(comment ? { rating, comment } : { rating }),
-    }),
-  clearRating: (packageId: string, version: number, render: string) =>
-    request<RenderItem>(`/packages/${encodeURIComponent(packageId)}/versions/${version}/renders/${encodeURIComponent(render)}/feedback`, {
-      method: "DELETE",
+  /** A room version's renders and the one queued or running (render-now-blueprints-verdict-note). */
+  roomRenders: (slug: string, version: number) =>
+    request<{ renders: RoomRender[]; render_job: RenderJob | null }>(
+      `/compositions/${encodeURIComponent(slug)}/versions/${version}/renders`,
+    ),
+  roomRenderEstimate: (slug: string, version: number) =>
+    request<RenderEstimate>(
+      `/compositions/${encodeURIComponent(slug)}/versions/${version}/render-estimate?kind=turntable&tier=draft`,
+    ),
+  /** A draft turntable of a room version through the render guard: the only render the Renders tab starts. */
+  startRoomRender: (slug: string, version: number) =>
+    request<{ estimate: string; status: string }>(`/compositions/${encodeURIComponent(slug)}/versions/${version}/renders`, {
+      method: "POST",
+      body: JSON.stringify({ kind: "turntable", tier: "draft" }),
     }),
   feedbackSummary: (days = 30) => request<FeedbackRow[]>(`/admin/feedback?days=${days}`),
   feedbackComments: (row: { slot: string | null; model: string | null; tier: string }) =>

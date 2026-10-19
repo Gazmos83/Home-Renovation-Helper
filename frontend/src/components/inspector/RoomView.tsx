@@ -10,7 +10,9 @@ import { RoomDimensions } from "@/components/inspector/RoomDimensions";
 /**
  * A room composition in 3D (studio-ui): the inspector's own stage, cameras and modes,
  * with one switch per surface of the build report's surface map (each wall, floor and
- * ceiling, and the items) and "All walls". The ceiling starts off, so the room is seen
+ * ceiling, and the items) and "All walls". When the report lists each built item's meshes, the
+ * single items switch becomes one switch per item plus "All items"; nothing is saved
+ * (hidden-room-items). The ceiling starts off, so the room is seen
  * from above. A "dimensions" switch, off at first, labels each wall's length and each
  * room's ceiling height from the version's own plan (project-room-inspection). No explode
  * or cut list. The switches sit in a column right of the stage under Views, Room and
@@ -84,28 +86,37 @@ export function RoomView({
     enabled: measured && Boolean(dimensions),
   });
   // Kept stable across switches: a new frame would move the camera back to its preset.
+  // Per-item layers, in front of the surfaces so an item's meshes are found under the item first.
+  const items = useMemo(() => {
+    const built = (read.data?.items ?? []).filter((item) => !item.hidden);
+    if (built.length === 0 || !built.every((item) => item.meshes)) return [];
+    return built.map((item) => ({ layer: `item:${item.id}`, label: item.name ?? item.id, meshes: item.meshes as string[] }));
+  }, [read.data]);
   const frame = useMemo(() => {
     if (!read.data) return null;
     const { min, max } = read.data.extent_mm;
+    const layers = { ...Object.fromEntries(items.map((item) => [item.layer, item.meshes])), ...read.data.surfaces };
     return {
-      spec: { overall: { w: max[0] - min[0], h: max[2] - min[2], d: max[1] - min[1] }, layers: read.data.surfaces },
+      spec: { overall: { w: max[0] - min[0], h: max[2] - min[2], d: max[1] - min[1] }, layers },
       // The model is in the plan's frame (x, y in mm, exported Y-up): move its centre to the stage's.
       offset: [-(min[0] + max[0]) / 2000, 0, (min[1] + max[1]) / 2000] as [number, number, number],
     };
-  }, [read.data]);
+  }, [read.data, items]);
 
   if (read.error) return <p>The 3D view of {name} could not be read.</p>;
   if (!read.data || !frame) return <p>Loading…</p>;
-  const surfaces = Object.keys(read.data.surfaces);
+  // With item switches, the single items switch goes.
+  const surfaces = Object.keys(read.data.surfaces).filter((surface) => items.length === 0 || surface !== "items");
   const walls = surfaces.filter(isWall);
   // The ceiling starts off; the overlay of a piece's dimensions never shows here.
   const shown: Layers = layers ?? Object.fromEntries(surfaces.filter(isCeiling).map((s) => [s, false]));
   const on = (surface: string) => shown[surface] !== false;
   const allWalls = walls.length > 0 && walls.every(on);
+  const allItems = items.length > 0 && items.every((item) => on(item.layer));
 
-  // The items switch belongs to Furniture.
+  // The single items switch belongs to Furniture with the per-item switches.
   const roomSurfaces = surfaces.filter((surface) => surface !== "items");
-  const furniture = surfaces.includes("items");
+  const furniture = items.length > 0 || surfaces.includes("items");
   const toggle = (surface: string) => (
     <Button
       key={surface}
@@ -173,7 +184,32 @@ export function RoomView({
           {furniture && (
             <StageSection title="Furniture">
               <div className="grid gap-1" role="group" aria-label="Furniture">
-                {toggle("items")}
+                {items.length === 0 && toggle("items")}
+                {items.length > 0 && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={allItems ? "default" : "outline"}
+                    aria-pressed={allItems}
+                    onClick={() =>
+                      setLayers({ ...shown, ...Object.fromEntries(items.map((item) => [item.layer, !allItems])) })
+                    }
+                  >
+                    All items
+                  </Button>
+                )}
+                {items.map((item) => (
+                  <Button
+                    key={item.layer}
+                    type="button"
+                    size="sm"
+                    variant={on(item.layer) ? "default" : "outline"}
+                    aria-pressed={on(item.layer)}
+                    onClick={() => setLayers({ ...shown, [item.layer]: !on(item.layer) })}
+                  >
+                    {item.label}
+                  </Button>
+                ))}
               </div>
             </StageSection>
           )}

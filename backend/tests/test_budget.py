@@ -191,7 +191,7 @@ def test_prepare_refuses_the_daily_ceiling_before_the_call() -> None:
 
 def test_refusal_names_the_role_and_not_a_slug() -> None:
     text = refusal_message("designer", BudgetRefused("daily_limit", 10, 1))
-    assert text.startswith("Designer can't take this on right now:")
+    assert text.startswith("Lil' Glitty can't take this on right now:")
     assert "midnight" in text
     assert "deepseek" not in text
     assert "token" not in text

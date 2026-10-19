@@ -64,11 +64,13 @@ from app.api.reading import router as reading_router
 from app.api.renders import router as renders_router
 from app.api.reviews import item_router as review_item_router
 from app.api.reviews import version_router as package_reviews_router
+from app.api.rooms import blueprints_router
 from app.api.rooms import router as rooms_router
 from app.api.uploads import router as uploads_router
 from app.auth.accounts import ensure_owner
 from app.blender import storage
 from app.blender.hardware_catalog import default_catalog
+from app.blender.lighting import load_lighting
 from app.config import Settings, get_settings
 from app.db.migrate import current_revision, upgrade_to_head
 from app.db.session import make_engine
@@ -342,6 +344,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The three render tiers (a bad render.yaml stops startup by name) and the
     # in-memory single-use approvals for `final` renders.
     app.state.tiers = load_tiers()
+    # Lamp lights in compositions (room-lamp-lights); a bad lighting.yaml stops startup by name.
+    app.state.lighting = load_lighting()
     # The hard design rules; a rule without a source stops startup naming it.
     app.state.design_rules = load_rules()
     # The reading rule table; a malformed file stops startup naming it.
@@ -387,6 +391,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(verdict_router)
     app.include_router(apartments_router)
     app.include_router(rooms_router)
+    app.include_router(blueprints_router)
     app.include_router(price_list_router)
     app.include_router(pricing_router)
     app.include_router(guideline_notes_router)

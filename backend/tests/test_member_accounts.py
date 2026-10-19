@@ -29,6 +29,7 @@ from app.main import create_app
 from conftest import OWNER_EMAIL, OWNER_PASSWORD
 from tests.api_helpers import create, reset_owner
 from tests.blender_fakes import fake_success_launch
+from tests.conftest import clean_house_file
 
 MEMBER_EMAIL = "member@example.com"
 MEMBER_PASSWORD = "member-password-1"
@@ -177,6 +178,18 @@ def test_a_member_never_reaches_the_owners_room_or_piece_conversation(app_client
     assert folder.is_dir()
     refused = app_client.post("/chat/threads", json={"title": "x", "package_id": "owner-bench"})
     assert refused.status_code == 422
+
+
+def test_a_member_never_duplicates_the_owners_room(app_client: TestClient, db_session: Session) -> None:
+    clean_house_file(app_client.app.state.engine)
+    house_file.upsert_room(db_session, "Wohnen", SQUARE, 2500)
+    db_session.commit()
+    add_member(app_client)
+    sign_in(app_client, MEMBER_EMAIL, MEMBER_PASSWORD)
+    assert app_client.post("/rooms/Wohnen/duplicate", json={"name": "Mine"}).status_code == 404
+    assert [room.name for room in db_session.scalars(select(Room))] == ["Wohnen"]
+    db_session.rollback()
+    clean_house_file(app_client.app.state.engine)
 
 
 def test_a_member_never_changes_the_owners_review_items(app_client: TestClient) -> None:

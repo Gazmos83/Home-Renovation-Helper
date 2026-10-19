@@ -545,6 +545,7 @@ CONFIRMATION_TITLES: dict[str, str] = {
     "rebuild": "Rebuilding piece",
     "create_piece": "Creating piece",
     "duplicate_piece": "Duplicating piece",
+    "approve_version": "Approving the version",
     "import_design": "Importing design",
     "import_version": "Importing version",
     "brief": "Confirming the brief",
@@ -640,7 +641,12 @@ def history(
                 entry["upload_ids"] = list(message.additional_kwargs["upload_ids"])
             shown.append(entry)
         elif isinstance(message, AIMessage) and _text(message.content).strip():
-            shown.append({"role": "assistant", "text": _text(message.content)})
+            # Signed by its writer; a reply saved before speakers were recorded is the Foreman's (meet-the-crew).
+            if message.additional_kwargs.get("engineering"):
+                speaker = "engineering"
+            else:
+                speaker = message.additional_kwargs.get("speaker") or "foreman"
+            shown.append({"role": "assistant", "text": _text(message.content), "speaker": speaker})
         elif isinstance(message, ToolMessage) and isinstance(message.additional_kwargs.get("confirmation"), dict):
             shown.append(_confirmation_entry(message.additional_kwargs["confirmation"]))
         elif isinstance(message, ToolMessage) and isinstance(message.additional_kwargs.get("answers"), dict):

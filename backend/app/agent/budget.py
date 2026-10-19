@@ -40,14 +40,16 @@ RefusalKind = Literal["input_too_large", "daily_limit"]
 # Given the exchanges a request drops (oldest first), their summary or `None`.
 Summarize = Callable[[list[BaseMessage]], str | None]
 
-ROLE_TITLES: Final = {
-    "foreman": "Foreman",
-    "intake": "Intake",
-    "designer": "Designer",
-    "builder": "Builder",
-    "researcher": "Researcher",
-    "reviewer": "Reviewer",
-    "lighting": "Lighting",
+# How the owner reads each agent's name in texts the application writes (meet-the-crew);
+# prompts keep the role names.
+PERSONA_NAMES: Final = {
+    "foreman": "Little Homey",
+    "intake": "Lil' Worm",
+    "designer": "Lil' Glitty",
+    "builder": "Muscles",
+    "researcher": "Money Bags",
+    "reviewer": "Mr. Lookback",
+    "lighting": "Bulbs",
 }
 
 
@@ -62,7 +64,7 @@ class BudgetRefused(Exception):
 
 
 def refusal_message(role: str, error: BudgetRefused) -> str:
-    title = ROLE_TITLES.get(role, role.capitalize())
+    title = PERSONA_NAMES.get(role, role.capitalize())
     if error.kind == "daily_limit":
         reason = "today's limit is reached; it resets at midnight"
     else:

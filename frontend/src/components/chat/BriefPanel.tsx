@@ -107,7 +107,7 @@ export function BriefPanel({ threadId }: { threadId: string }) {
         />
       </div>
       <div className="space-y-1">
-        <Label htmlFor="brief-height">Highest the piece may be (mm)</Label>
+        <Label htmlFor="brief-height">Highest the piece may be (mm, optional)</Label>
         <Input
           id="brief-height"
           inputMode="decimal"

@@ -226,7 +226,8 @@ def test_the_map_follows_routing_plugins_and_markers(client: TestClient) -> None
     assert "after_intake" not in nodes
     assert {"from": "intake", "to": "designer"} in body["handoffs"]
     assert "after_designer" not in nodes
-    assert {"from": "designer", "to": "builder"} in body["handoffs"]
+    # A saved place leads to a room proposal, not a Builder turn (place-piece-from-owner-words).
+    assert {"from": "designer", "to": "builder"} not in body["handoffs"]
     # The step after the other specialists hands a `compose_room` call on (room-change-goes-to-designer).
     assert "after_specialist" not in nodes
     assert {"from": "builder", "to": "designer"} in body["handoffs"]

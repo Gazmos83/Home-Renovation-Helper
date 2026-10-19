@@ -550,7 +550,7 @@ def test_a_reply_sent_with_a_tool_call_is_shown_without_the_call() -> None:
     call = {"id": "c1", "name": "create_piece", "args": {"package_id": "wall", "spec": {"secret": "args"}}}
     shown = _history_of([
         HumanMessage("design it"),
-        AIMessage("Here's how your spec forces the dimensions.", tool_calls=[call]),
+        AIMessage("Here's how your spec forces the dimensions.", tool_calls=[call], additional_kwargs={"speaker": "designer"}),
         ToolMessage("Created wall version 1.", tool_call_id="c1"),
         AIMessage("\n\n", tool_calls=[{**call, "id": "c2"}]),
         ToolMessage("Created.", tool_call_id="c2"),
@@ -558,8 +558,8 @@ def test_a_reply_sent_with_a_tool_call_is_shown_without_the_call() -> None:
     ])
     assert shown == [
         {"role": "owner", "text": "design it"},
-        {"role": "assistant", "text": "Here's how your spec forces the dimensions."},
-        {"role": "assistant", "text": "It is building."},
+        {"role": "assistant", "text": "Here's how your spec forces the dimensions.", "speaker": "designer"},
+        {"role": "assistant", "text": "It is building.", "speaker": "foreman"},
     ]
     assert "secret" not in json.dumps(shown) and "Created" not in json.dumps(shown)
 
@@ -574,9 +574,22 @@ def test_an_owner_message_names_the_files_sent_with_it() -> None:
     ])
     assert shown == [
         {"role": "owner", "text": "this is my flat", "upload_ids": ["u1", "u2"]},
-        {"role": "assistant", "text": "I can see the plan."},
+        {"role": "assistant", "text": "I can see the plan.", "speaker": "foreman"},
         {"role": "owner", "text": "thanks"},
     ]
+
+
+def test_each_reply_is_signed_by_its_writer() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    shown = _history_of([
+        HumanMessage("a bench"),
+        AIMessage("How wide is the hall?", additional_kwargs={"speaker": "intake"}),
+        AIMessage("Which room is this for?"),
+        AIMessage("It holds 20 kg.", additional_kwargs={"speaker": "researcher", "engineering": True}),
+        AIMessage("About 40 euros.", additional_kwargs={"speaker": "researcher"}),
+    ])
+    assert [entry.get("speaker") for entry in shown] == [None, "intake", "foreman", "engineering", "researcher"]
 
 
 def test_an_answered_confirmation_is_one_line_before_the_reply_that_followed(client: TestClient) -> None:

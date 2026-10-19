@@ -273,26 +273,6 @@ The conversation view SHALL offer a delete action. It asks for confirmation, nam
 - **WHEN** the owner confirms a delete while that conversation's turn is running
 - **THEN** the conversation stays open and the refusal is shown on the view
 
-### Requirement: The Pieces page shows renders and takes feedback
-The Studio SHALL show the owner a Pieces page that lists the pieces, then each piece's versions, then each version's published stills (the version's own, in the room, and detailed), showing for each:
-- its kind and tier;
-- its picture;
-- its current rating and comment, with controls to rate up, rate down, edit the comment and clear.
-
-Turntables and restyle variants SHALL NOT be listed on the Pieces page; they are viewed and rated on the inspector's Renders tab, which the version's "Inspect version N" button opens. The page SHALL NOT offer a link to a render's viewer. The page SHALL show an API refusal next to the render it names. It SHALL NOT show model names, prompts, token counts or costs. It SHALL pass a recorded browser check before it counts as done.
-
-#### Scenario: Rate a turntable
-- **WHEN** the owner opens `hall-bench` v2 from the Pieces page in the inspector, chooses the Renders tab and rates the `draft` turntable down with "too dark"
-- **THEN** the tab shows the down rating and the comment, and a reload shows the same
-
-#### Scenario: No internals
-- **WHEN** the Pieces page shows a render the Builder started
-- **THEN** no model slug, prompt text or token figure appears on the page
-
-#### Scenario: No viewer link
-- **WHEN** a version has a published draft turntable and a still
-- **THEN** the Pieces page shows the still with its rating controls, no card for the turntable, and no "Open the turntable viewer" link
-
 ### Requirement: The developer panel shows feedback
 The developer route tree SHALL include a Feedback page listing the per slot, model and tier rating counts, and the comments of a selected group. Like the other developer pages, it SHALL be reachable only when the developer API answers, and SHALL pass a recorded browser check before it counts as done.
 
@@ -1748,3 +1728,14 @@ The piece dialog on the Pieces page SHALL offer "Duplicate piece", asked in plac
 #### Scenario: Cancel
 - **WHEN** the owner opens "Duplicate piece" and presses "Cancel"
 - **THEN** no request is sent
+
+### Requirement: The placement question opens the Room layout
+A pending question set that asks where to place a piece SHALL show a "Room layout" button with its first question. Pressing it SHALL switch the Workspace to the "Chat and room" layout, keep the question set open with its answers so far, and send nothing. On a narrow screen it SHALL show the room pane. When the room has no 3D view yet, the room pane SHALL say so as it does today, and the wall choices with their lengths remain the guide.
+
+#### Scenario: Room layout from the question
+- **WHEN** the placement question is pending in the "Chat and piece" layout and the owner presses "Room layout"
+- **THEN** the layout is "Chat and room", the room pane shows `Wohnen` with its labelled walls, and the question is still pending
+
+#### Scenario: Other question sets
+- **WHEN** a question set that is not about placement is pending
+- **THEN** no "Room layout" button is shown

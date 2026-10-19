@@ -22,7 +22,7 @@ from tests.test_foreman import HALL, decision
 DESIGNER_SLUG = "deepseek/deepseek-v4-pro-0813"
 
 
-def test_the_designers_daily_refusal_is_a_200_naming_the_designer(tool_state) -> None:
+def test_the_designers_daily_refusal_is_a_200_naming_lil_glitty(tool_state) -> None:
     with Session(tool_state.engine) as session:
         owner = ensure_owner(session, OWNER_EMAIL, OWNER_PASSWORD)
         session.merge(
@@ -68,7 +68,7 @@ def test_the_designers_daily_refusal_is_a_200_naming_the_designer(tool_state) ->
     harness.answer("yes")
     state = harness.turn("design it")
     reply = last_reply(state)
-    assert "Designer" in reply
+    assert reply.startswith("Lil' Glitty can't take this on right now:")
     assert "midnight" in reply
     assert DESIGNER_SLUG not in reply
     assert "token" not in reply

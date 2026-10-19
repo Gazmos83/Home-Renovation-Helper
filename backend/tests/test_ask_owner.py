@@ -74,7 +74,7 @@ def test_answers_return_to_intake_in_the_same_turn_and_stay_in_the_history(tool_
             {"question": "Budget?", "answer": "900 EUR"},
         ],
     }
-    assert shown[-1] == {"role": "assistant", "text": "Thanks, noted."}
+    assert shown[-1] == {"role": "assistant", "text": "Thanks, noted.", "speaker": "intake"}
 
 
 def test_a_declined_set_returns_the_owners_words(tool_state) -> None:

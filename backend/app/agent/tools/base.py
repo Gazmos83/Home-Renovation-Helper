@@ -107,6 +107,13 @@ class ToolDeps:
         return getattr(self._state, "design_rules", ())
 
     @property
+    def lighting(self) -> Any:
+        """The lamp-light factors (room-lamp-lights); the defaults when the app loaded none."""
+        from app.blender.lighting import DEFAULT_LIGHTING
+
+        return getattr(self._state, "lighting", DEFAULT_LIGHTING)
+
+    @property
     def tracing(self) -> Any:
         return getattr(self._state, "tracing", None)
 

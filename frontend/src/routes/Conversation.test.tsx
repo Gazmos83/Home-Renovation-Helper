@@ -233,7 +233,7 @@ function show(path = "/studio/workspace/t1") {
 
 const card = { confirmation_id: "c1", subject: "revise", title: "Revising piece", summary: "cabinet: 2 shelves → 3", proposal: {} };
 const owner = (text: string) => ({ role: "owner" as const, text });
-const reply = (text: string) => ({ role: "assistant" as const, text });
+const reply = (text: string, speaker?: string) => ({ role: "assistant" as const, text, ...(speaker ? { speaker } : {}) });
 
 test("the history is shown in order", async () => {
   messages = [owner("a hall bench"), reply("How wide?")];
@@ -241,6 +241,36 @@ test("the history is shown in order", async () => {
   const list = within(await screen.findByRole("region", { name: "Messages" }));
   expect(list.getByText("a hall bench")).toBeInTheDocument();
   expect(list.getByText("How wide?")).toBeInTheDocument();
+});
+
+test("a new conversation opens with Little Homey's greeting (Greeting in a new conversation)", async () => {
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  const greeting = await list.findByText("Little Homey here, how can I help?");
+  expect(greeting.closest("[data-side]")).toHaveAttribute("data-side", "left");
+  expect(within(greeting.closest("[data-side]") as HTMLElement).getByText("Little Homey")).toBeInTheDocument();
+  expect(list.queryByText(/Nothing said yet/)).not.toBeInTheDocument();
+});
+
+test("the greeting goes once the owner writes and is not sent with the turn (Greeting is not part of the history)", async () => {
+  const user = userEvent.setup();
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  await list.findByText("Little Homey here, how can I help?");
+  await user.type(screen.getByLabelText("Message"), "a hall bench");
+  messages = [owner("a hall bench"), reply("ok", "intake")];
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  await list.findByText("ok");
+  expect(list.queryByText("Little Homey here, how can I help?")).not.toBeInTheDocument();
+  expect(calls).toContainEqual(["POST", "/chat/threads/t1/turns/stream", { message: "a hall bench", upload_ids: [] }]);
+});
+
+test("a conversation with messages shows no greeting", async () => {
+  messages = [owner("a hall bench"), reply("How wide?")];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  await list.findByText("How wide?");
+  expect(list.queryByText("Little Homey here, how can I help?")).not.toBeInTheDocument();
 });
 
 test("with no piece yet the piece pane says so and no 3D stage is loaded (No piece yet)", async () => {
@@ -261,7 +291,7 @@ test("the piece pane shows the conversation's piece at its latest version by def
   expect(calls.map(([, url]) => url)).toContain("/packages/hall-bench/versions/1");
 });
 
-test("sending shows the message on the right, a waiting bubble naming the Foreman then Intake, then the reply", async () => {
+test("sending shows the message on the right, a waiting bubble naming Little Homey then Lil' Worm, then the reply", async () => {
   const user = userEvent.setup();
   const live = controlledStream();
   turn = () => ({ events: live.stream });
@@ -274,25 +304,36 @@ test("sending shows the message on the right, a waiting bubble naming the Forema
   expect(sent.closest("[data-side]")).toHaveAttribute("data-side", "right");
   expect(screen.getByLabelText("Message")).toBeDisabled();
   const waiting = await screen.findByRole("status");
-  expect(waiting).toHaveTextContent("The Foreman is working…");
+  expect(waiting).toHaveTextContent("Little Homey is working…");
   expect(waiting.closest("[data-side]")).toHaveAttribute("data-side", "left");
   expect(waiting.className).toContain("border-2");
 
   live.send({ event: "specialist", data: { role: "intake" } });
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Intake is working…"));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Lil' Worm is working…"));
 
-  messages = [owner("I want a bench for the hall"), reply("How wide is the hall?")];
+  messages = [owner("I want a bench for the hall"), reply("How wide is the hall?", "intake")];
   live.send({ event: "reply", data: { reply: "How wide is the hall?", specialists: ["intake"] } });
   live.send({ event: "done", data: {} });
   live.close();
 
   const answer = await list.findByText("How wide is the hall?");
   expect(answer.closest("[data-side]")).toHaveAttribute("data-side", "left");
-  expect(within(list.getByLabelText("Specialists in this turn")).getByText("Intake")).toBeInTheDocument();
+  expect(within(answer.closest("[data-side]") as HTMLElement).getAllByText("Lil' Worm").length).toBeGreaterThan(0);
+  expect(within(list.getByLabelText("Specialists in this turn")).getByText("Lil' Worm")).toBeInTheDocument();
   expect(list.getAllByText("I want a bench for the hall")).toHaveLength(1);
   await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
   await waitFor(() => expect(screen.getByLabelText("Message")).toBeEnabled());
   expect(calls).toContainEqual(["POST", "/chat/threads/t1/turns/stream", { message: "I want a bench for the hall", upload_ids: [] }]);
+});
+
+test("each reply is signed by the crew member who wrote it (Reply signed by its writer)", async () => {
+  messages = [reply("A bench, then.", "designer"), reply("It holds 20 kg.", "engineering"), reply("Which room is this for?", "foreman")];
+  show();
+  const list = within(await screen.findByRole("region", { name: "Messages" }));
+  for (const [text, persona] of [["A bench, then.", "Lil' Glitty"], ["It holds 20 kg.", "Little Beam"], ["Which room is this for?", "Little Homey"]]) {
+    const bubble = (await list.findByText(text)).closest("[data-side]") as HTMLElement;
+    expect(within(bubble).getByText(persona)).toBeInTheDocument();
+  }
 });
 
 test("a refused turn shows its reason, keeps no message and gives the words back", async () => {
@@ -891,42 +932,24 @@ test("a malformed inspect address is ignored and the piece pane shows the piece'
   expect(calls.map(([, url]) => url).filter((url) => url.includes("passwd"))).toEqual([]);
 });
 
-test("a render notice names the tier on its Review button and opens the inspector on its Renders tab", async () => {
-  const user = userEvent.setup();
+test("a piece render notice is text only, with no Review button (render-now-blueprints-verdict-note)", async () => {
   messages = [
     reply("Started a draft turntable of hall-bench version 1."),
     notice({}),
-    notice({ text: "The draft still is ready.", tier: "draft", version: 2 }),
     notice({ text: "The final still is ready.", tier: "final", version: 3 }),
   ];
   show();
   const list = within(await screen.findByRole("region", { name: "Messages" }));
-  expect(list.getByRole("button", { name: "Review draft v1" })).toBeInTheDocument();
-  expect(list.getByRole("button", { name: "Review draft revision 2" })).toBeInTheDocument();
-  expect(list.getByRole("button", { name: "Review final revision 3" })).toBeInTheDocument();
-
-  // The newest draft render of version 1 is its still.
-  await user.click(list.getByRole("button", { name: "Review draft v1" }));
-  const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
-  expect(await inspector.findByRole("img", { name: "Still of hall-bench version 1" })).toBeInTheDocument();
-  expect(inspector.getByRole("button", { name: "Renders", pressed: true })).toBeInTheDocument();
-
-  // Another notice replaces the version shown; one not built yet is named in words.
-  await user.click(list.getByRole("button", { name: "Review draft revision 2" }));
-  expect(await inspector.findByText(/Version 2 is building/)).toBeInTheDocument();
+  await list.findByText("The final still is ready.");
+  expect(list.queryByRole("button", { name: /^Review/ })).not.toBeInTheDocument();
 });
 
-test("Review final opens the Renders tab on the newest final render, a detailed turntable that plays", async () => {
-  const user = userEvent.setup();
-  messages = [notice({ text: "The final turntable of hall-bench version 4 is ready.", tier: "final", version: 4 })];
-  show();
-  const list = within(await screen.findByRole("region", { name: "Messages" }));
-  await user.click(await list.findByRole("button", { name: "Review final revision 4" }));
-  const inspector = within(await screen.findByRole("complementary", { name: "Inspector" }));
-  expect(await inspector.findByRole("img", { name: "Detailed turntable, frame 1 of 36" })).toHaveAttribute(
-    "src", "/packages/hall-bench/versions/4/files/detail/frames/0",
-  );
-  expect(inspector.getByRole("button", { name: /Detailed turntable/, pressed: true })).toBeInTheDocument();
+test("the piece inspector has no Renders tab", async () => {
+  show("/studio/workspace/t1?inspect=hall-bench/1&tab=renders");
+  const pane = within(await screen.findByRole("complementary", { name: "Inspector" }));
+  const tabs = within(await pane.findByRole("group", { name: "Inspector tabs" }));
+  expect(tabs.getAllByRole("button").map((b) => b.textContent)).toEqual(["Model", "Cut list", "Reading", "Files"]);
+  expect(tabs.getByRole("button", { name: "Model" })).toHaveAttribute("aria-pressed", "true");
 });
 
 test("a failed, shell or composition notice has no button", async () => {
@@ -1191,24 +1214,6 @@ test("no delete in the piece pane for an approved version", async () => {
   const pane = within(await screen.findByRole("complementary", { name: "Inspector" }));
   await pane.findByRole("button", { name: "Unapprove version 1" });
   expect(pane.queryByRole("button", { name: /Delete version/ })).not.toBeInTheDocument();
-});
-
-test("a restyle look is kept from the piece pane, sending the owner's request (Keep a look from the piece pane)", async () => {
-  const user = userEvent.setup();
-  extra = (call) =>
-    call === "GET /packages/hall-bench/versions/1/variants"
-      ? { body: [{ id: "oak", label: "Oak", still: "/x.png", tier: "draft", note: null, looks: { carcass: "oak" } }] }
-      : undefined;
-  show("/studio/workspace/t1?inspect=hall-bench/1");
-  const pane = within(await screen.findByRole("complementary", { name: "Inspector" }));
-  await user.click(await pane.findByRole("button", { name: "Use this look" }));
-  await waitFor(() =>
-    expect(calls).toContainEqual([
-      "POST",
-      "/chat/threads/t1/turns/stream",
-      expect.objectContaining({ message: expect.stringContaining('restyle picture "Oak" of hall-bench version 1') }),
-    ]),
-  );
 });
 
 test("the piece pane lists the open generator-extension requests", async () => {
@@ -1485,7 +1490,7 @@ test("the room pane says in words why it shows no 3D view (No 3D view yet, No ro
   setWorkspaceLayout("chat-room");
   progressNow = progress(["brief", "piece", "built"], { room: { ...HALL, slug: null, model: null, surfaces: null } });
   show();
-  expect(await screen.findByText("Hall has no 3D view yet. Ask the Designer to compose the room.")).toBeInTheDocument();
+  expect(await screen.findByText("Hall has no 3D view yet. Ask Lil' Glitty to compose the room.")).toBeInTheDocument();
   expect(screen.queryByRole("complementary", { name: "Room view" })).not.toBeInTheDocument();
   cleanup();
 
@@ -1633,6 +1638,90 @@ test("the room pane offers the chosen version's turntable viewer under its 3D vi
   expect(await pane.findByRole("link", { name: "Open the turntable viewer of Hall" })).toHaveAttribute("href", viewer);
 });
 
+// --- the room inspector's Renders tab (render-now-blueprints-verdict-note) ---------------------
+
+const ROOM_V3 = "/compositions/room-hall/versions/3";
+
+function serveRoomRenders({ benchmark = true } = {}) {
+  let job: Record<string, unknown> | null = null;
+  let renders: unknown[] = [];
+  extra = (call) => {
+    if (/^GET \/compositions\/room-hall\/versions\/\d\/files\/report\.json$/.test(call))
+      return { body: { surfaces: { "wall 1": ["Wall_0_0"] }, extent_mm: { min: [0, 0, 0], max: [3000, 2000, 2500] } } };
+    if (call === `GET ${ROOM_V3}/renders`) return { body: { renders, render_job: job } };
+    if (call === `GET ${ROOM_V3}/render-estimate?kind=turntable&tier=draft`)
+      return benchmark
+        ? { body: { tier: "draft", kind: "turntable", estimate: "about 19 seconds", estimate_seconds: 19.2, warning: "" } }
+        : { status: 409, body: { detail: { failure_class: "benchmark_missing", reason: "no benchmark has been run yet; run the benchmark first so the estimate is real" } } };
+    if (call === `POST ${ROOM_V3}/renders`) {
+      job = { tier: "draft", status: "queued", estimate: "about 19 seconds" };
+      return { status: 202, body: { estimate: "about 19 seconds", status: "queued" } };
+    }
+    return undefined;
+  };
+  const finish = () => {
+    job = null;
+    renders = [{ render: "turntable", label: "Turntable", tier: "draft", finished_at: "2026-10-18T10:00:00+00:00",
+                 frames: 12, preview: `${ROOM_V3}/files/frames/0`, viewer: null }];
+  };
+  return { finish };
+}
+
+async function openRoomRenders() {
+  const user = userEvent.setup(vi.isFakeTimers() ? { advanceTimers: vi.advanceTimersByTime } : {});
+  setWorkspaceLayout("chat-room");
+  progressNow = progress(["brief", "piece", "built"], { room: VERSIONED_HALL });
+  show("/studio/workspace/t1?room=room-hall");
+  const pane = within(await screen.findByRole("complementary", { name: "Room view" }));
+  await user.click(pane.getByRole("button", { name: "Renders" }));
+  return { user, pane };
+}
+
+test("the room inspector has a Renders tab that offers Render version N now (No renders yet)", async () => {
+  serveRoomRenders();
+  const { pane } = await openRoomRenders();
+  expect(await pane.findByText("No renders of this version yet.")).toBeInTheDocument();
+  expect(pane.getByRole("button", { name: "Render version 3 now" })).toBeInTheDocument();
+});
+
+test("Render now shows the estimate, starts a draft turntable of the room, follows it and selects it (Render now)", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const { finish } = serveRoomRenders();
+  const { user, pane } = await openRoomRenders();
+  await user.click(await pane.findByRole("button", { name: "Render version 3 now" }));
+  const asked = await pane.findByText(/quick turn-around preview of the room on this computer/);
+  expect(asked).toHaveTextContent("It takes about 19 seconds.");
+  expect(asked.textContent).not.toMatch(/frame|resolution|Eevee|engine/i);
+  expect(calls.some(([method, url]) => method === "POST" && url.endsWith("/renders"))).toBe(false);
+  await user.click(pane.getByRole("button", { name: "Start" }));
+  await waitFor(() => expect(calls).toContainEqual(["POST", `${ROOM_V3}/renders`, { kind: "turntable", tier: "draft" }]));
+  expect(await pane.findByText("Rendering version 3… about 19 seconds")).toBeInTheDocument();
+  finish();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3100);
+  });
+  expect(await pane.findByRole("button", { name: /^Turntable/, pressed: true })).toBeInTheDocument();
+  expect(pane.getByRole("img", { name: "Turntable, frame 1 of 12" })).toHaveAttribute("src", `${ROOM_V3}/files/frames/0`);
+});
+
+test("Cancel before starting sends nothing and shows the button again (Cancel before starting)", async () => {
+  serveRoomRenders();
+  const { user, pane } = await openRoomRenders();
+  await user.click(await pane.findByRole("button", { name: "Render version 3 now" }));
+  await pane.findByText(/quick turn-around preview/);
+  await user.click(pane.getByRole("button", { name: "Cancel" }));
+  expect(pane.getByRole("button", { name: "Render version 3 now" })).toBeInTheDocument();
+  expect(calls.some(([method, url]) => method === "POST" && url.endsWith("/renders"))).toBe(false);
+});
+
+test("without a benchmark Render now says so and offers no Start (No benchmark yet)", async () => {
+  serveRoomRenders({ benchmark: false });
+  const { user, pane } = await openRoomRenders();
+  await user.click(await pane.findByRole("button", { name: "Render version 3 now" }));
+  expect(await pane.findByText(/run the benchmark first/)).toBeInTheDocument();
+  expect(pane.queryByRole("button", { name: "Start" })).not.toBeInTheDocument();
+});
+
 // --- delete conversation (piece-conversation-link) ---------------------------------------
 
 test("a confirmed delete removes the conversation and lands on Pieces", async () => {
@@ -1708,7 +1797,7 @@ test("the Brief panel lists every setting and saves an edit", async () => {
   const form = within(await openBrief());
   expect(await form.findByLabelText("Purpose")).toHaveValue("a bench by the door");
   expect(form.getByLabelText("Room")).toHaveValue("Hall");
-  expect(form.getByLabelText("Highest the piece may be (mm)")).toHaveValue("900");
+  expect(form.getByLabelText("Highest the piece may be (mm, optional)")).toHaveValue("900");
   expect(form.getByLabelText("Style")).toHaveValue("oak");
   expect(form.getByLabelText("Budget (EUR)")).toHaveValue("400");
   await user.clear(form.getByLabelText("Budget (EUR)"));
@@ -1722,6 +1811,21 @@ test("the Brief panel lists every setting and saves an edit", async () => {
     { room: "Kitchen", purpose: "a bench by the door", max_piece_height_mm: 900, style: "oak", budget_eur: 900 },
   ]);
   expect(form.getByLabelText("Budget (EUR)")).toHaveValue("900");
+});
+
+test("the Brief panel marks the height limit optional and saves it empty (Saved empty)", async () => {
+  const user = userEvent.setup();
+  show();
+  const form = within(await openBrief());
+  const limit = await form.findByLabelText("Highest the piece may be (mm, optional)");
+  await user.clear(limit);
+  await user.click(form.getByRole("button", { name: "Save" }));
+  expect(await form.findByText("Saved.")).toBeInTheDocument();
+  expect(calls).toContainEqual([
+    "PUT",
+    "/chat/threads/t1/brief",
+    { room: "Hall", purpose: "a bench by the door", max_piece_height_mm: null, style: "oak", budget_eur: 400 },
+  ]);
 });
 
 test("the Brief panel refuses an empty purpose in words and sends nothing", async () => {

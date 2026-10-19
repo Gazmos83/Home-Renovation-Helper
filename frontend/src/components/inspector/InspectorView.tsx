@@ -8,14 +8,13 @@ import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { CutListTables } from "@/components/inspector/CutListTables";
 import { ReadingTab } from "@/components/inspector/ReadingTab";
-import { RendersTab } from "@/components/inspector/RendersTab";
 import { VersionVerdict } from "@/components/inspector/VersionVerdict";
 import { VersionFiles } from "@/components/studio/VersionFiles";
 
 /**
  * One piece version, inspected (piece-inspector): its model in 3D with the camera
  * buttons, modes, explode, layer switches and overall dimensions, its straight-on
- * views, its cut list, its renders (two-tier-renders) and the owner's verdict on the version
+ * views, its cut list and the owner's verdict on the version
  * (version-verdict). Every figure comes from the version's own files. The 3D
  * stage is a lazy import, so three.js loads only when a model is shown. The stage's
  * switches sit in a column on its right under Views and Parts (inspector-side-column). The inspector
@@ -105,14 +104,15 @@ function stateWord(status: string | null): string {
   return "not built";
 }
 
-export type InspectorTab = "model" | "cutlist" | "renders" | "reading" | "files";
+/** A piece's tabs; renders belong to the room inspector (render-now-blueprints-verdict-note). */
+export type InspectorTab = "model" | "cutlist" | "reading" | "files";
 
-/** The open tab and the render chosen on the Renders tab, as the address keeps them. */
+/** The open tab as the address keeps it; `render` (the old Renders tab's choice) is no longer read. */
 export type InspectorPlace = { tab: InspectorTab; render: string | null };
 
 /** `?tab=` as the address spelled it: one of the tabs, else the Model tab. */
 export function parseTab(value: string | null): InspectorTab {
-  return value === "cutlist" || value === "renders" || value === "reading" || value === "files" ? value : "model";
+  return value === "cutlist" || value === "reading" || value === "files" ? value : "model";
 }
 
 /** Polls the piece's versions while open; how often, in milliseconds. */
@@ -130,7 +130,6 @@ export function InspectorView({
   versionLabel = String(version),
   onChoose,
   place,
-  tierHint = null,
   onPlace,
 }: {
   packageId: string;
@@ -142,8 +141,6 @@ export function InspectorView({
   onChoose?: (version: number) => void;
   /** Where the view stands when the address keeps it; without `onPlace` the view keeps its own. */
   place?: InspectorPlace;
-  /** The tier a notice's Review button asked for: the Renders tab shows its newest render. */
-  tierHint?: string | null;
   onPlace?: (place: InspectorPlace) => void;
 }) {
   const [ownPlace, setOwnPlace] = useState<InspectorPlace>({ tab: "model", render: null });
@@ -154,7 +151,7 @@ export function InspectorView({
     else setOwnPlace(next);
   }
   function setTab(next: InspectorTab) {
-    setPlace({ tab: next, render: next === "renders" ? current.render : null });
+    setPlace({ tab: next, render: null });
   }
   const [mode, setMode] = useState<ViewMode>("workshop");
   const [camera, setCamera] = useState<CameraPreset>("iso");
@@ -247,7 +244,6 @@ export function InspectorView({
           options={[
             { id: "model", label: "Model" },
             { id: "cutlist", label: "Cut list" },
-            { id: "renders", label: "Renders" },
             { id: "reading", label: "Reading" },
             { id: "files", label: "Files" },
           ]}
@@ -265,14 +261,6 @@ export function InspectorView({
           />
         ) : tab === "reading" ? (
           <ReadingTab packageId={packageId} version={version} approved={Boolean(info.data.approved_at)} />
-        ) : tab === "renders" ? (
-          <RendersTab
-            packageId={packageId}
-            version={version}
-            selected={current.render}
-            tierHint={current.render ? null : tierHint}
-            onSelect={(render) => setPlace({ tab: "renders", render })}
-          />
         ) : (
           <>
             <p className="text-sm">
@@ -361,6 +349,11 @@ export function InspectorView({
   return (
     <section className={`${cardClass} grid gap-4`}>
       {switcher}
+      {(info.data?.size_warnings ?? []).map((warning) => (
+        <p key={warning} className="text-sm font-medium text-amber-700 dark:text-amber-400" data-role="size-warning">
+          {warning}
+        </p>
+      ))}
       {info.data && <VersionVerdict key={`${packageId}-${version}`} packageId={packageId} version={version} />}
       {body}
     </section>

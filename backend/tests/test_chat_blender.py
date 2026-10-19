@@ -1,7 +1,8 @@
 """One real turn chain in the pinned Blender, driven by scripted models.
 
-brief → `create_piece` builds the fold-down desk for real → the Builder renders a
-`draft` turntable (tier `draft`: 12 frames, 800 × 800, Eevee).
+brief → `create_piece` builds the fold-down desk for real → the owner approves it → the
+Designer composes the hall with it → the Builder renders a `draft` turntable of the room
+(tier `draft`: 12 frames, 800 × 800, Eevee). Renders are made of rooms (rooms-only-renders).
 """
 
 from __future__ import annotations
@@ -37,20 +38,28 @@ def client(migrated_database: str, render_root: Path, blender_bin: Path) -> Iter
     c.__exit__(None, None, None)
 
 
-def test_a_chat_builds_the_desk_and_renders_a_draft_turntable(client: TestClient, render_root: Path) -> None:
+DESK_IN_HALL = [{"id": "desk", "type": "piece", "package_id": "hall-desk", "version": 1,
+                 "placement": {"wall": 1, "offset_mm": 0}}]
+
+
+def test_a_chat_builds_the_desk_and_renders_a_draft_turntable_of_its_room(client: TestClient, render_root: Path) -> None:
     install(client, fake_models(
         foreman={"decisions": [
             {"specialist": "intake", "reason": "t"},
             {"specialist": "designer", "reason": "t"},
             {"specialist": "builder", "reason": "t"},
+            {"specialist": "designer", "reason": "t", "composes_room": True},
             {"specialist": "builder", "reason": "t"},
         ]},
         intake={"steps": [[tool_call("record_brief", HALL)], "Saved."]},
-        designer={"steps": [[tool_call("create_piece", {"package_id": "hall-desk", "spec": desk()})], "Created."]},
+        designer={"steps": [
+            [tool_call("create_piece", {"package_id": "hall-desk", "spec": desk()})], "Created.",
+            [tool_call("compose_room", {"room": "Hall", "items": DESK_IN_HALL})], "Composed.",
+        ]},
         builder={"steps": [
             [tool_call("blender_build", {"package_id": "hall-desk"})],
             "Built.",
-            [tool_call("render_turntable", {"package_id": "hall-desk", "tier": "draft"})],
+            [tool_call("render_turntable", {"composition": "Hall", "tier": "draft"})],
             "A draft turntable has started.",
         ]},
     ))
@@ -74,7 +83,13 @@ def test_a_chat_builds_the_desk_and_renders_a_draft_turntable(client: TestClient
     assert wait_for_status(folder, seconds=120)["status"] == "succeeded"
     assert png_size(folder / "screenshot.png") == (800, 500)
 
-    rendered = client.post(f"/chat/threads/{thread}/turns", json={"message": "a draft turntable"})
+    assert client.put("/packages/hall-desk/versions/1/approval").status_code == 200
+    composed = confirm(client.post(f"/chat/threads/{thread}/turns", json={"message": "put the desk in the hall"}).json())
+    assert composed["reply"] == "Composed."
+    folder = storage.composition_version_dir(render_root, "hall", 1)
+    assert wait_for_status(folder, seconds=240)["status"] == "succeeded"
+
+    rendered = client.post(f"/chat/threads/{thread}/turns", json={"message": "a draft turntable of the hall"})
     assert rendered.status_code == 200, rendered.text
     deadline = time.monotonic() + 240
     job: dict = {}

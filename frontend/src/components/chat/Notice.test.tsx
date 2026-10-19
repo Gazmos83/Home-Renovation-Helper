@@ -19,7 +19,7 @@ test("a finished room render links to its viewer in a new tab, with no Review bu
   expect(screen.queryByRole("button")).toBeNull();
 });
 
-test("a piece render's notice keeps its Review button and has no link", () => {
+test("a piece render's notice is text only: no Review button and no link (render-now-blueprints-verdict-note)", () => {
   render(
     <Notice
       m={{ role: "notice", kind: "render", outcome: "succeeded", tier: "draft", package_id: "hall-bench", version: 1,
@@ -27,7 +27,8 @@ test("a piece render's notice keeps its Review button and has no link", () => {
       onReview={vi.fn()}
     />,
   );
-  expect(screen.getByRole("button", { name: "Review draft v1" })).toBeInTheDocument();
+  expect(screen.getByText("The draft turntable of hall-bench version 1 is ready.")).toBeInTheDocument();
+  expect(screen.queryByRole("button")).toBeNull();
   expect(screen.queryByRole("link")).toBeNull();
 });
 

@@ -27,14 +27,15 @@ import { Attachment } from "@/components/chat/Attachment";
 import { Bubble } from "@/components/chat/Bubble";
 import { Notice } from "@/components/chat/Notice";
 import { Composer } from "@/components/chat/Composer";
-import { PieceVariants, RoomVariants, keepLookRequest } from "@/components/Variants";
+import { RoomVariants } from "@/components/Variants";
 import { QuestionForm } from "@/components/chat/QuestionForm";
 import { Rail } from "@/components/chat/Rail";
 import { Reply } from "@/components/chat/Reply";
-import { ROLE_LABELS } from "@/components/chat/roles";
+import { personaOf } from "@/components/chat/roles";
 import { WaitingBubble } from "@/components/chat/WaitingBubble";
 import { LayoutMenu } from "@/components/studio/LayoutMenu";
-import { InspectorView, parseTab, type InspectorPlace } from "@/components/inspector/InspectorView";
+import { Choice, InspectorView, parseTab, type InspectorPlace } from "@/components/inspector/InspectorView";
+import { RoomRendersTab } from "@/components/inspector/RendersTab";
 import { RoomView, VersionSelect } from "@/components/inspector/RoomView";
 import { BriefPanel } from "@/components/chat/BriefPanel";
 import { DecisionsNote } from "@/components/chat/DecisionsNote";
@@ -377,10 +378,8 @@ export function useConversation(threadId: string, showPane: (pane: "piece" | "ro
   const stream = useRef<AbortController | null>(null);
   const [params, setParams] = useSearchParams();
   const inspected = parseInspect(params.get("inspect"));
-  // `?tab=` and `?render=`: the inspector's tab and the render chosen on its Renders tab;
-  // `?tier=`: the tier a notice's Review button asked for (two-tier-renders).
+  // `?tab=`: the piece inspector's tab, kept in the address.
   const place: InspectorPlace = { tab: parseTab(params.get("tab")), render: params.get("render") };
-  const tierHint = params.get("tier");
 
   // The progress runs here so a finished build or render is noticed with the panel closed.
   const progress = useQuery({
@@ -465,20 +464,15 @@ export function useConversation(threadId: string, showPane: (pane: "piece" | "ro
     if (packageId && version) showPane("piece");
   }
 
-  // A notice's Review button: the version's Renders tab, showing the newest render of that tier.
-  function review(packageId: string, version: number, tier?: string) {
+  // A build notice's Inspect button: the version in the piece pane, on its Model tab.
+  function review(packageId: string, version: number) {
     setParams(
       (current) => {
         const next = new URLSearchParams(current);
         next.set("inspect", `${packageId}/${version}`);
         next.delete("render");
-        if (tier) {
-          next.set("tab", "renders");
-          next.set("tier", tier);
-        } else {
-          next.delete("tab");
-          next.delete("tier");
-        }
+        next.delete("tab");
+        next.delete("tier");
         return next;
       },
       { replace: true },
@@ -635,7 +629,6 @@ export function useConversation(threadId: string, showPane: (pane: "piece" | "ro
     inspect,
     review,
     place,
-    tierHint,
     placeInspector,
     inspectRoom,
     showRoomLayout,
@@ -738,7 +731,12 @@ export function ChatPane({ c }: { c: ConversationState }) {
         )}
         aria-label="Messages"
       >
-        {messages.length === 0 && !showOptimistic && <p className="text-muted-foreground">Nothing said yet. Describe the piece you want.</p>}
+        {/* The greeting is drawn here only: it is never saved in the thread's history (conversation-greeting). */}
+        {messages.length === 0 && !showOptimistic && (
+          <Bubble side="left" speaker={personaOf("foreman")} compact={compact}>
+            Little Homey here, how can I help?
+          </Bubble>
+        )}
         {messages.map((m, index) => {
           if (m.role === "confirmation") return <AnsweredConfirmation key={index} m={m} />;
           if (m.role === "notice") return <Notice key={index} m={m} onReview={c.review} />;
@@ -763,7 +761,7 @@ export function ChatPane({ c }: { c: ConversationState }) {
             );
           }
           return (
-            <Bubble key={index} side="left" speaker="Foreman" compact={compact}>
+            <Bubble key={index} side="left" speaker={personaOf(m.speaker)} compact={compact}>
               <Reply text={m.text} />
               <Button type="button" variant="outline" size="sm" className={ADD_DECISION_CLASS} onClick={() => c.addDecision(m.text)}>
                 Add to decisions
@@ -771,7 +769,7 @@ export function ChatPane({ c }: { c: ConversationState }) {
               {index === lastReply && specialists.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1" aria-label="Specialists in this turn">
                   {specialists.map((role) => (
-                    <Badge key={role} variant="outline">{ROLE_LABELS[role] ?? role}</Badge>
+                    <Badge key={role} variant="outline">{personaOf(role)}</Badge>
                   ))}
                 </div>
               )}
@@ -907,13 +905,6 @@ export function PiecePane({ c }: { c: ConversationState }) {
               onDeleted={() => c.deleted(shown.packageId, shown.version)}
             />
           )}
-          {info.data.status === "succeeded" && (
-            <PieceVariants
-              packageId={shown.packageId}
-              version={shown.version}
-              onUse={(variant) => void c.send(keepLookRequest(shown.packageId, shown.version, variant), [])}
-            />
-          )}
           {own && own.open_requests.length > 0 && (
             <div>
               <h3>Waiting on a generator extension</h3>
@@ -936,7 +927,6 @@ export function PiecePane({ c }: { c: ConversationState }) {
         compact
         onChoose={(next) => c.inspect(shown.packageId, next)}
         place={c.place}
-        tierHint={c.tierHint}
         onPlace={c.placeInspector}
       />
     </aside>
@@ -951,6 +941,8 @@ export function PiecePane({ c }: { c: ConversationState }) {
 export function RoomPane({ c }: { c: ConversationState }) {
   const p = c.progress.data;
   const queryClient = useQueryClient();
+  // The room inspector's tabs: the 3D view, and the version's renders (render-now-blueprints-verdict-note).
+  const [roomTab, setRoomTab] = useState<"view" | "renders">("view");
   const approval = useMutation({
     mutationFn: ({ approve, slug, version }: { approve: boolean; slug: string; version: number }) =>
       approve ? api.approveCompositionVersion(slug, version) : api.unapproveCompositionVersion(slug, version),
@@ -982,7 +974,7 @@ export function RoomPane({ c }: { c: ConversationState }) {
         <p className="text-sm text-muted-foreground">
           {room.slug
             ? `Composing ${room.name} again adds the 3D view.`
-            : `${room.name} has no 3D view yet. Ask the Designer to compose ${what}.`}
+            : `${room.name} has no 3D view yet. Ask Lil' Glitty to compose ${what}.`}
         </p>
       </div>
     );
@@ -1034,7 +1026,20 @@ export function RoomPane({ c }: { c: ConversationState }) {
         />
       )}
       {chosen && chosen.status === "succeeded" && <RoomVariants slug={slug} version={chosen.version} />}
-      {shown.model && shown.surfaces ? (
+      {chosen && (
+        <Choice
+          label="Room inspector tabs"
+          options={[
+            { id: "view", label: "3D view" },
+            { id: "renders", label: "Renders" },
+          ]}
+          value={roomTab}
+          onChange={setRoomTab}
+        />
+      )}
+      {chosen && roomTab === "renders" ? (
+        <RoomRendersTab key={`${slug}/${chosen.version}`} slug={slug} version={chosen.version} built={chosen.status === "succeeded"} />
+      ) : shown.model && shown.surfaces ? (
         <RoomView
           key={shown.model}
           name={room.name}
@@ -1048,7 +1053,7 @@ export function RoomPane({ c }: { c: ConversationState }) {
           Version {chosen?.version} of {room.name} has no 3D view. Composing {room.name} again adds it.
         </p>
       )}
-      {shown.model && shown.surfaces && chosen?.viewer && (
+      {roomTab === "view" && shown.model && shown.surfaces && chosen?.viewer && (
         <p>
           <a href={chosen.viewer} target="_blank" rel="noreferrer" className="underline">
             Open the turntable viewer of {room.name}

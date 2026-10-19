@@ -76,42 +76,17 @@ def test_a_failed_build_reports_why(make_ctx, tool_state) -> None:
     assert "failed" in result and "boom" in result
 
 
+# --- renders are made of rooms (rooms-only-renders) -----------------------------------------
+
+
 def render(make_ctx, **fields):
-    args = {"package_id": "bench", "tier": "draft", "kind": "turntable", **fields}
+    args = {"composition": "Wohnen", "tier": "draft", "kind": "turntable", **fields}
     shown = render_preview(args, make_ctx())
     return shown, render_run(args, make_ctx())
 
 
-def test_a_draft_turntable_is_enqueued_with_its_estimate_and_viewer(make_ctx, tool_state) -> None:
-    made(make_ctx, tool_state)
-    shown, result = render(make_ctx)
-    assert shown is None
-    assert result.startswith("Started a draft turntable of bench version 1: about")
-    assert result.endswith("When it finishes, a Review button appears in this chat.")
-    assert "viewer.html" not in result
-    state = wait_for_status(folder_of(tool_state), "succeeded")
-    job = wait_job(folder_of(tool_state), "turntable")
-    assert job["tier"] == "draft"
-    assert png_size(folder_of(tool_state) / "frames" / "frame_000.png") == (800, 800)
-    assert len(list((folder_of(tool_state) / "frames").iterdir())) == 12
-    assert state["status"] == "succeeded"
-
-
-def test_a_draft_still_of_a_piece_alone_is_refused_as_a_turntable(make_ctx, tool_state) -> None:
-    made(make_ctx, tool_state)
-    launched = len(tool_state.launched)
-    shown, result = render(make_ctx, kind="still")
-    assert shown == result == "a draft of a piece is a turntable; ask for a draft turntable, or a final still"
-    assert len(tool_state.launched) == launched
-    assert not (folder_of(tool_state) / "still.png").exists()
-
-
-def test_a_preview_render_is_refused_as_an_unknown_tier(make_ctx, tool_state) -> None:
-    made(make_ctx, tool_state)
-    launched = len(tool_state.launched)
-    _shown, result = render(make_ctx, tier="preview")
-    assert "preview" in result and "the tiers are draft, final" in result
-    assert len(tool_state.launched) == launched
+def room_folder(tool_state):
+    return storage.composition_version_dir(tool_state.settings.render_root, "wohnen", 1)
 
 
 def wait_job(folder, key: str, seconds: float = 10.0) -> dict:
@@ -126,63 +101,6 @@ def wait_job(folder, key: str, seconds: float = 10.0) -> dict:
     raise AssertionError(f"render {key} never succeeded")
 
 
-def test_a_final_pauses_with_the_estimate_and_runs_only_on_approval(make_ctx, tool_state) -> None:
-    made(make_ctx, tool_state)
-    args = {"package_id": "bench", "tier": "final", "kind": "turntable"}
-    shown = render_preview(args, make_ctx())
-    assert isinstance(shown, Confirmation)
-    assert shown.subject == "final_render"
-    assert shown.proposal["tier"] == "final"
-    assert "A final render needs your approval" in shown.summary
-    # local-detail-turntable: a long final on the laptop says how long and that the laptop is busy.
-    assert "This is a long render: about 1 h 41 min" in shown.summary
-    assert "builds, drafts and the live detail pass wait" in shown.summary
-    short = render_preview({"package_id": "bench", "tier": "final", "kind": "still"}, make_ctx())
-    assert isinstance(short, Confirmation) and "long render" not in short.summary
-    assert not any("render_turntable" in " ".join(call) for call in tool_state.launched)
-
-    declined = render_run(args, make_ctx())
-    assert "approval" in declined
-    renders_before = [c for c in tool_state.launched if any("render_turntable.py" in part for part in c)]
-    assert renders_before == []
-
-    started = render_run(args, replace(make_ctx(), approved=True))
-    assert started.startswith("Started a final turntable")
-    wait_job(folder_of(tool_state), "turntable")
-
-
-def test_raw_frames_are_refused_naming_the_field(make_ctx, tool_state) -> None:
-    made(make_ctx, tool_state)
-    launched = len(tool_state.launched)
-    shown, result = render(make_ctx, frames=100)
-    assert isinstance(shown, str)
-    assert "frames cannot be set on a render" in result
-    assert len(tool_state.launched) == launched
-
-
-def test_no_tier_is_refused(make_ctx, tool_state) -> None:
-    made(make_ctx, tool_state)
-    result = render_run({"package_id": "bench"}, make_ctx())
-    assert "a tier is required" in result
-
-
-def test_no_benchmark_is_refused(make_ctx, tool_state) -> None:
-    made(make_ctx, tool_state)
-    from sqlalchemy.orm import Session
-
-    with Session(tool_state.engine) as session:
-        session.execute(text("DELETE FROM operator_settings WHERE key LIKE 'render:%'"))
-        session.commit()
-    _, result = render(make_ctx)
-    assert "no benchmark has been run" in result
-
-
-def test_an_unbuilt_version_cannot_be_rendered(make_ctx, tool_state) -> None:
-    unbuilt(tool_state)
-    _, result = render(make_ctx)
-    assert "is not built yet" in result
-
-
 def _living_room_thread(tool_deps):
     with tool_deps.session() as session:
         room = house_file.upsert_room(session, "Living room", LIVING, 2600)
@@ -192,41 +110,83 @@ def _living_room_thread(tool_deps):
         return thread.id
 
 
-def test_a_room_render_uses_the_saved_placement(make_ctx, tool_deps, tool_state) -> None:
+def test_a_piece_is_not_rendered_on_its_own_or_in_a_room(make_ctx, tool_deps, tool_state) -> None:
+    from plugins.render_turntable.tool import PIECE_REFUSED
+
     made(make_ctx, tool_state)
     thread = _living_room_thread(tool_deps)
-    fitted = fit_run({"room_name": "Living room", "package_id": "bench", "wall": 0, "offset_mm": 500}, make_ctx())
-    assert "Placement saved for Living room" in fitted
-
-    args = {"package_id": "bench", "tier": "draft", "kind": "still", "in_room": True}
-    shown = render_preview(args, make_ctx(thread_id=thread))
-    result = render_run(args, make_ctx(thread_id=thread))
-    assert shown is None
-    assert "a Review button appears in this chat" in result and "still.png" not in result
-    job = wait_job(folder_of(tool_state), "room-still")
-    assert job["tier"] == "draft"
-    scene = json.loads((folder_of(tool_state) / "room" / "scene.json").read_text(encoding="utf-8"))
-    assert scene
-
-
-def test_a_room_render_without_a_placement_is_refused_and_starts_nothing(make_ctx, tool_deps, tool_state) -> None:
-    made(make_ctx, tool_state)
-    thread = _living_room_thread(tool_deps)
+    fit_run({"room_name": "Living room", "package_id": "bench", "wall": 0, "offset_mm": 500}, make_ctx())
     launched = len(tool_state.launched)
-    args = {"package_id": "bench", "tier": "draft", "kind": "still", "in_room": True}
-    result = render_run(args, make_ctx(thread_id=thread))
-    assert result == "this piece has no place in Living room yet; the Designer will ask where it goes"
+    for args in (
+        {"package_id": "bench", "tier": "draft", "kind": "turntable"},
+        {"package_id": "bench", "tier": "draft", "kind": "still"},
+        {"package_id": "bench", "tier": "final", "kind": "still"},
+        {"package_id": "bench", "tier": "draft", "kind": "still", "in_room": True},
+        {"tier": "draft", "kind": "still", "in_room": True},
+    ):
+        assert render_preview(args, make_ctx(thread_id=thread)) == PIECE_REFUSED
+        assert render_run(args, make_ctx(thread_id=thread)) == PIECE_REFUSED
+    assert "renders are made of rooms" in PIECE_REFUSED and "render the room" in PIECE_REFUSED
+    assert len(tool_state.launched) == launched
+    assert not (folder_of(tool_state) / "frames").exists() and not (folder_of(tool_state) / "room").exists()
+
+
+def test_a_preview_render_is_refused_as_an_unknown_tier(make_ctx, tool_deps, tool_state) -> None:
+    composed(make_ctx, tool_deps, tool_state)
+    launched = len(tool_state.launched)
+    _shown, result = render(make_ctx, tier="preview")
+    assert "preview" in result and "the tiers are draft, final" in result
     assert len(tool_state.launched) == launched
 
 
-def test_a_room_document_from_the_model_is_refused(make_ctx, tool_deps, tool_state) -> None:
-    made(make_ctx, tool_state)
-    thread = _living_room_thread(tool_deps)
-    result = render_run(
-        {"package_id": "bench", "tier": "draft", "kind": "still", "room": {"kind": "room_scene"}},
-        make_ctx(thread_id=thread),
-    )
-    assert "in_room true" in result
+def test_a_final_pauses_with_the_estimate_and_runs_only_on_approval(make_ctx, tool_deps, tool_state) -> None:
+    composed(make_ctx, tool_deps, tool_state)
+    args = {"composition": "Wohnen", "tier": "final", "kind": "turntable"}
+    shown = render_preview(args, make_ctx())
+    assert isinstance(shown, Confirmation)
+    assert shown.subject == "final_render"
+    assert shown.proposal["tier"] == "final"
+    assert "A final render needs your approval" in shown.summary
+    # local-detail-turntable: a long final on the laptop says how long and that the laptop is busy.
+    assert "This is a long render: about 1 h 41 min" in shown.summary
+    assert "builds, drafts and the live detail pass wait" in shown.summary
+    short = render_preview({"composition": "Wohnen", "tier": "final", "kind": "still"}, make_ctx())
+    assert isinstance(short, Confirmation) and "long render" not in short.summary
+    launched = len(tool_state.launched)
+
+    declined = render_run(args, make_ctx())
+    assert "approval" in declined
+    assert len(tool_state.launched) == launched
+
+    started = render_run(args, replace(make_ctx(), approved=True))
+    assert started.startswith("Started a final turntable of Wohnen version 1")
+    wait_job(room_folder(tool_state), "turntable")
+
+
+def test_raw_frames_are_refused_naming_the_field(make_ctx, tool_deps, tool_state) -> None:
+    composed(make_ctx, tool_deps, tool_state)
+    launched = len(tool_state.launched)
+    shown, result = render(make_ctx, frames=100)
+    assert isinstance(shown, str)
+    assert "frames cannot be set on a render" in result
+    assert len(tool_state.launched) == launched
+
+
+def test_no_tier_is_refused(make_ctx, tool_deps, tool_state) -> None:
+    composed(make_ctx, tool_deps, tool_state)
+    result = render_run({"composition": "Wohnen"}, make_ctx())
+    assert "a tier is required" in result
+
+
+def test_no_benchmark_is_refused(make_ctx, tool_deps, tool_state) -> None:
+    composed(make_ctx, tool_deps, tool_state)
+    from sqlalchemy.orm import Session
+
+    with Session(tool_state.engine) as session:
+        session.execute(text("DELETE FROM operator_settings WHERE key LIKE 'render:%'"))
+        session.commit()
+    _, result = render(make_ctx)
+    assert "no benchmark has been run" in result
 
 
 def test_in_room_with_a_composition_or_a_shell_is_refused(make_ctx, tool_state) -> None:
@@ -244,7 +204,6 @@ def test_no_render_refusal_names_internal_documents(make_ctx, tool_deps, tool_st
     thread = _living_room_thread(tool_deps)
     results = [
         render_run({"package_id": "bench", "tier": "draft", "kind": "still", "in_room": True}, make_ctx(thread_id=thread)),
-        render_run({"package_id": "bench", "tier": "draft", "kind": "still", "in_room": True}, make_ctx()),
         render_run({"package_id": "bench", "tier": "draft", "kind": "still", "room": {}}, make_ctx(thread_id=thread)),
         render_run({"composition": "Wohnen", "tier": "draft", "kind": "still", "in_room": True}, make_ctx()),
         render_run({"shell": "Flat", "tier": "draft", "kind": "still", "in_room": True}, make_ctx()),
@@ -335,9 +294,9 @@ def test_a_shell_render_needs_a_tier_refuses_raw_frames_and_pauses_for_final(mak
     assert len(tool_state.launched) == launched
 
 
-def test_a_render_names_a_piece_or_a_shell_not_both_nor_neither(make_ctx, tool_deps) -> None:
+def test_a_render_names_a_composition_or_a_shell_not_both_nor_neither(make_ctx, tool_deps) -> None:
     seed_apartment(tool_deps)
-    for args in ({"tier": "draft"}, {"tier": "draft", "package_id": "bench", "shell": "Flat"}):
+    for args in ({"tier": "draft"}, {"tier": "draft", "composition": "Wohnen", "shell": "Flat"}):
         assert "name exactly one target" in render_run(args, make_ctx())
 
 
@@ -390,9 +349,11 @@ def test_a_composition_final_pauses_and_raw_values_are_refused(make_ctx, tool_de
 
 
 def test_a_piece_and_a_composition_together_are_refused(make_ctx, tool_deps, tool_state) -> None:
+    from plugins.render_turntable.tool import PIECE_REFUSED
+
     composed(make_ctx, tool_deps, tool_state)
     result = render_run({"composition": "Wohnen", "package_id": "bench", "tier": "draft"}, make_ctx())
-    assert "name exactly one target" in result
+    assert result == PIECE_REFUSED
 
 
 def test_an_unbuilt_composition_cannot_be_rendered(make_ctx, tool_deps, tool_state) -> None:
@@ -433,12 +394,10 @@ def test_a_draft_turntable_started_in_a_thread_posts_one_succeeded_notice(make_c
     harness = make_harness(tool_state)
     tool_state.graph = harness.graph
     thread = harness.thread
-    made(make_ctx, tool_state)
-    result = render_run(
-        {"package_id": "bench", "tier": "draft", "kind": "turntable"}, make_ctx(thread_id=thread)
-    )
+    composed(make_ctx, tool_deps, tool_state)
+    result = render_run({"composition": "Wohnen", "tier": "draft", "kind": "turntable"}, make_ctx(thread_id=thread))
     assert result.startswith("Started a draft turntable")
-    assert wait_notices(tool_deps, thread) == [("succeeded", "draft", "bench", 1)]
+    assert [(outcome, tier) for outcome, tier, _p, _v in wait_notices(tool_deps, thread)] == [("succeeded", "draft")]
 
 
 def test_a_failing_draft_posts_one_failed_notice_and_stays_failed(make_ctx, tool_deps, tool_state) -> None:
@@ -448,11 +407,11 @@ def test_a_failing_draft_posts_one_failed_notice_and_stays_failed(make_ctx, tool
     harness = make_harness(tool_state)
     tool_state.graph = harness.graph
     thread = harness.thread
-    made(make_ctx, tool_state)
+    composed(make_ctx, tool_deps, tool_state)
     tool_state.blender_launch = fake_failure_launch
-    render_run({"package_id": "bench", "tier": "draft", "kind": "turntable"}, make_ctx(thread_id=thread))
-    assert wait_notices(tool_deps, thread) == [("failed", "draft", "bench", 1)]
-    jobs = (storage.read_status(folder_of(tool_state)) or {}).get("renders", {})
+    render_run({"composition": "Wohnen", "tier": "draft", "kind": "turntable"}, make_ctx(thread_id=thread))
+    assert [(outcome, tier) for outcome, tier, _p, _v in wait_notices(tool_deps, thread)] == [("failed", "draft")]
+    jobs = (storage.read_status(room_folder(tool_state)) or {}).get("renders", {})
     assert jobs["turntable"]["status"] == "failed"
 
 
@@ -464,8 +423,8 @@ def test_a_render_with_no_thread_posts_no_notice(make_ctx, tool_deps, tool_state
     harness = make_harness(tool_state)
     tool_state.graph = harness.graph
     thread = harness.thread
-    made(make_ctx, tool_state)
-    render_run({"package_id": "bench", "tier": "draft", "kind": "turntable"}, make_ctx())
-    wait_job(folder_of(tool_state), "turntable")
+    composed(make_ctx, tool_deps, tool_state)
+    render_run({"composition": "Wohnen", "tier": "draft", "kind": "turntable"}, make_ctx())
+    wait_job(room_folder(tool_state), "turntable")
     time.sleep(0.3)
     assert wait_notices(tool_deps, thread, seconds=0.1) == []

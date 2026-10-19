@@ -27,7 +27,8 @@ const progress = {
 };
 const thread = (id: string, title: string) => ({ thread_id: id, title, package_id: null, created_at: "", last_turn_at: "" });
 
-const DRAFT_NOTICE = { role: "notice", text: "Draft v2 is ready.", kind: "render", outcome: "succeeded", tier: "draft", package_id: "hall-bench", version: 2 };
+// A build notice opens its version beside the chat; a piece render notice has no button any more.
+const DRAFT_NOTICE = { role: "notice", text: "hall-bench version 2 is built.", kind: "build", outcome: "succeeded", package_id: "hall-bench", version: 2 };
 
 function stubAll(threads = [thread("t2", "Shoe rack"), thread("t1", "Hall bench")], messages: object[] = [DRAFT_NOTICE]) {
   return stubFetch((call) => {
@@ -208,7 +209,7 @@ test("reviewing a version from the chat in the room layout switches to the piece
   setWorkspaceLayout("chat-room");
   show();
   await screen.findByRole("complementary", { name: "Room view" });
-  await user.click(await screen.findByRole("button", { name: /Review draft revision 2/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect version 2" }));
   expect(await screen.findByRole("complementary", { name: "Inspector" })).toBeInTheDocument();
   expect(roomView()).not.toBeInTheDocument();
   expect(screen.getByLabelText("address")).toHaveTextContent("/studio/workspace/t1?inspect=hall-bench%2F2");
@@ -220,7 +221,7 @@ test("in the piece and room layout the piece and the room are both shown and nei
   setWorkspaceLayout("chat-above");
   show();
   await screen.findByRole("complementary", { name: "Room view" });
-  await user.click(await screen.findByRole("button", { name: /Review draft revision 2/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect version 2" }));
   await waitFor(() => expect(screen.getByLabelText("address")).toHaveTextContent("inspect=hall-bench%2F2"));
   expect(inspector()).toBeInTheDocument();
   expect(roomView()).toBeInTheDocument();
@@ -279,7 +280,7 @@ test("on a phone reviewing a version from the chat chooses the Piece tab (Phone 
   setScreenWidth(360);
   stubAll();
   show();
-  await user.click(await screen.findByRole("button", { name: /Review draft revision 2/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect version 2" }));
   const tabs = within(screen.getByRole("tablist", { name: "Panes" }));
   expect(tabs.getByRole("tab", { name: "Piece" })).toHaveAttribute("aria-selected", "true");
   expect(await screen.findByRole("complementary", { name: "Inspector" })).toBeInTheDocument();
@@ -288,7 +289,7 @@ test("on a phone reviewing a version from the chat chooses the Piece tab (Phone 
 
 const CHAT = [
   { role: "owner", text: "Make it 10 cm narrower", message_id: "m1" },
-  { role: "assistant", text: "Done. Version 3 is ready." },
+  { role: "assistant", text: "Done. Version 3 is ready.", speaker: "designer" },
 ];
 
 test("chat above shows a compact transcript on the left with the speakers inline (Compact transcript)", async () => {
@@ -304,7 +305,7 @@ test("chat above shows a compact transcript on the left with the speakers inline
   expect(ownerRow.textContent?.startsWith("You:Make it 10 cm narrower")).toBe(true);
   expect(ownerRow).toHaveClass("flex", "border");
   expect(ownerRow).not.toHaveClass("bg-primary");
-  expect(reply.closest("[data-side]")!.firstElementChild!.textContent?.startsWith("Foreman:")).toBe(true);
+  expect(reply.closest("[data-side]")!.firstElementChild!.textContent?.startsWith("Lil' Glitty:")).toBe(true);
   // An 8 px gap between messages.
   expect(list).toHaveClass("space-y-2");
 });

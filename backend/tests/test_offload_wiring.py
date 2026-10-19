@@ -73,89 +73,19 @@ def final_args(**fields):
     return {"package_id": "bench", "tier": "final", "kind": "turntable", **fields}
 
 
-# --- the agent's render tool ----------------------------------------------------------------------------
+# --- the agent's render tools ----------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("kwargs", "fragment"),
-    [
-        ({"reachable": False}, "unreachable"),
-        ({"version": "Blender 4.5.0 LTS"}, "runs Blender 4.5.0, not the pinned 5.2.1"),
-    ],
-)
-def test_a_final_is_refused_before_approval_when_the_server_cannot_be_used_and_never_runs_locally(
-    make_ctx, remote_state, tmp_path: Path, kwargs: dict, fragment: str
-) -> None:
-    made(make_ctx, remote_state)
-    server = FakeServer(tmp_path / "bad", **kwargs)
-    remote_state.blender_launch = combined(server, fake_pipeline_launch(calls=remote_state.launched))
-    choose_remote(remote_state.engine)
-    shown = render_preview(final_args(), make_ctx())
-    assert isinstance(shown, str) and fragment in shown and "switch final renders to the laptop" in shown
-    assert fragment in render_run(final_args(), replace(make_ctx(), approved=True))
-    assert local_renders(remote_state.launched) == []
-    assert not (folder_of(remote_state) / "frames").exists()
+def test_the_builder_sends_no_piece_final_to_the_server(make_ctx, remote_state, server: FakeServer) -> None:
+    """rooms-only-renders: the Builder renders rooms; a piece final is refused before the server is asked."""
+    from plugins.render_turntable.tool import PIECE_REFUSED
 
-
-def test_a_final_with_no_server_configured_is_refused_never_replaced_by_the_laptop(
-    make_ctx, remote_state
-) -> None:
-    made(make_ctx, remote_state)
-    remote_state.offload = None
-    choose_remote(remote_state.engine)
-    shown = render_preview(final_args(), make_ctx())
-    assert isinstance(shown, str) and "not configured" in shown
-    assert local_renders(remote_state.launched) == []
-
-
-def test_a_remote_final_without_the_remote_benchmark_is_refused(make_ctx, remote_state) -> None:
-    made(make_ctx, remote_state)
-    choose_remote(remote_state.engine, benchmark=False)
-    shown = render_preview(final_args(), make_ctx())
-    assert isinstance(shown, str) and "remote benchmark must be run first" in shown
-
-
-def test_a_remote_final_pauses_with_the_estimate_for_the_server_then_runs_there(
-    make_ctx, remote_state, server: FakeServer
-) -> None:
-    made(make_ctx, remote_state)
-    choose_remote(remote_state.engine)
-    shown = render_preview(final_args(), make_ctx())
-    assert shown.subject == "final_render" and "on the render server" in shown.summary
-    assert shown.proposal["estimate"] == "about 56 seconds"
-    assert HOST not in shown.summary
-    assert local_renders(remote_state.launched) == []
-
-    started = render_run(final_args(), replace(make_ctx(), approved=True))
-    assert started.startswith("Started a final turntable") and "56 seconds" in started
-    wait_job(folder_of(remote_state), "turntable")
-    assert len(list((folder_of(remote_state) / "frames").iterdir())) == 36
-    assert local_renders(remote_state.launched) == []
-    assert server.job_folders() == []
-    with Session(remote_state.engine) as session:
-        [job] = session.scalars(select(RemoteRenderJob)).all()
-    assert (job.package_id, job.render_key, job.outcome) == ("bench", "turntable", "succeeded")
-    assert job.transfer_seconds is not None and job.estimate_seconds == pytest.approx(36 * 2.25 * 0.2 + 40)
-    assert store.read_remote_benchmark(remote_state.engine).calibrated is True
-    assert store.stored_cycles_multiplier(remote_state.engine) is None
-
-
-def test_a_draft_stays_on_the_laptop_whatever_the_target(make_ctx, remote_state, server: FakeServer) -> None:
     made(make_ctx, remote_state)
     choose_remote(remote_state.engine)
     server.calls.clear()
-    started = render_run({"package_id": "bench", "tier": "draft", "kind": "turntable"}, make_ctx())
-    assert started.startswith("Started a draft turntable")
-    wait_job(folder_of(remote_state), "turntable")
-    assert server.calls == [] and local_renders(remote_state.launched)
-
-
-def test_the_target_local_keeps_a_final_on_the_laptop(make_ctx, remote_state, server: FakeServer) -> None:
-    made(make_ctx, remote_state)
-    store.write_final_target(remote_state.engine, "local")
-    shown = render_preview(final_args(), make_ctx())
-    assert "render server" not in shown.summary
-    assert server.calls == []
+    assert render_preview(final_args(), make_ctx()) == PIECE_REFUSED
+    assert render_run(final_args(), replace(make_ctx(), approved=True)) == PIECE_REFUSED
+    assert server.calls == [] and local_renders(remote_state.launched) == []
 
 
 def test_a_detail_final_goes_to_the_server_too(make_ctx, remote_state, server: FakeServer) -> None:
@@ -214,6 +144,25 @@ def test_a_remote_final_over_http_quotes_asks_then_runs_on_the_server(
     folder = render_root / "hall-bench" / "v1"
     assert len(list((folder / "frames").iterdir())) == 36
     assert server.job_folders() == [] and local_renders(client.app.state.local_calls) == []
+    with Session(client.app.state.engine) as session:
+        [job] = session.scalars(select(RemoteRenderJob)).all()
+    assert (job.package_id, job.render_key, job.outcome) == ("hall-bench", "turntable", "succeeded")
+    assert job.transfer_seconds is not None and job.estimate_seconds == pytest.approx(36 * 2.25 * 0.2 + 40)
+    assert store.read_remote_benchmark(client.app.state.engine).calibrated is True
+    assert store.stored_cycles_multiplier(client.app.state.engine) is None
+
+
+def test_a_remote_final_over_http_without_the_remote_benchmark_is_refused(client: TestClient) -> None:
+    choose_remote(client.app.state.engine, benchmark=False)
+    response = client.post(f"{BASE}/renders", json={"kind": "turntable", "tier": "final"})
+    assert response.status_code == 409 and "remote benchmark must be run first" in response.json()["detail"]["reason"]
+
+
+def test_the_target_local_keeps_a_final_over_http_on_the_laptop(client: TestClient, server: FakeServer) -> None:
+    store.write_final_target(client.app.state.engine, "local")
+    asked = client.post(f"{BASE}/renders", json={"kind": "turntable", "tier": "final"})
+    assert "render server" not in asked.json()["detail"]["summary"]
+    assert server.calls == []
 
 
 def test_a_remote_final_over_http_is_refused_with_503_before_any_approval(
@@ -281,18 +230,6 @@ def sold_out_runtime():
         template=runtime.config, semaphore=runtime.semaphore,
     )
     return fake, runtime
-
-
-def test_a_final_with_no_render_gpu_in_stock_is_refused_by_the_tool_before_approval(
-    make_ctx, remote_state
-) -> None:
-    made(make_ctx, remote_state)
-    fake, remote_state.offload = sold_out_runtime()
-    choose_remote(remote_state.engine)
-    shown = render_preview(final_args(), make_ctx())
-    assert isinstance(shown, str)
-    assert "none of NVIDIA RTX A4500, NVIDIA GeForce RTX 4090 is in stock in EU-RO-1 right now" in shown
-    assert fake.created == [] and local_renders(remote_state.launched) == []
 
 
 def test_a_final_with_no_render_gpu_in_stock_is_503_over_http(client: TestClient) -> None:

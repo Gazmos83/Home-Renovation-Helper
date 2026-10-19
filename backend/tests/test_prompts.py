@@ -250,6 +250,38 @@ def test_item_names_in_the_composition_note_are_neutralised() -> None:
     assert SENTINEL not in note and NEUTRALISED in note
 
 
+def test_a_hidden_item_is_marked_in_the_composition_note() -> None:
+    """hidden-room-items: the Designer sees that an item is kept but not built."""
+    note = composition_note([_wohnen(latest_version=1, approved_version=None, items=[{**SOFA, "hidden": True}])])
+    assert "sofa (model: Sofa Lund) (hidden) 2200 × 950 × 850 mm" in note
+
+
+def test_the_composition_note_shows_the_floor_finish() -> None:
+    """room-floor-finish: the Designer can restate the finish from the note."""
+    finish = {"tile_width_mm": 600, "tile_length_mm": 600, "tile_colour": "#e8e4dc", "grout_colour": "#9a958c",
+              "grout_width_mm": 3.0, "pattern": "grid"}
+    note = composition_note([_wohnen(latest_version=4, approved_version=None, items=[SOFA], floor=finish)])
+    assert "  v4 floor: 600 × 600 mm tiles, grid, tile #e8e4dc, grout 3 mm #9a958c" in note
+
+
+def test_a_lit_lamp_shows_its_light_in_the_composition_note() -> None:
+    """room-lamp-lights."""
+    lamp = {**SOFA, "id": "pendant", "name": "Calisto", "light": {"type": "point", "lumens": 800, "kelvin": 2700}}
+    note = composition_note([_wohnen(latest_version=1, approved_version=None, items=[lamp])])
+    assert "pendant (model: Calisto) (light 800 lm, 2700 K)" in note
+
+
+def test_an_led_strip_is_described_in_the_composition_note() -> None:
+    """room-led-strips."""
+    strip = {"id": "under-cabinets", "type": "led-strip", "name": "Strip", "length_mm": 2400, "lumens_per_m": 500,
+             "kelvin": 3000, "mount_height_mm": 1450, "facing": "down", "placement": {"wall": 2, "offset_mm": 400}}
+    note = composition_note([_wohnen(latest_version=1, approved_version=None, items=[strip])])
+    assert (
+        "under-cabinets (led-strip: Strip) 2400 mm on wall 3 (index 2) at offset 400 mm at 1450 mm, "
+        "facing down, 500 lm/m, 3000 K"
+    ) in note
+
+
 def test_a_placed_piece_shows_its_resolved_size_and_centre() -> None:
     """room-change-goes-to-designer: "Placed sizes reach the Designer"."""
     wall = {
@@ -270,3 +302,14 @@ def test_a_free_item_keeps_one_point_and_a_model_one_size() -> None:
     note = composition_note([_wohnen(latest_version=1, approved_version=None, items=[sofa])])
     assert "sofa (model: Sofa Lund) 2200 × 950 × 850 mm free at x 2500, y 2000 mm, rotated 90°" in note
     assert note.count("2200 × 950 × 850") == 1 and "centre (" not in note
+
+
+def test_a_hung_piece_shows_its_height_in_the_composition_note() -> None:
+    """conversation-continuity: a hung piece's height reaches the Designer."""
+    sideboard = {
+        "id": "sideboard", "type": "piece", "name": "sideboard-1200 v2",
+        "placement": {"wall": 1, "offset_mm": 0, "mount_height_mm": 1700},
+        "size_mm": {"w": 1350.0, "d": 450.0, "h": 800.0}, "centre_mm": [4775.0, 675.0], "rotation_deg": 90.0,
+    }
+    note = composition_note([_wohnen(latest_version=16, approved_version=None, items=[sideboard])])
+    assert "on wall 2 (index 1) at offset 0 mm, hung with its underside at 1700 mm" in note

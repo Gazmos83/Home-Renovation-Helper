@@ -1,9 +1,9 @@
 import { cn } from "@/lib/utils";
-import { ROLE_LABELS } from "./roles";
+import { personaOf } from "./roles";
 
 /** Stands in the reply's place while a turn runs, naming who is working. */
 export function WaitingBubble({ working, tool, compact = false }: { working: string | null; tool: string | null; compact?: boolean }) {
-  const who = working ? `${ROLE_LABELS[working] ?? working} is working` : "The Foreman is working";
+  const who = `${personaOf(working)} is working`;
   return (
     <div className="mr-auto max-w-[80%]" data-side="left">
       <div role="status" className={cn("inline-flex items-center gap-2 rounded-2xl border-2 bg-card font-chat", compact ? "px-3 py-1.5" : "px-4 py-3")}>

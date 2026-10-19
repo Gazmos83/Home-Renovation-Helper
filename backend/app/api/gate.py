@@ -35,6 +35,7 @@ from app.blender import storage
 from app.db import scope as account_scope
 from app.db.models import (
     Apartment,
+    Blueprint,
     Composition,
     CutListPricing,
     ModelAsset,
@@ -132,6 +133,13 @@ def _hold_member(request: Request, member_id: UUID) -> None:
             review_id = _uuid(str(params["review_id"]))
             owned = review_id is not None and db_session.execute(
                 select(Review.id).join(Piece, Piece.package_id == Review.package_id).where(Review.id == review_id)
+            ).first() is not None
+        if owned and "blueprint_id" in params:
+            blueprint_id = _uuid(str(params["blueprint_id"]))
+            owned = blueprint_id is not None and db_session.execute(
+                select(Blueprint.id)
+                .join(Apartment, Apartment.id == Blueprint.apartment_id)
+                .where(Blueprint.id == blueprint_id)
             ).first() is not None
         if owned and "model_id" in params:
             model_id = _uuid(str(params["model_id"]))

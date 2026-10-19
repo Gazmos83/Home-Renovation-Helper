@@ -10,6 +10,7 @@ beside the thread, never in the checkpointed messages, so no model call ever rea
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
@@ -116,11 +117,22 @@ def finished(deps: Any, thread_id: UUID | None, run_id: Any, quote: RenderQuote,
 # --- build notices (version-cleanup-and-inspection) -------------------------------------
 
 
-def build_text(package_id: str, version: int, outcome: str) -> str:
-    """A build notice's words, built here and nowhere else."""
+def build_text(package_id: str, version: int, outcome: str, warnings: Sequence[str] = ()) -> str:
+    """A build notice's words, built here and nowhere else; a succeeded build carries its size
+    warnings against the piece's room (piece-size-room-warning)."""
     if outcome != "succeeded":
         return f"{package_id} version {version} did not build. You can ask for it again."
-    return f"{package_id} version {version} is built."
+    return " ".join([f"{package_id} version {version} is built.", *warnings])
+
+
+def _size_warnings(deps: Any, package_id: str, version: int) -> list[str]:
+    """Never raises: a read error gives the plain notice."""
+    try:
+        with deps.session() as session:
+            return house_file.version_size_warnings(session, deps.render_root, package_id, version)
+    except Exception:
+        logger.exception("could not check the size of a built version")
+        return []
 
 
 def post_build(deps: Any, thread_id: UUID | None, package_id: str, version: int, outcome: str) -> None:
@@ -131,6 +143,7 @@ def post_build(deps: Any, thread_id: UUID | None, package_id: str, version: int,
     try:
         count = _message_count(deps, thread_id)
         outcome = "succeeded" if outcome == "succeeded" else "failed"
+        warnings = _size_warnings(deps, package_id, version) if outcome == "succeeded" else []
         with deps.session() as session:
             house_file.add_notice(
                 session,
@@ -139,7 +152,7 @@ def post_build(deps: Any, thread_id: UUID | None, package_id: str, version: int,
                 outcome=outcome,
                 kind="build",
                 tier=None,
-                text=build_text(package_id, version, outcome),
+                text=build_text(package_id, version, outcome, warnings),
                 package_id=package_id,
                 version=version,
             )
