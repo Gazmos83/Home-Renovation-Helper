@@ -842,3 +842,109 @@ A module SHALL accept an optional `mounting`, either `floor` or `wall`. Any othe
 #### Scenario: Revision sets mounting
 - **WHEN** the Designer revises `upper-left` with `mounting: "wall"` and the owner confirms
 - **THEN** the new version's module carries `mounting: "wall"`, and the change line reads "upper-left mounting: not stated → wall"
+
+### Requirement: A whole piece can be deleted
+The owner SHALL be able to delete a whole piece through an owner-gated route. Before deleting, the owner SHALL be able to read, through a second owner-gated route that changes nothing, what the delete would remove:
+- the piece's versions;
+- which of them are approved;
+- which have a pricing;
+- the conversations bound to the piece;
+- the reason the delete would be refused, when it would be.
+
+Deleting a piece SHALL remove:
+- every version, as deleting that version removes it (its folder with the input, model, screenshots, views, renders, cut list and drilling list, and its reviews, render runs and their feedback, verdict, pricings, and the notices' references to it);
+- the piece's record;
+- every conversation bound to the piece, as deleting that conversation removes it: its memory first, then its index entry with its tool settings and upload records, then its upload files.
+
+An approved version SHALL NOT block the delete. Rooms, compositions, preferences, engineering records and generator-extension requests SHALL be unchanged.
+
+The delete SHALL be refused, with nothing removed and the reason given in plain words, when:
+- a room composition version places any version of the piece (naming the composition and its version);
+- a build or render of any version of the piece is queued or running;
+- a turn or a resume is running in one of its conversations;
+- the conversations' memory cannot be reached.
+
+A piece that does not exist SHALL answer 404. After a delete, the package id is free: a new piece may take it, and its first version is version 1. No agent tool SHALL delete a piece.
+
+#### Scenario: Piece with an approved version deleted
+- **WHEN** `sideboard-1200` has version 1, approved and priced, and one conversation, and the owner deletes the piece
+- **THEN** `sideboard-1200` is no longer listed, its folder is gone, its pricing and approval are gone, its conversation answers 404, and no room or composition changed
+
+#### Scenario: What would go
+- **WHEN** the owner asks what deleting `listening-wall` would remove, and it has versions 10 to 19 with 19 approved and priced and two conversations
+- **THEN** the answer lists the ten versions, version 19 as approved with its pricing, and the two conversations, and nothing is deleted
+
+#### Scenario: Placed in a composition
+- **WHEN** composition `Living room` version 3 places `hall-bench` version 2 and the owner deletes `hall-bench`
+- **THEN** the delete is refused naming `Living room` version 3, and nothing is removed
+
+#### Scenario: Still building
+- **WHEN** the owner deletes a piece whose latest version is still building
+- **THEN** the delete is refused saying the piece is still building, and nothing is removed
+
+#### Scenario: Turn running in its conversation
+- **WHEN** a turn is running in the piece's conversation and the owner deletes the piece
+- **THEN** the delete is refused saying a reply is still being written, and nothing is removed
+
+#### Scenario: Id reused
+- **WHEN** `kommode-harmony` with versions 1 and 2 is deleted and a design is then imported as `kommode-harmony`
+- **THEN** the new piece's first version is version 1
+
+#### Scenario: Unknown piece
+- **WHEN** the owner deletes a piece id that does not exist
+- **THEN** the response is 404
+
+#### Scenario: Not signed in
+- **WHEN** either route is called without the session cookie
+- **THEN** the response is 401
+
+### Requirement: A piece version can be duplicated into a new piece
+The owner SHALL be able to make a new piece from one version of an existing piece. The request names:
+- the source piece and version;
+- the copy's name;
+- the copy's id.
+
+The id SHALL be a valid package id that no piece or version folder uses yet. The name SHALL be non-empty and SHALL NOT equal any existing piece's name, ignoring case.
+
+The source version's design SHALL be validated against the current schema before anything is written. A field the schema refuses SHALL be refused by name, and nothing is created.
+
+On success:
+- **New piece:** version 1 of the new piece holds the source version's design with only its name replaced, and the source version's frozen hardware inputs unchanged.
+- **Records:** the new piece is recorded with the source piece's room and brief, and version 1 carries the change line "duplicated from `<source id>` v`<n>`".
+- **Build:** version 1's headless build starts. No render is started, and no render guard ticket is used.
+- **Conversation:** a new conversation bound to the new piece is created, and its id is returned.
+
+These SHALL NOT be copied: approvals, reviews, verdicts, render feedback, renders, pricings, detail passes and saved places in rooms. The source piece, its versions and its conversations SHALL be left unchanged.
+
+A duplicate SHALL be refused, with the reason and with nothing changed, when any of these holds:
+- the source version does not exist;
+- the source version has no design;
+- the id is taken;
+- the name is empty or already a piece's name;
+- builds are unavailable on this host.
+
+#### Scenario: Duplicate the latest version
+- **WHEN** the owner duplicates `sideboard-1200` v3 as "Sideboard (copy)" with id `sideboard-1200-copy`
+- **THEN** `sideboard-1200-copy/v1/` holds v3's design named "Sideboard (copy)" and v3's hardware inputs
+- **AND** the piece is recorded in `sideboard-1200`'s room with the change line "duplicated from `sideboard-1200` v3"
+- **AND** its build is queued, a new conversation bound to it is returned, and `sideboard-1200` is unchanged
+
+#### Scenario: Duplicate an earlier version
+- **WHEN** the owner duplicates `sideboard-1200` v1 while v3 is the latest
+- **THEN** the copy's v1 holds v1's design, not v3's
+
+#### Scenario: Approval is not copied
+- **WHEN** the source version is approved and priced
+- **THEN** the copy's v1 is not approved and has no pricing
+
+#### Scenario: Id taken
+- **WHEN** the owner duplicates with id `sideboard-1200`
+- **THEN** the duplicate is refused naming the id as already in use, and nothing is created
+
+#### Scenario: Name already used
+- **WHEN** the owner duplicates `sideboard-1200` as "sideboard"
+- **THEN** the duplicate is refused saying a piece already has that name, and nothing is created
+
+#### Scenario: Design no longer valid
+- **WHEN** the source version's design carries a field the current schema does not define
+- **THEN** the duplicate is refused naming the field, and nothing is created

@@ -41,6 +41,6 @@
 ## 5. Checks
 
 - [x] 5.1 Run `uv run ruff check .` and `uv run pytest -m "not slow"` in `backend/`, skipping the RunPod/offload test files and using a throwaway `TEST_DATABASE_URL` if another session holds the test database. Run `pnpm lint`, `pnpm test` and `pnpm build` in `frontend/`. All must pass.
-- [ ] 5.2 Browser pass, with **no render tier**:
+- [x] 5.2 Browser pass, with **no render tier**:
   - on the Pieces page, delete a throwaway imported piece that has an approved version and a conversation; the confirmation lists both, and afterwards the piece and its conversation are gone;
   - then attach a design named like another existing piece in a new conversation; the fixed reply appears and no interview starts.

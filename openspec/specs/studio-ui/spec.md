@@ -1700,3 +1700,51 @@ A signed-out visit to `/` SHALL show the marketing page. It SHALL have a top bar
 #### Scenario: Phone width
 - **WHEN** the marketing page is shown at 360 × 780
 - **THEN** the image sits below the text, nothing scrolls sideways, and the footer covers no content
+
+### Requirement: A whole piece is deleted from the Pieces page after "Are you sure?"
+The piece dialog on the Pieces page SHALL offer "Delete piece", whatever its versions' approval. Pressing it SHALL NOT delete anything yet. It SHALL show, in place, what the delete would remove, read from the service:
+- "Are you sure? <piece name> and all its N versions will be deleted with their renders, reviews and pricings.";
+- when any version is approved, "Approved: version <n>, priced" (or "not priced") for each approved version;
+- when the piece has conversations, "Its M conversation(s) will be deleted too.";
+- "This cannot be undone."
+
+It SHALL offer "Yes, delete <piece name>" and "Cancel". When the service says the delete would be refused, the reason SHALL be shown instead of the "Yes" button.
+
+Only "Yes" SHALL send the delete. Afterwards:
+- the dialog SHALL close;
+- the piece SHALL no longer be on the Pieces page or in its sub-menu;
+- its conversations SHALL no longer be in the conversation list.
+
+A refusal returned by the delete SHALL be shown with its reason next to the control, and the piece SHALL stay listed.
+
+#### Scenario: Confirmed delete
+- **WHEN** the owner opens `sideboard-1200`, presses "Delete piece", reads that version 1 is approved and priced and that one conversation goes too, and presses "Yes, delete Sideboard"
+- **THEN** the dialog closes, `sideboard-1200` is gone from the Pieces page and its sub-menu, and its conversation is gone from the conversation list
+
+#### Scenario: Cancelled
+- **WHEN** the owner presses "Delete piece" and then "Cancel"
+- **THEN** nothing is deleted and "Delete piece" is shown again
+
+#### Scenario: Refusal shown before confirming
+- **WHEN** the owner presses "Delete piece" for a piece a composition places
+- **THEN** the reason naming the composition is shown, no "Yes" button is offered, and the piece stays listed
+
+### Requirement: A piece is duplicated from the Pieces page
+The piece dialog on the Pieces page SHALL offer "Duplicate piece", asked in place in the same way as "Delete piece". The form asks for:
+- the version to copy, from a dropdown of the piece's versions with the latest chosen;
+- the copy's name, prefilled as "<piece name> (copy)";
+- the copy's id, prefilled from the name made into an id and editable.
+
+"Duplicate" sends the request. "Cancel" closes the form, and nothing is sent. On success, the Pieces list is refreshed and the Studio opens the copy's new conversation. A refusal SHALL be shown in the form with its reason, and the form stays open.
+
+#### Scenario: Duplicate from the dialog
+- **WHEN** the owner opens Sideboard's dialog, chooses "Duplicate piece", keeps version 3, names it "Sideboard Hall" and presses "Duplicate"
+- **THEN** the copy is created, the Pieces list shows it, and its conversation opens
+
+#### Scenario: Refusal shown
+- **WHEN** the id entered is already in use
+- **THEN** the form shows the refusal naming the id, and nothing is created
+
+#### Scenario: Cancel
+- **WHEN** the owner opens "Duplicate piece" and presses "Cancel"
+- **THEN** no request is sent
