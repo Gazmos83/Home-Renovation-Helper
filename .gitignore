@@ -18,9 +18,6 @@ docs/guidelines/pdf/*
 # Unapproved explore notes; adopt via OpenSpec before committing.
 docs/blueprint-input-notes.md
 
-# Hidden until the build has a workable version; the file stays on disk.
-/README.md
-
 # The owner's own app review notes; findings move into OpenSpec changes.
 /docs/App Check 08-10-2026.md
 /docs/App Check 09-10-2026.md
