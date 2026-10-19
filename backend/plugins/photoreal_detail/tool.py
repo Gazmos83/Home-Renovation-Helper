@@ -282,16 +282,13 @@ detail_screenshot = AgentTool(
 
 
 def _price_args(args: RenderDetailArgs, ctx: ToolContext, package_id: str, number: int) -> dict[str, Any]:
-    engine = ctx.deps.engine
     return {
         "record": _record(args),
         "package_id": package_id,
         "version": number,
         "kind": args.kind,
         "tier": args.tier,
-        "tiers": ctx.deps.tiers,
-        "benchmark": benchmark_store.read_benchmark(engine),
-        "cycles_multiplier": benchmark_store.read_cycles_multiplier(engine),
+        **benchmark_store.quote_inputs(ctx.deps.engine, ctx.deps.tiers),
         "room": False,
         "raw_fields": list((args.model_extra or {}).keys()),
         "source": "detail",
@@ -343,6 +340,7 @@ def render_preview(arguments: dict[str, Any], ctx: ToolContext):
             "source": "detail",
             "estimate_seconds": round(priced.estimate_seconds, 1),
             "estimate": priced.estimate_text,
+            "target": priced.target,
         },
     )
 

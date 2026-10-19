@@ -38,7 +38,8 @@ _PRODUCT_PATH = re.compile(r"^/p/[a-z0-9-]+/\d+", re.IGNORECASE)
 _STATE_PRICE = re.compile(r'"price"\s*:\s*"?(\d{1,5}(?:[.,]\d{1,2})?)"?')
 _PRICE = re.compile(r"(\d{1,4}(?:\.\d{3})*|\d+),(\d{2})")
 _DIMENSIONS = re.compile(r"(\d{2,5})\s*x\s*(\d{2,5})\s*x\s*(\d{1,4})\s*mm", re.IGNORECASE)
-_NUMBER_UNIT = re.compile(r"(\d+(?:,\d+)?)\s*(mm|cm|m)\b")
+# German thousands first, so "2.800 mm" is 2800 and not 800.
+_NUMBER_UNIT = re.compile(r"((?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d+)?)\s*(mm|cm|m)\b")
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +51,9 @@ class ProductRead:
     reason: str | None = None
     name: str | None = None
     price_cents: int | None = None
+    # The listing's per-unit figure, kept only when its unit is known: square or running metres.
     unit_price_cents: int | None = None
+    metre_price_cents: int | None = None
     sheet_length_mm: int | None = None
     sheet_width_mm: int | None = None
     thickness_mm: int | None = None
@@ -68,6 +71,13 @@ def host_permitted(url: str, retail_sources: frozenset[str]) -> bool:
     return any(host in SOURCE_HOSTS.get(source, frozenset()) for source in retail_sources)
 
 
+def _per_unit(text: str | None) -> str | None:
+    """The unit after the slash of a per-unit price (`'3,79 € / m²'` → `'m²'`), else `None`."""
+    if not text or "/" not in text:
+        return None
+    return text.rsplit("/", 1)[1].strip().casefold() or None
+
+
 def to_cents(text: str | None) -> int | None:
     """`'36,49'` or `'1.249,00 €'` → 3649 / 124900, else `None`."""
     if not text:
@@ -82,7 +92,7 @@ def to_cents(text: str | None) -> int | None:
 
 
 def _mm(value: str, unit: str) -> int | None:
-    number = float(value.replace(",", "."))
+    number = float(value.replace(".", "").replace(",", "."))
     factor = {"mm": 1, "cm": 10, "m": 1000}[unit]
     result = round(number * factor)
     return result if result > 0 else None
@@ -182,6 +192,7 @@ def read_product(fetcher: LiveFetcher, url: str) -> ProductRead:
     facts = parse_product_page(page.html)
     price = facts["price_cents"]
     unit_price: int | None = None
+    metre_price: int | None = None
     if facts["name"] is None:
         return ProductRead("unreadable", url, reason="the page names no product", fetched_at=page.fetched_at)
 
@@ -193,7 +204,11 @@ def read_product(fetcher: LiveFetcher, url: str) -> ProductRead:
                 tile = _tile_for(parse_listing_blocks(listing.html), url, facts["name"])
                 if tile is not None:
                     price = to_cents(tile.price)
-                    unit_price = to_cents(tile.unit_price)
+                    per = _per_unit(tile.unit_price)
+                    if per in ("m²", "m2"):
+                        unit_price = to_cents(tile.unit_price)
+                    elif per in ("m", "lfm"):
+                        metre_price = to_cents(tile.unit_price)
             elif listing.outcome in ("refused", "excluded"):
                 return ProductRead(
                     listing.outcome, url, reason=f"its category listing: {listing.reason}",
@@ -211,6 +226,7 @@ def read_product(fetcher: LiveFetcher, url: str) -> ProductRead:
         name=facts["name"],
         price_cents=price,
         unit_price_cents=unit_price,
+        metre_price_cents=metre_price,
         sheet_length_mm=facts["sheet_length_mm"],
         sheet_width_mm=facts["sheet_width_mm"],
         thickness_mm=facts["thickness_mm"],

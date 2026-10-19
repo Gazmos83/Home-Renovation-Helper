@@ -99,7 +99,8 @@ class ResumeIn(BaseModel):
             return {"answers": [a.strip() for a in self.answers or []]}
         if self.answer is None or self.answers is not None or self.declined is not None:
             return "answer the confirmation with yes or no"
-        return {"answer": self.answer, "reason": self.reason}
+        # What the owner saw, so a resumed turn can refuse a "yes" to something that changed.
+        return {"answer": self.answer, "reason": self.reason, "shown": pending.proposal}
 
     def said(self) -> str:
         """The answer as the trace's input."""
@@ -328,11 +329,14 @@ def _current_pending(request: Request, graph: Any, thread_id: UUID, owner: UUID)
 
 @contextmanager
 def _turn_running(request: Request, thread_id: UUID):
-    """Mark the thread as running a turn; refuse one deleted meanwhile."""
+    """Mark the thread as running a turn; refuse one deleted meanwhile or already running."""
     with _running_lock:
         with Session(request.app.state.engine) as session:
             if house_file.get_thread(session, thread_id) is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not Found")
+        # Two resumes of one confirmation would otherwise both run the approved action.
+        if thread_id in _running:
+            raise _refusal(status.HTTP_409_CONFLICT, "turn_running", "a reply is still being written; wait for it")
         _running.add(thread_id)
         chat.begin_turn(thread_id)
     try:
@@ -484,9 +488,12 @@ def start_thread(body: ThreadIn, request: Request) -> ThreadOut:
             package_id = storage.validate_package_id(package_id)
         except storage.InvalidPackageId as error:
             raise _refusal(422, "invalid_package_id", str(error)) from None
-        if not storage.versions(request.app.state.settings.render_root, package_id):
-            raise _refusal(422, "unknown_package", f"there is no package {package_id!r}")
     with Session(request.app.state.engine) as session:
+        if package_id is not None and (
+            not storage.versions(request.app.state.settings.render_root, package_id)
+            or not house_file.piece_visible(session, package_id)
+        ):
+            raise _refusal(422, "unknown_package", f"there is no package {package_id!r}")
         if package_id is not None and house_file.thread_id_for_piece(session, package_id) is not None:
             raise _refusal(
                 status.HTTP_409_CONFLICT,

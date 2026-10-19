@@ -33,6 +33,7 @@ from app.agent.tools.shared import (
     builds_unavailable,
     checked_package_id,
     latest_version,
+    visible_package_id,
 )
 from app.blender.hardware_catalog import default_catalog
 from app.blender.import_corrections import correct, rule_lines
@@ -224,7 +225,7 @@ def _checked_version(
     args, problem = parse_args(ImportVersionArgs, arguments)
     if args is None:
         return None, problem
-    package_id, problem = checked_package_id(args.package_id)
+    package_id, problem = visible_package_id(ctx.deps, args.package_id)
     if package_id is None:
         return None, problem
     latest = latest_version(ctx.deps, package_id)

@@ -550,3 +550,22 @@ def test_the_confirmation_says_when_the_front_layout_changes(make_ctx, tool_stat
     shown = preview({"package_id": "hall-bench", "changes": {"modules": {"cabinet": {"fronts": [single, single]}}}}, make_ctx())
     assert isinstance(shown, Confirmation), shown
     assert "cabinet: front layout changes from 1 entry of 2 doors side by side to 2 entries stacked top to bottom" in shown.summary
+
+
+def test_a_revision_whose_record_fails_leaves_no_folder_and_starts_no_build(make_ctx, tool_state, monkeypatch) -> None:
+    make_piece(make_ctx, tool_state)
+    root = tool_state.settings.render_root
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("database down")
+
+    monkeypatch.setattr(house_file, "record_version", broken)
+    started: list[int] = []
+    monkeypatch.setattr(type(make_ctx().deps), "start_build", lambda _self, _id, version: started.append(version))
+    try:
+        run(SHELVES, replace(make_ctx(), approved=True))
+    except RuntimeError:
+        pass
+    assert not storage.version_dir(root, "hall-bench", 2).exists()
+    assert storage.versions(root, "hall-bench") == [1]
+    assert started == []

@@ -118,6 +118,16 @@ class ToolDeps:
         models = getattr(self._state, "models", None) or {}
         return models.__getitem__
 
+    @property
+    def budgets(self) -> Any:
+        """The token restrictions per model (`app.state.budgets`, else the stored ones)."""
+        found = getattr(self._state, "budgets", None)
+        if found is not None:
+            return found
+        from app.agent.models.budgets import Budgets
+
+        return Budgets(self.engine)
+
     def model_id(self, slot: str) -> str:
         routing = getattr(self._state, "routing", None)
         if routing is not None:

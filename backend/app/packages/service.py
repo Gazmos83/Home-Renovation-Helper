@@ -61,41 +61,6 @@ def create_version(
     return {"package_id": package_id, "version": version, "status": "queued"}
 
 
-class RoomDocumentRefused(ValueError):
-    """A room-scene document the render cannot use; the message names why."""
-
-
-def room_scene_document(folder: Path, kind: str, room: Any) -> dict[str, Any]:
-    """The normalised room-scene document for a render of `kind` of this version.
-
-    The document's own `output.kind` is set to the render's kind: the kind is
-    the request's, and the tier decides everything else.
-    """
-    from pydantic import ValidationError
-
-    from app.blender.room_contract import normalise_room_scene
-    from app.blender.schemas import RoomSceneSpec, describe_validation_error
-    from app.blender.spec_contract import SpecValidationError
-
-    if not isinstance(room, dict):
-        raise RoomDocumentRefused("room must be a room-scene document")
-    document = {**room, "output": {"kind": kind}}
-    try:
-        spec = RoomSceneSpec.model_validate(document)
-    except ValidationError as error:
-        raise RoomDocumentRefused(describe_validation_error(error)) from None
-    try:
-        overall = json.loads((folder / "spec.json").read_text(encoding="utf-8"))["overall"]
-        normalise_room_scene(spec.model_dump(mode="json"), package_overall={k: float(v) for k, v in overall.items()})
-    except SpecValidationError as error:
-        raise RoomDocumentRefused(str(error)) from None
-    except (OSError, KeyError, ValueError, TypeError):
-        raise RoomDocumentRefused(
-            "this version has no readable spec.json to place in a room; build it first"
-        ) from None
-    return spec.model_dump(mode="json")
-
-
 def create_shell_version(
     root: Path,
     slug: str,

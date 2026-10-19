@@ -59,23 +59,6 @@ class GatewayError(RuntimeError):
         self.reason = reason
 
 
-class ModelUnavailable(GatewayError):
-    """A routed registry model is known to be unavailable (llm-gateway).
-
-    Raised before any request is built, so no paid call is made and no usage is
-    recorded. It is a `GatewayError` so every path that reports a gateway
-    failure as a stated inability reports this one the same way.
-    """
-
-    def __init__(self, model_id: str, reason: str) -> None:
-        super().__init__(
-            "model_unavailable",
-            f"the model {model_id} is unavailable ({reason}); "
-            "an administrator must route to an available model",
-        )
-        self.model_id = model_id
-
-
 @dataclass(frozen=True, slots=True)
 class _Mapping:
     error_class: str

@@ -21,6 +21,7 @@ from app.auth.accounts import (
     list_accounts,
 )
 from app.auth.passwords import WeakPassword
+from app.blender import storage
 from app.config import Settings
 from app.db import scope as account_scope
 from app.db.models import Piece, Room
@@ -149,6 +150,9 @@ def test_each_account_keeps_its_own_rooms_and_pieces(db_session: Session, migrat
         db_session.expunge_all()
         assert [r.height_mm for r in db_session.scalars(select(Room))] == [2400]
         assert [p.package_id for p in db_session.scalars(select(Piece))] == ["member-shelf"]
+        # The Designer's tools look pieces up through this check.
+        assert house_file.piece_visible(db_session, "member-shelf")
+        assert not house_file.piece_visible(db_session, "owner-shelf")
     db_session.expunge_all()
     assert [r.height_mm for r in db_session.scalars(select(Room))] == [2500]
     assert [p.package_id for p in db_session.scalars(select(Piece))] == ["owner-shelf"]
@@ -159,3 +163,36 @@ def test_each_account_keeps_its_own_rooms_and_pieces(db_session: Session, migrat
     ).one()
     assert stamped == member.id
     db_session.rollback()
+
+
+def test_a_member_never_reaches_the_owners_room_or_piece_conversation(app_client: TestClient, render_root: Path) -> None:
+    add_member(app_client)
+    assert create(app_client, "owner-bench").status_code == 202
+    folder = storage.composition_version_dir(render_root, "wohnen", 1)
+    folder.mkdir(parents=True)
+    sign_in(app_client, MEMBER_EMAIL, MEMBER_PASSWORD)
+    assert app_client.delete("/compositions/wohnen/versions/1").status_code == 404
+    assert app_client.get("/compositions/wohnen/versions/1/renders").status_code == 404
+    assert app_client.get("/apartments/wohnen").status_code == 404
+    assert folder.is_dir()
+    refused = app_client.post("/chat/threads", json={"title": "x", "package_id": "owner-bench"})
+    assert refused.status_code == 422
+
+
+def test_a_member_never_changes_the_owners_review_items(app_client: TestClient) -> None:
+    from app.db.models import ReviewItem
+
+    add_member(app_client)
+    assert create(app_client, "owner-bench").status_code == 202
+    item = {"aspect": "proportion", "expected": "600 mm", "expected_source": "spec", "observed": "500 mm",
+            "image": 1, "severity": "minor"}
+    with Session(app_client.app.state.engine) as session:
+        review = house_file.record_review(session, "owner-bench", 1, ["still.png"], [item])
+        session.commit()
+        review_id = review.id
+        item_id = session.scalars(select(ReviewItem.id).where(ReviewItem.review_id == review_id)).one()
+    sign_in(app_client, MEMBER_EMAIL, MEMBER_PASSWORD)
+    refused = app_client.patch(f"/reviews/{review_id}/items/{item_id}", json={"status": "dismissed"})
+    assert refused.status_code == 404
+    with Session(app_client.app.state.engine) as session:
+        assert session.get(ReviewItem, item_id).status == "open"

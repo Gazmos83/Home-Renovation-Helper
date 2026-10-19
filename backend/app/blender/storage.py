@@ -381,6 +381,11 @@ def list_packages(root: Path) -> list[tuple[str, list[int]]]:
     return packages
 
 
+# Staging paths of runs still in progress in this process; the sweeps leave them alone,
+# so one render's cleanup never removes another render's half-written output.
+live_stages: set[Path] = set()
+
+
 def staging_dir(target: Path) -> Path:
     """A fresh sibling of `target` matching the staging convention, so
     `sweep_stale_siblings` removes it if the process dies before publishing."""
@@ -407,7 +412,7 @@ def sweep_stale_siblings(target: Path) -> list[Path]:
     stale_dirs = set(target.parent.glob(f".{target.name}.tmp-*"))
     stale_dirs |= set(target.parent.glob(f"..{target.name}.tmp-*"))
     for stale in sorted(stale_dirs):
-        if stale.is_dir():
+        if stale.is_dir() and stale not in live_stages:
             shutil.rmtree(stale, ignore_errors=True)
             removed.append(stale)
     return removed

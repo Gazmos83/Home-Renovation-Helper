@@ -57,7 +57,7 @@ class PacedFetcher:
     def __post_init__(self) -> None:
         self._owns_client = self.client is None
         if self.client is None:
-            self.client = httpx.Client(follow_redirects=True, timeout=self.timeout)
+            self.client = httpx.Client(follow_redirects=False, timeout=self.timeout)
 
     # -- lifecycle ---------------------------------------------------------
 

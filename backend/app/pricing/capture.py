@@ -35,7 +35,12 @@ class CaptureResult:
 
 
 def _price_for_unit(read: ProductRead, unit: str) -> int | None:
-    return read.unit_price_cents if unit == "per_m2" else read.price_cents
+    # A pack's price is never a per-metre or per-m² price: a 5 m roll is not 4,99 € per metre.
+    if unit == "per_m2":
+        return read.unit_price_cents
+    if unit == "per_metre":
+        return read.metre_price_cents
+    return read.price_cents
 
 
 def capture_from_url(
@@ -111,7 +116,7 @@ def refresh(session: Session, fetcher: LiveFetcher, key: str) -> RefreshResult:
     read = read_product(fetcher, entry.source_url)
     if not read.ok:
         return RefreshResult(read.outcome, read.reason, entry)
-    price = _price_for_unit(read, entry.unit) if entry.unit in ("per_m2", "per_piece") else read.price_cents
+    price = _price_for_unit(read, entry.unit)
     if price is None:
         return RefreshResult("unreadable", f"the page states no {entry.unit.replace('_', ' ')} price", entry)
     price_list.record_capture(session, entry.key, cents=price, url=entry.source_url, at=read.fetched_at)

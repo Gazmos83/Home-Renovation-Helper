@@ -38,14 +38,6 @@ _RETAILER_PATTERN: Final = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
 _CURRENCY_PATTERN: Final = re.compile(r"^[A-Z]{3}$")
 
 
-class SnapshotValidationError(ValueError):
-    """A snapshot cannot be recorded as given. `field` names what failed."""
-
-    def __init__(self, field: str, message: str) -> None:
-        self.field = field
-        super().__init__(message)
-
-
 class SnapshotConflict(Exception):
     """The product URL already carries chunks from a source other than a manual snapshot."""
 

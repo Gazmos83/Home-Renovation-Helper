@@ -8,6 +8,7 @@ is marked `blender`. Production binds it to `subprocess_launch`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +56,12 @@ async def subprocess_launch(argv: list[str], cwd: Path, timeout: float) -> Launc
             stderr_tail=f"timed out after {timeout:.0f} seconds",
             timed_out=True,
         )
+    except BaseException:
+        # A cancel must not leave Blender (or ssh) running once the one-at-a-time lock is free.
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+        await asyncio.shield(process.wait())
+        raise
 
     return LaunchResult(
         exit_code=process.returncode or 0,

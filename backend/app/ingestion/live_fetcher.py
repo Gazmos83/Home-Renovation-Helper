@@ -87,7 +87,10 @@ class LiveFetcher:
         robots_refresh_seconds: float = DEFAULT_ROBOTS_REFRESH_SECONDS,
         client: httpx.Client | None = None,
         clock: Callable[[], float] | None = None,
+        hosts: frozenset[str] | None = None,
     ) -> None:
+        # The retail hosts a fetch may reach (CLAUDE.md §5a); `None` leaves it unchecked.
+        self._hosts = hosts
         self._fetcher = PacedFetcher(
             user_agent=build_user_agent(contact),
             min_interval_seconds=min_interval_seconds,
@@ -170,6 +173,9 @@ class LiveFetcher:
         if cached is not None:
             return cached
 
+        if self._hosts is not None and (urlsplit(url).hostname or "").lower() not in self._hosts:
+            return FetchResult(outcome="excluded", url=url, reason="this site is not a permitted retail source")
+
         try:
             rules = self._rules_for(url)
         except RulesUnavailable as error:
@@ -207,6 +213,12 @@ class LiveFetcher:
             return FetchResult(
                 outcome="refused", url=url, reason=f"HTTP {response.status_code}"
             )
+        if response.is_redirect:
+            # Redirects are not followed: the target was never checked against the rules.
+            return FetchResult(
+                outcome="unfetchable", url=url,
+                reason=f"HTTP {response.status_code}: the page moved to {response.headers.get('location', 'another address')}",
+            )
         if response.status_code != 200:
             return FetchResult(
                 outcome="unfetchable", url=url, reason=f"HTTP {response.status_code}"
@@ -223,12 +235,14 @@ def make_live_fetcher(
     contact: str,
     min_interval_seconds: float = 1.0,
     timeout: float = DEFAULT_TIMEOUT,
+    hosts: frozenset[str] | None = None,
 ) -> LiveFetcher:
     """The fetcher built at startup from settings (pricing-researcher)."""
     return LiveFetcher(
         contact=contact,
         min_interval_seconds=min_interval_seconds,
         timeout=timeout,
+        hosts=hosts,
     )
 
 

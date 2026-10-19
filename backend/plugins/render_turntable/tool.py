@@ -57,16 +57,13 @@ class RenderArgs(BaseModel):
 def _price_args(
     args: RenderArgs, ctx: ToolContext, package_id: str, number: int, record: str = "piece"
 ) -> dict[str, Any]:
-    engine = ctx.deps.engine
     return {
         "record": record,
         "package_id": package_id,
         "version": number,
         "kind": args.kind,
         "tier": args.tier,
-        "tiers": ctx.deps.tiers,
-        "benchmark": benchmark_store.read_benchmark(engine),
-        "cycles_multiplier": benchmark_store.read_cycles_multiplier(engine),
+        **benchmark_store.quote_inputs(ctx.deps.engine, ctx.deps.tiers),
         "room": args.in_room,
         "raw_fields": list((args.model_extra or {}).keys()),
     }
@@ -213,6 +210,7 @@ def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str |
             "tier": priced.tier.name,
             "estimate_seconds": round(priced.estimate_seconds, 1),
             "estimate": priced.estimate_text,
+            "target": priced.target,
         },
     )
 

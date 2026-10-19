@@ -8,7 +8,8 @@ not yet used. A caller, a model or a spec cannot name a frame count, resolution
 or engine — those come from the tier alone.
 
 The guard is a plain function so it can be tested without Blender or a graph;
-`guard_node` wraps it with LangGraph's `interrupt()` for agents.
+for agents, a render tool's preview returns a confirmation and the Foreman pauses
+on it with LangGraph's `interrupt()`.
 """
 
 from __future__ import annotations

@@ -16,6 +16,7 @@ from typing import Final
 import yaml
 
 from app.config import ConfigurationError
+from app.unique_yaml import load_unique
 
 TIER_NAMES: Final[tuple[str, ...]] = ("draft", "final")
 
@@ -72,25 +73,6 @@ class Tiers:
         return {name: tier.describe() for name, tier in self.items()}
 
 
-class _NoDuplicatesLoader(yaml.SafeLoader):
-    """Refuses a repeated key, so a duplicate tier is an error."""
-
-
-def _no_duplicate_keys(loader: _NoDuplicatesLoader, node: yaml.MappingNode) -> dict:
-    seen: set = set()
-    for key_node, _ in node.value:
-        key = loader.construct_object(key_node)
-        if key in seen:
-            raise TierError(f"render configuration names {key!r} more than once")
-        seen.add(key)
-    return loader.construct_mapping(node)
-
-
-_NoDuplicatesLoader.add_constructor(
-    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicate_keys
-)
-
-
 def _positive_int(tier: str, key: str, value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise TierError(f"tier {tier!r}: {key} must be a positive integer, got {value!r}")
@@ -99,7 +81,7 @@ def _positive_int(tier: str, key: str, value: object) -> int:
 
 def load_tiers(path: Path = DEFAULT_TIERS_PATH) -> Tiers:
     try:
-        raw = yaml.load(path.read_text(encoding="utf-8"), Loader=_NoDuplicatesLoader)
+        raw = load_unique(path.read_text(encoding="utf-8"), lambda key: TierError(f"render configuration names {key!r} more than once"))
     except FileNotFoundError as error:
         raise TierError(f"render configuration not found: {path}") from error
     except yaml.YAMLError as error:

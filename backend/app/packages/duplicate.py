@@ -55,11 +55,6 @@ def change_line(source_id: str, version: int) -> str:
     return f"duplicated from {source_id} v{version}"
 
 
-def copy_name(name: str) -> str:
-    """The name a copy is offered by default."""
-    return f"{name} (copy)"
-
-
 def _taken(session: Session, root: Path, package_id: str) -> bool:
     return bool(storage.versions(root, package_id)) or session.get(Piece, package_id) is not None
 
@@ -98,7 +93,7 @@ def plan(
     except storage.InvalidPackageId:
         raise DuplicateRefused("not_found", f"there is no piece {source_id!r}") from None
     found = storage.versions(root, source_id)
-    if not found:
+    if not found or not house_file.piece_visible(session, source_id):
         raise DuplicateRefused("not_found", f"there is no piece {source_id!r}")
     chosen = found[-1] if version is None else version
     if chosen not in found:

@@ -71,6 +71,17 @@ def checked_package_id(package_id: str) -> tuple[str | None, str]:
         return None, str(error)
 
 
+def visible_package_id(deps: ToolDeps, package_id: str) -> tuple[str | None, str]:
+    """`checked_package_id`, refusing a piece another account owns as if it did not exist."""
+    checked, problem = checked_package_id(package_id)
+    if checked is None:
+        return None, problem
+    with deps.session() as session:
+        if not house_file.piece_visible(session, checked):
+            return None, f"there is no package {checked!r}"
+    return checked, ""
+
+
 def latest_version(deps: ToolDeps, package_id: str) -> int | None:
     found = storage.versions(deps.render_root, package_id)
     return found[-1] if found else None
@@ -93,7 +104,7 @@ def version_limit_line(deps: ToolDeps, package_id: str) -> str | None:
 
 def version_folder(deps: ToolDeps, package_id: str, version: int | None) -> tuple[Path | None, int | None, str]:
     """The folder of `version` (the latest when `None`), or a refusal."""
-    package_id, problem = checked_package_id(package_id)
+    package_id, problem = visible_package_id(deps, package_id)
     if package_id is None:
         return None, None, problem
     number = version if version is not None else latest_version(deps, package_id)

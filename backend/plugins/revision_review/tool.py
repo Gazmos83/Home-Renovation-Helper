@@ -5,10 +5,11 @@ from __future__ import annotations
 import base64
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agent import house_file
+from app.agent.budget import BudgetRefused, RequestBudget, prepare, refusal_message
 from app.agent.models.openrouter_client import gateway_errors
 from app.agent.prompts import (
     CLOSE_TOKEN,
@@ -19,7 +20,7 @@ from app.agent.prompts import (
 from app.agent.review import ReviewRefused, collect, review_schema
 from app.agent.tools.base import AgentTool, ToolContext, parse_args
 from app.agent.tools.shared import version_folder
-from app.observability.usage import UsageRecorder, operation
+from app.observability.usage import UsageRecorder, operation, tokens_today
 
 REVIEW_NOTE = (
     "You compare the labelled images with the spec facts and the brief. "
@@ -100,18 +101,38 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str:
     for image in evidence.images:
         content.append(_image_block(image.path))
     schema = review_schema([image.label for image in evidence.images])
+    slug = ctx.deps.model_id("reviewer")
     try:
         provide = ctx.deps.model_provider
         model = provide("reviewer")
+        # Counted and checked against the day's ceiling like every other call (token-budget).
+        restrictions = ctx.deps.budgets.for_model(slug)
+        cap = getattr(model, "max_tokens", None)
+        request_budget = RequestBudget.for_model(
+            slug,
+            context_budget_tokens=restrictions.context_budget_tokens,
+            max_output_tokens=cap if isinstance(cap, int) else None,
+        )
+        prompt, counted = prepare(
+            request_budget,
+            f"{REVIEW_NOTE}\n\n{UNTRUSTED_CONTENT_PREAMBLE}",
+            [HumanMessage(content=content)],
+            used_today=tokens_today(ctx.deps.engine, slug, ctx.deps.settings.budget_timezone),
+            daily_ceiling=restrictions.daily_token_ceiling,
+        )
+    except BudgetRefused as error:
+        return refusal_message("reviewer", error)
+    try:
         with gateway_errors(operation="chat.reviewer.review"), operation("chat.reviewer.review"):
             result = model.with_structured_output(schema).invoke(
-                [SystemMessage(f"{REVIEW_NOTE}\n\n{UNTRUSTED_CONTENT_PREAMBLE}"), HumanMessage(content=content)],
+                prompt,
                 config={
                     "callbacks": [
                         UsageRecorder(
                             ctx.deps.engine,
-                            model_id=ctx.deps.model_id("reviewer"),
+                            model_id=slug,
                             owner_user_id=ctx.owner_id,
+                            estimated_tokens=counted,
                         )
                     ]
                 },

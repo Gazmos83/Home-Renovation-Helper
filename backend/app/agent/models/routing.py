@@ -32,6 +32,7 @@ from app.agent.models.registry import (
 )
 from app.config import ConfigurationError
 from app.db.models import OperatorSetting
+from app.unique_yaml import load_unique
 
 logger = logging.getLogger("app")
 
@@ -57,26 +58,6 @@ DEFAULT_ROUTING_PATH: Final = Path(__file__).resolve().parents[3] / "config" / "
 
 class RoutingError(ConfigurationError):
     """The routing file or its overrides cannot produce a usable mapping."""
-
-
-class _NoDuplicatesLoader(yaml.SafeLoader):
-    """A YAML loader that refuses a mapping with a repeated key, so a duplicate
-    slot is an error rather than a silently-kept last value."""
-
-
-def _no_duplicate_keys(loader: _NoDuplicatesLoader, node: yaml.MappingNode) -> dict:
-    seen: set = set()
-    for key_node, _value_node in node.value:
-        key = loader.construct_object(key_node)
-        if key in seen:
-            raise RoutingError(f"routing file names the slot {key!r} more than once")
-        seen.add(key)
-    return loader.construct_mapping(node)
-
-
-_NoDuplicatesLoader.add_constructor(
-    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicate_keys
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +137,7 @@ def load_routing(
 ) -> Routing:
     """Build the `Routing` from the file, with `overrides` resolved over it."""
     try:
-        raw = yaml.load(path.read_text(encoding="utf-8"), Loader=_NoDuplicatesLoader)
+        raw = load_unique(path.read_text(encoding="utf-8"), lambda key: RoutingError(f"routing file names the slot {key!r} more than once"))
     except FileNotFoundError as error:
         raise RoutingError(f"routing file not found: {path}") from error
     except yaml.YAMLError as error:

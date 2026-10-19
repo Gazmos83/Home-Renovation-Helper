@@ -82,13 +82,6 @@ class Plugins:
         name = self.tool_to_plugin.get(tool)
         return self.by_name.get(name) if name else None
 
-    def tools_for_role(self, role: str) -> list[str]:
-        names: list[str] = []
-        for plugin in self.by_name.values():
-            if plugin.role == role:
-                names.extend(plugin.manifest.tools)
-        return names
-
     def toggleable_tool_names(self) -> list[str]:
         names: list[str] = []
         for plugin in self.by_name.values():

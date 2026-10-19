@@ -147,3 +147,16 @@ def test_no_exploded_image_is_sent(tool_state, make_ctx) -> None:
     listing = block.split("Images:")[1].split("Spec facts:")[0]
     assert "exploded" not in listing
     assert "Overall:" in block
+
+
+def test_a_review_past_the_daily_ceiling_is_refused_before_the_call(tool_state, make_ctx) -> None:
+    from app.agent.models.budgets import TokenRestrictions
+
+    _ready(tool_state)
+    model = FakeChatModel(decisions=[{"items": [ITEM]}])
+    tool_state.budgets = SimpleNamespace(for_model=lambda _slug: TokenRestrictions(daily_token_ceiling=10))
+    text = run({}, _ctx(make_ctx, tool_state, model))
+    assert "today's limit is reached" in text
+    assert model.decision_prompts == []
+    with Session(tool_state.engine) as session:
+        assert session.scalars(select(Review)).all() == []

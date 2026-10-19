@@ -193,6 +193,24 @@ def test_a_message_while_a_confirmation_is_pending_is_refused_naming_the_subject
     assert "brief" in again.json()["detail"]["reason"]
 
 
+def test_a_second_yes_while_the_first_still_runs_is_refused_and_nothing_runs(client: TestClient) -> None:
+    from app.api import chat as chat_api
+
+    install(client, brief_models())
+    thread = start(client)
+    paused = client.post(f"/chat/threads/{thread}/turns", json={"message": "a hall bench"}).json()
+    right = {"confirmation_id": paused["pending"]["confirmation_id"], "answer": "yes"}
+    chat_api._running.add(UUID(thread))
+    try:
+        again = client.post(f"/chat/threads/{thread}/resume", json=right)
+    finally:
+        chat_api._running.discard(UUID(thread))
+    assert again.status_code == 409
+    assert again.json()["detail"]["failure_class"] == "turn_running"
+    with Session(client.app.state.engine) as session:
+        assert house_file.room_by_name(session, "Hall") is None
+
+
 def test_a_stale_or_unknown_confirmation_id_is_refused_and_nothing_runs(client: TestClient) -> None:
     install(client, brief_models())
     thread = start(client)

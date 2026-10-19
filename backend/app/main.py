@@ -81,6 +81,7 @@ from app.observability.langfuse import Tracing
 from app.plugins.binding import attach_https_tools
 from app.plugins.executor import PluginExecutor
 from app.plugins.loader import load_plugins
+from app.pricing.product_page import SOURCE_HOSTS
 from app.render.approvals import ApprovalStore
 from app.render.benchmark_store import read_benchmark
 from app.render.offload.availability import StockSampler
@@ -360,6 +361,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.live_fetcher = make_live_fetcher(
         contact=settings.crawler_identity,
         min_interval_seconds=settings.ingestion_min_interval_seconds,
+        hosts=frozenset().union(*(SOURCE_HOSTS.get(source, frozenset()) for source in settings.retail_sources)),
     )
     app.state.price_rate_limiter = RateLimiter(
         settings.rate_limit_price_fetch, settings.rate_limit_price_fetch_window_seconds

@@ -52,6 +52,16 @@ def test_an_oversize_part_that_fits_no_orientation_is_unfitting() -> None:
     assert [p.id for p in result.unfitting] == ["TOO_BIG"]
 
 
+def test_a_part_as_long_as_the_sheet_fits_and_the_kerf_is_charged_only_between_pieces() -> None:
+    full = pack_sheets([Part("shelf", 2800, 400, 1, True)], 2800, 2070, kerf_mm=4)
+    assert (full.sheet_count, full.unfitting) == (1, ())
+    # Two 1398 mm pieces and one cut fill 2800 mm exactly; two of 1400 mm do not.
+    snug = pack_sheets([Part("a", 1398, 400, 2, True)], 2800, 2070, kerf_mm=4)
+    assert {p.shelf_index for p in snug.placements} == {0}
+    tight = pack_sheets([Part("a", 1400, 400, 2, True)], 2800, 2070, kerf_mm=4)
+    assert {p.shelf_index for p in tight.placements} == {0, 1}
+
+
 def test_grain_locking_prevents_a_rotation_that_would_otherwise_fit() -> None:
     # 1200x1300mm: fails as-is (width 1300 > sheet width 1250), fits rotated
     # (1300x1200: length 1300 <= 2500, width 1200 <= 1250).

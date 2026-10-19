@@ -55,6 +55,66 @@ def reset_scene() -> None:
         shader.inputs["Strength"].default_value = 0.85
 
 
+def prism(
+    name: str,
+    polygon_mm: list[tuple[float, float]],
+    z0_mm: float,
+    z1_mm: float,
+    target: bpy.types.Collection,
+) -> bpy.types.Object:
+    """A closed solid from a 2D polygon extruded between two heights (millimetres), linked
+    to `target` with no material. Floors, ceilings and wall segments are built from it."""
+    # Imported here: tests import this module with only `bpy` and `mathutils` stubbed.
+    import bmesh
+
+    poly = [(m(x), m(y)) for x, y in polygon_mm]
+    z0, z1 = m(z0_mm), m(z1_mm)
+    n = len(poly)
+    verts = [(x, y, z0) for x, y in poly] + [(x, y, z1) for x, y in poly]
+    faces = [tuple(range(n - 1, -1, -1)), tuple(range(n, 2 * n))]
+    for i in range(n):
+        j = (i + 1) % n
+        faces.append((i, j, j + n, i + n))
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    if n > 4:
+        # An L- or U-shaped room's floor and ceiling are concave n-gons.
+        bmesh.ops.triangulate(bm, faces=bm.faces[:])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(mesh)
+    bm.free()
+    obj = bpy.data.objects.new(name, mesh)
+    target.objects.link(obj)
+    return obj
+
+
+def complement_intervals(full_range: tuple[float, float], holes: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """The sub-intervals of `full_range` not covered by any `holes` interval."""
+    lo, hi = full_range
+    ordered = sorted((max(h0, lo), min(h1, hi)) for h0, h1 in holes if h1 > h0)
+    intervals: list[tuple[float, float]] = []
+    cursor = lo
+    for h0, h1 in ordered:
+        if h0 > cursor:
+            intervals.append((cursor, h0))
+        cursor = max(cursor, h1)
+    if cursor < hi:
+        intervals.append((cursor, hi))
+    return intervals
+
+
+def is_convex_vertex(corners, index: int) -> bool:
+    """Whether the counter-clockwise polygon turns left (or straight) at `corners[index]`."""
+    n = len(corners)
+    ax, ay = corners[index - 1]
+    bx, by = corners[index]
+    cx, cy = corners[(index + 1) % n]
+    return (bx - ax) * (cy - by) - (by - ay) * (cx - bx) >= 0
+
+
 def collection(name: str, parent: bpy.types.Collection | None = None) -> bpy.types.Collection:
     created = bpy.data.collections.new(name)
     (parent or bpy.context.scene.collection).children.link(created)

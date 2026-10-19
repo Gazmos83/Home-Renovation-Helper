@@ -105,6 +105,7 @@ async def run_restyle(
         payload = variants / f".{job.variant_id}.restyle.json"
         error: str | None = None
         actual = 0.0
+        storage.live_stages.update((stage, payload))
         try:
             payload.write_text(json.dumps(job.plan.payload), encoding="utf-8")
             argv = _argv(
@@ -151,6 +152,7 @@ async def run_restyle(
         finally:
             shutil.rmtree(stage, ignore_errors=True)
             payload.unlink(missing_ok=True)
+            storage.live_stages.difference_update((stage, payload))
         log_render_finished(
             quote, actual_seconds=actual, outcome="failed" if error else "succeeded", error=error,
             tracing=tracing,

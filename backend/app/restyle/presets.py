@@ -18,6 +18,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
 from app.config import ConfigurationError
+from app.unique_yaml import load_unique
 
 CONFIG_DIR: Final = Path(__file__).resolve().parents[2] / "config"
 DEFAULT_LOOKS_PATH: Final = CONFIG_DIR / "looks.yaml"
@@ -96,25 +97,6 @@ class Presets:
         return {"looks": list(self.looks), "styles": list(self.styles)}
 
 
-class _NoDuplicatesLoader(yaml.SafeLoader):
-    """Refuses a repeated key, so a duplicate preset id is an error."""
-
-
-def _no_duplicate_keys(loader: _NoDuplicatesLoader, node: yaml.MappingNode) -> dict:
-    seen: set = set()
-    for key_node, _ in node.value:
-        key = loader.construct_object(key_node)
-        if key in seen:
-            raise PresetError(f"preset configuration names {key!r} more than once")
-        seen.add(key)
-    return loader.construct_mapping(node)
-
-
-_NoDuplicatesLoader.add_constructor(
-    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicate_keys
-)
-
-
 def _first_problem(error: ValidationError) -> str:
     problem = error.errors()[0]
     where = ".".join(str(part) for part in problem["loc"])
@@ -123,7 +105,7 @@ def _first_problem(error: ValidationError) -> str:
 
 def _load(path: Path, section: str, model: type[BaseModel]) -> dict[str, BaseModel]:
     try:
-        raw = yaml.load(path.read_text(encoding="utf-8"), Loader=_NoDuplicatesLoader)
+        raw = load_unique(path.read_text(encoding="utf-8"), lambda key: PresetError(f"preset configuration names {key!r} more than once"))
     except FileNotFoundError as error:
         raise PresetError(f"preset configuration not found: {path}") from error
     except yaml.YAMLError as error:

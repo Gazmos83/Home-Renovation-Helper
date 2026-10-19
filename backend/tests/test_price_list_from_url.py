@@ -81,6 +81,51 @@ def test_a_price_missing_from_the_page_is_read_from_the_category_listing(session
     assert any(r.url.path == LISTING for r in seen)
 
 
+def _listing_only(unit_text: str) -> dict[str, tuple[int, str]]:
+    """The product page without its own price, and its listing tile stating `unit_text` as the per-unit figure."""
+    page = fixture("toom_product_3150333.html")
+    page = page.replace('window.__PRODUCT_STATE__ = {"price": "36,49", "availability": "in_stock"};', "")
+    crumb = (
+        '<script type="application/ld+json">{"@type":"BreadcrumbList","itemListElement":['
+        f'{{"@type":"ListItem","position":1,"item":{{"@id":"https://toom.de{LISTING}","name":"Hartschaumplatten"}}}},'
+        f'{{"@type":"ListItem","position":2,"item":{{"@id":"https://toom.de{PRODUCT}","name":"x"}}}}]}}</script>'
+    )
+    listing = fixture("toom_listing_hartschaumplatten.html").replace(
+        "<span>1</span><span>,</span><span>82</span><span> €</span><span> / Kilogramm</span>", unit_text, 1
+    )
+    return {PRODUCT: (200, page.replace("</head>", crumb + "</head>")), LISTING: (200, listing)}
+
+
+def test_a_per_kilogram_figure_is_never_taken_as_a_square_metre_price(session) -> None:
+    pages = _listing_only("<span>1</span><span>,</span><span>82</span><span> €</span><span> / Kilogramm</span>")
+    result, _ = go(session, pages, f"https://toom.de{PRODUCT}", key="panel:foam", category="panel")
+    assert (result.outcome, result.entry.unit, result.entry.base_cents) == ("ok", "per_piece", 3649)
+
+
+def test_a_square_metre_figure_prices_a_panel_per_square_metre(session) -> None:
+    pages = _listing_only("<span>7</span><span>,</span><span>30</span><span> €</span><span> / m²</span>")
+    result, _ = go(session, pages, f"https://toom.de{PRODUCT}", key="panel:foam", category="panel")
+    assert (result.outcome, result.entry.unit, result.entry.base_cents) == ("ok", "per_m2", 730)
+
+
+def test_a_per_metre_entry_needs_a_per_metre_figure_not_the_roll_price(session) -> None:
+    pages = _listing_only("<span>1</span><span>,</span><span>82</span><span> €</span><span> / Kilogramm</span>")
+    result, _ = go(session, pages, f"https://toom.de{PRODUCT}", key="band:x", unit="per_metre")
+    assert result.outcome == "unreadable" and result.entry is None
+    pages = _listing_only("<span>0</span><span>,</span><span>99</span><span> €</span><span> / lfm</span>")
+    result, _ = go(session, pages, f"https://toom.de{PRODUCT}", key="band:y", unit="per_metre")
+    assert (result.outcome, result.entry.base_cents) == ("ok", 99)
+
+
+def test_a_captured_entry_keeps_the_unit_its_price_was_read_for(session) -> None:
+    from app.pricing import price_list
+
+    result, _ = go(session, {PRODUCT: (200, fixture("toom_product_3150333.html"))}, f"https://toom.de{PRODUCT}")
+    with pytest.raises(Refused, match="keeps the unit"):
+        price_list.revise_entry(session, result.entry.key, unit="per_m2")
+    assert price_list.revise_entry(session, result.entry.key, unit="per_piece").unit == "per_piece"
+
+
 def test_a_price_found_nowhere_creates_nothing_and_says_what_is_missing(session) -> None:
     html = fixture("toom_product_siebdruckplatte_7100576.html")
     result, _ = go(session, {SIEB: (200, html)}, f"https://toom.de{SIEB}", key="panel:sieb", category="panel")

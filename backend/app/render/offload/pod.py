@@ -153,6 +153,10 @@ class PodManager:
         except RemoteFailed as failure:
             await self._delete("start_failed", error=failure.reason)
             raise
+        except BaseException:
+            # A cancelled or crashed start must not leave a forgotten pod billing.
+            await asyncio.shield(self._delete("start_failed", error="the render pod's start was interrupted"))
+            raise
         boot_seconds = (self._now() - began).total_seconds()
         self.state, self.connection = "running", connection
         if self.engine is not None and boot_seconds > 0:
@@ -221,11 +225,15 @@ class PodManager:
             return
         self._update(jobs=1)
         if idle_minutes is None:
-            idle_minutes = (
-                benchmark_store.read_idle_minutes(self.engine)
-                if self.engine is not None
-                else benchmark_store.DEFAULT_IDLE_MINUTES
-            )
+            try:
+                idle_minutes = (
+                    benchmark_store.read_idle_minutes(self.engine)
+                    if self.engine is not None
+                    else benchmark_store.DEFAULT_IDLE_MINUTES
+                )
+            except Exception as error:  # noqa: BLE001 - the idle timer must start regardless
+                logger.warning("offload.idle_minutes_unread", extra={"context": {"error_type": type(error).__name__}})
+                idle_minutes = benchmark_store.DEFAULT_IDLE_MINUTES
         self.delete_at = self._now() + timedelta(minutes=idle_minutes)
         self._start_timer()
 
@@ -325,9 +333,16 @@ class PodManager:
         """The GPU type RunPod gave the pod, or the first choice until it says."""
         return pod.gpu_type or self.settings.gpu_types[0]
 
-    def _record(self, write: Callable[..., Any], *args: Any) -> Any:
-        return write(self.engine, *args) if self.engine is not None else None
+    def _record(self, write: Callable[..., Any], *args: Any, **changes: Any) -> Any:
+        """Write a session record; a failed write is logged, never raised, so a database
+        problem can never stop a pod from being deleted or its idle timer from starting."""
+        if self.engine is None:
+            return None
+        try:
+            return write(self.engine, *args, **changes)
+        except Exception as error:  # noqa: BLE001 - see above
+            logger.warning("offload.pod_record_failed", extra={"context": {"error_type": type(error).__name__}})
+            return None
 
     def _update(self, **changes: Any) -> None:
-        if self.engine is not None:
-            sessions.update_session(self.engine, self._session, **changes)
+        self._record(sessions.update_session, self._session, **changes)

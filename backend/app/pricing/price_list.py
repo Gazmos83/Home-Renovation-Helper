@@ -187,6 +187,9 @@ def revise_entry(session: Session, entry_key: str, **fields: Any) -> SupplierPri
         raise Refused(f"{PERSONAL_SUPPLY_KEY!r} can only change its label and its override")
     if "base_cents" in fields and entry.provenance == Provenance.CAPTURED:
         raise Refused("a captured price changes only by refreshing it, or by an override")
+    if "unit" in fields and entry.provenance == Provenance.CAPTURED and _unit(fields["unit"]) != entry.unit:
+        # The captured price was read for its unit; another unit would keep the wrong figure.
+        raise Refused("a captured entry keeps the unit its price was read for; capture the page again for another unit")
     if "label" in fields:
         label = (fields["label"] or "").strip()
         if not label:

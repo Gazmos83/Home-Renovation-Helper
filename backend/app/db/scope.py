@@ -73,11 +73,6 @@ def scoped(member_id: UUID | None) -> Iterator[None]:
         _scope.reset(token)
 
 
-def set_scope(member_id: UUID | None) -> None:
-    """Set the scope for the rest of the current context (a request or a turn's thread)."""
-    _scope.set(member_id)
-
-
 @event.listens_for(Session, "do_orm_execute")
 def _filter_by_account(state: ORMExecuteState) -> None:
     if not state.is_select or state.execution_options.get(ALL_ACCOUNTS, False):

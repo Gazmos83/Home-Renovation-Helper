@@ -156,6 +156,19 @@ def test_sweep_removes_only_matching_staging_directories(tmp_path: Path) -> None
     assert target.is_dir() and keep_other.is_dir() and unrelated.is_dir()
 
 
+def test_sweep_leaves_a_running_renders_stage_alone(tmp_path: Path) -> None:
+    target = tmp_path / "render-turntable"
+    running = storage.staging_dir(target)
+    running.mkdir()
+    storage.live_stages.add(running)
+    try:
+        assert storage.sweep_stale_siblings(target) == []
+    finally:
+        storage.live_stages.discard(running)
+    assert running.is_dir()
+    assert storage.sweep_stale_siblings(target) == [running]
+
+
 def test_sweep_is_a_no_op_without_a_parent_or_stale_siblings(tmp_path: Path) -> None:
     assert storage.sweep_stale_siblings(tmp_path / "missing" / "v1") == []
     (tmp_path / "v1").mkdir()

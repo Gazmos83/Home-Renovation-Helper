@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.agent import house_file
 from app.api.gate import require_owner
 from app.api.packages import (
+    _frame_count,
     frame_index,
     launcher,
     not_found,
@@ -88,11 +89,6 @@ def _shell_folder(request: Request, slug: str, version: int) -> Path:
     if not folder.is_dir():
         raise not_found()
     return folder
-
-
-def _frame_count(folder: Path) -> int:
-    frames = folder / "frames"
-    return len(list(frames.glob("frame_*.png"))) if frames.is_dir() else 0
 
 
 def _describe(root: Path, slug: str, version: int) -> dict[str, Any]:
@@ -214,12 +210,9 @@ def _refusal(error: RenderRefused) -> HTTPException:
 def _price_args(
     request: Request, *, slug: str, version: int, kind: str, tier: Any, raw_fields: list[str]
 ) -> dict[str, Any]:
-    engine = request.app.state.engine
     return {
         "package_id": slug, "version": version, "kind": kind, "tier": tier,
-        "tiers": request.app.state.tiers,
-        "benchmark": benchmark_store.read_benchmark(engine),
-        "cycles_multiplier": benchmark_store.read_cycles_multiplier(engine),
+        **benchmark_store.quote_inputs(request.app.state.engine, request.app.state.tiers),
         "room": False, "raw_fields": raw_fields, "record": "shell",
     }
 
@@ -280,6 +273,7 @@ def start_shell_render(
         token = request.app.state.render_approvals.issue(
             package_id=slug, version=version, kind=kind, tier=priced.tier.name,
             room=False, scene_document=None, record="shell",
+            target=priced.target, estimate_seconds=priced.estimate_seconds,
         )
         raise refused(
             status.HTTP_409_CONFLICT, "approval_required",
@@ -312,7 +306,11 @@ def approve_shell_render(
     _require_built(folder)
     args = _price_args(request, slug=slug, version=version, kind=pending.kind, tier=pending.tier, raw_fields=[])
     try:
+        priced = quote(**args)
+        pending.refuse_if_changed(priced.target, priced.estimate_seconds)
         ticket = authorise(**args, approval=body.get("confirm"))
     except RenderRefused as error:
         raise _refusal(error) from None
+    except ApprovalError as error:
+        raise refused(status.HTTP_409_CONFLICT, "approval_changed", error.reason) from None
     return _start_render(request, background, folder, ticket)

@@ -157,27 +157,28 @@ def create_and_record(
     """Create version 1, record the piece and the version, bind the thread and start the build."""
     with ctx.deps.session() as session:
         inputs = freeze_inputs(session, ctx.deps.design_rules, spec)
-    created = service.create_version(
-        ctx.deps.render_root,
-        package_id,
-        spec,
-        lambda version: notices.follow_build(
-            ctx.deps, ctx.thread_id, ctx.deps.start_build(package_id, version), package_id, version
-        ),
-        inputs=inputs,
-    )
-    room_id, _refusal = piece_room(ctx)
-    with ctx.deps.session() as session:
-        house_file.record_piece(
-            session, package_id, spec["name"], brief=dict(ctx.brief), room_id=room_id
-        )
-        house_file.record_version(
-            session, package_id, created["version"], changes=changes, slot=ctx.slot, model=ctx.model
-        )
-        if ctx.thread_id is not None:
-            house_file.touch_thread(session, ctx.thread_id, package_id=package_id)
-        session.commit()
-    return created["version"]
+    # The build starts only once the version is recorded (see below).
+    version = service.create_version(ctx.deps.render_root, package_id, spec, lambda _version: None, inputs=inputs)[
+        "version"
+    ]
+    try:
+        room_id, _refusal = piece_room(ctx)
+        with ctx.deps.session() as session:
+            house_file.record_piece(
+                session, package_id, spec["name"], brief=dict(ctx.brief), room_id=room_id
+            )
+            house_file.record_version(
+                session, package_id, version, changes=changes, slot=ctx.slot, model=ctx.model
+            )
+            if ctx.thread_id is not None:
+                house_file.touch_thread(session, ctx.thread_id, package_id=package_id)
+            session.commit()
+    except Exception:
+        # A version with no record could be neither seen nor deleted from the app.
+        storage.remove_version(ctx.deps.render_root, package_id, version)
+        raise
+    notices.follow_build(ctx.deps, ctx.thread_id, ctx.deps.start_build(package_id, version), package_id, version)
+    return version
 
 
 def preview(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | str:

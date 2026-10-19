@@ -110,6 +110,26 @@ def test_a_server_error_is_reported_as_unfetchable() -> None:
     assert result.outcome == "unfetchable"
 
 
+def test_a_redirect_is_an_answer_and_never_followed() -> None:
+    moved = httpx.Response(301, headers={"location": "https://www.bauhaus.info/p/1"})
+    fetcher, seen = make_fetcher(robots_and({"/p/1": moved}))
+    with fetcher:
+        result = fetcher.fetch("https://toom.de/p/1")
+
+    assert result.outcome == "unfetchable"
+    assert "https://www.bauhaus.info/p/1" in (result.reason or "")
+    assert all(request.url.host == "toom.de" for request in seen)
+
+
+def test_a_host_outside_the_retail_sources_makes_no_request() -> None:
+    fetcher, seen = make_fetcher(robots_and({}), hosts=frozenset({"toom.de"}))
+    with fetcher:
+        result = fetcher.fetch("https://www.bauhaus.info/p/1")
+
+    assert result.outcome == "excluded"
+    assert seen == []
+
+
 def test_a_robots_excluded_path_makes_no_request() -> None:
     fetcher, seen = make_fetcher(
         robots_and(

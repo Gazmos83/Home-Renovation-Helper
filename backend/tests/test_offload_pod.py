@@ -177,6 +177,45 @@ def test_the_wrong_blender_fails_and_deletes_the_pod() -> None:
     assert fake.deleted == ["pod1"]
 
 
+def test_a_cancelled_start_deletes_the_pod() -> None:
+    async def scenario():
+        fake, clock = FakeRunPod(ready_after=10_000), Clock()
+        pods = manager(fake, clock)
+        clock.auto = False
+        task = asyncio.create_task(pods.ensure_pod(ssh()))
+        for _ in range(20):
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return fake, pods
+
+    fake, pods = asyncio.run(scenario())
+    assert fake.deleted == ["pod1"] and fake.pods == {} and pods.state == "none"
+
+
+def test_a_database_failure_after_create_still_deletes_the_idle_pod(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("database down")
+
+    monkeypatch.setattr(sessions, "open_session", broken)
+    monkeypatch.setattr(sessions, "update_session", broken)
+    monkeypatch.setattr(benchmark_store, "read_idle_minutes", broken)
+    monkeypatch.setattr(benchmark_store, "write_boot_seconds", broken)
+
+    async def scenario():
+        fake, clock = FakeRunPod(), Clock()
+        pods = manager(fake, clock, engine=object())
+        await pods.ensure_pod(ssh())
+        clock.t, clock.auto = START, False
+        pods.job_finished()
+        await clock.to(at(benchmark_store.DEFAULT_IDLE_MINUTES))
+        return fake, pods
+
+    fake, pods = asyncio.run(scenario())
+    assert fake.deleted == ["pod1"] and pods.state == "none"
+
+
 def test_an_idle_pod_is_deleted_when_the_idle_time_ends() -> None:
     async def scenario():
         fake, clock = FakeRunPod(), Clock()

@@ -23,7 +23,6 @@ import logging
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -160,18 +159,6 @@ def attach(run_config: dict[str, Any] | None, recorder: UsageRecorder) -> dict[s
     return merged
 
 
-@dataclass(frozen=True, slots=True)
-class UsageLine:
-    """One model's recorded tokens for a project. `calls_without_tokens` counts
-    rows where the gateway reported no usage at all, so a caller can say so
-    rather than silently reading 0."""
-
-    model_id: str
-    input_tokens: int
-    output_tokens: int
-    calls_without_tokens: int
-
-
 def tokens_today(engine: Engine, model_id: str, tz: str) -> int:
     """Tokens already recorded for `model_id` since the start of the day in `tz`.
 
@@ -190,27 +177,3 @@ def tokens_today(engine: Engine, model_id: str, tz: str) -> int:
     return int(total)
 
 
-def usage_for_project(session: Session, project_id: UUID) -> list[UsageLine]:
-    """Every model this project's calls used, with its token totals."""
-    rows = session.execute(
-        select(
-            ModelUsage.model_id,
-            func.coalesce(func.sum(ModelUsage.input_tokens), 0),
-            func.coalesce(func.sum(ModelUsage.output_tokens), 0),
-            func.count().filter(
-                ModelUsage.input_tokens.is_(None), ModelUsage.output_tokens.is_(None)
-            ),
-        )
-        .where(ModelUsage.project_id == project_id)
-        .group_by(ModelUsage.model_id)
-        .order_by(ModelUsage.model_id)
-    ).all()
-    return [
-        UsageLine(
-            model_id=model_id,
-            input_tokens=int(input_total),
-            output_tokens=int(output_total),
-            calls_without_tokens=int(missing),
-        )
-        for model_id, input_total, output_total, missing in rows
-    ]

@@ -246,6 +246,23 @@ def test_a_token_for_another_version_is_refused_and_left_usable(client: TestClie
     assert right.status_code == 202
 
 
+def test_a_yes_to_a_quote_that_changed_is_refused_and_starts_nothing(client: TestClient, launched) -> None:
+    from dataclasses import replace
+
+    token = render(client, kind="still", tier="final").json()["detail"]["approval_token"]
+    store_ = client.app.state.render_approvals
+    # As if the render had been quoted for the render server, or for less time, before a change.
+    store_._pending[token] = replace(store_._pending[token], target="remote")
+    moved = client.post(f"{BASE}/renders/approve", json={"approval_token": token, "confirm": "yes"})
+    assert moved.status_code == 409 and moved.json()["detail"]["failure_class"] == "approval_changed"
+    assert "laptop" in moved.json()["detail"]["reason"]
+    token = render(client, kind="still", tier="final").json()["detail"]["approval_token"]
+    store_._pending[token] = replace(store_._pending[token], estimate_seconds=1.0)
+    longer = client.post(f"{BASE}/renders/approve", json={"approval_token": token, "confirm": "yes"})
+    assert longer.status_code == 409 and "estimate has grown" in longer.json()["detail"]["reason"]
+    assert renders_launched(launched) == []
+
+
 @pytest.mark.parametrize("body", [{}, {"confirm": "yes"}, {"approval_token": "nope", "confirm": "yes"}])
 def test_a_missing_or_unknown_token_is_refused(client: TestClient, body: dict) -> None:
     response = client.post(f"{BASE}/renders/approve", json=body)

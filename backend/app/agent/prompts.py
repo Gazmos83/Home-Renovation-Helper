@@ -12,6 +12,7 @@ text and fixed notes an agent has, so no edit can remove or weaken it.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -131,7 +132,8 @@ conversation note."""
 
 def neutralise(text: str) -> str:
     """Stop a text from opening or closing an untrusted block of its own."""
-    return text.replace(SENTINEL, NEUTRALISED)
+    # A whole bracket run, so `[[[[[` cannot leave a `[[[` behind.
+    return re.sub(r"\[{3,}", lambda run: " ".join(run.group()), text)
 
 
 def compose_agent_prompt(editable_text: str, *notes: str) -> str:

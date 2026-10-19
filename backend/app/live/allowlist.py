@@ -124,6 +124,10 @@ class _Checker(ast.NodeVisitor):
         root = node.module.split(".")[0]
         if root not in ALLOWED_MODULES:
             self._refuse(root, node)
+        for alias in node.names:
+            # `from random import _os` reaches a module's private imports.
+            if alias.name.startswith("_"):
+                self._refuse(f"from {node.module} import {alias.name}", node)
         if root == "bpy":
             for alias in node.names:
                 if node.module != "bpy" or alias.name not in ALLOWED_BPY_NAMES:
@@ -145,7 +149,8 @@ class _Checker(ast.NodeVisitor):
             self._refuse(".".join(chain), node)
         # Inner attributes first, so the first offender in reading order is named.
         self.generic_visit(node)
-        if node.attr.startswith("__") and node.attr.endswith("__"):
+        # Any leading underscore: `random._os` and `bpy.path._os` reach `os`.
+        if node.attr.startswith("_"):
             self._refuse(node.attr, node)
         if node.attr in REFUSED_ATTRIBUTES:
             self._refuse(node.attr, node)

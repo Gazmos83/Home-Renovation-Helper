@@ -442,6 +442,7 @@ async def run_render(
     stage_name = folder / f"render-{key}"
     storage.sweep_stale_siblings(stage_name)
     stage = storage.staging_dir(stage_name)
+    storage.live_stages.add(stage)
     tier = quote.tier
     limit = timeout * tier.timeout_multiplier
 
@@ -532,6 +533,7 @@ async def run_render(
         error = safe_error(f"render: {type(problem).__name__}: {problem}", root)
     finally:
         shutil.rmtree(stage, ignore_errors=True)
+        storage.live_stages.discard(stage)
         if scene_path is not None:
             scene_path.unlink(missing_ok=True)
         storage.sweep_stale_siblings(stage_name)

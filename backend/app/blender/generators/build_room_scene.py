@@ -29,7 +29,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import bmesh
 import bpy
 from mathutils import Vector
 
@@ -44,7 +43,15 @@ from app.blender.cli import (
     parse_room_generator_arguments,
 )
 from app.blender.generators import _render
-from app.blender.generators._scene import GeneratorError
+from app.blender.generators._scene import (
+    GeneratorError,
+    complement_intervals,
+    is_convex_vertex,
+    m,
+    prism,
+)
+from app.blender.generators._scene import collection as _collection
+from app.blender.generators._scene import link as _link
 from app.blender.room_contract import (
     RoomBuildContext,
     SpecValidationError,
@@ -58,7 +65,6 @@ from app.blender.verify import (
 )
 from app.render.viewer import render_viewer
 
-MM = 0.001
 STILL_FILES = frozenset({"still.png", "scene.json"})
 TURNTABLE_FILES = frozenset({"frames", "scene.json", "viewer.html"})
 TURNTABLE_FRAME_HIDE_THRESHOLD = 0.3  # cos of the angle past which a wall hides
@@ -79,10 +85,6 @@ class RoomBuildState:
     materials: dict[str, bpy.types.Material] = field(default_factory=dict)
     imported_mesh_names: set[str] = field(default_factory=set)
     package_empty: bpy.types.Object | None = None
-
-
-def m(value: float) -> float:
-    return float(value) * MM
 
 
 # --- scene / material setup ---------------------------------------------------------
@@ -178,18 +180,6 @@ def _build_lights(state: RoomBuildState) -> None:
     _aim(fill_light, (m(cx), m(cy), m(ceiling * 0.35)))
 
 
-def _collection(name: str, parent: bpy.types.Collection | None = None) -> bpy.types.Collection:
-    collection = bpy.data.collections.new(name)
-    (parent or bpy.context.scene.collection).children.link(collection)
-    return collection
-
-
-def _link(obj: bpy.types.Object, collection: bpy.types.Collection) -> None:
-    for current in list(obj.users_collection):
-        current.objects.unlink(obj)
-    collection.objects.link(obj)
-
-
 # --- geometry: one general "extruded polygon" primitive, floor/ceiling/walls all use it
 
 
@@ -202,51 +192,11 @@ def _prism(
     collection: bpy.types.Collection,
     material_key: str,
 ) -> bpy.types.Object:
-    """A closed solid from a 2D polygon (millimetres) extruded between two
-    heights (millimetres). The one primitive floor, ceiling and every wall
-    segment are built from (the original mock-up's
-    `prism()` performs the identical bmesh technique for the furniture
-    generator)."""
-
-    poly = [(m(x), m(y)) for x, y in polygon_mm]
-    z0, z1 = m(z0_mm), m(z1_mm)
-    n = len(poly)
-    verts = [(x, y, z0) for x, y in poly] + [(x, y, z1) for x, y in poly]
-    faces = [tuple(range(n - 1, -1, -1)), tuple(range(n, 2 * n))]
-    for i in range(n):
-        j = (i + 1) % n
-        faces.append((i, j, j + n, i + n))
-    mesh = bpy.data.meshes.new(name)
-    mesh.from_pydata(verts, [], faces)
-    mesh.update()
-    bm = bmesh.new()
-    bm.from_mesh(mesh)
-    if n > 4:
-        # Floor and ceiling caps of an L- or U-shaped room are concave n-gons.
-        bmesh.ops.triangulate(bm, faces=bm.faces[:])
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    bm.to_mesh(mesh)
-    bm.free()
-    obj = bpy.data.objects.new(name, mesh)
-    collection.objects.link(obj)
+    """A closed solid from a 2D polygon (millimetres) extruded between two heights
+    (millimetres): the one primitive floor, ceiling and every wall segment are built from."""
+    obj = prism(name, polygon_mm, z0_mm, z1_mm, collection)
     obj.data.materials.append(state.materials[material_key])
     return obj
-
-
-def _complement_intervals(full_range: tuple[float, float], holes: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    """The sub-intervals of `full_range` not covered by any `holes` interval."""
-
-    lo, hi = full_range
-    ordered = sorted((max(h0, lo), min(h1, hi)) for h0, h1 in holes if h1 > h0)
-    intervals: list[tuple[float, float]] = []
-    cursor = lo
-    for h0, h1 in ordered:
-        if h0 > cursor:
-            intervals.append((cursor, h0))
-        cursor = max(cursor, h1)
-    if cursor < hi:
-        intervals.append((cursor, hi))
-    return intervals
 
 
 def _wall_segment_polygon(wall, s: float, e: float, thickness: float) -> list[tuple[float, float]]:
@@ -271,15 +221,6 @@ def _build_floor_ceiling(state: RoomBuildState, collection: bpy.types.Collection
     _prism(state, "Ceiling", corners, ceiling, ceiling + 20, collection, "Ceiling")
 
 
-def _is_convex_vertex(corners, index: int) -> bool:
-    """Whether the counter-clockwise polygon turns left (or straight) at `corners[index]`."""
-    n = len(corners)
-    ax, ay = corners[index - 1]
-    bx, by = corners[index]
-    cx, cy = corners[(index + 1) % n]
-    return (bx - ax) * (cy - by) - (by - ay) * (cx - bx) >= 0
-
-
 def _build_wall(state: RoomBuildState, collection: bpy.types.Collection, wall) -> None:
     thickness = state.context.wall_thickness_mm
     ceiling = state.context.height_mm
@@ -291,10 +232,10 @@ def _build_wall(state: RoomBuildState, collection: bpy.types.Collection, wall) -
     # would poke into the room, and the neighbouring wall already covers it.
     corners = state.context.corners
     count = len(corners)
-    start_over = thickness if _is_convex_vertex(corners, wall.index) else 0.0
-    end_over = thickness if _is_convex_vertex(corners, (wall.index + 1) % count) else 0.0
+    start_over = thickness if is_convex_vertex(corners, wall.index) else 0.0
+    end_over = thickness if is_convex_vertex(corners, (wall.index + 1) % count) else 0.0
     full_range = (-start_over, wall.length_mm + end_over)
-    for index, (s, e) in enumerate(_complement_intervals(full_range, holes)):
+    for index, (s, e) in enumerate(complement_intervals(full_range, holes)):
         polygon = _wall_segment_polygon(wall, s, e, thickness)
         _prism(state, f"Wall_{wall.index}_{index}", polygon, 0, ceiling, collection, "Wall")
 

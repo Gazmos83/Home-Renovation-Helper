@@ -37,6 +37,22 @@ class PendingApproval:
     scene_document: dict[str, Any] | None
     expires_at: float
     record: str = "piece"
+    # What the owner was quoted: where it runs and how long (seconds, as shown).
+    target: str = "local"
+    estimate_seconds: float | None = None
+
+    def refuse_if_changed(self, target: str, estimate_seconds: float) -> None:
+        """A "yes" covers only the quote shown: refuse another target or a longer estimate."""
+        if target != self.target:
+            raise ApprovalError(
+                f"the render would now run on the {_PLACE[target]} instead of the {_PLACE[self.target]}; "
+                "ask for it again to see the new estimate"
+            )
+        if self.estimate_seconds is not None and round(estimate_seconds, 1) > self.estimate_seconds:
+            raise ApprovalError("the render's estimate has grown since it was shown; ask for it again")
+
+
+_PLACE: Final = {"local": "laptop", "remote": "render server"}
 
 
 class ApprovalStore:
@@ -49,10 +65,12 @@ class ApprovalStore:
     def issue(
         self, *, package_id: str, version: int, kind: str, tier: str, room: bool,
         scene_document: dict[str, Any] | None, record: str = "piece",
+        target: str = "local", estimate_seconds: float | None = None,
     ) -> str:
         token = secrets.token_urlsafe(24)
         pending = PendingApproval(
-            package_id, version, kind, tier, room, scene_document, self._clock() + self._ttl, record
+            package_id, version, kind, tier, room, scene_document, self._clock() + self._ttl, record,
+            target, None if estimate_seconds is None else round(estimate_seconds, 1),
         )
         with self._lock:
             self._purge()

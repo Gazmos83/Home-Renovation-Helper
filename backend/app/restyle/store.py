@@ -17,6 +17,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
+from app.blender import storage
+
 VARIANTS_DIRNAME: Final = "variants"
 MAX_VARIANTS: Final = 12
 VARIANT_ID_PATTERN: Final = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
@@ -113,6 +115,8 @@ def sweep_stale(version_folder: Path) -> None:
     root = variants_dir(version_folder)
     if root.is_dir():
         for leftover in root.glob(".*.staging"):
-            shutil.rmtree(leftover, ignore_errors=True)
+            if leftover not in storage.live_stages:
+                shutil.rmtree(leftover, ignore_errors=True)
         for leftover in root.glob(".*.restyle.json"):
-            leftover.unlink(missing_ok=True)
+            if leftover not in storage.live_stages:
+                leftover.unlink(missing_ok=True)

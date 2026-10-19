@@ -118,6 +118,7 @@ export function DecisionsNote({
     onError: (e: Error) => setError(e.message),
   });
 
+  if (note.isError) return <p className="text-sm text-muted-foreground">The note could not be read.</p>;
   if (!note.data) return <p className="text-sm text-muted-foreground">Loading…</p>;
   const text = note.data.note;
   const rows = text ? noteRows(text) : [];

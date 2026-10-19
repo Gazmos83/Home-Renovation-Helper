@@ -14,6 +14,13 @@ function show(props: { prefill?: { topic: string; decision: string; failed?: boo
   );
 }
 
+test("a note that cannot be read says so instead of loading forever", async () => {
+  stubFetch((call) => (call === "GET /chat/threads/t1/note" ? { status: 503, body: { detail: "down" } } : undefined));
+  show();
+  expect(await screen.findByText("The note could not be read.")).toBeInTheDocument();
+  expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+});
+
 test("no note yet offers compress now, which shows the written note", async () => {
   stubFetch((call) => {
     if (call === "GET /chat/threads/t1/note") return { body: { package_id: null, note: null, owner_edited: false } };

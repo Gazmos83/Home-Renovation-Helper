@@ -147,12 +147,9 @@ def _price_args(
     request: Request, *, package_id: str, version: int, kind: str, tier: Any, room: bool,
     raw_fields: list[str],
 ) -> dict[str, Any]:
-    engine = request.app.state.engine
     return {
         "package_id": package_id, "version": version, "kind": kind, "tier": tier,
-        "tiers": request.app.state.tiers,
-        "benchmark": benchmark_store.read_benchmark(engine),
-        "cycles_multiplier": benchmark_store.read_cycles_multiplier(engine),
+        **benchmark_store.quote_inputs(request.app.state.engine, request.app.state.tiers),
         "room": room, "raw_fields": raw_fields,
     }
 
@@ -204,6 +201,7 @@ def start_render(
         token = request.app.state.render_approvals.issue(
             package_id=package_id, version=version, kind=kind, tier=priced.tier.name,
             room=room_given, scene_document=scene_document,
+            target=priced.target, estimate_seconds=priced.estimate_seconds,
         )
         raise refused(
             status.HTTP_409_CONFLICT, "approval_required",
@@ -246,7 +244,11 @@ def approve_render(
     try:
         # The token is spent by `take`: a declined or failed approval is over.
         args = _with_target(request, args)
+        priced = quote(**args)
+        pending.refuse_if_changed(priced.target, priced.estimate_seconds)
         ticket = authorise(**args, approval=body.get("confirm"))
     except RenderRefused as error:
         raise _refusal(error) from None
+    except ApprovalError as error:
+        raise refused(status.HTTP_409_CONFLICT, "approval_changed", error.reason) from None
     return _start(request, background, folder, ticket, pending.scene_document)

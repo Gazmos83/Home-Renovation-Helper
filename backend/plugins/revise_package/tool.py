@@ -32,13 +32,13 @@ from app.agent.tools.base import (
 from app.agent.tools.shared import (
     NOT_APPROVED,
     builds_unavailable,
-    checked_package_id,
     latest_version,
     read_input,
     refuse_other_piece,
     validated_custom_build,
     version_limit_line,
     version_limit_refusal,
+    visible_package_id,
 )
 from app.blender import storage
 from app.blender.custom_build.derive import (
@@ -108,7 +108,7 @@ def _revised_with_effects(
     args, problem = parse_args(ReviseArgs, arguments)
     if args is None:
         return None, None, None, [], [], problem
-    package_id, problem = checked_package_id(args.package_id)
+    package_id, problem = visible_package_id(ctx.deps, args.package_id)
     if package_id is None:
         return None, None, None, [], [], problem
     other = refuse_other_piece(ctx, package_id)
@@ -251,28 +251,29 @@ def record_next(
     """Create and record the next version revised from `latest`, bind the thread, start the build."""
     with ctx.deps.session() as session:
         inputs = freeze_inputs(session, ctx.deps.design_rules, spec)
-    created = service.create_version(
-        ctx.deps.render_root,
-        package_id,
-        spec,
-        lambda version: notices.follow_build(
-            ctx.deps, ctx.thread_id, ctx.deps.start_build(package_id, version), package_id, version
-        ),
-        inputs=inputs,
-    )
-    with ctx.deps.session() as session:
-        if session.get(Piece, package_id) is None:
-            # A package made directly through the routes: record it now.
-            house_file.record_piece(session, package_id, spec["name"])
-        house_file.record_version(
-            session, package_id, created["version"], revised_from=latest, changes=lines,
-            slot=ctx.slot, model=ctx.model,
-        )
-        if ctx.thread_id is not None:
-            house_file.touch_thread(session, ctx.thread_id, package_id=package_id)
-        session.commit()
+    # The build starts only once the version is recorded (see below).
+    version = service.create_version(ctx.deps.render_root, package_id, spec, lambda _version: None, inputs=inputs)[
+        "version"
+    ]
+    try:
+        with ctx.deps.session() as session:
+            if session.get(Piece, package_id) is None:
+                # A package made directly through the routes: record it now.
+                house_file.record_piece(session, package_id, spec["name"])
+            house_file.record_version(
+                session, package_id, version, revised_from=latest, changes=lines,
+                slot=ctx.slot, model=ctx.model,
+            )
+            if ctx.thread_id is not None:
+                house_file.touch_thread(session, ctx.thread_id, package_id=package_id)
+            session.commit()
+    except Exception:
+        # A version with no record could be neither seen nor deleted from the app.
+        storage.remove_version(ctx.deps.render_root, package_id, version)
+        raise
     # No notice of its own: the build notice is the version's one notice (studio-navigation-tidy).
-    return created["version"]
+    notices.follow_build(ctx.deps, ctx.thread_id, ctx.deps.start_build(package_id, version), package_id, version)
+    return version
 
 
 class RebuildArgs(BaseModel):
@@ -284,7 +285,7 @@ def _rebuilt(arguments: dict[str, Any], ctx: ToolContext) -> tuple[tuple[str, in
     args, problem = parse_args(RebuildArgs, arguments)
     if args is None:
         return None, problem
-    package_id, problem = checked_package_id(args.package_id)
+    package_id, problem = visible_package_id(ctx.deps, args.package_id)
     if package_id is None:
         return None, problem
     other = refuse_other_piece(ctx, package_id)

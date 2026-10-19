@@ -338,8 +338,10 @@ def pack_sheets(
         shelf_index = sheet.shelf_count
         sheet.shelf_count += 1
         sheet.used_height += width_mm + kerf_mm
+        # A kerf is charged after every piece, but the sheet's own edge needs no cut,
+        # so the free length is `sheet.length + kerf - (length + kerf)`.
         shelves.append(
-            _Shelf(sheet, shelf_index, width_mm + kerf_mm, sheet.length - (length_mm + kerf_mm))
+            _Shelf(sheet, shelf_index, width_mm + kerf_mm, sheet.length - length_mm)
         )
         placements.append(
             Placement(
@@ -387,11 +389,8 @@ def pack_sheets(
                 if not _grain_allows(grain_locked, sheet.grain_axis):
                     continue
                 for along, across, rotated in options:
-                    if (
-                        along + kerf_mm <= sheet.length
-                        and across + kerf_mm <= sheet.width
-                        and sheet.used_height + across + kerf_mm <= sheet.width
-                    ):
+                    # No kerf against the sheet's edge (see `place_on_new_shelf`).
+                    if along <= sheet.length and sheet.used_height + across <= sheet.width:
                         place_on_new_shelf(sheet, part_id, along, across, rotated)
                         placed = True
                         break
@@ -404,7 +403,7 @@ def pack_sheets(
         fitting = [
             (along, across, rotated)
             for along, across, rotated in options
-            if along + kerf_mm <= sheet_length_mm and across + kerf_mm <= sheet_width_mm
+            if along <= sheet_length_mm and across <= sheet_width_mm
         ]
         if not fitting:
             unfitting.append(Part(part_id, length, width, 1, grain_locked))

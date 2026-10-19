@@ -553,6 +553,11 @@ def visible_packages(session: Session, folders: list[tuple[str, list[int]]]) -> 
     return [(p, v) for p, v in folders if p in seen]
 
 
+def piece_visible(session: Session, package_id: str) -> bool:
+    """Whether this account may see the package folder `package_id` (see `visible_packages`)."""
+    return bool(visible_packages(session, [(package_id, [])]))
+
+
 def pieces(session: Session, root: Path) -> list[dict[str, Any]]:
     """Every piece of this account: the recorded ones, then packages found only as folders."""
     recorded = {piece.package_id: piece for piece in session.scalars(select(Piece))}

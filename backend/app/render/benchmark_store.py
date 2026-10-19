@@ -100,6 +100,15 @@ def write_benchmark(
     return Benchmark(seconds_per_megapixel, measured_at, blender_version)
 
 
+def quote_inputs(engine: Engine, tiers: object) -> dict[str, object]:
+    """The stored figures every render quote is worked out from (tiers, benchmark, multiplier)."""
+    return {
+        "tiers": tiers,
+        "benchmark": read_benchmark(engine),
+        "cycles_multiplier": read_cycles_multiplier(engine),
+    }
+
+
 def read_cycles_multiplier(engine: Engine) -> float:
     return stored_cycles_multiplier(engine) or DEFAULT_CYCLES_MULTIPLIER
 

@@ -46,12 +46,14 @@ _PRODUCT_URL = re.compile(r"^/p/[a-z0-9-]+/\d+", re.IGNORECASE)
 # on toom's listing; matched first so it is never mistaken for the per-unit
 # figure. A page with only a single, unsuffixed price (no per-unit split)
 # falls back to that.
-_PACK_PRICE = re.compile(r"(\d{1,4},\d{2})\s*€\s*/\s*Pack\b")
-_STANDALONE_PRICE = re.compile(r"(\d{1,4},\d{2})\s*€(?!\s*/)")
+# German thousands first, so "1.249,00 €" is read whole and not as "249,00 €".
+_AMOUNT: Final = r"(?:\d{1,3}(?:\.\d{3})+|\d{1,4}),\d{2}"
+_PACK_PRICE = re.compile(rf"({_AMOUNT})\s*€\s*/\s*Pack\b")
+_STANDALONE_PRICE = re.compile(rf"({_AMOUNT})\s*€(?!\s*/)")
 # The unit word is matched as non-digit characters only: toom's listing fuses
 # the pack price directly onto it with no separator ("m²7,99 € / Pack"), and
 # a `\S+` here would swallow straight into that following price's digits.
-_UNIT_PRICE = re.compile(r"(\d{1,4},\d{2}\s*€\s*/\s*(?!Pack\b)[^\s\d]+)")
+_UNIT_PRICE = re.compile(rf"({_AMOUNT}\s*€\s*/\s*(?!Pack\b)[^\s\d]+)")
 
 IN_STOCK_VERB: Final = "Verfügbar"
 OUT_OF_STOCK_VERB: Final = "Nicht verfügbar"

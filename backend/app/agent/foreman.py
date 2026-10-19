@@ -564,6 +564,22 @@ def _designer_note() -> str:
     )
 
 
+CHANGED_SINCE_SHOWN: Final = (
+    "what was approved changed before it ran (another version, a new estimate or where the render "
+    "runs); nothing was done. Tell the owner and ask again with the current figures"
+)
+
+
+def _still_shown(confirmation: Confirmation, answer: dict[str, Any]) -> bool:
+    """Whether the proposal is the one the owner answered (`shown`); true when none was sent."""
+    if "shown" not in answer:
+        return True
+    def plain(value: Any) -> Any:
+        return json.loads(json.dumps(value, default=str, sort_keys=True))
+
+    return plain(confirmation.proposal) == plain(answer["shown"])
+
+
 def _confirmation_payload(confirmation: Confirmation, tool: str) -> dict[str, Any]:
     return {
         "kind": "confirmation",
@@ -1395,6 +1411,10 @@ def build_graph(
             approved = isinstance(answer, dict) and answer.get("answer") == "yes"
             reason = answer.get("reason") if isinstance(answer, dict) else None
             reason = reason.strip() if isinstance(reason, str) and reason.strip() else None
+            if approved and isinstance(outcome, Confirmation) and not _still_shown(outcome, answer):
+                # The preview is worked out again on resume: a "yes" covers only what was shown.
+                approved = False
+                reason = CHANGED_SINCE_SHOWN
 
             messages: list[ToolMessage] = []
             update: dict[str, Any] = {}

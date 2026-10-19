@@ -29,7 +29,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import bmesh
 import bpy
 from mathutils import Vector
 
@@ -40,8 +39,12 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.blender.cli import InputError, load_shell, parse_generator_arguments
 from app.blender.generators._scene import (
     GeneratorError,
+    complement_intervals,
     export_glb,
     hidden_for_presentation,
+    is_convex_vertex,
+    m,
+    prism,
     set_engine,
 )
 from app.blender.generators._scene import add_camera as _add_camera
@@ -51,7 +54,6 @@ from app.blender.generators._scene import reset_scene as _reset_scene
 from app.blender.shell_contract import ShellContext, ShellWall, normalise_shell
 from app.blender.verify import VerificationError, verify_shell
 
-MM = 0.001
 SCREENSHOT_SIZE = (800, 500)
 SLAB_MM = 20
 JOIN_TOLERANCE_MM = 1.0
@@ -68,10 +70,6 @@ class ShellState:
     context: ShellContext
     materials: dict[str, bpy.types.Material] = field(default_factory=dict)
     mesh_names: set[str] = field(default_factory=set)
-
-
-def m(value: float) -> float:
-    return float(value) * MM
 
 
 def _material(state: ShellState, key: str) -> bpy.types.Material:
@@ -100,27 +98,7 @@ def _prism(
     material: str,
 ) -> bpy.types.Object:
     """A closed solid from a 2D polygon extruded between two heights (millimetres)."""
-    poly = [(m(x), m(y)) for x, y in polygon_mm]
-    z0, z1 = m(z0_mm), m(z1_mm)
-    n = len(poly)
-    verts = [(x, y, z0) for x, y in poly] + [(x, y, z1) for x, y in poly]
-    faces = [tuple(range(n - 1, -1, -1)), tuple(range(n, 2 * n))]
-    for i in range(n):
-        j = (i + 1) % n
-        faces.append((i, j, j + n, i + n))
-    mesh = bpy.data.meshes.new(name)
-    mesh.from_pydata(verts, [], faces)
-    mesh.update()
-    bm = bmesh.new()
-    bm.from_mesh(mesh)
-    if n > 4:
-        # An L- or U-shaped room's floor and ceiling are concave n-gons.
-        bmesh.ops.triangulate(bm, faces=bm.faces[:])
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    bm.to_mesh(mesh)
-    bm.free()
-    obj = bpy.data.objects.new(name, mesh)
-    collection.objects.link(obj)
+    obj = prism(name, polygon_mm, z0_mm, z1_mm, collection)
     obj.data.materials.append(_material(state, material))
     state.mesh_names.add(name)
     return obj
@@ -129,30 +107,8 @@ def _prism(
 # --- walls ---------------------------------------------------------------------------------
 
 
-def _complement(full: tuple[float, float], holes: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    lo, hi = full
-    ordered = sorted((max(a, lo), min(b, hi)) for a, b in holes if b > a)
-    out: list[tuple[float, float]] = []
-    cursor = lo
-    for a, b in ordered:
-        if a > cursor:
-            out.append((cursor, a))
-        cursor = max(cursor, b)
-    if cursor < hi:
-        out.append((cursor, hi))
-    return out
-
-
 def _near(p: tuple[float, float], q: tuple[float, float]) -> bool:
     return math.hypot(p[0] - q[0], p[1] - q[1]) <= JOIN_TOLERANCE_MM
-
-
-def _convex_at(corners, index: int) -> bool:
-    n = len(corners)
-    ax, ay = corners[index - 1]
-    bx, by = corners[index]
-    cx, cy = corners[(index + 1) % n]
-    return (bx - ax) * (cy - by) - (by - ay) * (cx - bx) >= 0
 
 
 def _overrun(ctx: ShellContext, wall: ShellWall, point: tuple[float, float]) -> float:
@@ -169,7 +125,7 @@ def _overrun(ctx: ShellContext, wall: ShellWall, point: tuple[float, float]) -> 
             return 0.0
     for index, corner in enumerate(room.corners):
         if _near(point, corner):
-            return ctx.wall_thickness_mm if _convex_at(room.corners, index) else 0.0
+            return ctx.wall_thickness_mm if is_convex_vertex(room.corners, index) else 0.0
     return 0.0
 
 
@@ -198,7 +154,7 @@ def _build_wall(state: ShellState, collection: bpy.types.Collection, wall: Shell
     height = _wall_height(ctx, wall)
     holes = [(o["offset_mm"], o["offset_mm"] + o["width_mm"]) for o in wall.openings]
     full = (-_overrun(ctx, wall, wall.a), wall.length_mm + _overrun(ctx, wall, wall.b))
-    for index, (s, e) in enumerate(_complement(full, holes)):
+    for index, (s, e) in enumerate(complement_intervals(full, holes)):
         _prism(state, f"Wall_{wall.id}_{index}", _segment_polygon(wall, s, e, thickness), 0, height, collection, "Wall")
     for index, opening in enumerate(wall.openings):
         s, e = opening["offset_mm"], opening["offset_mm"] + opening["width_mm"]

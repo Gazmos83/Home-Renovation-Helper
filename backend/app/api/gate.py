@@ -31,8 +31,18 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.api.session import COOKIE_NAME
 from app.auth.sessions import AuthSessionRecord, find_auth_session
+from app.blender import storage
 from app.db import scope as account_scope
-from app.db.models import CutListPricing, Piece, Thread, Upload
+from app.db.models import (
+    Apartment,
+    Composition,
+    CutListPricing,
+    ModelAsset,
+    Piece,
+    Review,
+    Thread,
+    Upload,
+)
 
 logger = logging.getLogger("app")
 
@@ -118,8 +128,33 @@ def _hold_member(request: Request, member_id: UUID) -> None:
                 .join(Piece, Piece.package_id == CutListPricing.package_id)
                 .where(CutListPricing.id == pricing_id)
             ).first() is not None
+        if owned and "review_id" in params:
+            review_id = _uuid(str(params["review_id"]))
+            owned = review_id is not None and db_session.execute(
+                select(Review.id).join(Piece, Piece.package_id == Review.package_id).where(Review.id == review_id)
+            ).first() is not None
+        if owned and "model_id" in params:
+            model_id = _uuid(str(params["model_id"]))
+            owned = model_id is not None and db_session.get(ModelAsset, model_id) is not None
+        if owned and "slug" in params:
+            # Room and shell folders are found by an easily guessed slug, not a row.
+            owned = _member_has_slug(db_session, request.url.path, str(params["slug"]))
     if not owned:
         raise _not_found()
+
+
+def _member_has_slug(db_session: Session, path: str, slug: str) -> bool:
+    if path.startswith("/compositions/"):
+        return db_session.scalar(select(Composition.id).where(Composition.slug == slug)) is not None
+    if path.startswith("/apartments/"):
+        for name in db_session.scalars(select(Apartment.name)):
+            try:
+                if storage.apartment_slug(name) == slug:
+                    return True
+            except storage.InvalidPackageId:
+                continue
+        return False
+    return True
 
 
 class AccountScope:
