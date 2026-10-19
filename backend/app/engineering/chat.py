@@ -22,12 +22,19 @@ from app.engineering.retrieval import (
 )
 from app.engineering.schemas import StrictModel
 
-_ENGINEERING = re.compile(
-    r"\b(engineering|structural|deflection|creep|anchorage|anchor|tipping|load[- ]?capacity|load[- ]?bearing|allowable span|safe|safety|bending strength|elasticity|tragfähig\w*|traglast|belastbarkeit|durchbiegung|verankerung|kippsicher\w*|wandbefestigung|festigkeit|elastizitätsmodul|sicher|sicherheit|"
-    r"kitchen cabinet|wall cabinet|base cabinet|drawer|runner|hinge|worktop|countertop|"
+# Load, capacity and safety wording: a message with one is an engineering question
+# whatever else it asks (conversation-continuity adds the shelf span and sag terms).
+_LOAD = re.compile(
+    r"\b(engineering|structural|deflection|creep|anchorage|anchor|tipping|load[- ]?capacity|load[- ]?bearing|allowable\s+(?:\w+\s+)?span|shelf span|sag(?:s|ged|ging)?|durchh[äa]ng\w*|safe|safety|bending strength|elasticity|tragfähig\w*|traglast|belastbarkeit|durchbiegung|verankerung|kippsicher\w*|wandbefestigung|festigkeit|elastizitätsmodul|sicher|sicherheit)\b|"
+    r"\b(?:hold\w*|carr(?:y|ies|ying)|support\w*|halt\w*|tr[aä]g\w*|belast\w*)\b.{0,80}\b\d+\s*(?:kg|kN|N)\b",
+    re.IGNORECASE,
+)
+# Hardware and cabinet kinds: an engineering question on their own, but not when the
+# message asks to revise the piece (conversation-continuity).
+_HARDWARE = re.compile(
+    r"\b(kitchen cabinet|wall cabinet|base cabinet|drawer|runner|hinge|worktop|countertop|"
     r"küchenschrank|kuechenschrank|schublade|scharnier|arbeitsplatte|oberschrank|unterschrank|"
-    r"vollauszug|spülmaschine|spuelmaschine|backofen)\b|"
-    r"\b(?:hold|carry|support|halten|tragen|belasten)\b.{0,80}\b\d+\s*(?:kg|kN|N)\b",
+    r"vollauszug|spülmaschine|spuelmaschine|backofen)\b",
     re.IGNORECASE,
 )
 _REVISION = re.compile(
@@ -51,6 +58,8 @@ _PLACEMENT_WHERE = re.compile(
     r"\b\d+(?:[.,]\d+)?\s*(?:cm|mm|m)\b",
     re.IGNORECASE,
 )
+# The owner's own words for a piece hung on the wall (place-piece-from-owner-words).
+HANG = re.compile(r"\b(?:hang\w*|hung|wall[- ](?:mounted|hung)|mounted on the wall|\w*h(?:ä|ae)ng\w*)\b", re.IGNORECASE)
 INSUFFICIENT = "NOT VERIFIED. Numerical engineering calculation is not implemented. No capacity or conformity is established."
 # The only status line the owner sees on an engineering reply (short-engineering-reply).
 SHORT_STATUS = "Not verified: no engineering check is available, so load capacity, fixings and safety are unconfirmed."
@@ -59,7 +68,13 @@ SHORT_STATUS = "Not verified: no engineering check is available, so load capacit
 def engineering_intent(text: str) -> bool:
     from app.engineering.kitchen import kitchen_intents
 
-    return bool(_ENGINEERING.search(text)) or bool(kitchen_intents(text))
+    return bool(_LOAD.search(text)) or bool(_HARDWARE.search(text)) or bool(kitchen_intents(text))
+
+
+def revision_engineering(text: str) -> bool:
+    """Whether a message asking to revise the piece is an engineering question: only a load,
+    capacity or safety term counts, never hardware words alone (conversation-continuity)."""
+    return bool(_LOAD.search(text))
 
 
 def height_question(text: str) -> bool:
@@ -70,10 +85,16 @@ def height_question(text: str) -> bool:
 def placement_request(text: str) -> bool:
     """Whether the message places a piece in the room, with no engineering term."""
     return (
-        bool(_PLACEMENT_VERB.search(text))
+        (bool(_PLACEMENT_VERB.search(text)) or bool(HANG.search(text)))
         and bool(_PLACEMENT_WHERE.search(text))
         and not engineering_intent(text)
     )
+
+
+def hang_request(text: str) -> bool:
+    """Whether the message asks to hang the piece, with no engineering term: a placement turn
+    even with no wall named, such as "Can you hang it now?" (place-piece-from-owner-words)."""
+    return bool(HANG.search(text)) and not engineering_intent(text)
 
 
 def revision_intent(text: str) -> bool:

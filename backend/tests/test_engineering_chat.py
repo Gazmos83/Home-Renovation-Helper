@@ -14,9 +14,11 @@ from app.agent.summaries import transcript
 from app.db.models import EngineeringEvidenceUse
 from app.engineering.chat import (
     SHORT_STATUS,
+    engineering_intent,
     missing_inputs,
     render_answer,
     request_history,
+    revision_engineering,
 )
 from app.engineering.registry import add_property, decide_rights
 from app.engineering.schemas import PropertyIn, RightsIn
@@ -395,3 +397,80 @@ def test_a_new_engineering_question_after_an_answered_one_is_still_one() -> None
 
     assert engineering_intent("Can the shelf carry 30 kg?")
     assert not engineering_intent("Keep and shorten the dividers.")
+
+
+# --- conversation-continuity ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "revision"),
+    [
+        ("Yes, please add a wall hanger to the sideboard", False),
+        ("add a hinge to the left door", False),
+        ("make the drawer 20 mm deeper", False),
+        ("add a wall hanger that holds 30 kg", True),
+        ("Change the bench for greater load capacity", True),
+        ("make it safe to climb", True),
+    ],
+)
+def test_hardware_words_alone_do_not_make_a_revision_engineering(text: str, revision: bool) -> None:
+    assert revision_engineering(text) is revision
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "What's the allowable shelf span for particle boards?",
+        "What shelf span is fine for 18 mm birch?",
+        "How do I avoid sagging shelves?",
+        "Will the shelf sag?",
+        "add a wall hanger to the sideboard",
+        "Wie viel darf das Regal durchhängen?",
+    ],
+)
+def test_span_sag_and_hardware_are_engineering_by_code(text: str) -> None:
+    assert engineering_intent(text)
+
+
+@pytest.mark.parametrize("text", ["a sage green sideboard", "How much space is there between the bed and wall 1?"])
+def test_ordinary_wording_is_not_engineering(text: str) -> None:
+    assert not engineering_intent(text)
+
+
+def test_a_revision_naming_hardware_goes_to_the_designer_as_an_ordinary_turn(tool_state) -> None:
+    from tests.test_foreman import _bind_piece
+
+    models = fake_models(
+        foreman={"decisions": [{"specialist": "designer", "reason": "revision"}]},
+        designer={"replies": ["Here is the change: add a wall hanger. Anything else?"]},
+    )
+    harness = make_harness(tool_state, models)
+    _bind_piece(tool_state, harness, screenshot=False)
+    state = harness.turn("Yes, please add a wall hanger to the sideboard")
+    assert state["specialist"] == "designer" and not state["engineering_turn"]
+    assert state["messages"][-1].content == "Here is the change: add a wall hanger. Anything else?"
+
+
+def test_a_model_only_flag_is_answered_once_more_as_an_ordinary_turn(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [{"specialist": "researcher", "reason": "space", "engineering_question": True}]},
+        researcher={"replies": ["The gap is about 1 m.", "The gap is 4350 mm minus the bed's width."]},
+    )
+    harness = make_harness(tool_state, models)
+    state = harness.turn("How much space is there between the murphy bed and wall 1?")
+    assert state["messages"][-1].content == "The gap is 4350 mm minus the bed's width."
+    assert not state["engineering_turn"] and state["engineering_retried"]
+    assert models["researcher"].calls == 2
+    contents = [m.content for m in harness.snapshot().values["messages"]]
+    assert SHORT_STATUS not in contents and "The gap is about 1 m." not in contents
+
+
+def test_a_load_question_keeps_the_status_and_is_not_retried(tool_state) -> None:
+    models = fake_models(
+        foreman={"decisions": [{"specialist": "researcher", "reason": "load", "engineering_question": True}]},
+        researcher={"replies": ["safe for 40 kg", "Yes, it is fine."]},
+    )
+    harness = make_harness(tool_state, models, room=None)
+    state = harness.turn("Is the shelf safe for 40 kg?")
+    assert state["messages"][-1].content == SHORT_STATUS
+    assert models["researcher"].calls == 1

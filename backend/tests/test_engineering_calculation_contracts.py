@@ -17,6 +17,8 @@ from app.engineering.methods import (
     allowable_property,
     compare_result,
     method,
+    shelf_immediate_deflection,
+    stiffness_property,
     unavailable,
 )
 from app.engineering.registry import EvidenceRefused
@@ -35,7 +37,9 @@ def test_closed_registry_has_no_executable_user_formula_or_enabled_unreviewed_me
     }
     for item in METHODS.values():
         assert item.domain and item.units and item.required_inputs
-        assert not item.releasable and unavailable(item.id).status == "NOT_VERIFIED"
+        # Releasable means a complete code package; enabling still needs a review.
+        assert item.releasable == (item.id == "shelf_immediate")
+        assert unavailable(item.id).status == "NOT_VERIFIED"
         assert unavailable(item.id).result is None
     with pytest.raises(EvidenceRefused):
         method("__import__('os').system('touch /tmp/unsafe')")
@@ -248,3 +252,103 @@ def test_report_values_cannot_lose_units_or_acquire_invalid_limits(updates):
                 **updates,
             }
         )
+
+
+INCH, LB_PER_IN, PSI = 0.0254, 4.4482216152605 / 0.0254, 6894.757293168
+
+
+def test_shelf_immediate_reproduces_the_cited_worked_example():
+    case = method("shelf_immediate").independent_reference_cases[0]
+    given, expected = case["inputs"], case["expected"]
+    values = shelf_immediate_deflection(
+        given["span_in"] * INCH,
+        given["width_in"] * INCH,
+        given["thickness_in"] * INCH,
+        given["load_lb_per_in"] * LB_PER_IN,
+        given["E_psi"] * PSI,
+    )
+    assert values["I_m4"] / INCH**4 == pytest.approx(expected["I_in4"], abs=5e-5)
+    assert values["deflection_m"] / INCH == pytest.approx(
+        expected["deflection_in"], abs=0.005
+    )
+
+
+def test_shelf_immediate_matches_the_cited_span_table_at_l_over_400():
+    # Particleboard 3/4 x 7 1/2 in, E 350,000 psi, 35 lb/ft: 18 in passes, 19 in fails.
+    def ratio(span_in):
+        return shelf_immediate_deflection(
+            span_in * INCH, 7.5 * INCH, 0.75 * INCH, 35 / 12 * LB_PER_IN, 350_000 * PSI
+        )["deflection_span_ratio"]
+
+    limit = method("shelf_immediate").criteria[0].limit
+    assert limit == 1 / 400
+    assert ratio(18) <= limit < ratio(19)
+
+
+def test_shelf_immediate_limiting_cases_and_invalid_inputs():
+    base = (1.0, 0.3, 0.018, 100.0, 2e9)
+    first = shelf_immediate_deflection(*base)
+    doubled = shelf_immediate_deflection(2.0, *base[1:])
+    assert doubled["deflection_m"] == pytest.approx(16 * first["deflection_m"])
+    thicker = shelf_immediate_deflection(1.0, 0.3, 0.036, 100.0, 2e9)
+    assert thicker["deflection_m"] == pytest.approx(first["deflection_m"] / 8)
+    for index in range(len(base)):
+        for bad in (0, -1, float("inf"), float("nan")):
+            values = list(base)
+            values[index] = bad
+            with pytest.raises(EvidenceRefused):
+                shelf_immediate_deflection(*values)
+
+
+@pytest.mark.parametrize(
+    "prop, field",
+    [
+        (
+            {
+                "record": {"kind": "bending_strength_MPa"},
+                "verification_status": "verified",
+            },
+            "kind",
+        ),
+        (
+            {
+                "record": {"kind": "E_MPa", "value_basis": "mean", "value": 2000},
+                "verification_status": "unverified",
+            },
+            "value_basis",
+        ),
+        (
+            {
+                "record": {"kind": "E_MPa", "value_basis": "unknown", "value": 2000},
+                "verification_status": "verified",
+            },
+            "value_basis",
+        ),
+        (
+            {
+                "record": {
+                    "kind": "E_MPa",
+                    "value_basis": "mean",
+                    "value": None,
+                    "minimum": 1500,
+                    "maximum": 2500,
+                },
+                "verification_status": "verified",
+            },
+            "range",
+        ),
+    ],
+)
+def test_stiffness_needs_one_verified_e_value(prop, field):
+    with pytest.raises(EvidenceRefused) as error:
+        stiffness_property(prop)
+    assert error.value.field == field
+    assert (
+        stiffness_property(
+            {
+                "record": {"kind": "E_MPa", "value_basis": "mean", "value": 2000},
+                "verification_status": "verified",
+            }
+        )
+        == 2e9
+    )

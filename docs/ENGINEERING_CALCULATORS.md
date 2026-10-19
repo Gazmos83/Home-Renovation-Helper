@@ -1,6 +1,6 @@
 # Engineering assessments and calculator release
 
-The assessment/report infrastructure is implemented. **No numerical engineering method is released.** All eight registered families remain unavailable and return `NOT_VERIFIED` with null calculated results. This preserves the approved scope while the exact source packages, reference cases and qualified reviewer are supplied. No safety factor, allowable resistance, creep coefficient or serviceability limit is chosen from memory.
+The assessment/report infrastructure is implemented. **One method has a complete code package: `shelf_immediate`** (below). It still returns `NOT_VERIFIED` until a qualified review accepts it in the developer panel. The other seven families remain unavailable and return `NOT_VERIFIED` with null calculated results. This preserves the approved scope while the exact source packages, reference cases and qualified reviewer are supplied. No safety factor, allowable resistance, creep coefficient or serviceability limit is chosen from memory.
 
 The RAG foundation must pass its acceptance checks before a developer can accept a calculation method. See [engineering knowledge operations](ENGINEERING_KNOWLEDGE.md). Browser acceptance is still pending because this session has no connected browser. The plugins ship disabled; neither implementation enables them for the owner.
 
@@ -15,11 +15,21 @@ The RAG foundation must pass its acceptance checks before a developer can accept
 - Designer and Researcher have application-scoped calculate/read tools. Model-authored arithmetic or status text cannot replace report results. Conversation context and compressed memory carry report IDs/status only; fetching restores complete conditions and current staleness.
 - Reports and their source-derived property values pass current rights checks on every read/export. Local-only or revoked evidence is removed from the cloud request copy. Legacy free-text material/spec notes are omitted from remote report copies. Persisted history is unchanged.
 
+## `shelf_immediate`, version 1
+
+- **Domain:** a rectangular prismatic shelf, simply supported at its two ends (exactly two `support_positions`, span within the derived shelf length), under a uniform load given per length (`N/m`, `N/mm` or `kg/m`). Immediate elastic deflection only. Bending strength and creep are not checked, and the report says so. Folds, polygons, part overrides, dividers, cantilevers and total masses or point loads stay `NOT_VERIFIED`.
+- **Equation:** d = 5/384 · wL⁴ / (EI), I = b·h³ / 12, with b and h from the derived part row. Source: Hyman, "Down With Sagging Shelves", JLC April 1995, knowledge version `1a422636-e859-4c69-8cc0-a52a9d7d90cc`, block `hyman-p80-deflection-formula`.
+- **Criterion:** d/L ≤ 1/400, block `hyman-p84-allowable-spans-table`.
+- **Stiffness:** exactly one verified `E_MPa` property bound to the shelf, with a single value and a stated value basis; a range is refused (no midpoint). If the property states a thickness, it must equal the derived shelf thickness.
+- **Reference cases:** the article's worked example (26 in particleboard shelf, 0.1244 in⁴, 0.40 in), block `hyman-p80-worked-example`, and the particleboard ¾ × 7½ in table row (18 in passes, 19 in fails at L/400). These come from the source itself; an independent check of them is part of the qualified review.
+- **Known source issues:** the article's span table repeats three hardwood rows with the softwood ×10 values, and its plywood rows match E ≈ 1,000,000 psi rather than the stated 1,800,000. Neither is used by the method.
+- **Rollback:** "Disable method, retain history" in the developer panel.
+
 ## Method families awaiting source packages
 
 | ID, version 1 | Reserved domain | Required release evidence |
 |---|---|---|
-| `shelf_immediate` | Rectangular prismatic shelf in a declared support/load case | Exact material/grade, section/span/orientation, elasticity, allowable resistance, cited bending/deflection equations and acceptance limits |
+| `shelf_immediate` bending strength | Not in version 1 | A cited allowable bending resistance and criterion; a new method version |
 | `shelf_creep` | Exact material/service/duration domain of an accepted shelf case | Cited creep model, sustained-load share, moisture/service conditions and duration |
 | `joint` | Exact reviewed joint or tested assembly | Fastener identity, geometry/edge distances, load direction, matching assembly and criterion |
 | `hardware` | Exact manufacturer model/revision/installation | Rated orientation, count and documented distribution; individual ratings are not automatically multiplied |

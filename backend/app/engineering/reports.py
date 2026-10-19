@@ -13,7 +13,13 @@ from app.db.models import (
 )
 from app.engineering.assessments import AssessmentIn, CalculationReport
 from app.engineering.geometry import digest, part_domain, stored_geometry
-from app.engineering.methods import METHODS, method, unavailable
+from app.engineering.methods import (
+    METHODS,
+    compare_result,
+    method,
+    stiffness_property,
+    unavailable,
+)
 from app.engineering.registry import EvidenceRefused, current_rights
 from app.engineering.retrieval import resolve_evidence
 
@@ -188,6 +194,76 @@ def stale_reasons(session, root, assessment) -> list[str]:
     return reasons
 
 
+def shelf_immediate_check(session, snapshot, binding, missing):
+    """Immediate deflection for one simply supported shelf row, or NOT VERIFIED."""
+    selected = method("shelf_immediate")
+    missing = list(missing)
+    part = next(
+        (p for p in snapshot["geometry"]["parts"] if p["id"] == binding.part_id), None
+    )
+    if binding.support not in {None, "simply_supported"}:
+        missing.append("only a simply supported shelf is inside the reviewed domain")
+    if binding.support_positions is not None and len(binding.support_positions) != 2:
+        missing.append("exactly two end supports are required")
+    if binding.load is not None and binding.load.unit not in {"N/m", "N/mm", "kg/m"}:
+        missing.append(
+            "a uniform load per length (N/m, N/mm or kg/m) is required; a total mass or force has no stated distribution"
+        )
+    stiffness = [
+        snapshot["properties"][str(identifier)]
+        for identifier in binding.property_ids
+        if snapshot["properties"][str(identifier)]["record"].get("kind") == "E_MPa"
+    ]
+    E_Pa = None
+    if len(stiffness) != 1:
+        missing.append("exactly one verified E property for the shelf board")
+    else:
+        try:
+            E_Pa = stiffness_property(stiffness[0])
+        except EvidenceRefused as error:
+            missing.append(error.reason)
+        board = stiffness[0]["record"].get("thickness_mm")
+        if part is not None and board is not None and board != part["t"]:
+            missing.append(
+                "E property thickness differs from the derived shelf thickness"
+            )
+    span_m = None
+    if (
+        part is not None
+        and binding.support_positions
+        and len(binding.support_positions) == 2
+    ):
+        span_m = max(binding.support_positions) - min(binding.support_positions)
+        if span_m <= 0 or span_m > part["l"] / 1000:
+            missing.append("support span must be positive and within the shelf length")
+    if missing:
+        return unavailable(selected.id, part_id=binding.part_id, missing=missing)
+    values = selected.implementation(
+        span_m,
+        part["w"] / 1000,
+        part["t"] / 1000,
+        binding.distributed_load()["value"],
+        E_Pa,
+    )
+    check = compare_result(
+        selected,
+        method_state(session, selected.id),
+        values["deflection_span_ratio"],
+        "deflection_span_ratio",
+        part_id=binding.part_id,
+    )
+    return check.model_copy(
+        update={
+            "case": (
+                f"simply supported, span {span_m * 1000:.0f} mm, uniform "
+                f"{binding.distributed_load()['value']:.1f} N/m, E {E_Pa / 1e6:.0f} MPa: "
+                f"immediate deflection {values['deflection_m'] * 1000:.2f} mm; "
+                "bending strength and creep not checked"
+            )
+        }
+    )
+
+
 def generate_report(session, root, assessment) -> EngineeringCalculationReport:
     snapshot = assessment.snapshot
     inputs = AssessmentIn.model_validate(snapshot["inputs"])
@@ -208,9 +284,7 @@ def generate_report(session, root, assessment) -> EngineeringCalculationReport:
             or not binding.support_path
         ):
             missing.append("declared load distribution, support geometry and load path")
-        checks.append(
-            unavailable("shelf_immediate", part_id=binding.part_id, missing=missing)
-        )
+        checks.append(shelf_immediate_check(session, snapshot, binding, missing))
         checks.append(
             unavailable(
                 "shelf_creep",

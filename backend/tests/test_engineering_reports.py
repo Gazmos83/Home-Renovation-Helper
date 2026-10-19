@@ -340,7 +340,9 @@ def test_conversation_deletion_retains_reports_and_piece_deletion_uses_existing_
         assert session.get(EngineeringCalculationReport, report_id) is None
 
 
-def test_record_deletion_failure_keeps_reports_and_restores_the_folder(tool_state, piece, monkeypatch):
+def test_record_deletion_failure_keeps_reports_and_restores_the_folder(
+    tool_state, piece, monkeypatch
+):
     root = tool_state.settings.render_root
     with Session(tool_state.engine) as session:
         assessment = saved(session, root, piece)
@@ -564,3 +566,91 @@ def test_report_memory_is_opaque_and_request_copies_restore_full_conditions(
             "SAFE 100 kg" not in payload
             and marker.content == "compressed misleading memory SAFE 100 kg"
         )
+
+
+def test_shelf_immediate_runs_only_when_enabled_and_inside_its_domain(
+    tool_state, piece, fake_embedder, tmp_path
+):
+    root = tool_state.settings.render_root
+    with Session(tool_state.engine) as session:
+        version = publish(session, tmp_path)
+        prop = add_property(
+            session,
+            version.id,
+            PropertyIn(
+                block_id="row-1",
+                kind="E_MPa",
+                original_unit="MPa",
+                original_value=2000,
+                value_basis="mean",
+                standard_or_model="TEST P2",
+                material_grade="P2",
+                thickness_mm=18,
+                page_section="p. 1",
+                conditions={"service": "dry only"},
+            ),
+        )
+        review_property(
+            session, prop.id, ReviewIn(reviewer="fixture reviewer", status="verified")
+        )
+
+        def check(**binding):
+            data = inputs(
+                bindings=[
+                    {
+                        "part_id": "cabinet-shelf",
+                        "standard_or_model": "TEST P2",
+                        "material_grade": "P2",
+                        "thickness_mm": 18,
+                        "property_ids": [str(prop.id)],
+                        "load": {"value": 5, "unit": "kg/m"},
+                        "support": "simply_supported",
+                        "support_positions": [0, 0.964],
+                        "support_path": "shelf pins in both sides",
+                        **binding,
+                    }
+                ]
+            )
+            report = generate_report(session, root, saved(session, root, piece, data))
+            return next(
+                item
+                for item in report.report["checks"]
+                if item["method_id"] == "shelf_immediate"
+            )
+
+        # Complete, in-domain inputs stay unverified until a review accepts the method.
+        assert check()["status"] == "NOT_VERIFIED" and check()["result"] is None
+        selected = method("shelf_immediate")
+        session.add(
+            EngineeringMethodReview(
+                method_id=selected.id,
+                method_version=selected.version,
+                definition_hash=digest(selected.definition),
+                action="accept",
+                reviewer="synthetic reviewer",
+                qualification_evidence="test only; no real qualification",
+                evidence="test acceptance",
+            )
+        )
+        session.flush()
+        # 49.05 N/m over 964 mm on 288 x 18 mm, E 2000 MPa: about 1.97 mm, under L/400.
+        light = check()
+        assert light["status"] == "PASS_FOR_STATED_CASE"
+        assert light["unit"] == "m/m" and light["limit"] == pytest.approx(1 / 400)
+        assert "1.97 mm" in light["case"] and "strength" in light["case"]
+        heavy = check(load={"value": 30, "unit": "kg/m"})
+        assert heavy["status"] == "FAIL_FOR_STATED_CASE" and heavy["utilisation"] > 1
+        for binding, reason in (
+            ({"load": {"value": 10, "unit": "kg"}}, "uniform load"),
+            ({"support": "cantilever"}, "simply supported"),
+            ({"support_positions": [0, 0.5, 0.964]}, "two end supports"),
+            ({"support_positions": [0, 1.2]}, "within the shelf length"),
+            ({"property_ids": []}, "property"),
+        ):
+            refused = check(**binding)
+            assert refused["status"] == "NOT_VERIFIED" and refused["result"] is None
+            assert any(reason in item for item in refused["missing_inputs"])
+        session.rollback()
+        session.execute(text("TRUNCATE engineering_method_reviews"))
+        session.execute(text("TRUNCATE knowledge_sources CASCADE"))
+        session.commit()

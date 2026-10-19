@@ -74,7 +74,7 @@ export default function EngineeringMethods() {
   }
   return <section className={cardClass}>
     <h2>Engineering calculation methods</h2>
-    <p>Methods require exact cited equations, criteria, independently checked reference cases and qualified review before enablement. A visual approval or source-rights approval cannot supply that review. No method currently has a released source/review package.</p>
+    <p>Methods require exact cited equations, criteria, independently checked reference cases and qualified review before enablement. A visual approval or source-rights approval cannot supply that review. Only a method with a complete source/review package in code (shown with no limitation below) can be accepted.</p>
     {(error || methods.error) && <p role="alert" className="text-destructive">{error ?? methods.error?.message}</p>}
     {methods.isPending && <p>Loading methods…</p>}
     <div><Button type="button" variant="outline" onClick={() => downloadJson("engineering-method-template.json", methodTemplate())}>Export blank method template</Button></div>

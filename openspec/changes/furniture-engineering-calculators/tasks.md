@@ -8,8 +8,9 @@
 
 ## 2. Shelf methods first
 
-- [ ] 2.1 Record source-backed equations, acceptance criteria and independent reference cases for supported rectangular shelf support/load cases; verify a qualified reviewer has accepted the precise domain before enabling any method.
+- [x] 2.1 Record source-backed equations, acceptance criteria and independent reference cases for supported rectangular shelf support/load cases; verify a qualified reviewer has accepted the precise domain before enabling any method.
 - [ ] 2.2 Implement bounded immediate bending/deflection functions and case validation; verify independent reference results, limiting cases, load distribution and unsupported-domain failures.
+  - 2026-10-18: immediate deflection done (`shelf_immediate` v1, Hyman 1995, L/400, simply supported, uniform load). Bending strength is outside v1 by the owner's choice; it needs a cited strength source and a new method version before this task is ticked.
 - [ ] 2.3 Record and implement a cited creep model only for its material/duration/service domain; verify sustained-load share and moisture/duration conditions are required and missing long-term evidence keeps that check unverified.
 
 ## 3. Connections and installation methods

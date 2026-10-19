@@ -62,23 +62,72 @@ class Method:
         )
 
 
+# Hyman, "Down With Sagging Shelves", JLC April 1995; owner-reviewed blocks.
+HYMAN_1995 = "1a422636-e859-4c69-8cc0-a52a9d7d90cc"
+HYMAN_FORMULA = f"{HYMAN_1995}:hyman-p80-deflection-formula"
+HYMAN_EXAMPLE = f"{HYMAN_1995}:hyman-p80-worked-example"
+HYMAN_SPANS = f"{HYMAN_1995}:hyman-p84-allowable-spans-table"
+
+
+def shelf_immediate_deflection(
+    span_m: float,
+    width_m: float,
+    thickness_m: float,
+    load_N_per_m: float,
+    E_Pa: float,
+) -> dict:
+    """Immediate elastic midspan deflection of a simply supported shelf under uniform load.
+
+    d = 5/384 · wL⁴ / (EI), I = b·h³ / 12 (Hyman 1995, sidebar). SI in, SI out.
+    """
+    values = (span_m, width_m, thickness_m, load_N_per_m, E_Pa)
+    if any(not isfinite(value) or value <= 0 for value in values):
+        raise EvidenceRefused(
+            "inputs", "finite positive span, section, load and E are required"
+        )
+    I_m4 = width_m * thickness_m**3 / 12
+    deflection_m = 5 / 384 * load_N_per_m * span_m**4 / (E_Pa * I_m4)
+    if not isfinite(deflection_m):
+        raise EvidenceRefused("inputs", "deflection is non-finite")
+    return {
+        "I_m4": I_m4,
+        "deflection_m": deflection_m,
+        "deflection_span_ratio": deflection_m / span_m,
+    }
+
+
 METHODS = {
     method.id: method
     for method in (
         Method(
             "shelf_immediate",
             "1",
-            ("m", "N", "Pa"),
+            ("m", "N/m", "Pa"),
             (
                 "span",
                 "section",
                 "supports",
                 "load_distribution",
                 "E_MPa",
-                "allowable_resistance",
-                "serviceability_criterion",
             ),
-            "Rectangular prismatic shelf in an explicitly reviewed support/load case; no folds, polygons or assumed divider support",
+            "Rectangular prismatic shelf, simply supported at its two ends, under a uniform distributed load; immediate elastic deflection against L/400 only. Bending strength is not checked. No folds, polygons, cantilevers, point loads or assumed divider support",
+            citation_evidence_ids=(HYMAN_FORMULA, HYMAN_EXAMPLE, HYMAN_SPANS),
+            criteria=(Criterion("deflection_span_ratio", 1 / 400, "m/m", HYMAN_SPANS),),
+            independent_reference_cases=(
+                {
+                    "source_evidence_id": HYMAN_EXAMPLE,
+                    "inputs": {
+                        "span_in": 26,
+                        "width_in": 8.5,
+                        "thickness_in": 0.56,
+                        "load_lb_per_in": 2.9,
+                        "E_psi": 350_000,
+                    },
+                    "expected": {"I_in4": 0.1244, "deflection_in": 0.40},
+                    "tolerance": "as printed (two significant figures)",
+                },
+            ),
+            implementation=shelf_immediate_deflection,
         ),
         Method(
             "shelf_creep",
@@ -199,6 +248,22 @@ def allowable_property(prop, selected: Method) -> float:
     if not isfinite(value) or value <= 0:
         raise EvidenceRefused("value", "finite positive resistance is required")
     return value
+
+
+def stiffness_property(prop: dict) -> float:
+    """A verified single E value in Pa; a range has no reviewed bound rule here."""
+    record = prop["record"]
+    if record.get("kind") != "E_MPa":
+        raise EvidenceRefused("kind", "a modulus of elasticity (E_MPa) is required")
+    if prop["verification_status"] != "verified" or record["value_basis"] == "unknown":
+        raise EvidenceRefused(
+            "value_basis", "verified E with a stated value basis is required"
+        )
+    if record["value"] is None:
+        raise EvidenceRefused(
+            "range", "E range has no reviewed bound rule; no midpoint is permitted"
+        )
+    return record["value"] * 1_000_000
 
 
 def compare_result(
