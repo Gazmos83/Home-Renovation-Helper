@@ -10,6 +10,7 @@
 - [Concept](#concept)
   - [How it works](#how-it-works)
 - [Technical aspects](#technical-aspects)
+  - [Retrieval (RAG)](#retrieval-rag)
 - [For developers](#for-developers)
 
 ## Concept
@@ -53,6 +54,42 @@ Little Homey helps you design furniture and rooms for your own home, and shows t
 - **Plugins.** Each tool is a folder under `backend/plugins/` with a manifest; the developer switches them on or off globally.
 - **Stack.** Python 3.14, FastAPI, SQLAlchemy and Alembic, LangGraph, uv; a Vite + React + TypeScript SPA with Tailwind, shadcn/ui, TanStack Query and Vitest; Langfuse for tracing.
 - **Workflow.** Every product change goes through OpenSpec (`openspec/`): proposal, delta specs, design, tasks, then archive.
+
+### Retrieval (RAG)
+
+Agents answer product, design-rule and engineering questions from retrieved passages, not from memory, and say they don't know when nothing relevant is found.
+
+- **Corpora.** Two pgvector stores in the same PostgreSQL database:
+  - `chunks` holds the toom catalogue (robots-gated crawl), pages added from the price list, guideline publications (local PDFs, Markdown notes or official URLs from `config/guideline_sources.yaml`), and the owner's own guideline notes and hardware data sheets, each with a required citation.
+  - `engineering_chunks` holds engineering sources such as the USDA Wood Handbook (FPL-GTR-282), registered in `config/engineering_sources.yaml`. A source is only extracted, embedded or retrieved when a recorded rights decision allows it, page by page.
+- **Chunking.**
+  - Web pages lose scripts, navigation, footers and link-dense menus.
+  - Text is cut on paragraph boundaries into chunks of up to 1,200 characters with a 120-character overlap.
+  - Guideline PDFs are split on section markers (`§ 43`, `4.1 Heading`) first. Lines repeated on 4 or more pages (headers, footers, page numbers) are removed, and chunks under 5 words are dropped.
+  - Engineering PDFs become reading-order blocks of at most 4,000 characters. Each block keeps its page and section provenance, and tables stay pending review.
+  - Only chunks whose content hash changed are re-embedded.
+- **Embeddings.** `BAAI/bge-m3` (1024 dimensions, normalised) runs locally on the CPU through sentence-transformers, so no text leaves the laptop to be embedded. Both stores have HNSW cosine indexes.
+- **Hybrid search.** One SQL query blends `0.7 × cosine similarity + 0.3 × ts_rank` over a German full-text index (engineering uses German, English and simple text configurations together). Results below a measured relevance floor are dropped: 0.34 for hybrid, 0.48 for vector-only. The floors were measured on the toom corpus: questions it can answer scored 0.374–0.811 hybrid (0.535–0.731 vector), and questions it cannot answer peaked at 0.304 (0.435). Top 5 by default, with no reranker.
+- **Agent tools.**
+  - `search_catalog_knowledge` and `check_live_listing` belong to the Researcher. A live lookup finds the product through the corpus, then reads today's price and stock from toom under the same robots rules.
+  - The Designer has `search_guidelines`. `search_engineering_knowledge` is used only on engineering turns, and catalogue tools are withheld on those turns.
+- **Into the prompt.**
+  - Every passage is wrapped in `[[[UNTRUSTED_SOURCE url=… source=… section=…]]]` delimiters. Bracket runs inside a passage are neutralised, so it cannot close its own block, and a fixed preamble composed by code tells each agent that delimited text is data, not instructions.
+  - Catalogue hits are marked as dated content, not current prices.
+  - Guideline answers name the publication and section.
+  - Engineering answers are rendered by code with evidence, edition, pages, source URL and verification status. A citation the model makes is checked against the passages actually retrieved.
+- **Evaluation.** An offline [Ragas](https://docs.ragas.io) run (`backend/app/evals/`) scores the guideline path. It uses 31 owner-approved golden questions (22 held out, 9 dev) with `anthropic/claude-haiku-4.5` as the judge, under a token ceiling. Latest run, [docs/evals/2026-10-19.md](docs/evals/2026-10-19.md), held-out set:
+
+  | Metric | Score |
+  |---|---|
+  | Context recall (ID-based) | 0.886 |
+  | Context precision (LLM, with reference) | 0.902 |
+  | Context recall (LLM) | 0.871 |
+  | Faithfulness | 0.890 |
+  | Answer relevancy | 0.926 |
+  | Factual correctness | 0.412 |
+
+  ID-based context precision is low (0.227) because five passages are returned for questions that usually have one relevant chunk. The owner's hand check of five answers found them correct; factual correctness appears held down by the judge counting the source and date lines as claims.
 
 ## For developers
 
@@ -366,6 +403,22 @@ curl -b cookies.txt -X POST http://localhost:8000/guideline-notes -H 'Content-Ty
 ```
 
 Hard design rules live in `backend/config/design_rules.yaml`, each with its quoted source. It ships four: `shelf-bracket-count`, `shelf-bracket-spacing`, `shelf-pin-count` and `hinge-count`. `backend/config/guideline_sources.yaml` lists one guideline source, `topnotch-shelf-brackets`. A price question in a piece's conversation answers with a table of every priced line of the stored pricing and its total; an unpriced line says "unpriced". The Researcher answers price and product questions in chat; the Designer can search the guideline corpus.
+
+## Retrieval and evaluation
+
+How the corpora, search and evaluation work is under [Retrieval (RAG)](#retrieval-rag). The toom and guideline ingestion commands are in the section above. The first run downloads `BAAI/bge-m3` (about 2 GB in memory); `/health` reports whether it is loaded.
+
+```bash
+# Engineering sources: register the catalogue's metadata, then ingest a file once its
+# version has an approved rights decision (POST /admin/knowledge/{version_id}/rights)
+uv run python -m app.engineering seed-links
+uv run python -m app.engineering ingest-file <version_id> pdf/fpl-gtr-282.pdf   # relative to GUIDELINE_ROOT
+
+# Ragas evaluation of the guideline path, against the real database, read-only.
+# Spends OpenRouter tokens up to token_ceiling in config/evals.yaml; writes docs/evals/<date>.md
+uv run python -m app.evals --split held_out
+uv run python -m app.evals --only <id1>,<id2>   # re-score chosen golden questions
+```
 
 ## Photoreal detail (ladder step 3)
 
