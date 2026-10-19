@@ -40,6 +40,17 @@ test("About opens from the header and explains the app in plain words (About fro
   expect(page.textContent).not.toMatch(/\b(model name|prompt|token|frame|resolution|Eevee|Cycles)\b/i);
 });
 
+test("the last section says pictures keep the piece's measurements (Measurements stay put)", async () => {
+  signedIn();
+  show("/about");
+  const heading = await screen.findByRole("heading", { level: 1, name: "About Little Homey" });
+  const page = heading.closest("article") as HTMLElement;
+  const sections = within(page).getAllByRole("heading", { level: 2 });
+  expect(sections.at(-1)).toHaveTextContent("Your measurements stay put");
+  expect(page).toHaveTextContent("Every piece is built from its exact measurements");
+  expect(page).toHaveTextContent("A change happens only when you ask for it");
+});
+
 test("About no longer lists the crew; the crew has its own page (Crew moved to its own page)", async () => {
   signedIn();
   show("/about");

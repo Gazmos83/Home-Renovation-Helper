@@ -1551,13 +1551,14 @@ The app SHALL be named "Little Homey" wherever a name is shown: the header, the 
 A signed-in owner SHALL reach an About page at `/about` from an "About" link in the header and in the footer. The page SHALL explain, with no technical terms (no model, prompt, token, frame, resolution or engine names):
 - that the app makes 3D pictures of furniture and rooms on an ordinary, low-powered computer;
 - that pieces are improved by revising them with an AI assistant;
-- that a revised piece can be downloaded to add to an existing house model, or placed in a room in the app.
+- that a revised piece can be downloaded to add to an existing house model, or placed in a room in the app;
+- that every picture is drawn from the piece's exact measurements, so a piece's shape does not drift between pictures and changes only when the owner asks.
 
 The About page SHALL NOT list the crew; the crew is on the crew page at `/crew`. Opening `/about` signed out SHALL show the same About page under the marketing page's top bar, reached from its "About" link; Help SHALL stay owner-only.
 
 #### Scenario: About from the header
 - **WHEN** the signed-in owner clicks "About" in the header
-- **THEN** the About page opens and explains the three points in plain words
+- **THEN** the About page opens and explains the four points in plain words
 
 #### Scenario: Crew moved to its own page
 - **WHEN** the signed-in owner reads the About page
@@ -1574,6 +1575,10 @@ The About page SHALL NOT list the crew; the crew is on the crew page at `/crew`.
 #### Scenario: Signed out
 - **WHEN** someone who is not signed in opens `/about`
 - **THEN** the About page is shown under the marketing page's top bar, not the sign-in page
+
+#### Scenario: Measurements stay put
+- **WHEN** the owner reads the About page
+- **THEN** its last section, "Your measurements stay put", says in plain words that pictures are drawn from the piece's exact measurements and that the shape changes only when the owner asks
 
 ### Requirement: Every page has a footer
 Every page, the sign-in page included, SHALL end with a footer line showing "© 2026 Little Homey" and the app's version and build, e.g. "v0.1.0 · f08d9cb". The version SHALL be the Studio's package version, and the build SHALL be the short commit the Studio was started or built from, or "dev" when it is unknown. For a signed-in owner the footer SHALL also hold an "About" link. The footer SHALL stay frozen at the bottom of the screen while the page scrolls; page content and full-height panes SHALL end above it, so it SHALL NOT cover page content. It SHALL NOT show a model, prompt, token or cost.

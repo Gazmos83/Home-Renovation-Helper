@@ -29,6 +29,13 @@ export default function About() {
           When a piece is ready, download it and add it to a 3D model of your home that you already have. Or place it in a
           room right here in Little Homey, with your blueprint and your other furniture.
         </p>
+        <h2>Your measurements stay put</h2>
+        <p>
+          Many AI picture tools redraw a room each time you ask for a change. Along the way, things quietly drift: a shelf
+          gets shorter, a wall moves, an open cubby suddenly has a door. Little Homey never redraws your furniture from a
+          picture. Every piece is built from its exact measurements, and every picture shows that same model. A change
+          happens only when you ask for it, and you see it in the new version. So what you see is what you can build.
+        </p>
       </article>
     </Page>
   );
