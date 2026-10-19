@@ -34,6 +34,13 @@ from app.ingestion.robots import RulesUnavailable
 logger = logging.getLogger("app")
 
 CATEGORY = "guideline"
+# Page furniture: a line (digits ignored) found on four or more pages of a PDF, such as a
+# printed URL header or a "3 of 29 10/8/26, 08:45" footer. Counting pages, not repeats,
+# keeps a table whose rows differ only in their numbers. It is cut from every chunk, and a
+# chunk left with fewer than MIN_CHUNK_WORDS words is not stored: it would only take a
+# retrieval slot from a real passage.
+FURNITURE_PAGES = 4
+MIN_CHUNK_WORDS = 5
 _SECTION = re.compile(r"^\s*(§\s*\d+[a-z]?\b[^\n]{0,100}|\d+(?:\.\d+){1,3}\s+[A-ZÄÖÜ][^\n]{2,100})\s*$")
 
 
@@ -59,16 +66,40 @@ def split_sections(text: str) -> list[tuple[str | None, str]]:
     return [(label, "\n".join(lines).strip()) for label, lines in sections if "\n".join(lines).strip()]
 
 
+def pdf_pages(content: bytes) -> list[str]:
+    return [page.extract_text() or "" for page in PdfReader(io.BytesIO(content)).pages]
+
+
 def pdf_text(content: bytes) -> str:
-    reader = PdfReader(io.BytesIO(content))
-    return "\n".join((page.extract_text() or "") for page in reader.pages)
+    return "\n".join(pdf_pages(content))
 
 
-def _chunks(source: GuidelineSource, text: str) -> list[IncomingChunk]:
+def _shape(line: str) -> str:
+    return re.sub(r"\d+", "#", " ".join(line.split()))
+
+
+def without_furniture(pages: list[str], pieces: list[str]) -> list[str]:
+    """`pieces` with the pages' furniture cut out; near-empty pieces are dropped."""
+    counts: dict[str, int] = {}
+    for page in pages:
+        for shape in {_shape(line) for line in page.splitlines() if line.strip()}:
+            counts[shape] = counts.get(shape, 0) + 1
+    furniture = {shape for shape, count in counts.items() if count >= FURNITURE_PAGES}
+    kept = []
+    for piece in pieces:
+        cleaned = "\n".join(line for line in piece.splitlines() if _shape(line) not in furniture).strip()
+        if len(cleaned.split()) >= MIN_CHUNK_WORDS:
+            kept.append(cleaned)
+    return kept
+
+
+def _chunks(source: GuidelineSource, text: str, pages: list[str] | None = None) -> list[IncomingChunk]:
+    """`pages` (a PDF's, when known) let page furniture be cut; other sources are chunked as they are."""
     scraped_at = datetime.now(UTC)
     pieces: list[tuple[str | None, str]] = []
     for label, body in split_sections(text):
-        pieces.extend((label, piece) for piece in chunk_text(body))
+        found = chunk_text(body)
+        pieces.extend((label, piece) for piece in (without_furniture(pages, found) if pages else found))
     vectors = embed([piece for _label, piece in pieces]) if pieces else []
     return [
         IncomingChunk(
@@ -137,7 +168,9 @@ def ingest_guidelines(
                 text = _remote_text(source, fetcher, report)
                 if text is None:
                     continue
-            incoming = _chunks(source, text)
+            target = resolve_path(source, root) if source.path is not None else None
+            pages = pdf_pages(target.read_bytes()) if target is not None and source.format == "pdf" else None
+            incoming = _chunks(source, text, pages)
             if not incoming:
                 report.failures.append(f"{source.id}: no readable text")
                 continue

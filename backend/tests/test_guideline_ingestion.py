@@ -221,3 +221,14 @@ def test_a_source_list_with_a_duplicate_id_is_refused(tmp_path) -> None:
     path.write_text("sources:\n" + entry + entry)
     with pytest.raises(GuidelineSourceError, match="'a' is listed twice"):
         load_sources(path)
+
+
+def test_page_furniture_is_cut_and_a_furniture_only_chunk_is_dropped() -> None:
+    from app.guidelines.ingest import without_furniture
+
+    topics = ["brackets", "pins", "hinges", "aprons", "spans"]
+    pages = [f"This page explains shelf {topic} in some detail.\nShelf Guide https://example.org/guide\n{n} of 5 10/8/26, 08:45"
+             for n, topic in enumerate(topics, start=1)]
+    pages[0] += "\n1 x 8 27 23\n1 x 10 30 25\n1 x 12 32 26\n5 x 8 38 32"  # a table on one page stays
+    kept = without_furniture(pages, [pages[0], "Shelf Guide https://example.org/guide\n5 of 5 10/8/26, 08:45"])
+    assert kept == ["This page explains shelf brackets in some detail.\n1 x 8 27 23\n1 x 10 30 25\n1 x 12 32 26\n5 x 8 38 32"]
