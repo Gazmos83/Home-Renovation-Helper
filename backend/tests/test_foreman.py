@@ -567,7 +567,7 @@ def test_the_prompt_carries_the_guard_once_and_binds_only_the_headers_tools(tool
     assert system.count(UNTRUSTED_CONTENT_PREAMBLE) == 1
     assert system.endswith(UNTRUSTED_CONTENT_PREAMBLE)
     assert set(models["designer"].bound_tools) == {
-        "create_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit",
+        "create_piece", "duplicate_piece", "import_design", "import_design_version", "revise_package", "rebuild_piece", "cut_list", "room_fit",
         "compose_room", "read_room_version_dimensions", "edit_decisions", "record_version_verdict", "search_guidelines",
         "ask_owner", "ask_placement",
     }

@@ -35,7 +35,7 @@ from app.blender.spec_contract import SpecValidationError
 from app.db.models import Piece, PieceVersion
 from app.design_import import export_document
 from app.guidelines.hardware_inputs import freeze_inputs
-from app.packages import service
+from app.packages import duplicate, service
 from app.restyle import store as restyle_store
 
 logger = logging.getLogger("app")
@@ -69,6 +69,12 @@ class SpecIn(BaseModel):
 
 class RoomIn(BaseModel):
     room: str | None = None
+
+
+class DuplicateIn(BaseModel):
+    version: int | None = None
+    name: str
+    package_id: str | None = None
 
 
 def not_found() -> HTTPException:
@@ -426,6 +432,36 @@ def delete_piece(package_id: str, request: Request) -> None:
             house_file.delete_piece(session, root, package_id, thread_ids)
         except house_file.HouseFileError as error:
             raise refused(status.HTTP_409_CONFLICT, "piece_in_use", str(error)) from None
+
+
+# How a duplicate refusal is answered (duplicate-piece).
+_DUPLICATE_STATUS: Final[dict[str, int]] = {
+    "not_found": status.HTTP_404_NOT_FOUND,
+    "no_design": status.HTTP_409_CONFLICT,
+    "package_exists": status.HTTP_409_CONFLICT,
+    "name_taken": status.HTTP_409_CONFLICT,
+}
+
+
+@router.post("/{package_id}/duplicate", status_code=status.HTTP_202_ACCEPTED)
+def duplicate_piece(package_id: str, body: DuplicateIn, request: Request, background: BackgroundTasks):
+    """Make a new piece from one version of this one, with its own conversation (duplicate-piece).
+    Nothing of the source changes; nothing is written when it is refused."""
+    root = render_root(request)
+    with Session(request.app.state.engine) as session:
+        try:
+            checked = duplicate.plan(session, root, package_id, body.version, body.name, body.package_id)
+        except duplicate.DuplicateRefused as error:
+            if error.code == "not_found":
+                raise not_found() from None
+            raise refused(_DUPLICATE_STATUS.get(error.code, 422), error.code, str(error)) from None
+        require_generation(request)
+        return duplicate.create(
+            session,
+            root,
+            checked,
+            lambda _thread, version: _start_build(request, background, checked.package_id, version),
+        )
 
 
 @router.put("/{package_id}/spec", status_code=status.HTTP_202_ACCEPTED)

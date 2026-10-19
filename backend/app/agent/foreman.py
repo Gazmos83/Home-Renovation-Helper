@@ -119,8 +119,11 @@ PIECE_HAS_CONVERSATION: Final = (
 DESIGN_MATCHES_PIECE: Final = (
     "The attached design `{file}` matches your piece {name} (`{package_id}`). {update} "
     "To start over, delete {name} on the Pieces page, then attach the file again. "
-    "To keep both, change the design's name and attach it again."
+    "To keep both, reply \"keep both\" with a new name for the design, and it is imported as a new piece."
 )
+# The fixed reply's start, and the owner's words that choose its third way (duplicate-piece).
+DESIGN_MATCHES_PREFIX: Final = "The attached design `"
+KEEP_BOTH_WORDS: Final = ("keep both", "beide behalten")
 DESIGN_UPDATE_IN_CONVERSATION: Final = (
     "To update that piece, attach the file in its conversation (Pieces page → {name}) "
     "and it becomes the next version."
@@ -158,6 +161,7 @@ DECLINED: Final[dict[str, str]] = {
     "brief": "The brief was not saved.",
     "plan": "The plan was not saved.",
     "create_piece": "The piece was not created.",
+    "duplicate_piece": "The piece was not duplicated.",
     "import_design": "The design was not imported.",
     "compose_room": "No room version was created.",
     "revise": "No revision was created.",
@@ -210,6 +214,9 @@ class ChatState(TypedDict, total=False):
     # that confirms the room hands it to the Designer (pending-design-import).
     pending_design: dict[str, str] | None
     handoff_design: dict[str, str] | None
+    # The design file of a matched-design reply the owner answered with "keep both"; the turn goes
+    # to the Designer to import it under a new name (duplicate-piece).
+    keep_both_design: dict[str, str] | None
     # room-change-goes-to-designer: another specialist's lone `compose_room` call goes on to the Designer.
     handoff_compose: bool
     piece_named: bool
@@ -499,6 +506,14 @@ def piece_named(messages: list[AnyMessage], pieces: list[dict[str, Any]]) -> lis
     return _pieces_in(reply, pieces)
 
 
+def keep_both_asked(messages: list[AnyMessage]) -> bool:
+    """Whether the owner's latest message answers the matched-design reply with "keep both"
+    (duplicate-piece); decided by these words, never by a model."""
+    owner, reply = _latest_texts(messages)
+    lowered = owner.casefold()
+    return reply.startswith(DESIGN_MATCHES_PREFIX) and any(word in lowered for word in KEEP_BOTH_WORDS)
+
+
 def room_named(
     messages: list[AnyMessage], rooms: list[dict[str, Any]], apartments: list[dict[str, Any]]
 ) -> bool:
@@ -661,7 +676,8 @@ def build_graph(
             # One piece per conversation: bind only while unbound, and only when the named
             # piece has no conversation of its own yet.
             active = thread.package_id if thread and thread.package_id else None
-            matches = piece_named(messages, all_pieces)
+            # "Keep both" makes a new piece: the piece the fixed reply names is not bound (duplicate-piece).
+            matches = [] if keep_both_asked(messages) else piece_named(messages, all_pieces)
             piece_taken: str | None = None
             if active is None and len(matches) == 1 and thread_id is not None:
                 named = matches[0]
@@ -817,6 +833,11 @@ def build_graph(
                     "file": attached[0],
                     "has_conversation": has_conversation,
                 }
+        keep_both_design = (
+            _pending_design(engine, messages)
+            if package_id is None and not design_attached and keep_both_asked(messages)
+            else None
+        )
         pending_design = None
         if thread_id is not None and not room_confirmed and package_id is None:
             with Session(engine) as session:
@@ -869,6 +890,7 @@ def build_graph(
             "design_matches_piece": design_conflict,
             "pending_design": pending_design,
             "handoff_design": None,
+            "keep_both_design": keep_both_design,
             "handoff_compose": False,
             "piece_named": bool(matches) and active is None and piece_taken is None,
             "room_confirmed": room_confirmed,
@@ -1026,6 +1048,19 @@ def build_graph(
                 file=conflict["file"], name=conflict["name"], package_id=conflict["package_id"], update=update_way
             )
             return Command(update={"messages": [AIMessage(fixed)], "specialist": ""}, goto=END)
+        # "Keep both" after that reply: the Designer imports the earlier file under a new name.
+        keep_both = state.get("keep_both_design")
+        if keep_both:
+            return Command(
+                update={
+                    "specialist": "designer",
+                    "reason": "the owner chose to keep both pieces",
+                    "engineering_turn": False,
+                    "handoff_design": keep_both,
+                    "pending_design": None,
+                },
+                goto="designer",
+            )
         instruction = loaded["foreman"]
         system = compose_agent_prompt(
             instruction.text, state.get("facts", ""), state.get("house_note", ""), state.get("composition_note", "")
@@ -1208,7 +1243,16 @@ def build_graph(
             if name in ("designer", "lighting"):
                 notes.append(state.get("feedback_note", ""))
             handoff = state.get("handoff_design") if name == "designer" else None
-            if handoff:
+            if handoff and state.get("keep_both_design"):
+                owner_words = neutralise(_latest_texts(state.get("messages", []))[0])
+                notes.append(
+                    f"(The owner attached the design file '{neutralise(handoff['name'])}' as upload "
+                    f"{handoff['upload_id']}. It matches an existing piece, and the owner chose to keep both; "
+                    f"their reply was: \"{owner_words}\". Import it with import_design as a new piece, with "
+                    "`name` set to the new name the owner gave and a package id made from that name. If the "
+                    "reply gives no new name, ask for one and do not call import_design in this reply.)"
+                )
+            elif handoff:
                 when = (
                     "and chose not to view the piece in a room"
                     if state.get("room_declined") and not state.get("room_confirmed")

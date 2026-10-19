@@ -1147,6 +1147,12 @@ export const api = {
     }),
   /** What deleting the whole piece would remove, and why it would be refused (delete-piece). */
   pieceDeletion: (packageId: string) => request<PieceDeletion>(`/packages/${encodeURIComponent(packageId)}/deletion`),
+  /** A new piece from one version of this one, with its own conversation (duplicate-piece). */
+  duplicatePiece: (packageId: string, body: { version: number; name: string; package_id: string }) =>
+    request<{ package_id: string; version: number; status: string; thread_id: string }>(
+      `/packages/${encodeURIComponent(packageId)}/duplicate`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   /** Delete a whole piece with every version and its conversations (delete-piece). */
   deletePiece: (packageId: string) => request<void>(`/packages/${encodeURIComponent(packageId)}`, { method: "DELETE" }),
   /** Delete one version with its renders, reviews and pricings; the last one deletes the piece. */

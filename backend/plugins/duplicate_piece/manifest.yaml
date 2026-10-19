@@ -1,0 +1,7 @@
+name: duplicate_piece
+description: Make a new piece from one version of an existing piece, with its own conversation, after the owner confirms.
+kind: builtin
+role: designer
+tools: [duplicate_piece]
+enabled_by_default: true
+toggleable: true

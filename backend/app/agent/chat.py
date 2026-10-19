@@ -544,6 +544,7 @@ CONFIRMATION_TITLES: dict[str, str] = {
     "revise": "Revising piece",
     "rebuild": "Rebuilding piece",
     "create_piece": "Creating piece",
+    "duplicate_piece": "Duplicating piece",
     "import_design": "Importing design",
     "import_version": "Importing version",
     "brief": "Confirming the brief",

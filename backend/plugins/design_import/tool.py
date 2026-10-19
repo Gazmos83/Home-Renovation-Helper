@@ -39,6 +39,7 @@ from app.blender.import_corrections import correct, rule_lines
 from app.design_import import parse_import
 from app.guidelines.hardware_inputs import freeze_inputs
 from app.guidelines.rules import piece_outcome
+from app.packages import duplicate
 from plugins.create_piece.tool import (
     checked_new_id,
     create_and_record,
@@ -52,6 +53,10 @@ class ImportDesignArgs(BaseModel):
     upload_id: UUID = Field(description="the upload id of the attached design file, as the owner's message names it")
     package_id: str = Field(
         description="a short id for the new piece: lowercase letters, digits and hyphens, e.g. 'wall-unit'"
+    )
+    name: str | None = Field(
+        default=None,
+        description="a new name for the piece, replacing the name inside the design; only when the owner gave one",
     )
 
 
@@ -135,6 +140,15 @@ def _checked(
     design, refusal = parse_import(document, ctx, package_id)
     if design is None:
         return None, _quoted(refusal, name, args.upload_id)
+    if args.name is not None:
+        # "Keep both" (duplicate-piece): the owner's new name replaces the one inside the design.
+        new_name = args.name.strip()
+        if not new_name:
+            return None, "the new name is empty; ask the owner for the piece's name"
+        with ctx.deps.session() as session:
+            if duplicate.name_taken(session, new_name):
+                return None, f"a piece is already named {new_name!r}; ask the owner for another name"
+        design = {**design, "name": new_name}
     design, corrections = _corrected(design, ctx)
     return (package_id, design, name, corrections), ""
 

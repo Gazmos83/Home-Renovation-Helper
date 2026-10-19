@@ -359,3 +359,46 @@ def test_the_preview_names_a_black_right_door(make_ctx, tool_deps, tool_state, u
     stored = json.loads((storage.version_dir(tool_state.settings.render_root, "kommode", 1) / storage.INPUT_FILE).read_text())
     ids = [row["id"] for row in derive(stored)[0] if row["name"] == "Door"]
     assert ids == ["cabinet-door-1-1", "cabinet-door-1-2"]
+
+
+# --- a new name ("keep both", duplicate-piece) -------------------------------------------------
+
+
+def _record_sideboard(tool_deps) -> None:
+    with tool_deps.session() as session:
+        house_file.record_piece(session, "sideboard-1200", "Sideboard")
+        session.commit()
+
+
+def test_a_new_name_replaces_the_designs_name(make_ctx, tool_deps, tool_state, upload_root) -> None:
+    _record_sideboard(tool_deps)
+    thread = new_thread(tool_deps)
+    upload = attach(tool_deps, upload_root, thread, design(name="Sideboard"), name="sideboardo.json")
+    arguments = {"upload_id": upload, "package_id": "sideboard-hall", "name": "Sideboard Hall"}
+    shown = preview(arguments, make_ctx(thread_id=thread))
+    assert isinstance(shown, Confirmation) and "New piece 'Sideboard Hall' as sideboard-hall" in shown.summary
+    run(arguments, replace(make_ctx(thread_id=thread), approved=True))
+    folder = storage.version_dir(tool_state.settings.render_root, "sideboard-hall", 1)
+    assert json.loads((folder / storage.INPUT_FILE).read_text())["name"] == "Sideboard Hall"
+    with tool_deps.session() as session:
+        names = {p["package_id"]: p["name"] for p in house_file.pieces(session, tool_state.settings.render_root)}
+    assert names == {"sideboard-1200": "Sideboard", "sideboard-hall": "Sideboard Hall"}
+
+
+def test_a_new_name_that_is_still_a_pieces_name_is_refused(make_ctx, tool_deps, tool_state, upload_root) -> None:
+    _record_sideboard(tool_deps)
+    thread = new_thread(tool_deps)
+    upload = attach(tool_deps, upload_root, thread, design(name="Sideboard"), name="sideboardo.json")
+    shown = preview({"upload_id": upload, "package_id": "sideboard-2", "name": "sideboard"}, make_ctx(thread_id=thread))
+    assert isinstance(shown, str) and "already named 'sideboard'" in shown
+    assert storage.versions(tool_state.settings.render_root, "sideboard-2") == []
+
+
+def test_without_a_name_the_designs_own_name_is_kept_even_if_a_piece_has_it(
+    make_ctx, tool_deps, upload_root
+) -> None:
+    _record_sideboard(tool_deps)
+    thread = new_thread(tool_deps)
+    upload = attach(tool_deps, upload_root, thread, design(name="Sideboard"), name="sideboardo.json")
+    shown = preview({"upload_id": upload, "package_id": "sideboard-2"}, make_ctx(thread_id=thread))
+    assert isinstance(shown, Confirmation) and "New piece 'Sideboard' as sideboard-2" in shown.summary

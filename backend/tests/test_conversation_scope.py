@@ -376,11 +376,57 @@ def test_a_file_named_like_an_existing_piece_is_answered_by_code(tool_state, tmp
     assert reply.startswith("The attached design `murphy-bed.json` matches your piece Oak queen Murphy bed (`murphy-bed`).")
     assert "name murphy-bed here and attach the file again" in reply
     assert "delete Oak queen Murphy bed on the Pieces page" in reply
-    assert "change the design's name" in reply
+    assert 'reply "keep both" with a new name for the design' in reply
     assert ROOM_OFFER not in reply and ROOM_QUESTION not in reply
     assert state["specialist"] == ""
     assert all(models[slot].calls == 0 for slot in ("foreman", "intake", "designer"))
     assert _builds(tool_state, harness) == []
+
+
+def _matched(tool_state, tmp_path, designer: dict, foreman_decisions: list | None = None):
+    """A new conversation whose first message attached `murphy-bed.json` and got the fixed reply."""
+    _house(tool_state)
+    models = fake_models(foreman={"decisions": foreman_decisions or [decision("intake")]}, designer=designer)
+    harness = make_harness(tool_state, models, room=None)
+    upload_id = _attach(tool_state, harness, tmp_path, name="murphy-bed.json")
+    assert last_reply(_send(harness, "import this", upload_id)).startswith("The attached design `murphy-bed.json`")
+    return harness, models, upload_id
+
+
+def test_keep_both_with_a_new_name_goes_to_the_designer_with_the_file(tool_state, tmp_path) -> None:
+    harness, models, upload_id = _matched(tool_state, tmp_path, {"replies": ["Imported."]})
+    models["designer"].tool_call_scripts.append(
+        [tool_call("import_design", {"upload_id": upload_id, "package_id": "guest-bed", "name": "Guest bed"})]
+    )
+    state = harness.turn("Keep both, call it Guest bed")
+    assert state["specialist"] == "designer"
+    assert models["foreman"].calls == 0
+    prompt = "\n".join(str(m.content) for m in models["designer"].prompts[0])
+    assert f"'murphy-bed.json' as upload {upload_id}. It matches an existing piece" in prompt
+    assert '"Keep both, call it Guest bed"' in prompt
+    assert state["__interrupt__"][0].value["subject"] == "import_design"
+    harness.answer("yes")
+    assert _active(tool_state, harness) == "guest-bed"
+    with ToolDeps(tool_state).session() as session:
+        names = {p["package_id"]: p["name"] for p in house_file.pieces(session, tool_state.settings.render_root)}
+    assert names["guest-bed"] == "Guest bed" and names["murphy-bed"] == "Oak queen Murphy bed"
+
+
+def test_keep_both_without_a_name_lets_the_designer_ask(tool_state, tmp_path) -> None:
+    harness, models, _upload_id = _matched(tool_state, tmp_path, {"replies": ["What should the new piece be called?"]})
+    state = harness.turn("beide behalten")
+    assert state["specialist"] == "designer"
+    prompt = "\n".join(str(m.content) for m in models["designer"].prompts[0])
+    assert "If the reply gives no new name, ask for one" in prompt
+    assert last_reply(state) == "What should the new piece be called?"
+    assert _builds(tool_state, harness) == []
+
+
+def test_another_answer_to_the_fixed_reply_routes_as_before(tool_state, tmp_path) -> None:
+    harness, models, _upload_id = _matched(tool_state, tmp_path, {})
+    state = harness.turn("what does it cost?")
+    assert state["keep_both_design"] is None
+    assert models["foreman"].calls == 1
 
 
 def test_a_matching_piece_with_a_conversation_points_to_it(tool_state, tmp_path) -> None:

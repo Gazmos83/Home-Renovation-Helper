@@ -6,6 +6,7 @@ import json
 import shutil
 from collections.abc import Iterator
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -323,7 +324,7 @@ def test_a_symlink_leading_outside_the_root_is_not_served(
      ("PUT", "/packages/x/versions/1/approval"), ("DELETE", "/packages/x/versions/1/approval"),
      ("DELETE", "/packages/x/versions/1"), ("GET", "/packages/x/deletion"), ("DELETE", "/packages/x"),
      ("GET", "/packages/x/versions/1/design"), ("GET", "/packages/x/versions/1/bundle"),
-     ("PUT", "/packages/x/room"), ("GET", "/rooms"), ("DELETE", "/rooms/x")],
+     ("PUT", "/packages/x/room"), ("POST", "/packages/x/duplicate"), ("GET", "/rooms"), ("DELETE", "/rooms/x")],
 )
 def test_every_route_needs_the_owner_cookie(
     migrated_database: str, render_root: Path, fake_blender: Path, method: str, path: str
@@ -348,6 +349,8 @@ def test_a_missing_binary_refuses_builds_but_listing_and_files_still_work(
     assert detail["failure_class"] == "blender_unavailable" and "Blender" in detail["reason"]
     assert not (render_root / "second").exists()
     assert c.put("/packages/hall-bench/spec", json={"spec": desk()}).status_code == 503
+    assert c.post("/packages/hall-bench/duplicate", json={"name": "Second bench"}).status_code == 503
+    assert not (render_root / "second-bench").exists()
 
     assert c.get("/packages").status_code == 200
     assert c.get("/packages/hall-bench/versions/1/files/spec.json").status_code == 200
@@ -879,3 +882,60 @@ def test_a_failure_dismissing_items_still_approves(client: TestClient, record, m
     monkeypatch.setattr(house_file, "dismiss_outdated_height_items", lambda *a: 1 / 0)
     assert client.put("/packages/hall-bench/versions/1/approval").status_code == 200
     assert client.get("/packages/hall-bench/versions/1").json()["approved_at"] is not None
+
+
+# --- duplicate (duplicate-piece) ------------------------------------------------------------
+
+
+def test_a_duplicate_is_built_with_its_own_conversation(client: TestClient, record, render_root: Path) -> None:
+    from sqlalchemy.orm import Session
+
+    from app.db.models import Thread
+
+    create(client)
+    record()
+    response = client.post("/packages/hall-bench/duplicate", json={"version": 1, "name": "Hall bench two"})
+    assert response.status_code == 202
+    body = response.json()
+    assert (body["package_id"], body["version"], body["status"]) == ("hall-bench-two", 1, "queued")
+    assert client.get("/packages/hall-bench-two/versions/1").json()["status"] == "succeeded"
+    with Session(client.app.state.engine) as session:
+        assert session.get(Thread, UUID(body["thread_id"])).package_id == "hall-bench-two"
+    listed = {p["package_id"]: p for p in client.get("/packages").json()}
+    assert listed["hall-bench-two"]["thread_id"] == body["thread_id"]
+    assert listed["hall-bench"]["versions"] == [1]
+
+
+@pytest.mark.parametrize(
+    ("path", "payload", "code", "failure_class"),
+    [
+        ("/packages/nothing/duplicate", {"name": "X"}, 404, None),
+        ("/packages/hall-bench/duplicate", {"version": 7, "name": "X"}, 404, None),
+        ("/packages/hall-bench/duplicate", {"name": "X", "package_id": "hall-bench"}, 409, "package_exists"),
+        ("/packages/hall-bench/duplicate", {"name": "hall BENCH"}, 409, "name_taken"),
+    ],
+)
+def test_a_refused_duplicate_creates_nothing(
+    client: TestClient, record, render_root: Path, path, payload, code, failure_class
+) -> None:
+    create(client)
+    record()
+    response = client.post(path, json=payload)
+    assert response.status_code == code
+    if failure_class:
+        assert response.json()["detail"]["failure_class"] == failure_class
+    assert sorted(p.name for p in render_root.iterdir()) == ["hall-bench"]
+
+
+def test_a_duplicate_of_a_design_the_schema_now_refuses_names_the_field(
+    client: TestClient, record, render_root: Path
+) -> None:
+    create(client)
+    record()
+    path = render_root / "hall-bench" / "v1" / storage.INPUT_FILE
+    document = json.loads(path.read_text())
+    document["modules"][0]["bevel_mm"] = 3
+    path.write_text(json.dumps(document))
+    response = client.post("/packages/hall-bench/duplicate", json={"name": "Other"})
+    assert response.status_code == 422 and "bevel_mm" in response.json()["detail"]["reason"]
+    assert not (render_root / "other").exists()

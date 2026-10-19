@@ -16,6 +16,7 @@ import { Select } from "@/components/ui/select";
 import { cardClass } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DeletePiece } from "@/components/DeletePiece";
+import { DuplicatePiece } from "@/components/DuplicatePiece";
 import { DeleteVersion } from "@/components/DeleteVersion";
 import { Tile } from "@/components/studio/Tile";
 import { TileGrid } from "@/components/studio/TileGrid";
@@ -413,6 +414,7 @@ function PieceDetail({
   onDeleted: () => void;
 }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [chosen, setVersion] = useState(versions[0]);
   // After a delete the chosen version may be gone: show the newest left.
   const version = versions.includes(chosen) ? chosen : versions[0];
@@ -474,6 +476,15 @@ function PieceDetail({
         />
       )}
       <Version packageId={id} version={version} />
+      <DuplicatePiece
+        packageId={id}
+        versions={versions}
+        onDuplicated={(threadId) => {
+          queryClient.invalidateQueries({ queryKey: ["pieces"] });
+          queryClient.invalidateQueries({ queryKey: ["threads"] });
+          navigate(`/studio/workspace/${threadId}`);
+        }}
+      />
       <DeletePiece packageId={id} onDeleted={onDeleted} />
     </>
   );
