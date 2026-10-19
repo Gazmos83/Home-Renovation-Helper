@@ -49,6 +49,11 @@ def run(arguments: dict[str, Any], ctx: ToolContext) -> str | ToolOutput:
     except Exception as error:  # noqa: BLE001 - a lookup failure is a stated inability
         logger.warning("guideline search failed", extra={"context": {"error_type": type(error).__name__}})
         return LOOKUP_FAILED
+    return search_result(hits)
+
+
+def search_result(hits: list[Any]) -> str:
+    """What the model is given for these hits (also read by the offline eval)."""
     if not hits:
         return NOTHING_FOUND
     passages = []

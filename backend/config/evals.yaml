@@ -1,0 +1,13 @@
+# Offline Ragas evaluation (openspec change ragas-evaluation). Read only by
+# `uv run python -m app.evals`; the running app never loads it.
+#
+# judge: a registry slug, called through the OpenRouter gateway with its profile.
+# token_ceiling: every model call one run makes (Researcher answers and judge
+#   calls together); the agents' daily ceilings are not used or touched.
+# Paths are relative to the repository root.
+judge: anthropic/claude-haiku-4.5
+# TODO(user): confirm the ceiling. About 15 judge calls of ~2k tokens per question
+# for 30 questions is ~0.9M tokens, roughly 1-2 USD with this judge.
+token_ceiling: 1500000
+golden_set: backend/fixtures/evals/golden.yaml
+report_dir: docs/evals

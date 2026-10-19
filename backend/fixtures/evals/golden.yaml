@@ -1,0 +1,209 @@
+# Golden set for the Ragas evaluation (openspec change ragas-evaluation).
+#
+# Guideline questions only, by the owner's decision of 2026-10-19: the database
+# holds no toom catalogue chunks, and neither published engineering source grants
+# remote model use. Every question is drafted from a real passage in the corpus;
+# `expected` names the passages that answer it as `<url>#<chunk_index>`.
+#
+# "Design guide printer" (upload-947a90f94826) was a second upload of the
+# "Design Style Guide" PDF and was deleted on 2026-10-19; its keys were removed.
+#
+# Signed off by the owner on 2026-10-19 (all 31 questions, unchanged from the draft).
+questions:
+  # --- owner notes ---
+  - id: hinges-tall-door
+    question: How many hinges does a cabinet door 180 cm tall need?
+    reference: A door between 152.4 cm and 203.2 cm tall generally needs 4 hinges to carry the extra weight.
+    expected: ["owner-note:a8147011-0f73-4e5e-a5f2-e3a9f8fd9852#0"]
+    path: guideline
+    split: held_out
+  - id: shelf-pins-wide
+    question: How many shelf pins should an adjustable shelf wider than 36 inches sit on?
+    reference: Five or more pins, adding a centre pin or extra intermediate supports to stop bowing or tipping. Shelves up to 36 inches wide use four pins, one near each corner.
+    expected: ["owner-note:7cf8c9ef-e98f-4d3d-af6c-f0384a17ffdd#0"]
+    path: guideline
+    split: held_out
+  - id: counter-height-owner-note
+    question: What height does my own note give for a kitchen counter top?
+    reference: The owner's note gives a traditional counter top height of 70 cm, leaving room for purchased ovens and dishwashers.
+    expected: ["owner-note:f485dced-7dc2-49fe-8a7c-dc136593e83e#0"]
+    path: guideline
+    split: dev
+
+  # --- How Many Brackets Does a Wooden Shelf Need? ---
+  - id: brackets-120cm
+    question: How many brackets does a 120 cm wooden shelf need?
+    reference: A 120 cm shelf commonly uses two or three brackets, depending on the timber, wall construction, fixing method and expected load; three may be preferable for heavier storage.
+    expected: ["file:pdf/How Many Brackets Does a Wooden Shelf Need_.pdf#14", "file:pdf/How Many Brackets Does a Wooden Shelf Need_.pdf#1"]
+    path: guideline
+    split: held_out
+  - id: brackets-200cm
+    question: How many brackets should a 200 cm shelf have?
+    reference: A 200 cm shelf normally needs several evenly spaced brackets; four is an appropriate starting point (190 to 200 cm shelves take 4 or more), depending on the shelf, wall, fixings and load.
+    expected: ["file:pdf/How Many Brackets Does a Wooden Shelf Need_.pdf#14", "file:pdf/How Many Brackets Does a Wooden Shelf Need_.pdf#1"]
+    path: guideline
+    split: held_out
+  - id: bracket-end-distance
+    question: How far in from each end of a shelf should the outer brackets go?
+    reference: The outer brackets are commonly placed about 10 cm to 20 cm from each end; the exact position depends on the shelf length, bracket design and load.
+    expected: ["file:pdf/How Many Brackets Does a Wooden Shelf Need_.pdf#13"]
+    path: guideline
+    split: held_out
+  - id: brackets-on-plasterboard
+    question: Can I fix shelf brackets to a plasterboard wall?
+    reference: Yes, but plasterboard needs specialist hollow-wall fixings or attachment to timber studs; standard masonry plugs are not suitable, and more brackets do not help if every fixing is unsuitable.
+    expected: ["file:pdf/How Many Brackets Does a Wooden Shelf Need_.pdf#14", "file:pdf/How Many Brackets Does a Wooden Shelf Need_.pdf#7"]
+    path: guideline
+    split: dev
+  - id: bookshelf-support
+    question: How should I support a long shelf that will be full of heavy books?
+    reference: Use substantial brackets suited to the shelf depth, place them closer together, consider a central bracket, fix into solid masonry or timber studs with fixings rated for the load, spread the books evenly and avoid a long unsupported centre section.
+    expected: ["file:pdf/How Many Brackets Does a Wooden Shelf Need_.pdf#5"]
+    path: guideline
+    split: held_out
+  - id: deep-shelf-brackets
+    question: Why does a deeper shelf need stronger brackets?
+    reference: A deeper shelf puts more leverage on the brackets and wall fixings because objects can sit further from the wall; the bracket arm must suit the depth, and deeper shelves may need larger brackets, stronger fixings, closer spacing or extra brackets.
+    expected: ["file:pdf/How Many Brackets Does a Wooden Shelf Need_.pdf#4"]
+    path: guideline
+    split: held_out
+  - id: uneven-bracket-spacing
+    question: What should I do if a stud or a pipe stops me spacing the brackets evenly?
+    reference: Safety comes before visual symmetry. If a bracket must move, keep the remaining unsupported spans small and add another bracket rather than leave a large gap; check for pipes, cables and studs with a detector before drilling.
+    expected: ["file:pdf/How Many Brackets Does a Wooden Shelf Need_.pdf#8", "file:pdf/How Many Brackets Does a Wooden Shelf Need_.pdf#9"]
+    path: guideline
+    split: dev
+  - id: too-many-brackets
+    question: Can a shelf have too many brackets?
+    reference: Yes. Too many brackets can make the shelf look crowded, make levelling harder, need more wall fixings, add installation time and interfere with the design; enough evenly spaced brackets work better.
+    expected: ["file:pdf/How Many Brackets Does a Wooden Shelf Need_.pdf#9", "file:pdf/How Many Brackets Does a Wooden Shelf Need_.pdf#8"]
+    path: guideline
+    split: held_out
+
+  # --- Down With Sagging Shelves (Hyman, JLC 1995), guideline upload ---
+  - id: sag-acceptable-limit
+    question: How much shelf sag is acceptable according to the sagging shelves article?
+    reference: About 1/32 inch per foot, that is 1/384 of the span; deflection of 1/90 is clearly noticeable and 1/180 probably so.
+    expected: ["file:pdf/upload-d9d812aa9d0a.pdf#3"]
+    path: guideline
+    split: held_out
+  - id: sag-front-apron
+    question: How much longer can a shelf span if I add a front apron?
+    reference: A 1 x 3/4 inch apron on the front increases the allowable span by 50% to 75%; a second support at the back adds another 25%. Fix the apron with #6 screws 6 inches on centre and epoxy glue.
+    expected: ["file:pdf/upload-d9d812aa9d0a.pdf#5"]
+    path: guideline
+    split: held_out
+  - id: sag-strength-or-deflection
+    question: For a loaded bookshelf, is bending strength or deflection the limit?
+    reference: Deflection governs. A 1x8 pine shelf at 35 lb per foot sees about 391 psi bending stress against more than 1,000 psi allowable, so strength can be ignored.
+    expected: ["file:pdf/upload-d9d812aa9d0a.pdf#3"]
+    path: guideline
+    split: dev
+  - id: sag-plywood-span
+    question: What is the maximum span of a 3/4 x 7 1/2 inch plywood shelf carrying 35 lb per linear foot?
+    reference: 26 inches (22 inches at 60 lb per foot), with deflection limited to 1/400 of the span.
+    expected: ["file:pdf/upload-d9d812aa9d0a.pdf#6"]
+    path: guideline
+    split: held_out
+  - id: sag-canned-goods
+    question: How does a heavier load such as canned goods change the allowable shelf span?
+    reference: The 60 lb per linear foot load expected from canned goods shortens the acceptable span by about 15% compared with 35 lb per foot.
+    expected: ["file:pdf/upload-d9d812aa9d0a.pdf#4"]
+    path: guideline
+    split: dev
+
+  # --- 17 Foundational Principles in Kitchen Design ---
+  - id: kitchen-work-triangle
+    question: What are the rules for the kitchen working triangle?
+    reference: The triangle joins the fridge, stovetop and sink; the sum of its distances should be 27 ft or less and each leg between 4 and 9 ft.
+    expected: ["file:pdf/upload-ec829c28ca1d.pdf#1"]
+    path: guideline
+    split: held_out
+  - id: kitchen-walkway-width
+    question: How wide should the walkways in a kitchen be?
+    reference: At least 42 inches with one main cook, and 48 inches for kitchens with two or more cooks.
+    expected: ["file:pdf/upload-ec829c28ca1d.pdf#3"]
+    path: guideline
+    split: held_out
+  - id: kitchen-cabinet-sizes
+    question: What are the standard sizes of base and upper kitchen cabinets?
+    reference: Base cabinets 32 inches tall by 24 inches deep; upper cabinets 32 inches tall by 12 inches deep.
+    expected: ["file:pdf/upload-ec829c28ca1d.pdf#4"]
+    path: guideline
+    split: held_out
+  - id: kitchen-sink-counter
+    question: How much counter space do I need beside the kitchen sink?
+    reference: 24 inches on one side of the sink for prep work and 18 inches on the other.
+    expected: ["file:pdf/upload-ec829c28ca1d.pdf#6"]
+    path: guideline
+    split: held_out
+  - id: kitchen-fridge-clearance
+    question: How much free space does a fridge need in front of it and above it?
+    reference: 42 inches in front for opening the doors and loading groceries, and 15 inches above it to vent heat.
+    expected: ["file:pdf/upload-ec829c28ca1d.pdf#8"]
+    path: guideline
+    split: dev
+  - id: kitchen-dishwasher
+    question: How far from the sink may the dishwasher be?
+    reference: No more than 36 inches from the sink, with at least 21 inches between the open dishwasher and any adjacent surface.
+    expected: ["file:pdf/upload-ec829c28ca1d.pdf#8", "file:pdf/upload-ec829c28ca1d.pdf#9"]
+    path: guideline
+    split: held_out
+  - id: kitchen-hood-height
+    question: How high above the stovetop should the vent hood be installed?
+    reference: 30 inches above the stovetop.
+    expected: ["file:pdf/upload-ec829c28ca1d.pdf#8"]
+    path: guideline
+    split: dev
+  - id: kitchen-seating-clearance
+    question: How much space is needed behind chairs at a kitchen island?
+    reference: 36 inches when there is no passageway behind the chairs, and at least 44 inches when there is a walkway behind them.
+    expected: ["file:pdf/upload-ec829c28ca1d.pdf#5"]
+    path: guideline
+    split: held_out
+  - id: kitchen-remodel-budget
+    question: What is a standard budget for a kitchen remodel?
+    reference: The industry standard is 10% of the home's value, for example $75,000 for a $750,000 home; spend on what is seen rather than what is hidden.
+    expected: ["file:pdf/upload-ec829c28ca1d.pdf#9"]
+    path: guideline
+    split: held_out
+
+  # --- How to build a Murphy Bed ---
+  - id: murphy-bed-materials
+    question: Which sheet materials does the DIY modern Murphy bed use?
+    reference: 3/4 inch and 1/4 inch birch plywood, with 1x2 pine, edge banding and birch veneer sheets.
+    expected: ["file:pdf/upload-f800e3f3ada9.pdf#0"]
+    path: guideline
+    split: dev
+  - id: murphy-bed-pistons
+    question: When in the Murphy bed build are the pistons and wall anchors installed?
+    reference: In step 10, after the cabinet headers, with help from others; the anchoring positions should follow the specific kit's plans.
+    expected: ["file:pdf/upload-f800e3f3ada9.pdf#4"]
+    path: guideline
+    split: held_out
+
+  # --- Design Style Guide (two identical uploads) ---
+  - id: style-coastal-windows
+    question: What window treatments suit a coastal style room?
+    reference: Simple treatments that do not block natural light and retract into the window frame without drawing attention, such as woven wood shades or sheer shades; curtains in solid, pastel, light and flowy fabrics.
+    expected: ["file:pdf/upload-9a0dd1f68938.pdf#6"]
+    path: guideline
+    split: held_out
+  - id: style-farmhouse-features
+    question: What are the main features of farmhouse design?
+    reference: Simple, rustic and comfortable decor; natural materials such as wood, reeds, wicker and rattan; raw or weathered wood; mismatched vintage pieces chosen for sentiment; warm neutrals and earth tones; burlap with stripes, plaids and gingham.
+    expected: ["file:pdf/upload-9a0dd1f68938.pdf#18"]
+    path: guideline
+    split: held_out
+  - id: style-mid-century
+    question: What defines mid-century modern design?
+    reference: Pure, simple forms; strong horizontal and vertical lines; bold geometric patterns; sleek stainless steel or nickel hardware; textured materials; open plans with large windows; wood mixed with glass; statement lighting; function balanced with form.
+    expected: ["file:pdf/upload-9a0dd1f68938.pdf#13"]
+    path: guideline
+    split: dev
+  - id: style-glam-drapes
+    question: How high should drapes hang in a glam style room, and why?
+    reference: As close to the ceiling as possible, so the eye travels from top to bottom, the room feels more spacious and the window looks bigger.
+    expected: ["file:pdf/upload-9a0dd1f68938.pdf#21"]
+    path: guideline
+    split: held_out

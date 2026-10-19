@@ -110,6 +110,11 @@ def run_search(arguments: dict[str, Any], ctx: ToolContext) -> str:
     except Exception as error:  # noqa: BLE001 - a lookup failure is a stated inability, not a crash
         logger.warning("catalog search failed", extra={"context": {"error_type": type(error).__name__}})
         return LOOKUP_FAILED
+    return search_result(hits)
+
+
+def search_result(hits: list[Any]) -> str:
+    """What the model is given for these hits (also read by the offline eval)."""
     if not hits:
         return NOTHING_FOUND
     return DATED_NOTE + "\n\n" + wrap_passages([Passage.from_hit(hit) for hit in hits])
