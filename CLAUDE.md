@@ -171,7 +171,7 @@ None open as of 2026-10-05.
 3. [x] House file + checkpointer — `openspec/changes/agent-loop`
 4. [x] Foreman → Intake → Designer → Builder loop with `revise_package`, `cut_list`, `room_fit` — `openspec/changes/agent-loop`
 4a. [x] Intake vision read of blueprints and photos into the house file; headless apartment shell generator — `openspec/changes/apartment-intake`
-5. [ ] Pricing port and rework (§5a) + Researcher
+5. [x] Pricing port and rework (§5a) + Researcher — `openspec/changes/pricing-completion`
 6. [x] Reviewer (`revision_review`) with a vision model — `openspec/changes/render-reviewer`
 7. [x] Plugin manifests, homeowner toggles, dev panel with per-agent model routing and token restrictions — `openspec/changes/plugins-and-budgets`
 8. [x] `photoreal_detail` over the socket, allow-list, `final` tier — `openspec/changes/photoreal-detail`

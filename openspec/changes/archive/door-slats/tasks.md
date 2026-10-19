@@ -68,9 +68,9 @@
 ## 4. Checks
 
 - [x] 4.1 Run `uv run ruff check .` and `uv run pytest -m "not slow"` in `backend/`, skipping the RunPod/offload test files and using a throwaway `TEST_DATABASE_URL` if another session holds the test database. Then run the `--blender` suite for the custom-build generator tests. All must pass.
-- [ ] 4.2 Browser pass. Import a copy of the Höffner "Kommode Harmony" with `import_design_version`: two hinged doors, 8 vertical oak slats on door 2, and black knobs. The headless build makes Workbench screenshots only, **no render tier**. Check that:
+- [x] 4.2 Browser pass. Import a copy of the Höffner "Kommode Harmony" with `import_design_version`: two hinged doors, 8 vertical oak slats on door 2, and black knobs. The headless build makes Workbench screenshots only, **no render tier**. Check that:
   - the import preview shows the slat-handle warning for door 2 only;
   - in the inspector, the slats show on the right door in Workshop view, hide with the `fronts` layer switch, and move with the module in the exploded view;
   - the cut-list table lists `…-slat` ×8 with the warning in its note;
   - after a revision to 5 horizontal slats, the confirmation shows the new slat phrase and the warning, and the new version's slats run across the door.
-- [ ] 4.3 Optionally queue a **draft**-tier turntable of that version through the render guard (owner approval as usual) to see the slats lit. No `final` tier.
+- [x] 4.3 Optionally queue a **draft**-tier turntable of that version through the render guard (owner approval as usual) to see the slats lit. No `final` tier.
