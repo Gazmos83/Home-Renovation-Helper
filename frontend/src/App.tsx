@@ -7,7 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Footer } from "@/components/Footer";
 import { HouseIcon } from "@/components/HouseIcon";
 import About from "./routes/About";
+import Crew from "./routes/Crew";
 import Help from "./routes/Help";
+import Landing, { SiteBar } from "./routes/Landing";
 import Login from "./routes/Login";
 import PieceInspector from "./routes/PieceInspector";
 import Studio from "./routes/Studio";
@@ -121,6 +123,20 @@ export default function App() {
         </header>
       )}
       <Routes>
+        <Route path="/" element={signedIn ? <Navigate to={HOME} replace /> : <Landing />} />
+        <Route
+          path="/crew"
+          element={
+            signedIn ? (
+              <Crew />
+            ) : (
+              <>
+                <SiteBar />
+                <Crew />
+              </>
+            )
+          }
+        />
         <Route path="/login" element={<Login onSignedIn={() => setSignedIn(true)} />} />
         <Route path="/conversations" element={<Navigate to="/studio/workspace" replace />} />
         <Route path="/conversations/:threadId" element={<ConversationRedirect />} />
@@ -143,7 +159,19 @@ export default function App() {
           element={signedIn && dev ? <Navigate to="/admin/design-knowledge/guidelines" replace /> : <Navigate to={signedIn ? HOME : "/login"} replace />}
         />
         <Route path="/help" element={signedIn ? <Help /> : <Navigate to="/login" replace />} />
-        <Route path="/about" element={signedIn ? <About /> : <Navigate to="/login" replace />} />
+        <Route
+          path="/about"
+          element={
+            signedIn ? (
+              <About />
+            ) : (
+              <>
+                <SiteBar />
+                <About />
+              </>
+            )
+          }
+        />
         <Route
           path="/admin/agents"
           element={signedIn && dev ? <Studio dev fixedTab="agents" /> : <Navigate to={signedIn ? HOME : "/login"} replace />}

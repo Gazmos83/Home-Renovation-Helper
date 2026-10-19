@@ -40,6 +40,14 @@ test("About opens from the header and explains the app in plain words (About fro
   expect(page.textContent).not.toMatch(/\b(model name|prompt|token|frame|resolution|Eevee|Cycles)\b/i);
 });
 
+test("About no longer lists the crew; the crew has its own page (Crew moved to its own page)", async () => {
+  signedIn();
+  show("/about");
+  await screen.findByRole("heading", { level: 1, name: "About Little Homey" });
+  expect(screen.queryByRole("heading", { name: "Meet the crew" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("list", { name: "The crew" })).not.toBeInTheDocument();
+});
+
 test("the header links are the name, Help and About, then Sign out (Header links)", async () => {
   signedIn();
   show("/about");
@@ -49,10 +57,12 @@ test("the header links are the name, Help and About, then Sign out (Header links
   expect(within(nav).getByRole("button", { name: "Sign out" })).toBeInTheDocument();
 });
 
-test("About signed out shows the sign-in page (Signed out)", async () => {
+test("About signed out shows the About page under the visitor's top bar (Signed out)", async () => {
   stubFetch((call) => (call === "GET /auth/me" ? { status: 401, body: { detail: "Not authenticated" } } : undefined));
   show("/about");
-  expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { level: 1, name: "About Little Homey" })).toBeInTheDocument();
+  expect(screen.getByRole("navigation", { name: "Site" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Sign in" })).not.toBeInTheDocument();
 });
 
 test("the footer shows the name, year, version and build, and About when signed in (Footer on the Workspace)", async () => {

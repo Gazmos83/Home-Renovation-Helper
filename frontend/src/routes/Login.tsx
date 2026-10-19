@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cardClass } from "@/components/ui/card";
+import { HouseIcon } from "@/components/HouseIcon";
 
 export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
   const navigate = useNavigate();
@@ -26,6 +27,10 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
 
   return (
     <main className="mx-auto max-w-sm space-y-4 px-4 py-16">
+      <Link to="/" className="flex w-fit items-center gap-2 font-semibold">
+        <HouseIcon />
+        Little Homey
+      </Link>
       <h1>Sign in</h1>
       <form onSubmit={submit} className={cardClass}>
         <Label htmlFor="email">Email</Label>
