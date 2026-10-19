@@ -14,6 +14,7 @@ import codecs
 import json
 import logging
 import os
+import shutil
 import unicodedata
 from pathlib import Path
 from typing import BinaryIO, Final
@@ -22,7 +23,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Upload
+from app.db.models import Apartment, Blueprint, Upload
 
 logger = logging.getLogger("app")
 
@@ -222,3 +223,46 @@ def list_uploads(session: Session, thread_id: UUID) -> list[Upload]:
 
 def get_upload(session: Session, upload_id: UUID) -> Upload | None:
     return session.get(Upload, upload_id)
+
+
+# --- blueprints (render-now-blueprints-verdict-note) ------------------------------------------
+
+
+def blueprint_path(root: Path, blueprint_id: UUID, kind: str) -> Path:
+    return root / "blueprints" / f"{blueprint_id}.{EXTENSIONS[kind]}"
+
+
+def keep_blueprints(session: Session, upload_root: Path, apartment: Apartment, thread_id: UUID) -> list[Blueprint]:
+    """Copy the thread's PNG and JPEG uploads as the apartment's blueprints, skipping ones
+    already kept. The files are written before the caller commits; nothing is committed here."""
+    kept = set(
+        session.scalars(select(Blueprint.source_upload_id).where(Blueprint.apartment_id == apartment.id))
+    )
+    added: list[Blueprint] = []
+    for upload in list_uploads(session, thread_id):
+        if upload.kind not in IMAGE_KINDS or upload.id in kept:
+            continue
+        source = upload_path(upload_root, thread_id, upload.id, upload.kind)
+        if not source.is_file():
+            continue
+        blueprint = Blueprint(
+            id=uuid4(), apartment_id=apartment.id, source_upload_id=upload.id, kind=upload.kind,
+            original_name=upload.original_name, size_bytes=upload.size_bytes,
+        )
+        target = blueprint_path(upload_root, blueprint.id, blueprint.kind)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        session.add(blueprint)
+        added.append(blueprint)
+    return added
+
+
+def apartment_blueprints(session: Session, apartment_id: UUID) -> list[Blueprint]:
+    """An apartment's blueprints, newest first."""
+    return list(
+        session.scalars(
+            select(Blueprint)
+            .where(Blueprint.apartment_id == apartment_id)
+            .order_by(Blueprint.created_at.desc(), Blueprint.id)
+        )
+    )

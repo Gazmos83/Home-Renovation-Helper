@@ -706,6 +706,32 @@ class Upload(Base):
     )
 
 
+class Blueprint(Base):
+    """An image of a confirmed plan, kept with its apartment so it outlives the conversation
+    that carried it (render-now-blueprints-verdict-note). The bytes are a file under the upload root."""
+
+    __tablename__ = "blueprints"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    apartment_id: Mapped[UUID] = mapped_column(
+        ForeignKey("apartments.id", ondelete="CASCADE"), nullable=False
+    )
+    # The upload it was copied from; no foreign key, because the upload goes with its thread.
+    source_upload_id: Mapped[UUID] = mapped_column(nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    original_name: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('png', 'jpeg')", name="ck_blueprints_kind"),
+        UniqueConstraint("apartment_id", "source_upload_id", name="uq_blueprints_apartment_source"),
+        Index("ix_blueprints_apartment_id", "apartment_id"),
+    )
+
+
 class PluginOutcome(StrEnum):
     """How one HTTPS plugin invocation ended; the audit trail keeps no payload."""
 

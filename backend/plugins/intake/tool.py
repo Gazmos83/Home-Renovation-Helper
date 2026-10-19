@@ -9,11 +9,12 @@ the thread's brief; nothing else writes rooms or style (agent-loop design).
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from app.agent import house_file
+from app.agent import house_file, uploads
 from app.agent.house_file import HouseFileError
 from app.agent.memory_settings import read_memory_settings
 from app.agent.tools.base import (
@@ -25,6 +26,8 @@ from app.agent.tools.base import (
 )
 from app.agent.tools.shared import NOT_APPROVED
 from app.blender.shell_contract import polygon_area_m2
+
+logger = logging.getLogger("app")
 
 
 class OpeningArg(BaseModel):
@@ -340,6 +343,17 @@ def preview_plan(arguments: dict[str, Any], ctx: ToolContext) -> Confirmation | 
     )
 
 
+def _keep_blueprints(session: Any, ctx: ToolContext, apartment: Any) -> None:
+    """The conversation's images become the apartment's blueprints (render-now-blueprints-verdict-note).
+    After the plan is committed: a failed copy is logged and the plan stays."""
+    try:
+        uploads.keep_blueprints(session, ctx.deps.settings.upload_root, apartment, ctx.thread_id)
+        session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception("could not keep the plan's blueprints")
+
+
 def run_plan(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
     if not ctx.approved:
         return NOT_APPROVED
@@ -365,6 +379,8 @@ def run_plan(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutput | str:
             if ctx.thread_id is not None:
                 house_file.set_thread_apartment(session, ctx.thread_id, apartment)
             session.commit()
+            if ctx.thread_id is not None:
+                _keep_blueprints(session, ctx, apartment)
     except HouseFileError as error:
         return f"the plan cannot be stored: {error}"
     removed = [room["name"] for room in (replacement or {}).get("removed", [])]

@@ -74,7 +74,10 @@ test("a saved thumbs down shows its note and open, and resolving hides resolve a
   const section = screen.getByRole("region", { name: "Verdict" });
   await within(section).findByText("open");
   expect(down()).toHaveAttribute("aria-pressed", "true");
-  expect(screen.getByLabelText("Verdict note")).toHaveValue(DRAWERS);
+  // Saved: the note is text with "Saved" (Blockout marked wrong in the inspector).
+  expect(within(section).getByText(DRAWERS)).toBeInTheDocument();
+  expect(within(section).getByText("Saved")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Verdict note")).not.toBeInTheDocument();
   expect(calls).toContainEqual(["PUT", `${BASE}/4/verdict`, { verdict: "mismatch", note: DRAWERS }]);
   await user.click(screen.getByRole("button", { name: "Mark resolved" }));
   expect(await within(section).findByText("resolved")).toBeInTheDocument();
@@ -115,8 +118,63 @@ test("no model, token or cost text appears", async () => {
   serve({ 4: { verdict: "mismatch", note: DRAWERS, status: "open", updated_at: "x" } });
   show();
   const section = await screen.findByRole("region", { name: "Verdict" });
-  await waitFor(() => expect(screen.getByLabelText("Verdict note")).toHaveValue(DRAWERS));
+  await within(section).findByText(DRAWERS);
   for (const word of ["model", "token", "cost", "deepseek", "designer"]) {
     expect(section.textContent?.toLowerCase()).not.toContain(word);
   }
+});
+
+// --- the note saves visibly (render-now-blueprints-verdict-note) ---
+
+test("a thumbs-up note saved with Enter is sent once and shown as saved (Note on a thumbs up saved with Enter)", async () => {
+  const calls = serve({ 4: { verdict: "matches", note: null, status: null, updated_at: "x" } });
+  show();
+  const user = userEvent.setup();
+  const field = await screen.findByLabelText("Verdict note");
+  await user.type(field, "drawer heights are right");
+  expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+  await user.keyboard("{Enter}{Enter}");
+  const section = screen.getByRole("region", { name: "Verdict" });
+  expect(await within(section).findByText("Saved")).toBeInTheDocument();
+  expect(within(section).getByText("drawer heights are right")).toBeInTheDocument();
+  expect(within(section).getByRole("button", { name: "Edit" })).toBeInTheDocument();
+  expect(calls.filter(([method]) => method === "PUT")).toHaveLength(1);
+});
+
+test("leaving the field saves nothing", async () => {
+  const calls = serve({ 4: { verdict: "matches", note: null, status: null, updated_at: "x" } });
+  show();
+  const user = userEvent.setup();
+  await user.type(await screen.findByLabelText("Verdict note"), "half a thought");
+  await user.tab();
+  expect(calls.filter(([method]) => method === "PUT")).toHaveLength(0);
+});
+
+test("a saved note is edited and saved again (Note edited)", async () => {
+  const calls = serve({ 4: { verdict: "matches", note: "spot on", status: null, updated_at: "x" } });
+  show();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Edit" }));
+  const field = screen.getByLabelText("Verdict note");
+  expect(field).toHaveValue("spot on");
+  await user.clear(field);
+  await user.type(field, "spot on, check the plinth");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  const section = screen.getByRole("region", { name: "Verdict" });
+  expect(await within(section).findByText("spot on, check the plinth")).toBeInTheDocument();
+  expect(within(section).getByText("Saved")).toBeInTheDocument();
+  expect(calls).toContainEqual(["PUT", `${BASE}/4/verdict`, { verdict: "matches", note: "spot on, check the plinth" }]);
+});
+
+test("Escape cancels an edit and shows the saved note again (Edit cancelled)", async () => {
+  const calls = serve({ 4: { verdict: "matches", note: "spot on", status: null, updated_at: "x" } });
+  show();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Edit" }));
+  await user.type(screen.getByLabelText("Verdict note"), " and more");
+  await user.keyboard("{Escape}");
+  const section = screen.getByRole("region", { name: "Verdict" });
+  expect(within(section).getByText("spot on")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Verdict note")).not.toBeInTheDocument();
+  expect(calls.filter(([method]) => method === "PUT")).toHaveLength(0);
 });

@@ -11,7 +11,8 @@ import { Input } from "@/components/ui/input";
  * confirmed? A thumbs up or down above the inspector's tabs, whether or not the version is
  * built or rendered. The note field appears only once a thumb is chosen; a thumbs down
  * needs a note before it is saved and stays open until resolved or dismissed. Pressing
- * the chosen thumb again clears the verdict.
+ * the chosen thumb again clears the verdict. Enter or Save saves the note once; a saved note
+ * shows as text with "Saved" and Edit, and Escape cancels an edit (render-now-blueprints-verdict-note).
  */
 type Choice = "matches" | "mismatch";
 
@@ -24,12 +25,15 @@ export function VersionVerdict({ packageId, version }: { packageId: string; vers
   const [pending, setPending] = useState<Choice | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [missingNote, setMissingNote] = useState(false);
+  // The note field is open for an edit (after Edit); a verdict with no saved note always shows it.
+  const [editing, setEditing] = useState(false);
 
   const settle = (data: { verdict: Verdict | null }) => {
     queryClient.setQueryData(key, data);
     setPending(null);
     setNote(null);
     setMissingNote(false);
+    setEditing(false);
   };
   const give = useMutation({
     mutationFn: ({ verdict, text }: { verdict: Choice; text: string | null }) =>
@@ -59,15 +63,29 @@ export function VersionVerdict({ packageId, version }: { packageId: string; vers
   }
 
   function saveNote() {
-    if (!chosen) return;
+    // One save at a time: Enter pressed again while it is sent does nothing.
+    if (!chosen || give.isPending) return;
     const trimmed = text.trim();
     if (chosen === "mismatch" && !trimmed) {
       setMissingNote(true);
       return;
     }
-    if (!pending && trimmed === (saved?.note ?? "")) return;
+    if (!pending && trimmed === (saved?.note ?? "")) {
+      setEditing(false);
+      return;
+    }
     give.mutate({ verdict: chosen, text: trimmed || null });
   }
+
+  function cancelEdit() {
+    if (pending) settle({ verdict: saved });
+    setNote(null);
+    setMissingNote(false);
+    setEditing(false);
+  }
+
+  const fieldOpen = chosen !== null && (pending !== null || editing || !saved?.note);
+  const changed = pending !== null || text.trim() !== (saved?.note ?? "");
 
   return (
     <section aria-label="Verdict" className="grid gap-1">
@@ -94,26 +112,35 @@ export function VersionVerdict({ packageId, version }: { packageId: string; vers
         >
           <ThumbsDown aria-hidden size={16} />
         </Button>
-        {chosen && (
+        {chosen && !fieldOpen && (
+          <>
+            <span className="text-sm">{saved?.note}</span>
+            <span className="text-sm text-muted-foreground">Saved</span>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(true)}>
+              Edit
+            </Button>
+          </>
+        )}
+        {fieldOpen && (
           <Input
             aria-label="Verdict note"
             className="h-8 min-w-48 flex-1"
             maxLength={1000}
-            autoFocus={pending !== null}
+            autoFocus={pending !== null || editing}
             value={text}
             placeholder={chosen === "mismatch" ? "What doesn't match?" : "Add a note (optional)"}
             onChange={(event) => {
               setNote(event.target.value);
               setMissingNote(false);
             }}
-            onBlur={() => !pending && saveNote()}
             onKeyDown={(event) => {
               if (event.key === "Enter") saveNote();
+              else if (event.key === "Escape") cancelEdit();
             }}
           />
         )}
-        {pending && (
-          <Button type="button" size="sm" onClick={saveNote}>
+        {fieldOpen && changed && (
+          <Button type="button" size="sm" disabled={give.isPending} onClick={saveNote}>
             Save
           </Button>
         )}

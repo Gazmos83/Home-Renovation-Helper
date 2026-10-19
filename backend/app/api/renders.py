@@ -108,7 +108,7 @@ def _room_document(folder: Path, kind: str, room: Any) -> dict[str, Any]:
 
 def _start(
     request: Request, background: BackgroundTasks, folder: Path, ticket: RenderTicket,
-    scene_document: dict[str, Any] | None,
+    scene_document: dict[str, Any] | None, models_root: Path | None = None,
 ) -> dict[str, Any]:
     settings = request.app.state.settings
     engine = request.app.state.engine
@@ -128,6 +128,7 @@ def _start(
         on_outcome=lambda outcome: feedback_runs.finish_run(engine, run_id, outcome),
         offload=getattr(request.app.state, "offload", None),
         on_remote_job=lambda record: offload_jobs.record_job(engine, record),
+        models_root=models_root,
     )
     quote = ticket.quote
     return {
@@ -145,9 +146,10 @@ def _start(
 
 def _price_args(
     request: Request, *, package_id: str, version: int, kind: str, tier: Any, room: bool,
-    raw_fields: list[str],
+    raw_fields: list[str], record: str = "piece",
 ) -> dict[str, Any]:
     return {
+        "record": record,
         "package_id": package_id, "version": version, "kind": kind, "tier": tier,
         **benchmark_store.quote_inputs(request.app.state.engine, request.app.state.tiers),
         "room": room, "raw_fields": raw_fields,
