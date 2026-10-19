@@ -77,7 +77,7 @@ def test_the_researcher_is_told_to_have_an_unapproved_version_approved_first(too
 
         prompt = models["researcher"].last_prompt_text()
         assert "the cut list cannot be priced" in prompt
-        assert "approve it first on the Pieces page" in prompt
+        assert "approve it first in the version's inspector" in prompt
         assert last_reply(state) == "Please approve it first."
         with Session(tool_state.engine) as session:
             assert list_pricings(session, "hall-desk", 1) == []

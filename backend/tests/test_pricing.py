@@ -264,7 +264,7 @@ def test_an_unapproved_version_is_refused_and_no_record_is_written(session, sett
     house_file.unapprove_version(session, "hall-desk", 1)
     session.flush()
 
-    with pytest.raises(NotApproved, match="approve it first on the Pieces page"):
+    with pytest.raises(NotApproved, match="approve it first in the version's inspector"):
         price_cut_list(session, settings.render_root, "hall-desk", 1, settings)
 
     assert list_pricings(session, "hall-desk", 1) == []
@@ -390,3 +390,69 @@ def test_a_version_without_frozen_inputs_is_priced_as_before(session, settings) 
     home_store(session)
     price_the_desk(session)
     assert "drilling" not in price_cut_list(session, settings.render_root, "hall-desk", 1, settings).result
+
+
+# --- the priced lines in the chat (pricing-completion) ---------------------------------------
+
+
+def _summary(session, row) -> str:
+    from plugins.material_cost.tool import summarise
+
+    return summarise(describe_pricing(session, row))
+
+
+def _table(summary: str) -> list[list[str]]:
+    rows = [line for line in summary.splitlines() if line.startswith("| ") and not line.startswith("| Line")]
+    return [[cell.strip() for cell in line.strip("|").split("|")] for line in rows]
+
+
+def test_a_complete_pricing_lists_every_line_and_the_total_in_one_table(session, settings) -> None:
+    write_version(settings.render_root)
+    home_store(session)
+    price_the_desk(session)
+    row = price_cut_list(session, settings.render_root, "hall-desk", 1, settings, delivery_key="delivery:10km")
+    summary = _summary(session, row)
+    assert "Every priced line (show this table as given):" in summary
+    table = _table(summary)
+    names = [cells[0] for cells in table]
+    assert BIRCH in names and PLY in names
+    for item in ("Confirmat screw 7×50 mm", "Flap hinge", "Flap stay", "Cabinet wall hanger"):
+        assert item in names, item
+    assert any(name.startswith("edge band") for name in names)
+    assert "cut service" in names and "delivery delivery:10km" in names
+    assert table[-1] == ["**Total**", "", f"**{row.total_cents // 100},{row.total_cents % 100:02d} EUR**"]
+    assert "the pricing is complete" in summary
+
+
+def test_an_unpriced_hardware_line_says_unpriced_and_why(session, settings) -> None:
+    write_version(settings.render_root)
+    home_store(session)
+    sheet(session, BIRCH, 6000, thickness=18)
+    sheet(session, PLY, 3000, thickness=12)
+    for key, cents in (("confirmat-7x50", 10), ("flap-stay", 400), ("cabinet-hanger", 800)):
+        price_list.create_entry(session, key=key, label=key, category="hardware", unit="per_piece", base_cents=cents)
+    row = price_cut_list(session, settings.render_root, "hall-desk", 1, settings)
+    summary = _summary(session, row)
+    hinge = next(cells for cells in _table(summary) if "hinge" in cells[0].lower())
+    assert hinge[2] == "unpriced"
+    assert "the pricing is INCOMPLETE" in summary and "no price-list entry for this hardware item" in summary
+
+
+def test_every_amount_in_the_table_is_in_the_stored_pricing(session, settings) -> None:
+    import re
+
+    write_version(settings.render_root)
+    home_store(session)
+    price_the_desk(session)
+    row = price_cut_list(session, settings.render_root, "hall-desk", 1, settings, delivery_key="delivery:10km")
+    result = row.result
+    stored = {row.total_cents, row.cut_service_cents}
+    stored |= {m.get("cost_cents") for m in result["materials"].values()}
+    stored |= {line.get("cost_cents") for line in result["hardware"] + result["banding"]}
+    stored.add(result["delivery"]["cents"])
+    shown = {
+        int(euros) * 100 + int(cents)
+        for cells in _table(_summary(session, row))
+        for euros, cents in re.findall(r"(\d+),(\d{2}) EUR", cells[2])
+    }
+    assert shown and shown <= stored

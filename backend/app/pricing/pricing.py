@@ -667,8 +667,8 @@ def price_cut_list(
         raise Refused(f"{package_id} version {version} has no readable document to price") from None
     if not version_approved(session, package_id, version):
         raise NotApproved(
-            f"{package_id} version {version} is not approved; approve it first on the Pieces "
-            "page or in the conversation's project panel, then ask for the price again"
+            f"{package_id} version {version} is not approved; approve it first in the version's inspector "
+            "(the Piece icon in the Workspace) or on the Pieces page, then ask for the price again"
         )
     # The rows are what the version derives from its own document: the same rows
     # `cut_list` shows and the cut list a build writes, so an unbuilt version is priced too.

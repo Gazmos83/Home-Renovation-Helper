@@ -128,7 +128,7 @@ def test_an_unapproved_version_is_refused_with_409_and_writes_no_record(client: 
     assert response.status_code == 409
     detail = response.json()["detail"]
     assert detail["failure_class"] == "not_approved"
-    assert "approve it first on the Pieces page" in detail["reason"]
+    assert "approve it first in the version's inspector" in detail["reason"]
     assert client.get(PRICINGS).json() == []
 
 

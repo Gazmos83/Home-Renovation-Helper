@@ -20,10 +20,12 @@
 
 ## 4. Design guidelines
 
-- [ ] 4.1 Write `config/guideline_sources.yaml` (file sources under `docs/guidelines/`, URL sources only where the host allows us) and the `--guidelines` ingestion with `pypdf`, Markdown and section splitting; verify `tests/test_guideline_ingestion.py` with PDF and Markdown fixtures yields sectioned `guideline` chunks with title, section and date, a local file makes no request, a missing or refused source is reported and skipped, and a path outside the folder fails loading
+- [x] 4.1 Write `config/guideline_sources.yaml` (file sources under `docs/guidelines/`, URL sources only where the host allows us) and the `--guidelines` ingestion with `pypdf`, Markdown and section splitting; verify `tests/test_guideline_ingestion.py` with PDF and Markdown fixtures yields sectioned `guideline` chunks with title, section and date, a local file makes no request, a missing or refused source is reported and skipped, and a path outside the folder fails loading
+  - Closed 2026-10-18 by `knowledge-source-onboarding` (the listed source `topnotch-shelf-brackets`) and `pricing-completion`.
   - Local-file sources (`path:` under `docs/guidelines/`, PDF and Markdown, no network request, path confined to the folder) and URL sources are built and tested; the checked-in list is empty because the official hosts refused (2026-10-06). `TODO(user)`: place your PDFs under `docs/guidelines/pdf/` and list them to complete this task.
 - [x] 4.2 Add `guideline_notes` routes mirrored into the corpus and `search_guidelines`; verify `tests/test_guidelines_api.py` covers create/edit/delete reaching the corpus, a citation required, and search results wrapped with their source
-- [ ] 4.3 Write `config/design_rules.yaml` (each limit quoted from its clause) and `app/guidelines/checks.py` with the four checks; apply placement rules in `room_fit` and piece rules in `create_piece`/`revise_package` previews; verify `tests/test_design_rules.py` covers each check, a `warn` in the summary naming rule, value, limit and source, a `refuse` refusing with no pause, and a rule without a source failing startup by id
+- [x] 4.3 Write `config/design_rules.yaml` (each limit quoted from its clause) and `app/guidelines/checks.py` with the four checks; apply placement rules in `room_fit` and piece rules in `create_piece`/`revise_package` previews; verify `tests/test_design_rules.py` covers each check, a `warn` in the summary naming rule, value, limit and source, a `refuse` refusing with no pause, and a rule without a source failing startup by id
+  - Closed 2026-10-18 by `guideline-hardware-counts` (four cited rules) and `pricing-completion`.
   - Built and tested (loader, four checks, tool wiring, startup load). Left open: `config/design_rules.yaml` ships empty — no limit may be entered without quoting its clause, and no source was readable; `TODO(user)` to add rules (official text or an owner note).
 
 ## 5. The Researcher
@@ -42,7 +44,8 @@
 
 ## 7. Documentation and verification
 
-- [ ] 7.1 README: settings, ingestion commands (`--store`, toom, `--guidelines`), the price-list routes with `curl`, the frontend commands; `.env.example` gains the new settings with `TOOM_HOME_STORE` marked `TODO(user)`; tick CLAUDE.md §11 step 5
+- [x] 7.1 README: settings, ingestion commands (`--store`, toom, `--guidelines`), the price-list routes with `curl`, the frontend commands; `.env.example` gains the new settings with `TOOM_HOME_STORE` marked `TODO(user)`; tick CLAUDE.md §11 step 5
   - README, `.env.example` and the CLAUDE.md §5 table are done. Left open: ticking CLAUDE.md §11 step 5, held until 4.1, 4.3 and 6.1 are resolved.
+  - Closed 2026-10-18 by `pricing-completion`: the README pricing section is updated and CLAUDE.md §11 step 5 is ticked.
 - [x] 7.2 Run `uv run ruff check .`, `uv run pytest -m "not slow"`, `uv run pytest --blender -m blender` (no render added; every render at `draft`), and `pnpm lint && pnpm test && pnpm build`; verify all pass and record the counts in the commit message
   - 2026-10-06: ruff clean; `pytest -m "not slow"` 1078 passed, 24 skipped; `pytest --blender -m blender` 23 passed (no render added); `pnpm lint` (one pre-existing warning), `pnpm test` 21 passed, `pnpm build` ok.

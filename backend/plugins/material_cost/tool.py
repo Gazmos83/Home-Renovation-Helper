@@ -49,6 +49,36 @@ def euros(cents: int | None) -> str:
     return "unpriced" if cents is None else f"{cents // 100},{cents % 100:02d} EUR"
 
 
+def _cell(text: Any) -> str:
+    """Owner and catalogue text in a Markdown table cell: no pipe or line break breaks the row."""
+    return str(text).replace("|", "/").replace("\n", " ").strip()
+
+
+def priced_table(row_dict: dict[str, Any]) -> list[str]:
+    """Every line of the stored pricing as one Markdown table, then the total
+    (pricing-completion). Each amount is the stored one; a line without a price says "unpriced"."""
+    result = row_dict["result"]
+    rows = ["| Line | Quantity | Cost |", "|---|---|---|"]
+    for key, material in result["materials"].items():
+        if "sheet_count" in material:
+            quantity = f"{material['sheet_count']} sheet(s), {material['utilisation_percent']:g} % use"
+        else:
+            quantity = ""
+        rows.append(f"| {_cell(key)} | {quantity} | {euros(material.get('cost_cents'))} |")
+    for line in result.get("hardware") or []:
+        rows.append(f"| {_cell(line['item'])} | {_cell(line['qty'])} | {euros(line.get('cost_cents'))} |")
+    for line in result.get("banding") or []:
+        metres = f"{line['length_mm'] / 1000:g} m" if line.get("length_mm") is not None else ""
+        rows.append(f"| edge band {_cell(line.get('label') or line['key'])} | {metres} | {euros(line.get('cost_cents'))} |")
+    cut_open = result.get("cut_charge_choice_open")
+    rows.append(f"| cut service | | {'open' if cut_open else euros(row_dict['cut_service_cents'])} |")
+    delivery = result.get("delivery")
+    if delivery is not None:
+        rows.append(f"| delivery {_cell(delivery['key'])} | | {euros(delivery.get('cents'))} |")
+    rows.append(f"| **Total** | | **{euros(row_dict['total_cents'])}** |")
+    return rows
+
+
 def summarise(row_dict: dict[str, Any]) -> str:
     result = row_dict["result"]
     heading = (
@@ -83,6 +113,7 @@ def summarise(row_dict: dict[str, Any]) -> str:
             lines.append(f"  - {item['kind']} {what}: {item['reason']}")
         for item in result["unfitting"]:
             lines.append(f"  - part {item['part_id']} does not fit any {item['material_key']} sheet")
+    lines += ["", "Every priced line (show this table as given):", "", *priced_table(row_dict)]
     return "\n".join(lines)
 
 
